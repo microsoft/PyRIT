@@ -7,10 +7,6 @@ export const usePairedOutcomesStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
-    padding: tokens.spacingHorizontalL,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorNeutralBackground1,
     minWidth: 0,
   },
   controls: {

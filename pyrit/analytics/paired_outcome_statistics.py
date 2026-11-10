@@ -26,8 +26,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pyrit.analytics.scenario_statistics import ScenarioAttempt
-    from pyrit.models import AttackResult, ScenarioResult, ScenarioRunPlan, ScenarioRunPlanAtomicGroup
-    from pyrit.models.score import ScoringExpectation
+    from pyrit.models import (
+        AttackResult,
+        ScenarioResult,
+        ScenarioRunPlan,
+        ScenarioRunPlanAtomicGroup,
+        ScoringExpectation,
+    )
 
 
 @dataclass(frozen=True, slots=True)

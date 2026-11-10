@@ -176,9 +176,11 @@ if TYPE_CHECKING:
         ScenarioOrchestrationParentSummary,
     )
     from pyrit.models.scenario_progress import (
+        SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_PLAN_VERSION,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
+        ScenarioActiveConversation,
         ScenarioAtomicGroupProgress,
         ScenarioAttackResultDelta,
         ScenarioAttackTechniqueDetails,
@@ -333,7 +335,7 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_trace_context import RequestTraceContext
-    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata
+    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
@@ -388,6 +390,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
+    "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
+    "ToolLoopStopReason": "pyrit.models.target.tool_execution_metadata",
     "AttackAnalyticsCell": "pyrit.models.analytics",
     "AttackAnalyticsConverterDirection": "pyrit.models.analytics",
     "AttackAnalyticsDimension": "pyrit.models.analytics",
@@ -549,6 +553,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioTechniqueSummary": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "ScenarioRunState": "pyrit.models.results.scenario_result",
+    "SCENARIO_CONVERSATIONS_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_STARTED_AT_METADATA_KEY": "pyrit.models.scenario_progress",
@@ -566,6 +571,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioAtomicGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioAttackTechniqueDetails": "pyrit.models.scenario_progress",
     "ScenarioComponentIdentity": "pyrit.models.scenario_progress",
+    "ScenarioActiveConversation": "pyrit.models.scenario_progress",
     "ScenarioDisplayGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioExecutionStatistics": "pyrit.models.scenario_progress",
     "ScenarioExecutionUnit": "pyrit.models.scenario_progress",

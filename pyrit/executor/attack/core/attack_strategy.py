@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never,
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
-from pyrit.exceptions.retry_collector import (
+from pyrit.exceptions import (
     get_retry_collector,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -30,7 +30,7 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -41,6 +41,7 @@ from pyrit.models import (
     AttackResultSelection,
     ComponentIdentifier,
     ConversationReference,
+    ConversationType,
     ConverterIdentifier,
     Identifiable,
     Message,
@@ -51,8 +52,8 @@ from pyrit.models import (
     TargetIdentifier,
     UndeterminedScoreError,
 )
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.observation.lifecycle import AttemptObserver
+from pyrit.prompt_target import TargetRequirements
+from pyrit.score import AttemptObserver
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Collection, Generator
@@ -69,10 +70,10 @@ if TYPE_CHECKING:
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
+    from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
-    from pyrit.prompt_target import PromptTarget
-    from pyrit.prompt_target.common.target_capabilities import CapabilityName
+    from pyrit.prompt_target import CapabilityName, PromptTarget
     from pyrit.score import Scorer
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -223,6 +224,8 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     )
     _persisted_attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
+    _objective_conversation_ids: dict[str, None] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _current_objective_conversation_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
         init=False,
@@ -357,6 +360,24 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         if lifecycle is None:
             return
         lifecycle.record_invocation(conversation_id=conversation_id)
+        self._objective_conversation_ids.setdefault(conversation_id, None)
+        self._current_objective_conversation_id = conversation_id
+
+    @property
+    def objective_conversation_ids(self) -> tuple[str, ...]:
+        """Objective conversations in first-invocation order."""
+        return tuple(self._objective_conversation_ids)
+
+    @property
+    def current_objective_conversation_id(self) -> str | None:
+        """The most recently invoked objective conversation, unless it has been pruned."""
+        current = self._current_objective_conversation_id
+        pruned = {
+            reference.conversation_id
+            for reference in self.related_conversations
+            if reference.conversation_type == ConversationType.PRUNED
+        }
+        return current if current not in pruned else None
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -761,7 +782,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="AttackStrategy")
 
@@ -979,6 +1000,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         return self._objective_target
 
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Child execution observations, supplied by compound strategies."""
+        return ()
+
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
@@ -1032,6 +1058,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
         context._persisted_attack_result_id = None
+        context._objective_conversation_ids.clear()
+        context._current_objective_conversation_id = None
         await self._resolve_operation_async(context=context)
         self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(

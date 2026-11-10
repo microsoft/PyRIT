@@ -140,6 +140,19 @@ def test_paired_outcomes_requires_explicit_groups(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("parameter", ["baseline_group_id", "attack_group_id"])
+def test_paired_outcomes_limit_group_ids(client: TestClient, parameter: str) -> None:
+    params = {"baseline_group_id": "baseline", "attack_group_id": "attack"}
+    with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as service:
+        service.return_value.get_run_results_async = AsyncMock(return_value=_saved_result())
+        at_limit = client.get("/api/scenarios/runs/saved/paired-outcomes", params={**params, parameter: "g" * 256})
+        over_limit = client.get("/api/scenarios/runs/saved/paired-outcomes", params={**params, parameter: "g" * 257})
+
+    assert at_limit.status_code == 400
+    assert over_limit.status_code == 422
+    service.return_value.get_run_results_async.assert_awaited_once()
+
+
 def test_paired_outcomes_rejects_legacy_plan(client: TestClient) -> None:
     saved = _saved_result()
     saved.metadata = {}

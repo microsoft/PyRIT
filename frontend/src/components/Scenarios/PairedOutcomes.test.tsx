@@ -113,9 +113,9 @@ test('expands on keyboard, lazily retrieves the selected transition, and links b
   expect(within(details).getByText('Outcome: success')).toBeInTheDocument()
   expect(within(details).getByText('Baseline failed')).toBeInTheDocument()
   expect(within(details).getByRole('link', { name: 'Open baseline conversation' }))
-    .toHaveAttribute('href', `/attacks/baseline-result/conversations/baseline-conversation?scenarioResultId=${runId}`)
+    .toHaveAttribute('href', `/attack/chat/baseline-result/conversations/baseline-conversation?scenarioResultId=${runId}`)
   expect(within(details).getByRole('link', { name: 'Open attack conversation' }))
-    .toHaveAttribute('href', `/attacks/attack-result/conversations/attack-conversation?scenarioResultId=${runId}`)
+    .toHaveAttribute('href', `/attack/chat/attack-result/conversations/attack-conversation?scenarioResultId=${runId}`)
   expect(detailsRequest).toHaveBeenCalledWith(runId, {
     baseline_group_id: 'base', attack_group_id: 'attack', transition: 'failure_to_success', limit: 25,
   }, expect.any(AbortSignal))
@@ -290,7 +290,7 @@ test('links a compound outcome to its linked child conversation in Scenario cont
   const user = await compare()
   await user.click(await screen.findByRole('button', { name: 'Failure → Success' }))
   const link = await screen.findByRole('link', { name: 'Open attack child conversation' })
-  expect(link).toHaveAttribute('href', `/attacks/linked-child/conversations/child-conversation?scenarioResultId=${runId}`)
+  expect(link).toHaveAttribute('href', `/attack/chat/linked-child/conversations/child-conversation?scenarioResultId=${runId}`)
   expect(screen.getByText('Linked child outcome: success')).toBeInTheDocument()
   expect(screen.getByText('1 of 1 pairs shown')).toBeInTheDocument()
 })

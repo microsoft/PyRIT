@@ -7,14 +7,13 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.analytics.paired_outcome_statistics import (
+from pyrit.analytics import (
     PairedOutcomeTransition,
     compute_paired_outcome_statistics,
     get_paired_outcome_details,
 )
 from pyrit.common.utils import to_sha256
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttackResult
+from pyrit.executor.attack import PromptSendingAttack, SequenceCompletionPolicy, SequentialAttackResult
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -23,19 +22,19 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    MatchesObjective,
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     Score,
+    ScoringExpectation,
     SeedObjective,
     TargetIdentifier,
 )
-from pyrit.models.score import MatchesObjective, ScoringExpectation
-from pyrit.scenario import DatasetConfiguration
+from pyrit.scenario import AttackTechnique, DatasetConfiguration
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget, make_scenario_result

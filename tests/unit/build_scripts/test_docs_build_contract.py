@@ -43,7 +43,14 @@ def test_pdf_targets_share_checked_export_and_all_builds_html_first() -> None:
     assert pdf_commands == all_commands == ["uv run python -m build_scripts.build_docs_pdf"]
 
 
-@pytest.mark.parametrize("url", [COMMONS_SOURCE, "https://crates.io"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        COMMONS_SOURCE,
+        "https://crates.io",
+        "https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation",
+    ],
+)
 def test_robot_exceptions_only_skip_the_verified_url(url: str) -> None:
     config = yaml.safe_load((REPO_ROOT / "doc" / "myst.yml").read_text(encoding="utf-8"))
     rules = config["project"]["error_rules"]

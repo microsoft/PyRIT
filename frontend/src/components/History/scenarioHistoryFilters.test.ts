@@ -14,6 +14,7 @@ describe('scenario history URL filters', () => {
       operationId: ['6f1b2c3d-0000-4000-8000-000000000001'],
       otherLabels: ['team:security', 'team:safety'],
       labelSearchText: 'team',
+      referenceId: '11111111-1111-4111-8111-111111111111',
     }
 
     const params = scenarioHistoryFiltersToSearchParams({
@@ -24,18 +25,19 @@ describe('scenario history URL filters', () => {
     expect(params.getAll('scenario')).toEqual(['red.team', 'benchmark'])
     expect(params.getAll('status')).toEqual(['IN_PROGRESS', 'FAILED'])
     expect(params.getAll('operation_id')).toEqual(['6f1b2c3d-0000-4000-8000-000000000001'])
+    expect(params.get('id')).toBe(filters.referenceId)
     expect(scenarioHistoryFiltersFromSearchParams(params)).toEqual({
       ...filters,
       statuses: [...filters.statuses],
     })
   })
 
-  it('ignores synthetic and invalid run states without dropping valid filters', () => {
+  it('ignores invalid run states without dropping valid filters', () => {
     const params = new URLSearchParams('status=COMPLETED&status=QUEUED&status=UNKNOWN&operator=alice')
 
     expect(scenarioHistoryFiltersFromSearchParams(params)).toEqual({
       ...DEFAULT_SCENARIO_HISTORY_FILTERS,
-      statuses: ['COMPLETED'],
+      statuses: ['COMPLETED', 'QUEUED'],
       operator: ['alice'],
     })
   })
@@ -48,8 +50,16 @@ describe('scenario history URL filters', () => {
 
     const params = scenarioHistoryFiltersToSearchParams(filters)
 
-    expect(params.getAll('status')).toEqual(SCENARIO_RUN_STATES)
+    expect(params.getAll('status')).toEqual([
+      'CREATED', 'QUEUED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED',
+    ])
     expect(scenarioHistoryFiltersFromSearchParams(params)).toEqual(filters)
+  })
+
+  it('preserves a QUEUED-only status filter from the URL', () => {
+    const params = new URLSearchParams('status=QUEUED')
+
+    expect(scenarioHistoryFiltersFromSearchParams(params).statuses).toEqual(['QUEUED'])
   })
 
   it('omits empty filters from the URL', () => {

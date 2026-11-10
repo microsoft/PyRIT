@@ -5,19 +5,27 @@
 Tests for the shared registry constructor-argument resolution primitive.
 """
 
+import re
 from collections.abc import Callable
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
 
 from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
-from pyrit.models import Message, MessagePiece, SeedPrompt
-from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
-from pyrit.models.parameter import ComponentType, Parameter
+from pyrit.models import (
+    ComponentType,
+    ConverterIdentifier,
+    Message,
+    MessagePiece,
+    Parameter,
+    SeedPrompt,
+    TargetIdentifier,
+)
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, ScorerRegistry, SourceRegistry, TargetRegistry
 from pyrit.registry.resolution import (
     _registry_getter_for_component_type,
     derive_parameters,
@@ -459,6 +467,15 @@ class _Handle:
     """A Python object no external caller can supply."""
 
 
+class _Files:
+    """Helper whose constructor takes paths that name files on the server."""
+
+    def __init__(self, *, label: str = "", data_file: Path | None = None, source: Path | str | None = None) -> None:
+        self.label = label
+        self.data_file = data_file
+        self.source = source
+
+
 class _Mixed:
     """Helper whose constructor mixes external inputs with Python-object parameters."""
 
@@ -497,6 +514,49 @@ class TestExternalInput:
     def test_external_still_rejects_unknown_parameters(self) -> None:
         with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
             resolve_constructor_args(cls=_Mixed, raw_args={"nope": 1}, external_input=True)
+
+    @pytest.mark.parametrize(
+        "raw_args", [{"data_file": "/etc/hosts"}, {"source": "/etc/hosts"}, {"data_file": None}, {"source": ""}]
+    )
+    def test_external_rejects_path_parameters_by_default(self, raw_args: dict[str, object]) -> None:
+        with pytest.raises(
+            ValueError, match="of '_Files' names a server file or folder and cannot be set through the API"
+        ):
+            resolve_constructor_args(cls=_Files, raw_args=raw_args, external_input=True)
+
+    def test_external_accepts_only_the_allowed_path_parameters(self) -> None:
+        resolved = resolve_constructor_args(
+            cls=_Files,
+            raw_args={"label": "x", "data_file": "/uploads/data.bin"},
+            external_input=True,
+            allowed_path_params=frozenset({"data_file"}),
+        )
+
+        assert resolved == {"label": "x", "data_file": Path("/uploads/data.bin")}
+        with pytest.raises(ValueError, match="'source' of '_Files' names a server file"):
+            resolve_constructor_args(
+                cls=_Files,
+                raw_args={"source": "/etc/hosts"},
+                external_input=True,
+                allowed_path_params=frozenset({"data_file"}),
+            )
+
+    def test_unknown_parameter_lists_only_parameters_callers_may_set(self) -> None:
+        with pytest.raises(ValueError, match=re.escape("Valid parameters: ['label']")):
+            resolve_constructor_args(cls=_Files, raw_args={"nope": 1}, external_input=True)
+        with pytest.raises(ValueError, match=re.escape("Valid parameters: ['data_file', 'label']")):
+            resolve_constructor_args(
+                cls=_Files, raw_args={"nope": 1}, external_input=True, allowed_path_params=frozenset({"data_file"})
+            )
+
+    def test_allowing_a_path_does_not_allow_python_objects(self) -> None:
+        with pytest.raises(ValueError, match="'handle' of '_Mixed' cannot be set through the API"):
+            resolve_constructor_args(
+                cls=_Mixed, raw_args={"handle": None}, external_input=True, allowed_path_params=frozenset({"handle"})
+            )
+
+    def test_in_process_callers_keep_passing_paths(self) -> None:
+        assert _resolve(_Files, {"data_file": "/etc/hosts"}) == {"data_file": Path("/etc/hosts")}
 
     def test_in_process_callers_keep_passing_python_objects(self) -> None:
         handle = _Handle()
@@ -735,6 +795,7 @@ _RESOLVABLE_COMPONENT_REGISTRIES = {
     ComponentType.TARGET: TargetRegistry,
     ComponentType.CONVERTER: ConverterRegistry,
     ComponentType.SCORER: ScorerRegistry,
+    ComponentType.SOURCE: SourceRegistry,
 }
 # Scenarios are created by name, never referenced by name inside another component,
 # so they are deliberately not wired for reference resolution.

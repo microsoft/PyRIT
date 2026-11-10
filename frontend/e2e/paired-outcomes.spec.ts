@@ -27,6 +27,8 @@ test('compares persisted outcomes through the real API, including retries and ex
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto(run)
+  await expect(page.getByRole('region', { name: 'Paired outcomes', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Compare outcomes' })).toBeDisabled()
@@ -76,9 +78,10 @@ test('compares persisted outcomes through the real API, including retries and ex
   await captureExpandedTransition(page, comparison.getByRole('table', { name: 'Outcome transitions' }), details,
     testInfo.outputPath('paired-outcomes-desktop.png'))
   await attackLink.click()
-  await expect(page).toHaveURL(/\/attacks\/[^/]+\/conversations\/[^/]+\?scenarioResultId=/)
+  await expect(page).toHaveURL(/\/attack\/chat\/[^/]+\/conversations\/[^/]+\?scenarioResultId=/)
   await expect(page.getByText('Offline objective: a')).toBeVisible()
   await page.goto(run)
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
   const restored = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await restored.getByLabel('Baseline group').selectOption('baseline')
   await restored.getByLabel('Attack group').selectOption('attack')
@@ -99,6 +102,9 @@ test('compares persisted outcomes through the real API, including retries and ex
 test('keeps expanded pairs usable at a narrow viewport and with keyboard controls', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(run)
+  const disclosure = page.getByRole('button', { name: 'Compare baseline and attack' })
+  await disclosure.focus()
+  await page.keyboard.press('Enter')
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')
@@ -132,6 +138,7 @@ test('keeps expanded pairs usable at a narrow viewport and with keyboard control
 
 test('paginates matching SQLite pairs', async ({ page }) => {
   await page.goto(paginatedRun)
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')
@@ -159,14 +166,16 @@ test('paginates matching SQLite pairs', async ({ page }) => {
 
 test('explains why legacy or failed runs cannot be compared', async ({ page }) => {
   await page.goto(scenarioRunRoutePath('00000000-0000-0000-0000-00000000238d'))
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
   await expect(page.getByRole('region', { name: 'Paired outcomes', exact: true })).toContainText('saved execution plan')
   await page.goto(scenarioRunRoutePath('00000000-0000-0000-0000-00000000238e'))
-  await expect(page.getByRole('region', { name: 'Paired outcomes', exact: true })).toContainText('Complete the run')
+  await expect(page.getByRole('button', { name: 'Compare baseline and attack' })).toHaveCount(0)
 })
 
 test('opens a compound child conversation and pages long seed IDs on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.goto(scenarioRunRoutePath('00000000-0000-0000-0000-000000002390'))
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')
@@ -184,7 +193,7 @@ test('opens a compound child conversation and pages long seed IDs on mobile', as
   const baselinePath = await baseline.getAttribute('href')
   const child = details.getByRole('link', { name: 'Open attack child conversation', exact: true })
   await child.click()
-  await expect(page).toHaveURL(/\/attacks\/[^/]+\/conversations\/[^/]+\?scenarioResultId=00000000-0000-0000-0000-000000002390/)
+  await expect(page).toHaveURL(/\/attack\/chat\/[^/]+\/conversations\/[^/]+\?scenarioResultId=00000000-0000-0000-0000-000000002390/)
   await expect(page.getByText('Offline objective: a')).toBeVisible()
   if (!baselinePath) throw new Error('Missing baseline conversation link')
   await page.goto(baselinePath)
@@ -194,6 +203,7 @@ test('opens a compound child conversation and pages long seed IDs on mobile', as
 test('offers a usable mobile retry after a real network failure', async ({ page, context }) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.goto(run)
+  await page.getByRole('button', { name: 'Compare baseline and attack' }).click()
   const panel = page.getByRole('region', { name: 'Paired outcomes', exact: true })
   await panel.getByLabel('Baseline group').selectOption('baseline')
   await panel.getByLabel('Attack group').selectOption('attack')

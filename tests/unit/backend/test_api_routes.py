@@ -9,8 +9,10 @@ import json
 import os
 import tempfile
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
@@ -20,14 +22,22 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageResponse,
     AttackListResponse,
     AttackSummary,
     ConversationMessagesResponse,
+    ConverterInstance,
+    ConverterInstanceListResponse,
+    ConverterPreviewResponse,
+    ConverterTypeResponse,
     CreateAttackResponse,
     MessagePieceView,
     MessageView,
+    PaginationInfo,
+    PreviewStep,
+    ScoreView,
+    TargetListResponse,
     TargetResponseStatus,
 )
 from pyrit.backend.models.common import (
@@ -36,27 +46,20 @@ from pyrit.backend.models.common import (
     MAX_ITEMS,
     MAX_LABEL_KEY_LENGTH,
     MAX_LABEL_VALUE_LENGTH,
-    PaginationInfo,
 )
-from pyrit.backend.models.converters import (
-    ConverterInstance,
-    ConverterInstanceListResponse,
-    ConverterPreviewResponse,
-    ConverterTypeResponse,
-    PreviewStep,
-)
-from pyrit.backend.models.targets import (
-    TargetListResponse,
-    TargetTypeResponse,
-)
+from pyrit.backend.models.scores import ApplyChatScorerResponse
+from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
+from pyrit.backend.services import AttackService
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError
+from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.catalog import TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -229,7 +232,8 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             assert mock_service.list_attacks_async.call_args.kwargs["include_scenario_attacks"] is False
 
-    def test_create_attack_success(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("field", ["objective", "name"])
+    def test_create_attack_success(self, *, client: TestClient, field: str) -> None:
         """Test successful attack creation."""
         now = datetime.now(UTC)
 
@@ -244,14 +248,47 @@ class TestAttackRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.post(
-                "/api/attacks",
-                json={"target_registry_name": "target-1", "name": "Test Attack"},
-            )
+            with (
+                pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective")
+                if field == "name"
+                else nullcontext()
+            ):
+                response = client.post(
+                    "/api/attacks",
+                    json={"target_registry_name": "target-1", field: "Test objective"},
+                )
 
             assert response.status_code == status.HTTP_201_CREATED
             data = response.json()
             assert data["conversation_id"] == "attack-1"
+            request = mock_service.create_attack_async.call_args.kwargs["request"]
+            assert request.objective == "Test objective"
+
+    def test_create_attack_rejects_conflicting_objective_alias(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.attacks.get_attack_service") as service,
+            pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"),
+        ):
+            response = client.post("/api/attacks", json={"objective": "", "name": "Legacy objective"})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        service.assert_not_called()
+
+    def test_create_attack_half_branch_spec_is_a_bad_request(self, client: TestClient) -> None:
+        """A half provided branching spec answers 400 like the conversation endpoint, not 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_attack_async = AsyncMock(
+                side_effect=ValueError("Both source_conversation_id and cutoff_index must be provided together")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks",
+                json={"source_conversation_id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"},
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "must be provided together" in response.json()["detail"]
 
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
@@ -1156,6 +1193,47 @@ class TestAttackRoutes:
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (None, status.HTTP_200_OK),
+            (PermissionError("Automated results are read-only. Choose Continue manually."), status.HTTP_403_FORBIDDEN),
+            (LookupError("The conversation does not belong to this attack."), status.HTTP_404_NOT_FOUND),
+            (
+                AttackStateConflictError("The latest response changed. Reload before applying."),
+                status.HTTP_409_CONFLICT,
+            ),
+            (ManualSendConflictError("The conversation is busy."), status.HTTP_409_CONFLICT),
+            (ManualSendQueueFullError("Too many manual operations."), status.HTTP_429_TOO_MANY_REQUESTS),
+            (ValueError("This conversation has no saved assistant response to score."), status.HTTP_400_BAD_REQUEST),
+            (ChatScoringError("The scorer could not evaluate the latest response."), status.HTTP_502_BAD_GATEWAY),
+        ],
+    )
+    def test_apply_scorer_maps_outcomes(self, client: TestClient, error: Exception | None, status_code: int) -> None:
+        """Test that Apply scorer reports each service outcome with its own status and message."""
+        result = ApplyChatScorerResponse(
+            conversation_id="conversation",
+            score=ScoreView(score_type="true_false", score_value="true", message_piece_id=uuid.uuid4()),
+            reused=True,
+        )
+        with patch("pyrit.backend.routes.attacks.get_chat_scoring_service") as get_service:
+            get_service.return_value.apply_async = AsyncMock(return_value=result, side_effect=error)
+            response = client.post(
+                "/api/attacks/attack-1/apply-scorer",
+                json={
+                    "conversation_id": str(uuid.uuid4()),
+                    "response_id": str(uuid.uuid4()),
+                    "scorer": {"registry_name": "judge", "identifier_hash": "hash"},
+                    "objective": "Goal",
+                },
+            )
+
+        assert response.status_code == status_code
+        if error is None:
+            assert response.json()["reused"] is True
+        else:
+            assert response.json() == {"detail": str(error)}
+
 
 # ============================================================================
 # Target Routes Tests
@@ -1212,6 +1290,16 @@ class TestTargetRoutes:
         response = client.get("/api/targets/catalog")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_list_target_types_marks_hack_a_prompt_credentials_sensitive(self, client: TestClient) -> None:
+        response = client.get("/api/targets/types")
+
+        assert response.status_code == status.HTTP_200_OK
+        entry = next(item for item in response.json()["items"] if item["target_type"] == "HackAPromptTarget")
+        sensitive = {parameter["name"]: parameter["sensitive"] for parameter in entry["parameters"]}
+        assert sensitive["cookie"] is True
+        assert sensitive["session_id"] is True
+        assert sensitive["challenge_slug"] is False
 
     def test_create_target_success(self, client: TestClient) -> None:
         """Test successful target creation."""
@@ -1477,6 +1565,18 @@ class TestConverterRoutes:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    @pytest.mark.parametrize("converter_type", ["AzureSpeechAudioToTextConverter", "AzureSpeechTextToAudioConverter"])
+    def test_list_converter_types_marks_azure_speech_key_sensitive(
+        self, client: TestClient, converter_type: str
+    ) -> None:
+        response = client.get("/api/converters/types")
+
+        assert response.status_code == status.HTTP_200_OK
+        entry = next(item for item in response.json()["items"] if item["converter_type"] == converter_type)
+        sensitive = {parameter["name"]: parameter["sensitive"] for parameter in entry["parameters"]}
+        assert sensitive["azure_speech_key"] is True
+        assert sensitive["azure_speech_region"] is False
+
     def test_create_converter_success(self, client: TestClient) -> None:
         """Test successful converter instance creation."""
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
@@ -1697,19 +1797,18 @@ class TestVersionRoutes:
 
         assert response.json()["default_operation"] == "op_proposed"
 
-    def test_get_version_with_build_info(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("commit", ["abc123", None])
+    def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
+        build_info: version_routes.BuildInfo = {
+            "source": "git" if commit is not None else "pypi",
+            "commit": commit,
+            "modified": False,
+            "display": "1.0.0-test",
+        }
         # Create a temp file to simulate Docker build info
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(
-                {
-                    "source": "git",
-                    "commit": "abc123",
-                    "modified": False,
-                    "display": "1.0.0-test",
-                },
-                f,
-            )
+            json.dump(build_info, f)
             temp_path = f.name
 
         try:
@@ -1724,18 +1823,14 @@ class TestVersionRoutes:
 
                 # Mock open to return our temp file content
                 with patch("builtins.open", create=True) as mock_open:
-                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(
-                        {
-                            "source": "git",
-                            "commit": "abc123",
-                            "modified": False,
-                            "display": "1.0.0-test",
-                        }
-                    )
+                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(build_info)
 
                     response = client.get("/api/version")
 
             assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            for key, value in build_info.items():
+                assert data[key] == value
             to_thread_mock.assert_any_await(version_routes._load_build_info, mock_path_instance)
         finally:
             os.unlink(temp_path)
@@ -1756,6 +1851,39 @@ class TestVersionRoutes:
         assert "version" in data
         assert data["source"] is None
         assert data["commit"] is None
+
+    def test_build_info_keys_are_not_required(self) -> None:
+        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
+        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
+            "source": NotRequired[str],
+            "commit": NotRequired[str | None],
+            "modified": NotRequired[bool],
+            "display": NotRequired[str],
+        }
+        assert version_routes.BuildInfo.__required_keys__ == frozenset()
+        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
+        assert version_routes.BuildInfo() == {}
+
+    def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
+        """A build-info file without `display` falls back to the package version."""
+        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+        with (
+            patch("pyrit.backend.routes.version.Path") as mock_path_class,
+            patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
+            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+        ):
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_class.return_value = mock_path_instance
+
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] == "git"
+        assert data["commit"] is None
+        assert data["modified"] is None
+        assert data["display"] == data["version"]
 
 
 class TestScoreRoutes:

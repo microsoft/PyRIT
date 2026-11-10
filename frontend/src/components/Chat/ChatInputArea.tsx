@@ -1,16 +1,17 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, type KeyboardEvent } from 'react'
 
-import { Button, Caption1, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
+import { Button, Caption1, MessageBar, MessageBarBody, MessageBarActions, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
+import { useAttachmentUploads } from '@/hooks/useAttachmentUploads'
 
 import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
-import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
+import { attachmentsFromFiles, PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 const DISABLED_WARNING_HOVER_DELAY_MS = 700
 
@@ -59,7 +60,7 @@ function TargetResolutionBanner({ status, activeTarget, onRetry, onConfigureTarg
     const text = status === 'error'
       ? 'Target verification failed. Sending is disabled; human scores can still be changed by the same operator.'
       : status === 'unavailable'
-        ? 'The target used by this attack is not currently registered. Sending is disabled; human scores can still be changed by the same operator.'
+        ? 'The target used by this attack is unavailable in the GUI. Sending is disabled; human scores can still be changed by the same operator.'
         : "Multiple registered targets have this attack's identity. Remove duplicate registrations, then retry."
     return <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
       icon={<WarningRegular fontSize={18} />} text={text} buttonText="Retry" buttonIcon={<ArrowSyncRegular />}
@@ -98,8 +99,11 @@ function getUnsupportedConverterOutputTypes(converterOutputDataTypes: string[], 
 
 export interface ChatInputAreaHandle {
   addAttachment: (attachment: MessageAttachment) => void
+  addFiles: (files: File[]) => void
   setText: (text: string) => void
   restoreDraft: (text: string, attachments: MessageAttachment[], textMetadata?: Record<string, unknown>) => void
+  /** Clear after transferring attachment ownership to a preserved draft. */
+  detachDraft: () => void
   focus: () => void
   getDraftRevision: () => number
   getTextMetadata: () => Record<string, unknown> | undefined
@@ -116,6 +120,7 @@ interface ChatInputAreaProps {
   ) => Promise<ChatSendOutcome>
   conversionRevisionKey?: string
   disabled?: boolean
+  fileDropEnabled?: boolean
   disabledReasons?: string[]
   sendDisabled?: boolean
   sendDisabledReasons?: string[]
@@ -151,7 +156,7 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({
-  onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
+  onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
@@ -164,6 +169,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const styles = usePromptEditorStyles()
   const [input, setInput] = useState(initialText)
   const [attachments, setAttachments] = useState<MessageAttachment[]>(initialAttachments)
+  const uploads = useAttachmentUploads(attachments)
   const [isInputWarningOpen, setIsInputWarningOpen] = useState(false)
   const warningHoverTimer = useRef<number | undefined>(undefined)
   const cancelWarningHover = useCallback((): void => {
@@ -210,6 +216,9 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     setAttachments(next)
   }
   useImperativeHandle(ref, () => ({
+    addFiles: (files: File[]): void => {
+      if (!disabled) changeAttachments([...attachmentsRef.current, ...attachmentsFromFiles(files)])
+    },
     addAttachment: (attachment: MessageAttachment): void => {
       changeAttachments([...attachmentsRef.current, withDraftIdentity({ ...attachment, draftId: undefined })])
     },
@@ -221,6 +230,11 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       changeText(text)
       textMetadataRef.current = textMetadata
       changeAttachments(draftAttachments.map((attachment) => attachment.draftId ? attachment : withDraftIdentity(attachment)))
+    },
+    detachDraft: (): void => {
+      changeText('')
+      attachmentsRef.current = []
+      setAttachments([])
     },
     focus: (): void => { textareaRef.current?.focus() },
     getDraftRevision: (): number => draftRevisionRef.current,
@@ -244,6 +258,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const hasUnsupportedModalities = unsupportedModalityReasons.length > 0
   const hasContent = Boolean(input || convertedValue != null || convertedFileChip || attachments.length)
   const sendBlockedReasons = [
+    ...(uploads.errors.length ? ['Retry or remove attachments whose uploads failed.'] : []),
     ...(disabled ? inputDisabledReasons : []),
     ...(sendDisabled ? sendDisabledReasons.length > 0
       ? sendDisabledReasons : ['Sending is temporarily unavailable. Wait for the current operation to finish.'] : []),
@@ -295,7 +310,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         <>
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
-            disabled={disabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
+            disabled={disabled} disabledReason={inputDisabledReasons.join(' ')}
+            fileDropEnabled={fileDropEnabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
             onToggleConverterPanel={onToggleConverterPanel} isConverterPanelOpen={isConverterPanelOpen}
             undoLastSend={undoLastSend}
             convertedValue={convertedValue} onConvertedValueChange={onConvertedValueChange}
@@ -303,11 +319,22 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             convertedFileChip={convertedFileChip} onClearConvertedFileChip={onClearConvertedFileChip}
             setup={showSystemPrompt && onSystemPromptChange && <SystemPromptSetup value={systemPrompt}
               onChange={onSystemPromptChange} disabled={!!activeTarget && !supportsSystemPrompt} />}
-            warning={hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
-              <WarningRegular fontSize={14} /><Caption1>
-                {unsupportedModalityReasons.join(' ')}
-              </Caption1>
-            </div>}
+            warning={<>
+              {uploads.pending && <Caption1 role="status">Uploading attachments...</Caption1>}
+              {uploads.errors.map(({ id, file, detail }: { id: string; file: File; detail: string }) => (
+                <MessageBar key={id} intent="error">
+                  <MessageBarBody>Upload failed for {file.name}: {detail}</MessageBarBody>
+                  <MessageBarActions>
+                    <Button className={styles.touchTarget} onClick={() => uploads.retry(file)} disabled={disabled}>Retry upload</Button>
+                  </MessageBarActions>
+                </MessageBar>
+              ))}
+              {hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
+                <WarningRegular fontSize={14} /><Caption1>
+                  {unsupportedModalityReasons.join(' ')}
+                </Caption1>
+              </div>}
+            </>}
             actions={<>
               <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
                 disabledReason={repeatDisabledReason} onChange={setSendOptions} />
@@ -341,6 +368,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               }
             }}>
             <PopoverTrigger disableButtonEnhancement>
+              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
               <div ref={disabledOverlayRef} className={styles.disabledComposerOverlay} hidden={!disabled} tabIndex={disabled ? 0 : -1}
                 onMouseLeave={cancelWarningHover}
                 aria-label="Why the prompt box is disabled" />
