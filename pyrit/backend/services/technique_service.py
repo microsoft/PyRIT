@@ -20,13 +20,21 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
     launch_script_class_reason,
     refuse_temporary_entries,
+    refuse_temporary_references,
     save_then_register_async,
 )
 from pyrit.models import ComponentType
-from pyrit.models.catalog import RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner, TechniqueRecipe
+from pyrit.models.catalog import (
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    SavedEntryOwner,
+    TechniqueRecipe,
+)
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
 from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.scenario.core import AttackTechniqueFactory
 
 
@@ -136,8 +144,9 @@ class TechniqueService:
             TechniqueInstance: The saved technique.
 
         Raises:
-            NotSaveableError: If the technique's attack type was added by a scan's launch script, or the technique
-                uses a Temporary converter or target.
+            NotSaveableError: If the technique's attack type was added by a scan's launch script or can't be saved,
+                an attack parameter holds a credential, or the technique uses a Temporary converter or target.
+            ValueError: If an address an attack parameter gives isn't a full http(s) or ws(s) address.
             SavedEntryConflictError: If the name or a tag conflicts with a registered technique.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
@@ -151,6 +160,7 @@ class TechniqueService:
         )
         refuse_temporary_entries(component_type=ComponentType.TARGET, names=[request.adversarial_chat])
         factory = await asyncio.to_thread(self._build, request)
+        await asyncio.to_thread(self._refuse_attack_params_restore_would_refuse, request)
         try:
             await asyncio.to_thread(self._registry.instances.check_runtime_available, factory)
         except TechniqueSelectorConflictError as error:
@@ -166,6 +176,30 @@ class TechniqueService:
             register=lambda metadata: self._registry.instances.register_runtime(factory, metadata=metadata),
         )
         return result
+
+    @staticmethod
+    def _refuse_attack_params_restore_would_refuse(request: CreateTechniqueRequest) -> None:
+        """
+        Check the attack type and its parameters the way restore does, so a saved technique comes back.
+
+        Raises:
+            NotSaveableError: If the attack type can't be saved, or a parameter holds a credential or names a
+                Temporary entry.
+            ValueError: If an address a parameter gives isn't a full http(s) or ws(s) address.
+        """
+        attack_registry = AttackRegistry.get_registry_singleton()
+        attack_class = attack_registry.get_class(request.type)
+        metadata = attack_registry.get_registered_class_metadata(request.type) or attack_registry.get_class_metadata(
+            attack_class
+        )
+        try:
+            check_saved_entry_params(cls=attack_class, parameters=metadata.parameters, params=request.params)
+        except SavedEntryRefusedError as error:
+            # The address needs fixing; creating the technique without saving it wouldn't make it usable.
+            if error.reason is RestoreFailureReason.INVALID_RECIPE:
+                raise ValueError(str(error)) from error
+            raise NotSaveableError(f"{error} It can still be created without saving it.") from error
+        refuse_temporary_references(parameters=metadata.parameters, params=request.params)
 
     async def types_async(self) -> TechniqueTypeResponse:
         """
