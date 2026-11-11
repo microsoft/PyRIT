@@ -49,7 +49,6 @@ interface ScenarioRunPreviewDialogProps {
   objectiveTarget: string | null
   /** The objective scorer label, or null when the scenario takes no objective scorer. */
   objectiveScorer?: string | null
-  scoringTarget?: string | null
   /** The adversarial target shown, or null when the scenario has no adversarial target. */
   adversarialTarget: string | null
   /** The selected techniques, or null when the scenario takes neither techniques nor a baseline. */
@@ -73,7 +72,6 @@ export default function ScenarioRunPreviewDialog({
   refresh,
   objectiveTarget,
   objectiveScorer = null,
-  scoringTarget = null,
   adversarialTarget,
   techniques,
   techniqueOverride,
@@ -121,10 +119,6 @@ export default function ScenarioRunPreviewDialog({
                     <dt>Objective scorer</dt>
                     <dd>{objectiveScorer}</dd>
                   </>}
-                </>}
-                {scoringTarget !== null && <>
-                  <dt>Scoring Target</dt>
-                  <dd>{scoringTarget}</dd>
                 </>}
                 {adversarialTarget !== null && (
                   <>

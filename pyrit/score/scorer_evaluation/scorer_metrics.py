@@ -279,6 +279,16 @@ class ObjectiveScorerMetrics(ScorerMetrics):
             identify positive labels.
         trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
+        baseline_accuracy (float, Optional): The accuracy of a scorer that ignores the response and always
+            returns the more common gold label of the dataset, which is the constant with the highest possible
+            accuracy on these labels. A scorer whose `accuracy` is not above this value has not beaten a
+            constant guess on this dataset. It is computed in-sample, so it is the best any constant could do
+            here and is a demanding reference. None for results recorded before this field existed.
+        baseline_f1_score (float, Optional): The F1 score of a scorer that ignores the response and always
+            answers true: its recall is 1.0 and its precision is the share of gold labels that are true. The
+            other constant, always answering false, has an F1 score of 0.0, so this is the best F1 any
+            constant could reach. A scorer whose `f1_score` is not above this value has not beaten a constant
+            guess on this dataset. None for results recorded before this field existed.
     """
 
     accuracy: float
@@ -286,6 +296,8 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     f1_score: float
     precision: float
     recall: float
+    baseline_accuracy: float | None = field(default=None, kw_only=True)
+    baseline_f1_score: float | None = field(default=None, kw_only=True)
 
 
 @dataclass

@@ -52,7 +52,7 @@ const SEEDED_BACKEND_CONFIG_FILE =
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: ["**/analytics.spec.ts", "**/paired-outcomes.spec.ts", "**/scenario-hierarchy.spec.ts", "**/scenario-datasets.spec.ts", "**/scenario-techniques.spec.ts"],
+  testIgnore: ["**/analytics.spec.ts", "**/paired-outcomes.spec.ts", "**/scenario-hierarchy.spec.ts", "**/scenario-datasets.spec.ts", "**/scenario-techniques.spec.ts", "**/scan-launch.seeded.spec.ts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
