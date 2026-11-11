@@ -12,6 +12,9 @@ test.use({
   extraHTTPHeaders: async ({}, runTest) => runTest(compatibilityHeaders()),
 })
 
+// The dialog saves a target when it can, so its primary action reads either way.
+const SUBMIT_TARGET = /^(Save Target|Create as Temporary)$/
+
 async function targetSnapshot(request: APIRequestContext): Promise<string[]> {
   const identities: string[] = []
   let cursor: string | null | undefined
@@ -66,7 +69,8 @@ for (const width of [1280, 390]) {
     await targetDialog.getByRole('textbox', { name: 'Model / Deployment Name', exact: true }).fill('explicit-example-model')
     await targetDialog.getByRole('textbox', { name: 'Endpoint URL', exact: true }).fill('https://offline.invalid')
     await capture(page, `target-editing-${width}`)
-    await targetDialog.getByRole('radio', { name: 'Identity-based (Microsoft Entra ID)' }).check()
+    // Entra ID may already be selected; clicking it also leaves the endpoint field, which shows its error.
+    await targetDialog.getByRole('radio', { name: 'Identity-based (Microsoft Entra ID)' }).click()
     await expect(targetDialog.getByText(/Identity-based auth only works with Azure OpenAI/)).toBeVisible()
     await capture(page, `target-unsupported-${width}`)
     await targetDialog.getByRole('radio', { name: 'API Key', exact: true }).check()
@@ -82,10 +86,10 @@ for (const width of [1280, 390]) {
     await page.getByRole('button', { name: 'Create objective target', exact: true }).click()
     await targetDialog.getByRole('combobox', { name: 'Target Type' }).click()
     await page.getByRole('option', { name: /Implementation: BrowserTarget\./ }).click()
-    await expect(targetDialog.getByRole('button', { name: 'Create Target', exact: true })).toBeEnabled()
+    await expect(targetDialog.getByRole('button', { name: SUBMIT_TARGET })).toBeEnabled()
     const createdTargetResponse = page.waitForResponse((response) =>
       response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/targets', { timeout: 15_000 })
-    await targetDialog.getByRole('button', { name: 'Create Target', exact: true }).click()
+    await targetDialog.getByRole('button', { name: SUBMIT_TARGET }).click()
     const targetResponse = await createdTargetResponse
     expect(targetResponse.ok(), await targetResponse.text()).toBe(true)
     const target: TargetInstance = await targetResponse.json()
@@ -194,8 +198,8 @@ for (const width of [1280, 390]) {
     await page.getByRole('option', { name: /Implementation: BrowserTarget\./ }).click()
     const targetCreated = page.waitForResponse((response) =>
       response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/targets')
-    await expect(targetDialog.getByRole('button', { name: 'Create Target', exact: true })).toBeEnabled()
-    await targetDialog.getByRole('button', { name: 'Create Target', exact: true }).click()
+    await expect(targetDialog.getByRole('button', { name: SUBMIT_TARGET })).toBeEnabled()
+    await targetDialog.getByRole('button', { name: SUBMIT_TARGET }).click()
     const targetResponse = await targetCreated
     expect(targetResponse.ok(), await targetResponse.text()).toBe(true)
     const target = await targetResponse.json()
