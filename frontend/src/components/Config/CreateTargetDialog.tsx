@@ -411,7 +411,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
   const isIdentity = showAuthField && authMode === 'identity'
   const isNoKey = showAuthField && authMode === 'none'
-  const endpointRequired = hasEndpointField
+  const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
   const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey

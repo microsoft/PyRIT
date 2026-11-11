@@ -52,12 +52,29 @@ def _mock_prompt_target(*, identifier: ComponentIdentifier | None = None) -> Mag
     mock_target = MagicMock(spec=PromptTarget)
     mock_target.get_identifier.return_value = identifier if identifier is not None else _mock_target_identifier()
     mock_target.capabilities = TargetCapabilities()
+    mock_target.generation_ranges = {}
     return mock_target
 
 
 async def _test_token_provider() -> str:
     """Shared async token provider used in Entra authentication tests."""
     return "test-token"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("value", [None, "", "   "])
+async def test_manual_model_field_never_inherits_ambient_default_async(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "ambient-model")
+    request = CreateTargetRequest(
+        type="OpenAIChatTarget",
+        params={"endpoint": "https://api.openai.com", "api_key": "test-key", "model_name": value},
+        auth_mode="api_key",
+    )
+    with pytest.raises(ValueError, match="explicit connection fields: model_name"):
+        await TargetService().create_target_async(request=request)
 
 
 class TestListTargets:
@@ -698,7 +715,11 @@ class TestCreateTargetCodeExecution:
 
     @staticmethod
     def _request(params: dict[str, object] | None = None) -> CreateTargetRequest:
-        return CreateTargetRequest(name="hf", type="HuggingFaceChatTarget", params={"model_id": "m", **(params or {})})
+        return CreateTargetRequest(
+            name="hf",
+            type="HuggingFaceChatTarget",
+            params={"model_id": "m", "hf_access_token": "test-token", **(params or {})},
+        )
 
     @pytest.mark.parametrize(
         ("params", "expected_written"),
