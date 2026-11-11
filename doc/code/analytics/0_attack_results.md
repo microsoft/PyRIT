@@ -243,10 +243,12 @@ only when that group's taxonomy matches the one ASSERT's built-in policy judge
 recorded in its saved scorer identifier. Otherwise, for example after the dataset
 is replaced or its policy edited, or when the policy score has no such record,
 the conversation is counted as having no matching stored policy and left out of
-the stance and category rates; its dimension rates still count it. The judge doesn't record
-the category a conversation was generated for, so that category, which only
-attributes a violation without a violated category, is read from the stored
-group. A supplied `objective_scorer`'s verdicts are reported as the `objective`
+the stance and category rates; its dimension rates still count it. The judge
+recomputes `policy_violation` from its category judgments, so every violation
+names a violated category; unlike ASSERT, no violation is attributed to the
+category a conversation was generated for, which the stored seeds alone can't
+prove. A policy score whose verdict disagrees with its category judgments is
+rejected as malformed. A supplied `objective_scorer`'s verdicts are reported as the `objective`
 dimension, whatever its score category. See the [Foundry scenarios](../../scanner/foundry.ipynb) page for
 an example.
 

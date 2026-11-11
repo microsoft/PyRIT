@@ -6,7 +6,7 @@
 import json
 import re
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -61,6 +61,7 @@ from pyrit.models import (
     ScenarioRunPlan,
     Score,
     ScoreStatus,
+    SeedObjective,
     SeedPrompt,
     construct_response_from_request,
 )
@@ -214,8 +215,12 @@ def harness() -> _Harness:
     return _Harness()
 
 
-async def _store_async(result: AssertGeneratorResult, *, name: str = "assert_a") -> None:
+async def _store_async(
+    result: AssertGeneratorResult, *, name: str = "assert_a", edit: Callable[[Any], None] | None = None
+) -> None:
     dataset = await AssertProvider(dataset_name=name, result=result).fetch_dataset_async()
+    if edit is not None:
+        edit(dataset)
     await CentralMemory.get_memory_instance().add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
 
 
@@ -393,16 +398,8 @@ async def test_same_objective_with_different_prompts_resolves_each_group_async(h
     units = _select_effective_results(result)
     contexts = await _load_group_contexts_async(memory=CentralMemory.get_memory_instance(), units=units)
 
-    # Groups 0 and 1 are assigned public_policy and group 2 private_disclosure.
-    assigned = {
-        _user_prompt(unit.result): getattr(contexts[unit.result.attack_result_id], "assigned_category", None)
-        for unit in units
-    }
-    assert assigned == {
-        "Question 0?": "public_policy",
-        "Question 1?": "public_policy",
-        "Question 2?": "private_disclosure",
-    }
+    assert {_user_prompt(unit.result) for unit in units} == {"Question 0?", "Question 1?", "Question 2?"}
+    assert all(contexts[unit.result.attack_result_id] is not None for unit in units)
     single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
     assert single.unresolved_policy == 0
 
@@ -493,12 +490,48 @@ async def test_supplied_scorer_with_a_policy_violation_category_is_not_the_polic
     assert single.categories == []
 
 
+def _reassign_categories(dataset: Any) -> None:
+    """Give every stored group another of its policy's categories, keeping its prompts and taxonomy."""
+    for seed in dataset.seeds:
+        if not isinstance(seed, SeedObjective):
+            continue
+        group = AssertGroupMetadata.from_metadata(seed.metadata)
+        other = next(c.name for c in group.taxonomy.behavior_categories if c.name != group.behavior_category)
+        seed.metadata = {**seed.metadata, **group.model_copy(update={"behavior_category": other}).to_metadata()}
+
+
+async def test_reassigned_stored_categories_do_not_change_historical_metrics_async(harness: _Harness) -> None:
+    stored = _groups()
+    await _store_async(stored)
+    result = await harness.run_async(**_prompt_case(), objective_dimension="overrefusal", **_datasets())
+    before = await compute_assert_policy_metrics_async(result)
+    memory = CentralMemory.get_memory_instance()
+
+    await memory.remove_seed_groups_from_memory_async(dataset_name="assert_a")
+    await _store_async(stored, edit=_reassign_categories)
+    assert await compute_assert_policy_metrics_async(result) == before
+
+    # A stored policy verdict that disagrees with its categories is rejected, not attributed to a category.
+    policies = [
+        score
+        for attack_result in _all_results(result)
+        for score in await memory.get_prompt_scores_async(prompt_ids=[str(_scored_piece_id(attack_result))])
+        if score.score_category == ["policy_violation"]
+    ]
+    policy = next(score for score in policies if score.get_value() is False)
+    flipped = policy.model_copy(
+        update={"id": uuid.uuid4(), "timestamp": policy.timestamp + timedelta(seconds=1), "score_value": "true"}
+    )
+    await memory.add_scores_to_memory_async(scores=[flipped])
+    with pytest.raises(ValueError, match="disagrees with its ASSERT category judgments"):
+        await compute_assert_policy_metrics_async(result)
+
+
 def _support_context() -> _GroupContext:
     group = AssertGroupMetadata.from_metadata(_groups().seed_groups[0].objective.metadata)
     return _GroupContext(
         behavior_name=group.taxonomy.behavior.name,
         permissible_by_category=tuple((item.name, item.permissible) for item in group.taxonomy.behavior_categories),
-        assigned_category=group.behavior_category,
         taxonomy=json.dumps(group.taxonomy.model_dump(mode="json"), sort_keys=True),
     )
 
@@ -601,7 +634,6 @@ def test_policies_sharing_behavior_and_category_names_are_rated_separately() -> 
         _GroupContext(
             behavior_name="support",
             permissible_by_category=(("refunds", permissible),),
-            assigned_category="refunds",
             taxonomy=f"support-{permissible}",
         )
         for permissible in (True, False)
@@ -1043,41 +1075,42 @@ def test_malformed_judgment_metadata_raises(metadata: dict[str, str], match: str
         _build_row(technique="t", result=_result(policy), piece_scores=[policy], context=None)
 
 
-def test_violation_without_violated_category_is_attributed_to_assigned_category() -> None:
+def test_category_rates_count_only_judged_categories() -> None:
     context = _GroupContext(
         behavior_name="support",
         permissible_by_category=(("public_policy", True), ("private_disclosure", False)),
-        assigned_category="private_disclosure",
         taxonomy="support-policy",
     )
-    row = _Row(
-        technique="single_turn",
-        not_judged_reason=None,
-        context=context,
-        policy_id="support-policy",
-        judgment_mode="category_validated",
-        nodes=(_node("public_policy", violated=False), _node("unknown", violated=True)),
-        verdicts={"policy_violation": True},
-    )
-    nothing_relevant = _Row(
-        technique="single_turn",
-        not_judged_reason=None,
-        context=context,
-        policy_id="support-policy",
-        judgment_mode="category_validated",
-        nodes=(),
-        verdicts={"policy_violation": False},
-    )
+    rows = [
+        _Row(
+            technique="single_turn",
+            not_judged_reason=None,
+            context=context,
+            policy_id="support-policy",
+            judgment_mode="category_validated",
+            nodes=nodes,
+            verdicts={"policy_violation": any(node.violated for node in nodes)},
+        )
+        for nodes in ((_node("public_policy", violated=False),), ())
+    ]
 
-    single = _aggregate(scenario_result_id="run", rows=[row, nothing_relevant]).techniques["single_turn"]
+    single = _aggregate(scenario_result_id="run", rows=rows).techniques["single_turn"]
 
     categories = {category.name: category for category in single.categories}
-    assert categories["private_disclosure"].attributed_by_fallback == 1
-    assert _counts(categories["private_disclosure"].node_violation) == (1, 1, 0)
     assert _counts(categories["public_policy"].node_violation) == (0, 1, 0)
-    # The split uses only relevant categories in the taxonomy, so the fallback does not change it.
-    assert _counts(single.policy_violation_on_not_permissible) == (0, 0, 2)
+    assert _counts(categories["private_disclosure"].node_violation) == (0, 0, 0)
     assert _counts(single.policy_violation_on_permissible) == (0, 1, 1)
+
+
+def test_policy_verdict_that_disagrees_with_its_categories_is_rejected() -> None:
+    policy = _score("policy_violation", piece_id=uuid.uuid4(), scorer_class="Judge", marked=True)
+    judgment = AssertCategoryJudgment(
+        node_judgments=(_node("public_policy", violated=False),), original_score_value=True
+    )
+    policy.score_metadata = judgment.merge_into(policy.score_metadata)
+
+    with pytest.raises(ValueError, match="disagrees with its ASSERT category judgments"):
+        _build_row(technique="t", result=_result(policy), piece_scores=[policy], context=None)
 
 
 def test_unreadable_attack_identifiers_leave_the_policy_unresolved() -> None:

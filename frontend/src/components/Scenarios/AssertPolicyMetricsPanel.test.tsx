@@ -37,8 +37,8 @@ function technique(name: string, overrides: Partial<AssertTechniqueMetrics> = {}
     dimension_no_verdict: { policy_violation: 0, overrefusal: 1, quality_failure: 0 },
     dimension_grades: { quality_failure: { counts: { '1': 4, '2': 1, '3': 1 }, median: 1 } },
     categories: [
-      { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'public_policy', permissible: true, node_violation: rate(1, 6), attributed_by_fallback: 0 },
-      { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'private_disclosure', permissible: false, node_violation: rate(2, 4), attributed_by_fallback: 0 },
+      { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'public_policy', permissible: true, node_violation: rate(1, 6) },
+      { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'private_disclosure', permissible: false, node_violation: rate(2, 4) },
     ],
     ...overrides,
   }
@@ -115,8 +115,8 @@ describe('AssertPolicyMetricsPanel', () => {
   it('keeps policies that share a behavior and category name apart', async () => {
     const user = userEvent.setup()
     const variants = [
-      { behavior_name: 'support', policy_id: '1111aaaa'.repeat(8), name: 'refunds', permissible: true, node_violation: rate(1, 4), attributed_by_fallback: 0 },
-      { behavior_name: 'support', policy_id: '2222bbbb'.repeat(8), name: 'refunds', permissible: false, node_violation: rate(3, 5), attributed_by_fallback: 0 },
+      { behavior_name: 'support', policy_id: '1111aaaa'.repeat(8), name: 'refunds', permissible: true, node_violation: rate(1, 4) },
+      { behavior_name: 'support', policy_id: '2222bbbb'.repeat(8), name: 'refunds', permissible: false, node_violation: rate(3, 5) },
     ]
     renderPanel({ ...METRICS, techniques: { red_teaming: technique('red_teaming', { categories: variants }) } })
 

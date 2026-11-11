@@ -2638,7 +2638,6 @@ export interface AssertCategoryMetrics {
   permissible: boolean
   /** Violated share of conversations that judged this category relevant. */
   node_violation: AssertBinaryRate
-  attributed_by_fallback: number
 }
 
 /** Grade counts in declared scale order and the median grade for a graded judge dimension. */
