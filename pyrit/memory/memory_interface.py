@@ -12,7 +12,7 @@ import threading
 import uuid
 import weakref
 from collections import Counter
-from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -60,9 +60,29 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
+from pyrit.memory._seed_decomposition import (
+    DecompositionIdentity,
+    DecompositionUnit,
+    apply_decomposition_identity,
+    assign_decomposition_identity,
+    canonicalize_decomposition,
+    fresh_decomposition_identities,
+    split_decomposition_units,
+)
+from pyrit.memory.analytics_sql import (
+    JsonArrayItems,
+    JsonArrayJoin,
+    JsonArrayValue,
+    JsonContainer,
+    JsonScalar,
+    UuidHex,
+    text_match,
+    validate_text_search,
+)
 
 if TYPE_CHECKING:
+    from pyrit.memory.dataset_mutation import DatasetEditingSnapshot
+    from pyrit.memory.dataset_upload_lease import DatasetUploadLease
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
@@ -150,10 +170,12 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedOrigin,
     SeedPrompt,
     SeedRecord,
     SeedType,
+    SeedUnion,
     TargetIdentifier,
     config_hash,
     group_conversation_message_pieces_by_sequence,
@@ -528,6 +550,7 @@ class _AttackResultQuery:
     attack_result_ids: Sequence[str] | None = None
     conversation_id: str | None = None
     objective: str | None = None
+    objective_pattern: str | None = None
     objective_sha256: Sequence[str] | None = None
     outcome: str | None = None
     attack_classes: Sequence[str] | None = None
@@ -560,6 +583,7 @@ class _AttackResultQuery:
                 or exceed their maximum length.
         """
         object.__setattr__(self, "result_selection", AttackResultSelection(self.result_selection))
+        validate_text_search(value=self.objective, pattern=self.objective_pattern)
         for field_name in self._SEQUENCE_FIELDS:
             value = getattr(self, field_name)
             if value is not None:
@@ -602,6 +626,13 @@ class MemoryInterface(abc.ABC):
     This interface defines the contract for storing and retrieving chat messages
     and conversation history. Implementations can use different storage backends
     such as files, databases, or cloud storage services.
+
+    Text substring filters are case-insensitive and literal. Pattern companions
+    accept full LIKE patterns: '%' and '_' are wildcards, '/' escapes the next
+    character, and brackets, '*' and backslashes are literal. Patterns are not
+    automatically wrapped in '%'. A dangling escape or a literal/pattern conflict
+    raises ValueError. Existing exact filters and ordinary empty-query behavior
+    remain unchanged; an explicit empty pattern matches empty text.
     """
 
     # Maximum number of bind variables per SQL statement.
@@ -638,6 +669,7 @@ class MemoryInterface(abc.ABC):
         self.memory_embedding = embedding_model
         self._operation_session: ContextVar[Session | None] = ContextVar("memory_operation_session", default=None)
         self._async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
+        self._dataset_upload_leases: dict[uuid.UUID, DatasetUploadLease] = {}
         self._initialized = False
         self._initialization_lock = threading.Lock()
         self._init_storage_io()
@@ -676,7 +708,11 @@ class MemoryInterface(abc.ABC):
         """
         if self._uses_legacy_session_override():
             raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
-        return AsyncSession(bind=self._get_async_engine(), sync_session_class=MemorySession)
+        return AsyncSession(
+            bind=self._get_async_engine(),
+            sync_session_class=MemorySession,
+            info={"dataset_storage_io": self.results_storage_io},
+        )
 
     def _uses_legacy_session_override(self) -> bool:
         return (
@@ -1041,25 +1077,39 @@ class MemoryInterface(abc.ABC):
         limit: int = 20,
         offset: int = 0,
         title_query: str | None = None,
+        title_pattern: str | None = None,
     ) -> list[Finding]:
         """
         Read one page of findings, highest severity first, then newest first.
+
+        Args:
+            operation_id (uuid.UUID | None): Restrict to one operation.
+            limit (int): Maximum findings to return.
+            offset (int): Number of ordered findings to skip.
+            title_query (str | None): Case-insensitive literal title substring.
+            title_pattern (str | None): Full LIKE pattern instead of title_query.
 
         Returns:
             list[Finding]: The findings on the page.
 
         Raises:
-            ValueError: If the page bounds are invalid.
+            ValueError: If the page bounds or pattern are invalid, or both title filters are supplied.
         """
         if limit < 1 or offset < 0:
             raise ValueError("Finding limit must be positive and offset must be nonnegative.")
+        validate_text_search(value=title_query, pattern=title_pattern)
         statement = select(FindingEntry)
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
-        if title_query:
-            # SQL Server also treats "[" as a LIKE wildcard.
-            escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
-            statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
+        if title_query or title_pattern is not None:
+            statement = statement.where(
+                text_match(
+                    column=FindingEntry.title,
+                    value=title_query,
+                    pattern=title_pattern,
+                    casefold=title_pattern is None,
+                )
+            )
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
@@ -1306,11 +1356,18 @@ class MemoryInterface(abc.ABC):
 
     async def dispose_loop_resources_async(self) -> None:
         """Close resources before their owning event loop stops."""
+        await self._release_dataset_uploads_async()
         loop = asyncio.get_running_loop()
         engine = self._async_engines.get(loop)
         if engine is not None:
             await engine.dispose()
             del self._async_engines[loop]
+
+    async def _release_dataset_uploads_async(self) -> None:
+        loop = asyncio.get_running_loop()
+        for upload_id, lease in list(self._dataset_upload_leases.items()):
+            if lease.loop is loop:
+                await self.release_dataset_upload_async(upload_id)
 
     @legacy_sync_override(lambda: MemoryInterface.dispose_engine)
     async def dispose_engine_async(self) -> None:
@@ -1409,6 +1466,7 @@ class MemoryInterface(abc.ABC):
                     property_path=identifier_filter.property_path,
                     array_element_path=identifier_filter.array_element_path,
                     value=identifier_filter.value,
+                    value_pattern=identifier_filter.value_pattern,
                     partial_match=identifier_filter.partial_match,
                     case_sensitive=identifier_filter.case_sensitive,
                 )
@@ -1421,7 +1479,8 @@ class MemoryInterface(abc.ABC):
         json_column: InstrumentedAttribute[Any],
         property_path: str,
         array_element_path: str | None = None,
-        value: str,
+        value: str | None = None,
+        value_pattern: str | None = None,
         partial_match: bool = False,
         case_sensitive: bool = False,
     ) -> Any:
@@ -1435,8 +1494,9 @@ class MemoryInterface(abc.ABC):
             array_element_path (str | None): An optional JSON path that indicates property at property_path is an array
                 and the condition should resolve if any element in that array matches the value.
                 Cannot be used with partial_match.
-            value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match. Defaults to False.
+            value (str | None): The string value to match, exactly unless partial_match is True.
+            value_pattern (str | None): A full case-insensitive LIKE pattern instead of value.
+            partial_match (bool): Whether value is a case-insensitive literal substring. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -1445,11 +1505,18 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If array_element_path is provided together with partial_match or case_sensitive
         """
+        validate_text_search(value=value, pattern=value_pattern)
+        if value_pattern is not None and (partial_match or case_sensitive or array_element_path):
+            raise ValueError("Cannot use value_pattern with partial_match, case_sensitive or array_element_path")
+        if value is None and value_pattern is None:
+            raise ValueError("Exactly one of value or value_pattern must be supplied")
         if array_element_path and (partial_match or case_sensitive):
             raise ValueError("Cannot use array_element_path with partial_match or case_sensitive")
         if partial_match and case_sensitive:
             raise ValueError("case_sensitive is not reliably supported with partial_match across all backends")
         if array_element_path:
+            if value is None:
+                raise ValueError("An array-element JSON match requires value")
             return self._get_condition_json_array_match(
                 json_column=json_column,
                 property_path=property_path,
@@ -1460,6 +1527,7 @@ class MemoryInterface(abc.ABC):
             json_column=json_column,
             property_path=property_path,
             value=value,
+            value_pattern=value_pattern,
             partial_match=partial_match,
             case_sensitive=case_sensitive,
         )
@@ -1470,7 +1538,8 @@ class MemoryInterface(abc.ABC):
         *,
         json_column: InstrumentedAttribute[Any],
         property_path: str,
-        value: str,
+        value: str | None = None,
+        value_pattern: str | None = None,
         partial_match: bool = False,
         case_sensitive: bool = False,
     ) -> Any:
@@ -1485,8 +1554,9 @@ class MemoryInterface(abc.ABC):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
-            value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match. Defaults to False.
+            value (str | None): The string value to match, exactly unless partial_match is True.
+            value_pattern (str | None): A full case-insensitive LIKE pattern instead of value.
+            partial_match (bool): Whether value is a case-insensitive literal substring. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -3501,7 +3571,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -3513,7 +3583,8 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): Return only scores whose category list contains this category.
+            score_category (str | Sequence[str] | None): Return scores that list this category, or every category
+                of a sequence. Names match whole and case-insensitively.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -3532,13 +3603,10 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            # score_category is stored as a JSON array, so match by element membership.
-            conditions.append(
-                self._get_condition_json_array_match(
-                    json_column=ScoreEntry.score_category,
-                    property_path="$",
-                    array_to_match=[score_category],
-                )
+            # score_category is stored as a JSON list, so match one whole element of it.
+            categories = [score_category] if isinstance(score_category, str) else list(score_category)
+            self._add_list_conditions(
+                field=ScoreEntry.score_category, conditions=conditions, values=categories, exact=True
             )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
@@ -4391,19 +4459,24 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = False,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> "list[ColumnElement[bool]]":
@@ -4417,6 +4490,8 @@ class MemoryInterface(abc.ABC):
             origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
                 and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
                 elements (case-insensitive) rather than substrings within decoded list elements. Defaults to False
@@ -4424,25 +4499,37 @@ class MemoryInterface(abc.ABC):
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories returns only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by.
                 Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
                 is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -4451,15 +4538,18 @@ class MemoryInterface(abc.ABC):
         """
         conditions: list[ColumnElement[bool]] = []
 
-        # Apply filters for non-list fields
-        if value:
-            conditions.append(SeedEntry.value == value if exact else SeedEntry.value.contains(value))
+        validate_text_search(value=value, pattern=value_pattern)
+        # Explicit patterns opt into pattern matching even when deletion defaults to exact equality.
+        if value_pattern is not None:
+            conditions.append(text_match(column=SeedEntry.value, pattern=value_pattern))
+        elif value:
+            conditions.append(SeedEntry.value == value if exact else text_match(column=SeedEntry.value, value=value))
         if value_sha256:
             conditions.append(SeedEntry.value_sha256.in_(value_sha256))
         if dataset_name:
             conditions.append(SeedEntry.dataset_name == dataset_name)
-        elif dataset_name_pattern:
-            conditions.append(SeedEntry.dataset_name.like(dataset_name_pattern))
+        elif dataset_name_pattern is not None:
+            conditions.append(text_match(column=SeedEntry.dataset_name, pattern=dataset_name_pattern))
         if prompt_group_ids:
             conditions.append(SeedEntry.prompt_group_id.in_(prompt_group_ids))
         if data_types:
@@ -4479,13 +4569,25 @@ class MemoryInterface(abc.ABC):
             conditions.append(SeedEntry.seed_type == seed_type)
 
         self._add_list_conditions(
-            field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions, exact=exact
+            field=SeedEntry.harm_categories,
+            values=harm_categories,
+            patterns=harm_categories_patterns,
+            conditions=conditions,
+            exact=exact,
         )
-        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions, exact=exact)
-        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions, exact=exact)
-
-        if parameters:
-            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions, exact=exact)
+        self._add_list_conditions(
+            field=SeedEntry.authors, values=authors, patterns=authors_patterns, conditions=conditions, exact=exact
+        )
+        self._add_list_conditions(
+            field=SeedEntry.groups, values=groups, patterns=groups_patterns, conditions=conditions, exact=exact
+        )
+        self._add_list_conditions(
+            field=SeedEntry.parameters,
+            values=parameters,
+            patterns=parameters_patterns,
+            conditions=conditions,
+            exact=exact,
+        )
 
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
@@ -4503,9 +4605,15 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             list[Seed]: Matching candidates in input order, with their original identities.
+
+        Raises:
+            ValueError: If literal and pattern filters conflict or a pattern has an unpaired escape.
         """
-        if not seeds or not filters:
+        if not filters:
             return list(seeds)
+        if not seeds:
+            self._build_seed_filter_conditions(**filters)
+            return []
         return await self._run_database_operation_async(self._filter_seed_candidates, seeds=seeds, filters=filters)
 
     def _filter_seed_candidates(self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]) -> list[Seed[Any]]:
@@ -4559,18 +4667,23 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> Sequence[Seed[Any]]:
@@ -4580,28 +4693,42 @@ class MemoryInterface(abc.ABC):
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match by substring. If None, all values are returned.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories returns only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by.
                 Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
                 is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -4611,18 +4738,23 @@ class MemoryInterface(abc.ABC):
         """
         conditions = self._build_seed_filter_conditions(
             value=value,
+            value_pattern=value_pattern,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -4641,19 +4773,24 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = True,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> int:
@@ -4673,6 +4810,8 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
                 ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
                 (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
@@ -4681,25 +4820,37 @@ class MemoryInterface(abc.ABC):
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
                 must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
                 If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -4712,19 +4863,24 @@ class MemoryInterface(abc.ABC):
         """
         conditions = self._build_seed_filter_conditions(
             value=value,
+            value_pattern=value_pattern,
             exact=exact,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -4740,6 +4896,9 @@ class MemoryInterface(abc.ABC):
         with closing(self._get_session()) as session:
             try:
                 query = session.query(SeedEntry).filter(and_(*conditions))
+                self._validate_decomposition_deletion(
+                    session=session, seed_ids=select(SeedEntry.id).where(and_(*conditions))
+                )
                 count = query.delete(synchronize_session=False)
                 session.commit()
                 return count
@@ -4752,19 +4911,24 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = True,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> int:
@@ -4782,7 +4946,8 @@ class MemoryInterface(abc.ABC):
 
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
@@ -4792,6 +4957,8 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
                 ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
                 (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
@@ -4800,25 +4967,37 @@ class MemoryInterface(abc.ABC):
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
                 must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
                 If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -4831,19 +5010,24 @@ class MemoryInterface(abc.ABC):
         """
         conditions = self._build_seed_filter_conditions(
             value=value,
+            value_pattern=value_pattern,
             exact=exact,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -4867,6 +5051,10 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.prompt_group_id.isnot(None))
                     .distinct()
                 )
+                self._validate_decomposition_deletion(
+                    session=session,
+                    seed_ids=select(SeedEntry.id).where(SeedEntry.prompt_group_id.in_(group_id_subquery)),
+                )
                 count = (
                     session.query(SeedEntry)
                     .filter(SeedEntry.prompt_group_id.in_(group_id_subquery))
@@ -4879,31 +5067,66 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Failed to remove seed groups from memory: {e}")
                 raise
 
+    @staticmethod
+    def _validate_decomposition_deletion(*, session: Session, seed_ids: Select[tuple[uuid.UUID]]) -> None:
+        """
+        Reject a delete that selects only one end of a stored parent-child link.
+
+        Args:
+            session (Session): The deletion's transaction.
+            seed_ids (Select): The IDs selected for deletion, including any group expansion.
+
+        Raises:
+            ValueError: If the selection contains only part of a decomposition tree.
+        """
+        deletion = seed_ids.cte()
+        selected = SeedEntry.id.in_(select(deletion.c.id))
+        parent_selected = SeedEntry.parent_objective_id.in_(select(deletion.c.id))
+        boundary = session.query(SeedEntry.id).filter(
+            SeedEntry.parent_objective_id.is_not(None),
+            or_(and_(selected, not_(parent_selected)), and_(not_(selected), parent_selected)),
+        )
+        if boundary.first() is not None:
+            raise ValueError(
+                "Deletion must include the whole decomposition tree; select every objective in the tree "
+                "(for example, by dataset_name). No seeds were deleted."
+            )
+
     def _add_list_conditions(
         self,
         *,
         field: InstrumentedAttribute[Any],
         conditions: "list[ColumnElement[bool]]",
         values: Sequence[str] | None = None,
+        patterns: Sequence[str] | None = None,
         exact: bool = False,
     ) -> None:
-        if not values:
+        validate_text_search(value=values, pattern=patterns)
+        if not values and not patterns:
             return
-        if exact:
+        if exact and patterns is None:
             # Match whole list elements (case-insensitive) so "hate" does not match "hate_speech" or "whatever".
             conditions.append(
                 self._get_condition_json_array_match(
                     json_column=field,
                     property_path="$",
-                    array_to_match=list(values),
+                    array_to_match=list(values or ()),
                     match_mode="all",
                 )
             )
         else:
             items = JsonArrayItems(JsonContainer(field, "$")).table_valued(column("value", Unicode))
             conditions.extend(
-                select(1).select_from(items).where(items.c.value.contains(value)).correlate_except(items).exists()
-                for value in values
+                select(1)
+                .select_from(items)
+                .where(
+                    text_match(column=items.c.value, pattern=item)
+                    if patterns is not None
+                    else text_match(column=items.c.value, value=item)
+                )
+                .correlate_except(items)
+                .exists()
+                for item in (patterns if patterns is not None else values or ())
             )
 
     async def _serialize_seed_value_async(self, prompt: Seed[Any]) -> str:
@@ -5012,6 +5235,124 @@ class MemoryInterface(abc.ABC):
         """
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
 
+    async def reserve_dataset_upload_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Reserve an exact name and journal owned asset paths before writing bytes.
+
+        Returns:
+            uuid.UUID: The durable upload/cleanup identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths)
+
+    async def reserve_dataset_mutation_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Journal new media for an existing exact-name population before writing bytes.
+
+        Returns:
+            uuid.UUID: Durable operation ID.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths, mutation=True)
+
+    async def get_dataset_editing_snapshot_async(self, dataset_name: str) -> "DatasetEditingSnapshot":
+        """
+        Read records and a complete content token from one participating-writer snapshot.
+
+        Returns:
+            DatasetEditingSnapshot: Inert records and their content token.
+        """
+        from pyrit.memory.dataset_mutation import editing_snapshot_async
+
+        return await editing_snapshot_async(memory=self, dataset_name=dataset_name)
+
+    async def commit_dataset_mutation_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        expected_version: str,
+        delete_ids: Sequence[uuid.UUID],
+        prepare_seeds: Callable[[dict[uuid.UUID, SeedRecord]], list[SeedUnion]],
+        write_media: Callable[[list[SeedUnion]], Awaitable[None]],
+        max_records: int,
+        max_bytes: int,
+    ) -> dict[str, Any]:
+        """
+        Commit exact inserts/replacements/deletions with final-group and state validation.
+
+        Returns:
+            dict[str, Any]: Exact committed counts, IDs, population and version.
+        """
+        from pyrit.memory.dataset_mutation import commit_mutation_async
+
+        return await commit_mutation_async(
+            memory=self,
+            upload_id=upload_id,
+            expected_version=expected_version,
+            delete_ids=delete_ids,
+            prepare_seeds=prepare_seeds,
+            write_media=write_media,
+            max_records=max_records,
+            max_bytes=max_bytes,
+        )
+
+    async def commit_dataset_upload_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        seeds: Sequence[SeedUnion],
+        write_media: Callable[[], Awaitable[None]],
+    ) -> bool:
+        """
+        Atomically publish all storage-ready seeds without deduplication or replacement.
+
+        Returns:
+            bool: Whether native ownership was released after the successful commit.
+        """
+        from pyrit.memory.dataset_lifecycle import commit_upload_async
+
+        return await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)
+
+    async def delete_dataset_async(self, *, dataset_name: str) -> uuid.UUID:
+        """
+        Delete exact-name stored seeds and journal cleanup of API-owned media.
+
+        Returns:
+            uuid.UUID: The durable deletion identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import delete_dataset_async
+
+        return await delete_dataset_async(memory=self, dataset_name=dataset_name)
+
+    async def cleanup_dataset_media_async(
+        self, *, operation_id: uuid.UUID, abandon_upload: bool = False
+    ) -> dict[str, object]:
+        """
+        Retry owned-media cleanup.
+
+        Returns:
+            dict[str, object]: Durable, non-sensitive cleanup status.
+        """
+        from pyrit.memory.dataset_lifecycle import cleanup_dataset_media_async
+
+        return await cleanup_dataset_media_async(memory=self, operation_id=operation_id, abandon_upload=abandon_upload)
+
+    async def release_dataset_upload_async(self, upload_id: uuid.UUID) -> None:
+        """Release this runtime's native upload ownership after publication, failure, or shutdown."""
+        from pyrit.memory.dataset_lifecycle import _finish_storage_write_async
+
+        lease = self._dataset_upload_leases.pop(upload_id, None)
+        if lease is not None:
+            await _finish_storage_write_async(lease.close_async())
+
+    async def recover_dataset_cleanup_async(self) -> None:
+        """Recover abandoned uploads and incomplete deletions after runtime initialization."""
+        from pyrit.memory.dataset_lifecycle import recover_dataset_cleanup_async
+
+        await recover_dataset_cleanup_async(self)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -5029,6 +5370,13 @@ class MemoryInterface(abc.ABC):
         successful insertion; a copy that would otherwise reuse the stored group ID is moved to a
         new group so editing it cannot alter the original group.
 
+        Decomposition trees, including prompts grouped with their objectives, deduplicate as complete
+        units by execution identity, group membership, parent links, and ordered path steps. Descriptive
+        metadata and path labels do not change tree identity: re-importing updates that metadata in
+        place, keeping the original import attribution and timestamps. Caller seed, group, parent,
+        and path IDs are remapped to the stored IDs only after a successful write. Changes to content,
+        behavioral inputs, group sequence, or tree structure store a separate tree.
+
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
             added_by (str): The user who added the seeds.
@@ -5040,8 +5388,252 @@ class MemoryInterface(abc.ABC):
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
-        """Deduplicate and store seeds after their media is prepared."""
-        existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        """
+        Deduplicate and store seeds after their media is prepared.
+
+        Decomposition trees, with the seeds grouped with their objectives, are stored as whole
+        units; every other seed is deduplicated individually or by its complete prompt group.
+        """
+        units, independent = split_decomposition_units(seeds)
+        for unit in units:
+            self._insert_decomposition_unit(unit=unit)
+        if independent:
+            self._insert_independent_seeds(seeds=independent)
+
+    def _insert_decomposition_unit(self, *, unit: DecompositionUnit) -> None:
+        """
+        Store one decomposition tree unless an equivalent tree is already stored.
+
+        An equivalent stored tree has the same execution content, structure, and paths in the same dataset;
+        each caller seed then takes its stored counterpart's identifiers, including group IDs the
+        caller left unset. A new tree whose seed or group IDs are already stored is copied with new
+        identifiers so it cannot alter the stored rows.
+        """
+        canonical, ordered = canonicalize_decomposition(unit=unit, member_key=self._seed_decomposition_member_key)
+        stored = self._find_stored_decomposition(root=unit.root, canonical=canonical)
+        if stored is not None:
+            self._update_decomposition_metadata(seeds=ordered, stored=stored)
+            for target, source in zip(ordered, stored, strict=True):
+                assign_decomposition_identity(target=target, source=source)
+            return
+        if self._decomposition_identifiers_are_stored(seeds=unit.seeds):
+            identity = fresh_decomposition_identities(unit.seeds)
+        else:
+            identity = DecompositionIdentity(seed_ids={}, group_ids={}, path_ids={})
+        copies = apply_decomposition_identity(seeds=unit.seeds, identity=identity)
+        self._insert_entries(entries=[SeedEntry(entry=seed) for seed in copies])
+        for target, source in zip(unit.seeds, copies, strict=True):
+            assign_decomposition_identity(target=target, source=source)
+
+    def _seed_decomposition_member_key(self, seed: Seed[Any]) -> str:
+        """
+        Identify a tree member by execution content and its position in a prompt group.
+
+        Returns:
+            str: Canonical execution identity, excluding descriptive metadata.
+        """
+        return json.dumps(
+            {
+                "execution": self._seed_standalone_key(seed),
+                "value_sha256": seed.value_sha256,
+                "sequence": getattr(seed, "sequence", None),
+                "parameters": getattr(seed, "parameters", None) or [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _update_decomposition_metadata(self, *, seeds: Sequence[Seed[Any]], stored: Sequence[Seed[Any]]) -> None:
+        """
+        Update matched tree metadata atomically, retaining stored identity and import provenance.
+
+        Args:
+            seeds (Sequence[Seed]): Incoming seeds in canonical order.
+            stored (Sequence[Seed]): Matching stored seeds in the same order.
+
+        Raises:
+            StaleDataError: If a matched row disappeared.
+            SQLAlchemyError: If the metadata update fails.
+        """
+        with closing(self._get_session()) as session:
+            try:
+                for seed, source in zip(seeds, stored, strict=True):
+                    copy = seed.model_copy(deep=True)
+                    assign_decomposition_identity(target=copy, source=source)
+                    entry = SeedEntry(entry=copy)
+                    count = (
+                        session.query(SeedEntry)
+                        .filter(SeedEntry.id == source.id)
+                        .update(
+                            {
+                                SeedEntry.name: entry.name,
+                                SeedEntry.description: entry.description,
+                                SeedEntry.harm_categories: entry.harm_categories,
+                                SeedEntry.authors: entry.authors,
+                                SeedEntry.groups: entry.groups,
+                                SeedEntry.source: entry.source,
+                                SeedEntry.prompt_metadata: entry.prompt_metadata,
+                                SeedEntry.paths: entry.paths,
+                            },
+                            synchronize_session=False,
+                        )
+                    )
+                    if count != 1:
+                        raise StaleDataError(f"Stored decomposition member {source.id} disappeared during re-import.")
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to update decomposition metadata: {e}")
+                raise
+
+    def _find_stored_decomposition(self, *, root: SeedObjective, canonical: str) -> list[Seed[Any]] | None:
+        """
+        Find a stored tree equivalent to an incoming one.
+
+        Returns:
+            list[Seed] | None: The stored tree's seeds in canonical order, or None if none matches.
+        """
+        conditions = [
+            SeedEntry.value_sha256 == root.value_sha256,
+            SeedEntry.seed_type == "objective",
+            SeedEntry.parent_objective_id.is_(None),
+        ]
+        if root.dataset_name:
+            conditions.append(SeedEntry.dataset_name == root.dataset_name)
+        for candidate in self._query_entries(
+            SeedEntry, conditions=and_(*conditions), order_by=(SeedEntry.date_added, SeedEntry.id)
+        ):
+            objectives, mates = self._get_decomposition_entries(root_id=candidate.id)
+            if len(objectives) < 2:
+                continue
+            try:
+                stored_unit = DecompositionUnit(
+                    root_id=candidate.id, seeds=tuple(entry.get_seed() for entry in (*objectives, *mates))
+                )
+                stored_canonical, stored_ordered = canonicalize_decomposition(
+                    unit=stored_unit, member_key=self._seed_decomposition_member_key
+                )
+            except ValueError:
+                logger.warning(f"Skipping stored decomposition {candidate.id}: its tree is incomplete or invalid.")
+                continue
+            if stored_canonical == canonical:
+                return stored_ordered
+        return None
+
+    def _get_decomposition_entries(self, *, root_id: uuid.UUID) -> tuple[list[SeedEntry], list[SeedEntry]]:
+        """
+        Read a stored objective, its descendants, and the seeds grouped with any of them.
+
+        Returns:
+            tuple[list[SeedEntry], list[SeedEntry]]: The objectives, parents before children, and the
+                other seeds of their prompt groups.
+        """
+        objectives = list(self._query_entries(SeedEntry, conditions=SeedEntry.id == root_id))
+        seen = {entry.id for entry in objectives}
+        frontier = list(seen)
+        while frontier:
+            children = [
+                entry
+                for entry in self._execute_batched_query(
+                    SeedEntry,
+                    batch_column=SeedEntry.parent_objective_id,
+                    batch_values=frontier,
+                    order_by=(SeedEntry.date_added, SeedEntry.id),
+                )
+                if entry.id not in seen
+            ]
+            seen.update(entry.id for entry in children)
+            objectives.extend(children)
+            frontier = [entry.id for entry in children]
+        group_ids = list({entry.prompt_group_id for entry in objectives if entry.prompt_group_id is not None})
+        mates = (
+            [
+                entry
+                for entry in self._execute_batched_query(
+                    SeedEntry,
+                    batch_column=SeedEntry.prompt_group_id,
+                    batch_values=group_ids,
+                    order_by=(SeedEntry.date_added, SeedEntry.id),
+                )
+                if entry.id not in seen
+            ]
+            if group_ids
+            else []
+        )
+        return objectives, mates
+
+    def _decomposition_identifiers_are_stored(self, *, seeds: Sequence[Seed[Any]]) -> bool:
+        """
+        Whether any seed ID or prompt group ID of a unit is already stored.
+
+        Returns:
+            bool: True if storing the unit as-is would collide with or join stored rows.
+        """
+        seed_ids = [seed.id for seed in seeds if seed.id is not None]
+        group_ids = list({seed.prompt_group_id for seed in seeds if seed.prompt_group_id is not None})
+        return bool(
+            (seed_ids and self._execute_batched_query(SeedEntry, batch_column=SeedEntry.id, batch_values=seed_ids))
+            or (
+                group_ids
+                and self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.prompt_group_id, batch_values=group_ids
+                )
+            )
+        )
+
+    def _exclude_stored_decomposition_seeds(
+        self, *, existing_seeds: list[tuple[str | None, Seed[Any]]]
+    ) -> list[tuple[str | None, Seed[Any]]]:
+        """
+        Drop stored decomposition members, and seeds grouped with them, from deduplication matches.
+
+        Independent seeds never deduplicate against part of a tree.
+
+        Returns:
+            list[tuple[str | None, Seed[Any]]]: The matches that are not part of a stored tree.
+        """
+        if not existing_seeds or not self._query_entries(
+            SeedEntry, conditions=SeedEntry.parent_objective_id.is_not(None), limit=1
+        ):
+            return existing_seeds
+        objectives: dict[uuid.UUID, SeedObjective] = {
+            seed.id: seed for _, seed in existing_seeds if isinstance(seed, SeedObjective) and seed.id is not None
+        }
+        group_ids = list({seed.prompt_group_id for _, seed in existing_seeds if seed.prompt_group_id is not None})
+        if group_ids:
+            for entry in self._execute_batched_query(
+                SeedEntry,
+                batch_column=SeedEntry.prompt_group_id,
+                batch_values=group_ids,
+                other_conditions=[SeedEntry.seed_type == "objective"],
+            ):
+                grouped = entry.get_seed()
+                if isinstance(grouped, SeedObjective):
+                    objectives.setdefault(entry.id, grouped)
+        parent_ids = {
+            entry.parent_objective_id
+            for entry in self._execute_batched_query(
+                SeedEntry, batch_column=SeedEntry.parent_objective_id, batch_values=list(objectives)
+            )
+        }
+        members = [
+            objective
+            for objective_id, objective in objectives.items()
+            if objective.parent_objective_id is not None or objective_id in parent_ids
+        ]
+        member_ids = {member.id for member in members}
+        member_groups = {member.prompt_group_id for member in members if member.prompt_group_id is not None}
+        return [
+            (dataset, seed)
+            for dataset, seed in existing_seeds
+            if seed.id not in member_ids and seed.prompt_group_id not in member_groups
+        ]
+
+    def _insert_independent_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
+        """Deduplicate and store seeds that are not part of a decomposition tree."""
+        existing_seeds = self._exclude_stored_decomposition_seeds(
+            existing_seeds=self._get_existing_seed_keys(seeds=seeds)
+        )
         # Compute each stored seed's full member identity once; retained groups and the
         # complete-group check both use it.
         existing_group_members: list[tuple[uuid.UUID, str | None, str, uuid.UUID | None]] = []
@@ -5453,6 +6045,7 @@ class MemoryInterface(abc.ABC):
         harm_categories: Sequence[str] | None,
         seed_types: Sequence[SeedType] | None,
         value_search: str | None,
+        value_pattern: str | None = None,
     ) -> list[Any]:
         """
         Build one logical-example membership condition for each active filter.
@@ -5478,14 +6071,19 @@ class MemoryInterface(abc.ABC):
             )
         if seed_types:
             member_conditions.append(SeedEntry.seed_type.in_(list(seed_types)))
-        if value_search:
+        validate_text_search(value=value_search, pattern=value_pattern)
+        if value_search or value_pattern is not None:
             # A simulated-conversation value is JSON, so its keys would match common words such as "prompt".
-            pattern = "%" + re.sub(r"([\\%_\[])", r"\\\1", value_search) + "%"
             member_conditions.append(
                 and_(
                     SeedEntry.data_type == "text",
                     SeedEntry.seed_type != "simulated_conversation",
-                    SeedEntry.value.ilike(pattern, escape="\\"),
+                    text_match(
+                        column=SeedEntry.value,
+                        value=value_search,
+                        pattern=value_pattern,
+                        casefold=value_pattern is None,
+                    ),
                 )
             )
 
@@ -5531,6 +6129,7 @@ class MemoryInterface(abc.ABC):
         harm_categories: Sequence[str] | None,
         seed_types: Sequence[SeedType] | None,
         value_search: str | None,
+        value_pattern: str | None = None,
     ) -> tuple[dict[uuid.UUID, list[SeedRecord]], int, DecodedKeysetCursor | None]:
         """
         Read one keyset page of complete logical seed examples.
@@ -5549,6 +6148,7 @@ class MemoryInterface(abc.ABC):
             harm_categories=harm_categories,
             seed_types=seed_types,
             value_search=value_search,
+            value_pattern=value_pattern,
         )
         grouped = (
             select(
@@ -5702,6 +6302,7 @@ class MemoryInterface(abc.ABC):
             )
 
         SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
+        split_decomposition_units(seeds)
 
     def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
         """
@@ -5715,6 +6316,9 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                self._validate_decomposition_deletion(
+                    session=session, seed_ids=select(SeedEntry.id).where(SeedEntry.dataset_name == dataset_name)
+                )
                 deleted = (
                     session.query(SeedEntry)
                     .filter(SeedEntry.dataset_name == dataset_name)
@@ -5770,18 +6374,23 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
         group_length: Sequence[int] | None = None,
@@ -5792,22 +6401,36 @@ class MemoryInterface(abc.ABC):
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
-            dataset_name_pattern (str | None, Optional): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str | None, Optional): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None, Optional): List of data types to filter seed prompts by
             (e.g., text, image_path).
             harm_categories (Sequence[str] | None, Optional): List of harm categories to filter seed prompts by.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str | None, Optional): The user who added the seed groups to filter by.
             authors (Sequence[str] | None, Optional): List of authors to filter seed groups by.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str] | None, Optional): List of groups to filter seed groups by.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str | None, Optional): The source from which the seed prompts originated.
             seed_type (SeedType | None, Optional): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str] | None, Optional): List of parameters to filter by.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int] | None, Optional): A free-form dictionary for tagging
                 prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID] | None, Optional): List of prompt group IDs to filter by.
@@ -5820,18 +6443,23 @@ class MemoryInterface(abc.ABC):
             "get_seeds",
             self._execute_get_seeds,
             value=value,
+            value_pattern=value_pattern,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -5841,9 +6469,14 @@ class MemoryInterface(abc.ABC):
         if seeds:
             related_prompt_group_ids = {seed.prompt_group_id for seed in seeds if seed.prompt_group_id}
             if related_prompt_group_ids:
-                seeds = self._dispatch_memory_operation(
-                    "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
-                )
+                # Seeds without a group can't be found by group ID, so keep them as matched.
+                ungrouped_seeds = [seed for seed in seeds if not seed.prompt_group_id]
+                seeds = [
+                    *self._dispatch_memory_operation(
+                        "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
+                    ),
+                    *ungrouped_seeds,
+                ]
 
         # Deduplicate seeds to ensure we don't have duplicate prompts in the groups
         if seeds:
@@ -6332,6 +6965,7 @@ class MemoryInterface(abc.ABC):
         attack_result_ids: Sequence[str] | None = None,
         conversation_id: str | None = None,
         objective: str | None = None,
+        objective_pattern: str | None = None,
         objective_sha256: Sequence[str] | None = None,
         outcome: str | None = None,
         attack_classes: Sequence[str] | None = None,
@@ -6359,7 +6993,9 @@ class MemoryInterface(abc.ABC):
         Args:
             attack_result_ids (Sequence[str] | None, optional): A list of attack result IDs. Defaults to None.
             conversation_id (str | None, optional): The conversation ID to filter by. Defaults to None.
-            objective (str | None, optional): The objective to filter by (substring match). Defaults to None.
+            objective (str | None, optional): Case-insensitive literal objective substring. Defaults to None.
+            objective_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             objective_sha256 (Sequence[str] | None, optional): A list of objective SHA256 hashes to filter by.
                 Defaults to None.
             outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
@@ -6446,6 +7082,7 @@ class MemoryInterface(abc.ABC):
             attack_result_ids=attack_result_ids,
             conversation_id=conversation_id,
             objective=objective,
+            objective_pattern=objective_pattern,
             objective_sha256=objective_sha256,
             outcome=outcome,
             attack_classes=attack_classes,
@@ -6554,8 +7191,11 @@ class MemoryInterface(abc.ABC):
         conditions: list[Any] = []
         if query.conversation_id:
             conditions.append(AttackResultEntry.conversation_id == query.conversation_id)
-        if query.objective:
-            conditions.append(AttackResultEntry.objective.contains(query.objective))
+        validate_text_search(value=query.objective, pattern=query.objective_pattern)
+        if query.objective or query.objective_pattern is not None:
+            conditions.append(
+                text_match(column=AttackResultEntry.objective, value=query.objective, pattern=query.objective_pattern)
+            )
         if query.outcome:
             conditions.append(AttackResultEntry.outcome == query.outcome)
         if query.operator:
@@ -8531,13 +9171,16 @@ class MemoryInterface(abc.ABC):
         *,
         scenario_result_ids: Sequence[str] | None = None,
         scenario_name: str | None = None,
+        scenario_name_pattern: str | None = None,
         scenario_version: int | None = None,
         pyrit_version: str | None = None,
         added_after: datetime | None = None,
         added_before: datetime | None = None,
         labels: dict[str, str] | None = None,
         objective_target_endpoint: str | None = None,
+        objective_target_endpoint_pattern: str | None = None,
         objective_target_model_name: str | None = None,
+        objective_target_model_name_pattern: str | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
@@ -8549,8 +9192,11 @@ class MemoryInterface(abc.ABC):
         Args:
             scenario_result_ids (Sequence[str] | None, optional): A list of scenario result IDs.
                 Defaults to None.
-            scenario_name (str | None, optional): The scenario name to filter by (substring match).
+            scenario_name (str | None, optional): Case-insensitive literal scenario name substring.
+                No alias normalization is applied.
                 Defaults to None.
+            scenario_name_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             scenario_version (int | None, optional): The scenario version to filter by. Defaults to None.
             pyrit_version (str | None, optional): The PyRIT version to filter by. Defaults to None.
             added_after (datetime | None, optional): Filter for scenarios completed after this datetime.
@@ -8562,9 +9208,13 @@ class MemoryInterface(abc.ABC):
             objective_target_endpoint (str | None, optional): Filter for scenarios where the
                 objective_target_identifier has an endpoint attribute containing this value (case-insensitive).
                 Defaults to None.
+            objective_target_endpoint_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             objective_target_model_name (str | None, optional): Filter for scenarios where the
                 objective_target_identifier has a model_name attribute containing this value (case-insensitive).
                 Defaults to None.
+            objective_target_model_name_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
@@ -8575,21 +9225,29 @@ class MemoryInterface(abc.ABC):
                 ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
+            for value, pattern in (
+                (scenario_name, scenario_name_pattern),
+                (objective_target_endpoint, objective_target_endpoint_pattern),
+                (objective_target_model_name, objective_target_model_name_pattern),
+            ):
+                validate_text_search(value=value, pattern=pattern)
             empty_scenario_results: list[ScenarioResult] = []
             return empty_scenario_results
 
         conditions = self._build_scenario_result_query_conditions(
             scenario_name=scenario_name,
+            scenario_name_pattern=scenario_name_pattern,
             scenario_version=scenario_version,
             pyrit_version=pyrit_version,
             added_after=added_after,
             added_before=added_before,
             labels=labels,
             objective_target_endpoint=objective_target_endpoint,
+            objective_target_endpoint_pattern=objective_target_endpoint_pattern,
             objective_target_model_name=objective_target_model_name,
+            objective_target_model_name_pattern=objective_target_model_name_pattern,
             identifier_filters=identifier_filters,
         )
-
         try:
             entries = self._query_scenario_result_entries(
                 scenario_result_ids=scenario_result_ids,
@@ -8614,13 +9272,16 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         scenario_name: str | None,
+        scenario_name_pattern: str | None = None,
         scenario_version: int | None,
         pyrit_version: str | None,
         added_after: datetime | None,
         added_before: datetime | None,
         labels: dict[str, str] | None,
         objective_target_endpoint: str | None,
+        objective_target_endpoint_pattern: str | None = None,
         objective_target_model_name: str | None,
+        objective_target_model_name_pattern: str | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None,
     ) -> "list[ColumnElement[bool]]":
         """
@@ -8631,9 +9292,11 @@ class MemoryInterface(abc.ABC):
         """
         conditions: list[ColumnElement[bool]] = []
 
-        if scenario_name:
-            normalized_name = ScenarioResult.normalize_scenario_name(scenario_name)
-            conditions.append(ScenarioResultEntry.scenario_name.contains(normalized_name))
+        validate_text_search(value=scenario_name, pattern=scenario_name_pattern)
+        if scenario_name or scenario_name_pattern is not None:
+            conditions.append(
+                text_match(column=ScenarioResultEntry.scenario_name, value=scenario_name, pattern=scenario_name_pattern)
+            )
 
         if scenario_version is not None:
             conditions.append(ScenarioResultEntry.scenario_version == scenario_version)
@@ -8650,23 +9313,27 @@ class MemoryInterface(abc.ABC):
         if labels:
             conditions.append(self._get_scenario_result_label_condition(labels=labels))
 
-        if objective_target_endpoint:
+        validate_text_search(value=objective_target_endpoint, pattern=objective_target_endpoint_pattern)
+        if objective_target_endpoint or objective_target_endpoint_pattern is not None:
             conditions.append(
                 self._get_condition_json_property_match(
                     json_column=ScenarioResultEntry.objective_target_identifier,
                     property_path="$.endpoint",
                     value=objective_target_endpoint,
-                    partial_match=True,
+                    value_pattern=objective_target_endpoint_pattern,
+                    partial_match=objective_target_endpoint_pattern is None,
                 )
             )
 
-        if objective_target_model_name:
+        validate_text_search(value=objective_target_model_name, pattern=objective_target_model_name_pattern)
+        if objective_target_model_name or objective_target_model_name_pattern is not None:
             conditions.append(
                 self._get_condition_json_property_match(
                     json_column=ScenarioResultEntry.objective_target_identifier,
                     property_path="$.model_name",
                     value=objective_target_model_name,
-                    partial_match=True,
+                    value_pattern=objective_target_model_name_pattern,
+                    partial_match=objective_target_model_name_pattern is None,
                 )
             )
 
@@ -9734,7 +10401,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -9767,7 +10434,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -9779,7 +10446,8 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): Return only scores whose category list contains this category.
+            score_category (str | Sequence[str] | None): Return scores that list this category, or every category
+                of a sequence. Names match whole and case-insensitively.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -10333,18 +11001,23 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> Sequence[Seed[Any]]:
@@ -10361,18 +11034,23 @@ class MemoryInterface(abc.ABC):
         )
         return self._execute_get_seeds(
             value=value,
+            value_pattern=value_pattern,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -10382,18 +11060,23 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> Sequence[Seed[Any]]:
@@ -10401,33 +11084,49 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of seed prompts based on the specified filters.
 
         List filters match substrings within decoded elements, not their JSON representation.
-        Substring matching retains the backend's LIKE case and wildcard semantics.
+        Substring searches are case-insensitive and literal. Explicit pattern companions
+        accept full LIKE patterns: '%' and '_' are wildcards and '/' escapes the next character.
+        Supplying a literal and its pattern companion raises ValueError.
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match by substring. If None, all values are returned.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories returns only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by.
                 Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
                 is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -10438,39 +11137,70 @@ class MemoryInterface(abc.ABC):
         return await self._run_database_operation_async(
             self._execute_get_seeds,
             value=value,
+            value_pattern=value_pattern,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
+
+    async def get_seed_decomposition_async(self, *, objective_id: uuid.UUID) -> Sequence[SeedObjective]:
+        """
+        Retrieve a stored objective and every objective decomposed beneath it.
+
+        Use ``build_objective_decomposition_tree(result, root_id=objective_id)`` to walk the children
+        and paths; the returned objective keeps its stored parent link even when it is not a root.
+        Prompts grouped with these objectives can be read with ``get_seeds_async(prompt_group_ids=...)``.
+
+        Args:
+            objective_id (uuid.UUID): The objective to start from, at any level of its tree.
+
+        Returns:
+            Sequence[SeedObjective]: The objective and its descendants, parents before children.
+                Empty if no objective has this ID.
+        """
+        return await self._run_database_operation_async(self._execute_get_seed_decomposition, objective_id=objective_id)
+
+    def _execute_get_seed_decomposition(self, *, objective_id: uuid.UUID) -> Sequence[SeedObjective]:
+        objectives, _ = self._get_decomposition_entries(root_id=objective_id)
+        return [seed for seed in (entry.get_seed() for entry in objectives) if isinstance(seed, SeedObjective)]
 
     def remove_seeds_from_memory(
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = True,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> int:
@@ -10489,19 +11219,24 @@ class MemoryInterface(abc.ABC):
         )
         return self._execute_remove_seeds_from_memory(
             value=value,
+            value_pattern=value_pattern,
             exact=exact,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -10511,19 +11246,24 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = True,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> int:
@@ -10535,6 +11275,9 @@ class MemoryInterface(abc.ABC):
         filter must be provided to prevent accidental deletion of all seeds. The deletion runs in a single
         transaction, so it works consistently across SQLite and Azure SQL.
 
+        A filter that selects only part of a decomposition tree raises ``ValueError`` before any
+        rows are deleted. Select every objective in the tree, for example by dataset name.
+
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
@@ -10543,6 +11286,8 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
                 Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
                 safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
@@ -10550,25 +11295,37 @@ class MemoryInterface(abc.ABC):
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by.
                 Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
                 is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -10576,25 +11333,30 @@ class MemoryInterface(abc.ABC):
             int: The number of seeds removed.
 
         Raises:
-            ValueError: If no filters are provided.
+            ValueError: If no filters are provided or the selection would delete only part of a decomposition tree.
             SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
         """
         return await self._run_database_operation_async(
             self._execute_remove_seeds_from_memory,
             value=value,
+            value_pattern=value_pattern,
             exact=exact,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -10603,19 +11365,24 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = True,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> int:
@@ -10634,19 +11401,24 @@ class MemoryInterface(abc.ABC):
         )
         return self._execute_remove_seed_groups_from_memory(
             value=value,
+            value_pattern=value_pattern,
             exact=exact,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -10656,19 +11428,24 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         exact: bool = True,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> int:
@@ -10684,9 +11461,13 @@ class MemoryInterface(abc.ABC):
         to prevent accidental deletion of all seeds. The deletion runs in a single transaction, so it
         works consistently across SQLite and Azure SQL.
 
+        Group expansion must still select every objective of an affected decomposition tree;
+        otherwise ``ValueError`` is raised before any rows are deleted.
+
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
@@ -10696,6 +11477,8 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
                 Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
                 safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
@@ -10703,25 +11486,37 @@ class MemoryInterface(abc.ABC):
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
-            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str): The user who added the prompts.
             authors (Sequence[str]): A list of authors to filter by.
                 Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
                 is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
                 prompt templates instead of prompts.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
@@ -10729,25 +11524,30 @@ class MemoryInterface(abc.ABC):
             int: The number of seeds removed across all affected groups.
 
         Raises:
-            ValueError: If no filters are provided.
+            ValueError: If no filters are provided or the expanded groups contain only part of a decomposition tree.
             SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
         """
         return await self._run_database_operation_async(
             self._execute_remove_seed_groups_from_memory,
             value=value,
+            value_pattern=value_pattern,
             exact=exact,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
         )
@@ -10797,6 +11597,7 @@ class MemoryInterface(abc.ABC):
         harm_categories: Sequence[str] | None = None,
         seed_types: Sequence[SeedType] | None = None,
         value_search: str | None = None,
+        value_pattern: str | None = None,
     ) -> tuple[dict[uuid.UUID, list[SeedRecord]], int, DecodedKeysetCursor | None]:
         """
         Read one page of complete logical seed examples from one dataset.
@@ -10818,6 +11619,8 @@ class MemoryInterface(abc.ABC):
             seed_types: Match seeds with any of these seed types.
             value_search: Match text prompts and objectives whose stored value contains this literal
                 text, ignoring case. Simulated-conversation configurations are not searched.
+            value_pattern: Full case-insensitive LIKE pattern instead of value_search.
+                '%' and '_' are wildcards; '/' escapes the next character.
 
         Returns:
             tuple[dict[uuid.UUID, list[SeedRecord]], int, DecodedKeysetCursor | None]: The stored members of each
@@ -10833,6 +11636,7 @@ class MemoryInterface(abc.ABC):
             harm_categories=harm_categories,
             seed_types=seed_types,
             value_search=value_search,
+            value_pattern=value_pattern,
         )
 
     async def get_seed_example_async(self, *, dataset_name: str | None, example_id: uuid.UUID) -> list[SeedRecord]:
@@ -10883,18 +11687,23 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
         group_length: Sequence[int] | None = None,
@@ -10914,18 +11723,23 @@ class MemoryInterface(abc.ABC):
         )
         return self._execute_get_seed_groups(
             value=value,
+            value_pattern=value_pattern,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
             group_length=group_length,
@@ -10936,18 +11750,23 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         value: str | None = None,
+        value_pattern: str | None = None,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
         data_types: Sequence[str] | None = None,
         harm_categories: Sequence[str] | None = None,
+        harm_categories_patterns: Sequence[str] | None = None,
         added_by: str | None = None,
         authors: Sequence[str] | None = None,
+        authors_patterns: Sequence[str] | None = None,
         groups: Sequence[str] | None = None,
+        groups_patterns: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
+        parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
         group_length: Sequence[int] | None = None,
@@ -10958,22 +11777,36 @@ class MemoryInterface(abc.ABC):
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
+            value_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
-            dataset_name_pattern (str | None, Optional): A pattern to match dataset names using SQL LIKE syntax.
+            dataset_name_pattern (str | None, Optional): A full case-insensitive LIKE pattern for dataset names.
                 Supports wildcards: % (any characters) and _ (single character).
-                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                '/' escapes the next character; brackets, '*' and backslashes are literal.
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
             data_types (Sequence[str] | None, Optional): List of data types to filter seed prompts by
             (e.g., text, image_path).
             harm_categories (Sequence[str] | None, Optional): List of harm categories to filter seed prompts by.
+            harm_categories_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             added_by (str | None, Optional): The user who added the seed groups to filter by.
             authors (Sequence[str] | None, Optional): List of authors to filter seed groups by.
+            authors_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             groups (Sequence[str] | None, Optional): List of groups to filter seed groups by.
+            groups_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             source (str | None, Optional): The source from which the seed prompts originated.
             seed_type (SeedType | None, Optional): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
             parameters (Sequence[str] | None, Optional): List of parameters to filter by.
+            parameters_patterns (Sequence[str] | None): Case-insensitive full LIKE patterns.
+                All must match decoded list elements.
+                '%' and '_' are wildcards; '/' escapes the next character.
             metadata (dict[str, str | int] | None, Optional): A free-form dictionary for tagging
                 prompts with custom metadata.
             prompt_group_ids (Sequence[uuid.UUID] | None, Optional): List of prompt group IDs to filter by.
@@ -10985,18 +11818,23 @@ class MemoryInterface(abc.ABC):
         return await self._run_database_operation_async(
             self._execute_get_seed_groups,
             value=value,
+            value_pattern=value_pattern,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
             dataset_name_pattern=dataset_name_pattern,
             data_types=data_types,
             harm_categories=harm_categories,
+            harm_categories_patterns=harm_categories_patterns,
             added_by=added_by,
             authors=authors,
+            authors_patterns=authors_patterns,
             groups=groups,
+            groups_patterns=groups_patterns,
             source=source,
             seed_type=seed_type,
             origin=origin,
             parameters=parameters,
+            parameters_patterns=parameters_patterns,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
             group_length=group_length,
@@ -11251,6 +12089,7 @@ class MemoryInterface(abc.ABC):
         attack_result_ids: Sequence[str] | None = None,
         conversation_id: str | None = None,
         objective: str | None = None,
+        objective_pattern: str | None = None,
         objective_sha256: Sequence[str] | None = None,
         outcome: str | None = None,
         attack_classes: Sequence[str] | None = None,
@@ -11289,6 +12128,7 @@ class MemoryInterface(abc.ABC):
             attack_result_ids=attack_result_ids,
             conversation_id=conversation_id,
             objective=objective,
+            objective_pattern=objective_pattern,
             objective_sha256=objective_sha256,
             outcome=outcome,
             attack_classes=attack_classes,
@@ -11318,6 +12158,7 @@ class MemoryInterface(abc.ABC):
         attack_result_ids: Sequence[str] | None = None,
         conversation_id: str | None = None,
         objective: str | None = None,
+        objective_pattern: str | None = None,
         objective_sha256: Sequence[str] | None = None,
         outcome: str | None = None,
         attack_classes: Sequence[str] | None = None,
@@ -11345,7 +12186,9 @@ class MemoryInterface(abc.ABC):
         Args:
             attack_result_ids (Sequence[str] | None, optional): A list of attack result IDs. Defaults to None.
             conversation_id (str | None, optional): The conversation ID to filter by. Defaults to None.
-            objective (str | None, optional): The objective to filter by (substring match). Defaults to None.
+            objective (str | None, optional): Case-insensitive literal objective substring. Defaults to None.
+            objective_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             objective_sha256 (Sequence[str] | None, optional): A list of objective SHA256 hashes to filter by.
                 Defaults to None.
             outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
@@ -11431,6 +12274,7 @@ class MemoryInterface(abc.ABC):
             attack_result_ids=attack_result_ids,
             conversation_id=conversation_id,
             objective=objective,
+            objective_pattern=objective_pattern,
             objective_sha256=objective_sha256,
             outcome=outcome,
             attack_classes=attack_classes,
@@ -12202,13 +13046,16 @@ class MemoryInterface(abc.ABC):
         *,
         scenario_result_ids: Sequence[str] | None = None,
         scenario_name: str | None = None,
+        scenario_name_pattern: str | None = None,
         scenario_version: int | None = None,
         pyrit_version: str | None = None,
         added_after: datetime | None = None,
         added_before: datetime | None = None,
         labels: dict[str, str] | None = None,
         objective_target_endpoint: str | None = None,
+        objective_target_endpoint_pattern: str | None = None,
         objective_target_model_name: str | None = None,
+        objective_target_model_name_pattern: str | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
@@ -12228,13 +13075,16 @@ class MemoryInterface(abc.ABC):
         return self._execute_get_scenario_results(
             scenario_result_ids=scenario_result_ids,
             scenario_name=scenario_name,
+            scenario_name_pattern=scenario_name_pattern,
             scenario_version=scenario_version,
             pyrit_version=pyrit_version,
             added_after=added_after,
             added_before=added_before,
             labels=labels,
             objective_target_endpoint=objective_target_endpoint,
+            objective_target_endpoint_pattern=objective_target_endpoint_pattern,
             objective_target_model_name=objective_target_model_name,
+            objective_target_model_name_pattern=objective_target_model_name_pattern,
             identifier_filters=identifier_filters,
             limit=limit,
         )
@@ -12245,13 +13095,16 @@ class MemoryInterface(abc.ABC):
         *,
         scenario_result_ids: Sequence[str] | None = None,
         scenario_name: str | None = None,
+        scenario_name_pattern: str | None = None,
         scenario_version: int | None = None,
         pyrit_version: str | None = None,
         added_after: datetime | None = None,
         added_before: datetime | None = None,
         labels: dict[str, str] | None = None,
         objective_target_endpoint: str | None = None,
+        objective_target_endpoint_pattern: str | None = None,
         objective_target_model_name: str | None = None,
+        objective_target_model_name_pattern: str | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
@@ -12263,8 +13116,11 @@ class MemoryInterface(abc.ABC):
         Args:
             scenario_result_ids (Sequence[str] | None, optional): A list of scenario result IDs.
                 Defaults to None.
-            scenario_name (str | None, optional): The scenario name to filter by (substring match).
+            scenario_name (str | None, optional): Case-insensitive literal scenario name substring.
+                No alias normalization is applied.
                 Defaults to None.
+            scenario_name_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             scenario_version (int | None, optional): The scenario version to filter by. Defaults to None.
             pyrit_version (str | None, optional): The PyRIT version to filter by. Defaults to None.
             added_after (datetime | None, optional): Filter for scenarios completed after this datetime.
@@ -12276,9 +13132,13 @@ class MemoryInterface(abc.ABC):
             objective_target_endpoint (str | None, optional): Filter for scenarios where the
                 objective_target_identifier has an endpoint attribute containing this value (case-insensitive).
                 Defaults to None.
+            objective_target_endpoint_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             objective_target_model_name (str | None, optional): Filter for scenarios where the
                 objective_target_identifier has a model_name attribute containing this value (case-insensitive).
                 Defaults to None.
+            objective_target_model_name_pattern (str | None): Full case-insensitive LIKE pattern.
+                '%' and '_' are wildcards; '/' escapes the next character.
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
@@ -12292,13 +13152,16 @@ class MemoryInterface(abc.ABC):
             self._execute_get_scenario_results,
             scenario_result_ids=scenario_result_ids,
             scenario_name=scenario_name,
+            scenario_name_pattern=scenario_name_pattern,
             scenario_version=scenario_version,
             pyrit_version=pyrit_version,
             added_after=added_after,
             added_before=added_before,
             labels=labels,
             objective_target_endpoint=objective_target_endpoint,
+            objective_target_endpoint_pattern=objective_target_endpoint_pattern,
             objective_target_model_name=objective_target_model_name,
+            objective_target_model_name_pattern=objective_target_model_name_pattern,
             identifier_filters=identifier_filters,
             limit=limit,
         )

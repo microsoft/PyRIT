@@ -11,6 +11,7 @@ without any database or service dependencies.
 import os
 import tempfile
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,6 +57,24 @@ from unit.mocks import MockPromptTarget
 # ============================================================================
 # Helpers
 # ============================================================================
+
+
+@pytest.fixture
+def target_mock_factory() -> Callable[[type[PromptTarget]], MagicMock]:
+    """Create independent target mocks with the base target's default bounds."""
+
+    def _create_target(target_type: type[PromptTarget]) -> MagicMock:
+        target = MagicMock(spec=target_type)
+        target.generation_ranges = {}
+        return target
+
+    return _create_target
+
+
+@pytest.fixture
+def target_obj(target_mock_factory: Callable[[type[PromptTarget]], MagicMock]) -> MagicMock:
+    """Create a fresh base target mock for each mapper test."""
+    return target_mock_factory(PromptTarget)
 
 
 def _make_attack_result(
@@ -1207,6 +1226,18 @@ class TestResolveMediaUrl:
         url = "https://acct.blob.core.windows.net/container/image.png"
         assert _resolve_media_url(value=url, data_type="image_path") == url
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "HTTPS://acct.blob.core.windows.net/container/image.png",
+            "Http://example.test/image.png",
+            "DATA:image/png;base64,AAAA",
+        ],
+    )
+    def test_mixed_case_schemes_pass_through(self, value: str) -> None:
+        """Schemes are case-insensitive; mixed-case URLs and data URIs are returned as-is."""
+        assert _resolve_media_url(value=value, data_type="image_path") == value
+
     def test_local_file_returns_media_url(self) -> None:
         """Local file paths are converted to /api/media URLs."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -1562,9 +1593,8 @@ def test_target_instance_reports_effective_history_replay(mode: str) -> None:
 class TestTargetObjectToInstance:
     """Tests for target_object_to_instance function."""
 
-    def test_maps_target_with_identifier(self) -> None:
+    def test_maps_target_with_identifier(self, *, target_obj: MagicMock) -> None:
         """Test mapping a target object that has get_identifier."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1584,15 +1614,15 @@ class TestTargetObjectToInstance:
         assert result.identifier.endpoint == "http://test"
         assert result.identifier.model_name == "gpt-4"
         assert result.identifier.temperature == 0.7
+        assert result.generation_ranges == {}
         # hash is auto-populated by the ComponentIdentifier validator and surfaced on
         # the embedded identifier so the frontend can dedupe targets that resolve to the
         # same underlying configuration.
         assert result.identifier.hash is not None
         assert result.identifier.hash == mock_identifier.hash
 
-    def test_no_endpoint_returns_none(self) -> None:
+    def test_no_endpoint_returns_none(self, *, target_obj: MagicMock) -> None:
         """Test that missing endpoint returns None."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(
             class_name="TextTarget",
@@ -1606,9 +1636,8 @@ class TestTargetObjectToInstance:
         assert result.identifier.endpoint is None
         assert result.identifier.model_name is None
 
-    def test_no_get_identifier_uses_class_name(self) -> None:
+    def test_no_get_identifier_uses_class_name(self, *, target_obj: MagicMock) -> None:
         """Test that target uses class name from identifier."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(class_name="FakeTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
@@ -1619,9 +1648,8 @@ class TestTargetObjectToInstance:
         assert result.identifier.endpoint is None
         assert result.identifier.model_name is None
 
-    def test_supports_multi_turn_true_when_capability_set(self) -> None:
+    def test_supports_multi_turn_true_when_capability_set(self, *, target_obj: MagicMock) -> None:
         """Test that targets with supports_multi_turn capability expose it via capabilities."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1637,9 +1665,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supports_multi_turn is True
 
-    def test_supports_multi_turn_false_when_capability_not_set(self) -> None:
+    def test_supports_multi_turn_false_when_capability_not_set(self, *, target_obj: MagicMock) -> None:
         """Test that targets without supports_multi_turn capability expose False via capabilities."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=False)
         mock_identifier = ComponentIdentifier(
             class_name="TextTarget",
@@ -1651,9 +1678,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supports_multi_turn is False
 
-    def test_supports_multi_turn_not_extracted_from_identifier_params(self) -> None:
+    def test_supports_multi_turn_not_extracted_from_identifier_params(self, *, target_obj: MagicMock) -> None:
         """Identifier-level supports_multi_turn must not leak into target_specific_params or override capabilities."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1672,9 +1698,8 @@ class TestTargetObjectToInstance:
         # supports_multi_turn from identifier params should NOT bleed into target_specific_params
         assert result.target_specific_params is None or "supports_multi_turn" not in result.target_specific_params
 
-    def test_capabilities_includes_all_capability_flags(self) -> None:
+    def test_capabilities_includes_all_capability_flags(self, *, target_obj: MagicMock) -> None:
         """Test that all boolean capability flags are exposed via the capabilities DTO."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
@@ -1695,9 +1720,8 @@ class TestTargetObjectToInstance:
         assert result.capabilities.supports_editable_history is True
         assert result.capabilities.supports_system_prompt is True
 
-    def test_capabilities_defaults_when_capabilities_minimal(self) -> None:
+    def test_capabilities_defaults_when_capabilities_minimal(self, *, target_obj: MagicMock) -> None:
         """Test that unset capability flags default to False."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(class_name="MinimalTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
@@ -1711,9 +1735,8 @@ class TestTargetObjectToInstance:
         assert result.capabilities.supports_editable_history is False
         assert result.capabilities.supports_system_prompt is False
 
-    def test_extra_params_in_target_specific_params(self) -> None:
+    def test_extra_params_in_target_specific_params(self, *, target_obj: MagicMock) -> None:
         """Test that non-extracted params like reasoning_effort appear in target_specific_params."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIResponseTarget",
@@ -1737,9 +1760,8 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params["reasoning_summary"] == "auto"
         assert result.target_specific_params["max_output_tokens"] == 4096
 
-    def test_no_extra_params_returns_none_target_specific(self) -> None:
+    def test_no_extra_params_returns_none_target_specific(self, *, target_obj: MagicMock) -> None:
         """Test that when only extracted params exist, target_specific_params is None."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1759,9 +1781,8 @@ class TestTargetObjectToInstance:
         assert result.identifier.top_p == 0.9
         assert result.target_specific_params is None
 
-    def test_none_valued_extra_params_excluded(self) -> None:
+    def test_none_valued_extra_params_excluded(self, *, target_obj: MagicMock) -> None:
         """Test that extra params with None values are excluded from target_specific_params."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIResponseTarget",
@@ -1781,9 +1802,8 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params is not None
         assert result.target_specific_params == {"reasoning_effort": "high"}
 
-    def test_explicit_target_specific_params_merged_with_extras(self) -> None:
+    def test_explicit_target_specific_params_merged_with_extras(self, *, target_obj: MagicMock) -> None:
         """Test that explicit target_specific_params from identifier merge with extra params."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="CustomTarget",
@@ -1805,9 +1825,8 @@ class TestTargetObjectToInstance:
         # explicit target_specific_params from identifier should also be present
         assert result.target_specific_params["explicit_param"] == "explicit_val"
 
-    def test_chat_target_extra_params_preserved(self) -> None:
+    def test_chat_target_extra_params_preserved(self, *, target_obj: MagicMock) -> None:
         """Test that OpenAIChatTarget params like frequency_penalty appear in target_specific_params."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1835,9 +1854,8 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params["seed"] == 42
         assert result.target_specific_params["max_completion_tokens"] == 2048
 
-    def test_supported_input_modalities_text_only_default(self) -> None:
+    def test_supported_input_modalities_text_only_default(self, *, target_obj: MagicMock) -> None:
         """Test that a target with default capabilities reports only 'text'."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
@@ -1846,9 +1864,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supported_input_modalities == ["text"]
 
-    def test_supported_input_modalities_multimodal(self) -> None:
+    def test_supported_input_modalities_multimodal(self, *, target_obj: MagicMock) -> None:
         """Test that a multimodal target reports all individual input types."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             input_modalities=frozenset(
                 {
@@ -1868,9 +1885,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supported_input_modalities == ["image_path", "text"]
 
-    def test_supported_input_modalities_audio_video(self) -> None:
+    def test_supported_input_modalities_audio_video(self, *, target_obj: MagicMock) -> None:
         """Test that a target supporting audio and video reports those types."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             input_modalities=frozenset(
                 {
@@ -1888,9 +1904,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supported_input_modalities == ["audio_path", "image_path", "text"]
 
-    def test_supported_output_modalities_default_text(self) -> None:
+    def test_supported_output_modalities_default_text(self, *, target_obj: MagicMock) -> None:
         """Test that a target with default capabilities reports only 'text' as output."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
@@ -1899,9 +1914,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supported_output_modalities == ["text"]
 
-    def test_supported_output_modalities_image_target(self) -> None:
+    def test_supported_output_modalities_image_target(self, *, target_obj: MagicMock) -> None:
         """Test that an image-output target reports 'image_path' in supported_output_modalities."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             output_modalities=frozenset({frozenset({"image_path"})}),
         )
@@ -1912,9 +1926,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supported_output_modalities == ["image_path"]
 
-    def test_supported_output_modalities_video_with_audio(self) -> None:
+    def test_supported_output_modalities_video_with_audio(self, *, target_obj: MagicMock) -> None:
         """Test that a video target reports flattened sorted unique output modalities."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(
             output_modalities=frozenset(
                 {
@@ -1930,9 +1943,8 @@ class TestTargetObjectToInstance:
 
         assert result.capabilities.supported_output_modalities == ["audio_path", "video_path"]
 
-    def test_target_configuration_excluded_from_target_specific_params(self) -> None:
+    def test_target_configuration_excluded_from_target_specific_params(self, *, target_obj: MagicMock) -> None:
         """Test that the verbose target_configuration blob is filtered from target_specific_params."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities(supports_multi_turn=True)
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1956,15 +1968,17 @@ class TestTargetObjectToInstance:
 class TestTargetObjectToInstanceRoundRobin:
     """Tests for target_object_to_instance with RoundRobinTarget."""
 
-    def test_round_robin_populates_inner_targets(self) -> None:
+    def test_round_robin_populates_inner_targets(
+        self, *, target_mock_factory: Callable[[type[PromptTarget]], MagicMock]
+    ) -> None:
         """Inner targets list is populated for RoundRobinTarget objects."""
         from pyrit.prompt_target import RoundRobinTarget
 
         # Build a mock RoundRobinTarget with two inner targets
-        rr = MagicMock(spec=RoundRobinTarget)
+        rr = target_mock_factory(RoundRobinTarget)
         rr.capabilities = TargetCapabilities(supports_multi_turn=True)
 
-        inner_a = MagicMock(spec=PromptTarget)
+        inner_a = target_mock_factory(PromptTarget)
         inner_a.capabilities = TargetCapabilities()
         inner_a.get_identifier.return_value = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1972,7 +1986,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"endpoint": "https://a.openai.azure.com", "model_name": "gpt-4o"},
         )
 
-        inner_b = MagicMock(spec=PromptTarget)
+        inner_b = target_mock_factory(PromptTarget)
         inner_b.capabilities = TargetCapabilities()
         inner_b.get_identifier.return_value = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -1994,8 +2008,12 @@ class TestTargetObjectToInstanceRoundRobin:
         assert len(result.inner_targets) == 2
         assert result.inner_targets[0].identifier.endpoint == "https://a.openai.azure.com"
         assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
+        assert result.generation_ranges == {}
+        assert all(inner.generation_ranges == {} for inner in result.inner_targets)
 
-    def test_round_robin_identifier_carries_no_model_name(self) -> None:
+    def test_round_robin_identifier_carries_no_model_name(
+        self, *, target_mock_factory: Callable[[type[PromptTarget]], MagicMock]
+    ) -> None:
         """The composite identifier owns no model_name; inner targets carry theirs.
 
         Hoisting a shared model name for display is now the frontend's concern
@@ -2004,10 +2022,10 @@ class TestTargetObjectToInstanceRoundRobin:
         """
         from pyrit.prompt_target import RoundRobinTarget
 
-        rr = MagicMock(spec=RoundRobinTarget)
+        rr = target_mock_factory(RoundRobinTarget)
         rr.capabilities = TargetCapabilities()
 
-        inner_a = MagicMock(spec=PromptTarget)
+        inner_a = target_mock_factory(PromptTarget)
         inner_a.capabilities = TargetCapabilities()
         inner_a.get_identifier.return_value = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -2015,7 +2033,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
         )
 
-        inner_b = MagicMock(spec=PromptTarget)
+        inner_b = target_mock_factory(PromptTarget)
         inner_b.capabilities = TargetCapabilities()
         inner_b.get_identifier.return_value = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -2038,14 +2056,16 @@ class TestTargetObjectToInstanceRoundRobin:
         assert result.inner_targets[0].identifier.model_name == "gpt-4o"
         assert result.inner_targets[1].identifier.underlying_model_name == "gpt-4o"
 
-    def test_round_robin_inner_targets_retain_distinct_models(self) -> None:
+    def test_round_robin_inner_targets_retain_distinct_models(
+        self, *, target_mock_factory: Callable[[type[PromptTarget]], MagicMock]
+    ) -> None:
         """Inner targets keep their own deployment names; the mapper does not merge them."""
         from pyrit.prompt_target import RoundRobinTarget
 
-        rr = MagicMock(spec=RoundRobinTarget)
+        rr = target_mock_factory(RoundRobinTarget)
         rr.capabilities = TargetCapabilities()
 
-        inner_a = MagicMock(spec=PromptTarget)
+        inner_a = target_mock_factory(PromptTarget)
         inner_a.capabilities = TargetCapabilities()
         inner_a.get_identifier.return_value = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -2053,7 +2073,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"model_name": "deploy-japan", "underlying_model_name": "gpt-4o"},
         )
 
-        inner_b = MagicMock(spec=PromptTarget)
+        inner_b = target_mock_factory(PromptTarget)
         inner_b.capabilities = TargetCapabilities()
         inner_b.get_identifier.return_value = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -2075,9 +2095,8 @@ class TestTargetObjectToInstanceRoundRobin:
         assert result.inner_targets[0].identifier.model_name == "deploy-japan"
         assert result.inner_targets[1].identifier.model_name == "deploy-us"
 
-    def test_non_round_robin_has_no_inner_targets(self) -> None:
+    def test_non_round_robin_has_no_inner_targets(self, *, target_obj: MagicMock) -> None:
         """Regular targets return None for inner_targets."""
-        target_obj = MagicMock(spec=PromptTarget)
         target_obj.capabilities = TargetCapabilities()
         target_obj.get_identifier.return_value = ComponentIdentifier(
             class_name="TextTarget",

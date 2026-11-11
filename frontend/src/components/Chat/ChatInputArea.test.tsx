@@ -6,6 +6,12 @@ import ChatInputArea from "./ChatInputArea";
 import type { ChatInputAreaHandle } from "./ChatInputArea";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import type { MessageAttachment, TargetCapabilities } from "@/types";
+import { mediaApi } from "@/services/api";
+import { buildMessagePieces } from "@/utils/messageMapper";
+
+jest.mock("@/services/api", () => ({
+  mediaApi: { upload: jest.fn().mockResolvedValue({ value: "/stored/attachment" }) },
+}));
 
 // Wrapper component for Fluent UI context
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -52,6 +58,70 @@ describe("ChatInputArea", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(mediaApi.upload).mockResolvedValue({ value: "/stored/attachment" });
+  });
+
+  it.each(["picker", "drop", "imperative"])(
+    "should start a %s upload before Send without blocking editing and reuse the pending upload",
+    async (method: string) => {
+      const user = userEvent.setup();
+      const file = new File(["image bytes"], "early.png", { type: "image/png" });
+      let finishUpload: (response: { value: string }) => void = () => {};
+      jest.mocked(mediaApi.upload).mockReturnValueOnce(new Promise((resolve) => { finishUpload = resolve }));
+      const ref = React.createRef<ChatInputAreaHandle>();
+      const prepared = jest.fn();
+      const onSend = jest.fn(async (text: string, _converted: string | undefined, attachments: MessageAttachment[]) => {
+        prepared(await buildMessagePieces(text, attachments));
+        return sentOutcome;
+      });
+      render(<TestWrapper><ChatInputArea {...defaultProps} ref={ref} onSend={onSend} /></TestWrapper>);
+      if (method === "picker") await user.upload(screen.getByTestId("file-input"), file);
+      else if (method === "drop") {
+        fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files: [file] } });
+      } else act(() => { ref.current?.addFiles([file]) });
+
+      await waitFor(() => expect(mediaApi.upload).toHaveBeenCalledWith({
+        data_type: "image_path", content: "aW1hZ2UgYnl0ZXM=", mime_type: "image/png",
+      }));
+      expect(onSend).not.toHaveBeenCalled();
+      expect(screen.getByRole("status")).toHaveTextContent("Uploading attachments...");
+      await user.type(screen.getByRole("textbox"), "Still editable");
+      await user.click(getSendButton());
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(prepared).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveValue("Still editable");
+      await act(async () => { finishUpload({ value: "/stored/early.png" }) });
+      await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
+      expect(prepared).toHaveBeenCalledWith([
+        { data_type: "text", original_value: "Still editable", prompt_metadata: undefined },
+        expect.objectContaining({ data_type: "image_path", original_value: "/stored/early.png" }),
+      ]);
+      expect(mediaApi.upload).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("should retain failed attachments and text, allow retry, and ignore removed uploads", async () => {
+    const user = userEvent.setup();
+    jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error("Upload unavailable"));
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Keep text" /></TestWrapper>);
+    await user.upload(screen.getByTestId("file-input"), new File(["image"], "retry.png", { type: "image/png" }));
+    expect(await screen.findByText(/Upload failed for retry.png: Upload unavailable/)).toBeInTheDocument();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("textbox")).toHaveValue("Keep text");
+    expect(screen.getByRole("button", { name: "Remove retry.png" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Retry upload" }));
+    await waitFor(() => expect(screen.queryByText(/Upload failed for/)).not.toBeInTheDocument());
+    expect(getSendButton()).not.toHaveAttribute("aria-disabled", "true");
+    expect(mediaApi.upload).toHaveBeenCalledTimes(2);
+
+    let rejectUpload: (error: Error) => void = () => {};
+    jest.mocked(mediaApi.upload).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectUpload = reject }));
+    await user.upload(screen.getByTestId("file-input"), new File(["image"], "removed.png", { type: "image/png" }));
+    await waitFor(() => expect(mediaApi.upload).toHaveBeenCalledTimes(3));
+    await user.click(screen.getByRole("button", { name: "Remove removed.png" }));
+    await act(async () => { rejectUpload(new Error("Late failure")) });
+    expect(screen.queryByText(/Late failure/)).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("Keep text");
   });
 
   it("should pass dropped files through the existing attachment pipeline in order without changing the text draft", () => {
@@ -119,6 +189,30 @@ describe("ChatInputArea", () => {
     await user.click(screen.getByRole("button", { name: /convert/i }));
 
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("should place the compact temperature control immediately after Send without losing converter or Undo actions", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Hello"
+      activeTarget={makeTarget({ target_registry_name: "temperature-target", capabilities: buildCapabilities({ supports_temperature: true }) })}
+      generationDraft={{ temperature: "0" }} onGenerationDraftChange={jest.fn()}
+      undoLastSend={{ isUndoing: false, onUndo }} convertedValue="Converted"
+    /></TestWrapper>);
+    const prompt = screen.getByTestId("prompt-editor");
+    const send = within(prompt).getByRole("button", { name: "Send message" });
+    const temperature = within(prompt).getByRole("button", { name: "Adjust temperature: 0" });
+    const clearConversion = within(prompt).getByRole("button", { name: "Clear conversion" });
+    expect(send.compareDocumentPosition(temperature) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(temperature.compareDocumentPosition(clearConversion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(() => send.focus());
+    await user.tab();
+    expect(temperature).toHaveFocus();
+    expect(temperature).toHaveTextContent("0");
+    await user.click(within(prompt).getByRole("button", { name: "Undo last send" }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    await user.click(within(prompt).getByRole("button", { name: "Toggle converter panel" }));
+    expect(defaultProps.onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
   it("should place Undo directly after the converter button inside the prompt box without opening the panel", async () => {
