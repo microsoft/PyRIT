@@ -196,6 +196,14 @@ async def test_azure_blob_storage_io_write_file():
         )
 
 
+def test_azure_blob_storage_io_accepts_raw_mime_string():
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url="https://youraccount.blob.core.windows.net/yourcontainer",
+        blob_content_type="text/html",  # type: ignore[arg-type]
+    )
+    assert azure_blob_storage_io._blob_content_type == "text/html"
+
+
 async def test_azure_blob_storage_io_write_file_with_relative_path():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     azure_blob_storage_io = AzureBlobStorageIO(
