@@ -231,11 +231,9 @@ class DecompositionConverter(Converter):
         Raises:
             InvalidJsonException: If the response is missing, unparseable, or fails validation.
         """
-        conversation_id = str(uuid.uuid4())
-        (
-            await self._converter_target.set_system_prompt_async(
-                system_prompt=self._decomposition_prompt.render_template_value(), conversation_id=conversation_id
-            )
+        # The decomposition instructions are sent in the user turn; see Converter._prepend_instructions.
+        user_prompt = self._prepend_instructions(
+            instructions=self._decomposition_prompt.render_template_value(), prompt=objective
         )
 
         prompt_metadata = JsonResponseConfig(
@@ -248,10 +246,10 @@ class DecompositionConverter(Converter):
                 MessagePiece(
                     role="user",
                     original_value=objective,
-                    converted_value=objective,
+                    converted_value=user_prompt,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    conversation_id=conversation_id,
+                    conversation_id=str(uuid.uuid4()),
                     sequence=0,
                     prompt_metadata=prompt_metadata,
                     converter_identifiers=[self.get_identifier()],

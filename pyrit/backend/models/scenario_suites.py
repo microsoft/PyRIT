@@ -52,8 +52,8 @@ class ScenarioSuiteResponse(BaseModel):
     version: str | None = Field(
         ...,
         description=(
-            "Opaque version required to update a stored suite. None for a registered suite, "
-            "which has no document to guard."
+            "Opaque version required to update a stored suite and optionally sent to delete it. "
+            "None for a registered suite, which has no document to guard."
         ),
     )
     entry_statuses: list[ScenarioSuiteEntryStatus] = Field(

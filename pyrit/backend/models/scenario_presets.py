@@ -41,8 +41,8 @@ class ScenarioPresetResponse(BaseModel):
     version: str | None = Field(
         ...,
         description=(
-            "Opaque version of the stored document, required to update it. None for a registered preset, "
-            "which has no document to guard and nothing to round-trip into a write."
+            "Opaque version of the stored document, required to update it and optionally sent to delete it. "
+            "None for a registered preset, which has no document to guard and nothing to round-trip into a write."
         ),
     )
     issues: list[PresetIssue] = Field(
