@@ -39,6 +39,7 @@ from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
     AssertBinaryRate,
     AssertCategoryJudgment,
     AssertDimensionResult,
@@ -53,6 +54,7 @@ from pyrit.models import (
     Message,
     PromptResponseError,
     ScenarioResult,
+    ScenarioRunPlan,
     Score,
     ScoreStatus,
     SeedPrompt,
@@ -64,7 +66,7 @@ from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
 from pyrit.score import AssertScoringDimension, get_assert_failure_criterion
 from unit.assert_mocks import make_assert_config, make_assert_result
-from unit.mocks import MockPromptTarget, make_scenario_result
+from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -677,6 +679,18 @@ def test_unmarked_legacy_scores_fall_back_to_the_objective_judge_class() -> None
     assert set(row.verdicts) == {"policy_violation", "overrefusal"}
 
 
+def test_supplied_objective_scorer_is_not_reported_as_the_policy_judge() -> None:
+    objective = _score("unused", piece_id=uuid.uuid4(), scorer_class="SubStringScorer", marked=False)
+    objective.score_category = []
+
+    row = _build_row(technique="t", result=_result(objective), piece_scores=[objective], context=None)
+    metrics = _aggregate(scenario_result_id="run", rows=[row])
+
+    assert row.verdicts == {"objective": True}
+    assert metrics.split_unavailable_reason == NODE_JUDGMENTS_UNAVAILABLE
+    assert "policy_violation" not in metrics.techniques["t"].dimensions
+
+
 def test_split_reads_policy_violation_when_another_dimension_is_the_objective() -> None:
     piece_id = uuid.uuid4()
     objective = _score("budget_compliance", piece_id=piece_id, scorer_class="Judge", marked=True)
@@ -814,6 +828,15 @@ def test_unreadable_attack_identifiers_leave_the_policy_unresolved() -> None:
         assert _group_key(result) is None
 
 
+def _saved_result(*, module: str = AssertPolicy.__module__, registry_name: str | None = None) -> ScenarioResult:
+    plan = ScenarioRunPlan(scenario_registry_name=registry_name, atomic_groups=[], seed_groups=[])
+    return ScenarioResult(
+        scenario_identifier=make_scenario_identifier(scenario_name="AssertPolicy", scenario_module=module),
+        attack_results={},
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")} if registry_name else {},
+    )
+
+
 async def test_non_assert_result_is_rejected_async() -> None:
     result = make_scenario_result(scenario_name="ContentHarms", attack_results={})
 
@@ -821,10 +844,38 @@ async def test_non_assert_result_is_rejected_async() -> None:
         await compute_assert_policy_metrics_async(result)
 
 
+@pytest.mark.parametrize(
+    ("module", "registry_name"),
+    [
+        # Another scanner's class can share the name; its saved registry name decides.
+        (AssertPolicy.__module__, "custom.scan"),
+        # Without a registry name, a same-named class from another module isn't ASSERT.
+        ("my_package.scenarios", None),
+    ],
+)
+async def test_same_class_name_from_another_scenario_is_rejected_async(module: str, registry_name: str | None) -> None:
+    with pytest.raises(NotAssertPolicyRunError, match="came from"):
+        await compute_assert_policy_metrics_async(_saved_result(module=module, registry_name=registry_name))
+
+
+@pytest.mark.parametrize(
+    ("module", "registry_name"),
+    [
+        (AssertPolicy.__module__, None),
+        ("pyrit.scenario.foundry.assert_policy", None),
+        ("my_package.scenarios", "foundry.assert_policy"),
+    ],
+)
+async def test_assert_results_are_recognized_by_registry_name_or_module_async(
+    module: str, registry_name: str | None
+) -> None:
+    metrics = await compute_assert_policy_metrics_async(_saved_result(module=module, registry_name=registry_name))
+
+    assert metrics.total == 0
+
+
 async def test_empty_run_has_no_judged_results_async() -> None:
-    metrics = await compute_assert_policy_metrics_async(
-        make_scenario_result(scenario_name="AssertPolicy", attack_results={})
-    )
+    metrics = await compute_assert_policy_metrics_async(_saved_result())
 
     assert metrics == AssertPolicyMetrics(
         scenario_result_id=metrics.scenario_result_id,

@@ -380,7 +380,8 @@ for technique, technique_metrics in assert_metrics.techniques.items():
 #   violation or not. ASSERT reports grade counts instead of a violation rate for scaled dimensions;
 #   ASSERT metrics here report both.
 # - The impermissible and permissible rates come from the `policy_violation` judge's per-category
-#   judgments, so they aren't available in `direct` mode or when `policy_violation` is disabled.
+#   judgments, so they aren't available in `direct` mode, when `policy_violation` is disabled, or
+#   with a supplied `objective_scorer`.
 # - A group with both inputs runs as the baseline and with each selected technique on the same
 #   objective, so the results are paired. ASSERT samples prompt and scenario cases separately.
 # - In `assert_package`, a stored user prompt opens the conversation without passing through the

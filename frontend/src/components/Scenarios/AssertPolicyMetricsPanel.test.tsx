@@ -132,6 +132,13 @@ describe('AssertPolicyMetricsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Rates by policy category' })).not.toBeInTheDocument()
   })
 
+  it('renders nothing when the backend identifies another scenario', () => {
+    mockUseMetrics.mockReturnValue({ status: 'not_assert', metrics: null, error: null, retry: jest.fn() })
+    render(<FluentProvider theme={webLightTheme}><AssertPolicyMetricsPanel scenarioResultId="run" /></FluentProvider>)
+
+    expect(screen.queryByTestId('assert-policy-metrics')).not.toBeInTheDocument()
+  })
+
   it('offers a retry after a load error', async () => {
     const user = userEvent.setup()
     const retry = jest.fn()
@@ -145,9 +152,15 @@ describe('AssertPolicyMetricsPanel', () => {
 })
 
 describe('isAssertPolicyRun', () => {
-  it('recognizes the registry name or the scenario class', () => {
+  it('lets a stored registry name decide', () => {
     expect(isAssertPolicyRun({ scenario_registry_name: 'foundry.assert_policy', scenario_name: 'X' })).toBe(true)
-    expect(isAssertPolicyRun({ scenario_registry_name: null, scenario_name: 'AssertPolicy' })).toBe(true)
     expect(isAssertPolicyRun({ scenario_registry_name: 'foundry.red_team_agent', scenario_name: 'RedTeamAgent' })).toBe(false)
+    expect(isAssertPolicyRun({ scenario_registry_name: 'custom.scan', scenario_name: 'AssertPolicy' })).toBe(false)
+  })
+
+  it('matches older runs without a registry name by class name', () => {
+    expect(isAssertPolicyRun({ scenario_registry_name: null, scenario_name: 'AssertPolicy' })).toBe(true)
+    expect(isAssertPolicyRun({ scenario_name: 'AssertPolicy' })).toBe(true)
+    expect(isAssertPolicyRun({ scenario_registry_name: null, scenario_name: 'ContentHarms' })).toBe(false)
   })
 })

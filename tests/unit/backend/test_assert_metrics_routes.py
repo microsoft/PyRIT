@@ -10,10 +10,12 @@ from fastapi.testclient import TestClient
 
 from pyrit.analytics.assert_policy_metrics import _rate
 from pyrit.backend.main import app
+from pyrit.backend.routes.scenarios import NOT_ASSERT_POLICY_RUN_TYPE
 from pyrit.backend.services.scenario_run_service import ScenarioRunNotCompletedError
-from pyrit.models import AssertPolicyMetrics, ScenarioResult
+from pyrit.models import SCENARIO_RUN_PLAN_METADATA_KEY, AssertPolicyMetrics, ScenarioResult, ScenarioRunPlan
 from pyrit.models.results.assert_policy_metrics import AssertNotJudgedCounts, AssertTechniqueMetrics
-from unit.mocks import make_scenario_result
+from pyrit.scenario.scenarios.foundry import AssertPolicy
+from unit.mocks import make_scenario_identifier, make_scenario_result
 
 _URL = "/api/scenarios/runs/saved/assert-metrics"
 
@@ -23,8 +25,15 @@ def client(compatibility_headers: dict[str, str]) -> TestClient:
     return TestClient(app, headers=compatibility_headers)
 
 
-def _assert_result() -> ScenarioResult:
-    return make_scenario_result(scenario_name="AssertPolicy", attack_results={})
+def _assert_result(*, registry_name: str | None = None) -> ScenarioResult:
+    plan = ScenarioRunPlan(scenario_registry_name=registry_name, atomic_groups=[], seed_groups=[])
+    return ScenarioResult(
+        scenario_identifier=make_scenario_identifier(
+            scenario_name="AssertPolicy", scenario_module=AssertPolicy.__module__
+        ),
+        attack_results={},
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")} if registry_name else {},
+    )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -86,6 +95,25 @@ def test_assert_metrics_returns_explicit_errors(
 
     assert response.status_code == expected
     assert response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [
+        make_scenario_result(scenario_name="ContentHarms", attack_results={}),
+        _assert_result(registry_name="custom.scan"),
+    ],
+)
+def test_assert_metrics_identifies_other_scenarios_with_a_problem_type(
+    client: TestClient, saved: ScenarioResult
+) -> None:
+    with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as service:
+        service.return_value.get_run_results_async = AsyncMock(return_value=saved)
+        response = client.get(_URL)
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"] == NOT_ASSERT_POLICY_RUN_TYPE
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -50,6 +50,7 @@ interface AssertPolicyMetricsPanelProps {
 export default function AssertPolicyMetricsPanel({ scenarioResultId }: AssertPolicyMetricsPanelProps) {
   const styles = useAssertPolicyMetricsPanelStyles()
   const { status, metrics, error, retry } = useAssertPolicyMetrics(scenarioResultId)
+  if (status === 'not_assert') return null
   return (
     <section className={styles.root} aria-labelledby="assert-metrics-heading" data-testid="assert-policy-metrics">
       <Text as="h2" id="assert-metrics-heading" size={500} weight="semibold">ASSERT policy metrics</Text>

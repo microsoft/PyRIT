@@ -66,9 +66,14 @@ if TYPE_CHECKING:
 
 ASSERT_SCENARIO_CLASS_NAME = "AssertPolicy"
 ASSERT_SCENARIO_REGISTRY_NAME = "foundry.assert_policy"
+# The scenario's module and its short import alias, for results saved without a registry name.
+ASSERT_SCENARIO_MODULES = frozenset(
+    {"pyrit.scenario.scenarios.foundry.assert_policy", "pyrit.scenario.foundry.assert_policy"}
+)
 BASELINE = "baseline"
 POLICY_VIOLATION = "policy_violation"
 OVERREFUSAL = "overrefusal"
+OBJECTIVE = "objective"
 NODE_JUDGMENTS_UNAVAILABLE = "node_judgments_unavailable"
 NO_JUDGED_RESULTS = "no_judged_results"
 
@@ -207,13 +212,33 @@ class _Row:
 
 
 def _require_assert_run(scenario_result: ScenarioResult) -> None:
+    """
+    Check that ``foundry.assert_policy`` produced the result.
+
+    A saved registry name decides. Results saved without one must come from the ``AssertPolicy`` class in
+    the scenario's own module, so another scenario with the same class name isn't mistaken for ASSERT.
+
+    Raises:
+        NotAssertPolicyRunError: If another scenario produced the result.
+    """
     plan = load_scenario_run_plan(scenario_result)
     registry_name = plan.scenario_registry_name if plan is not None else None
-    if registry_name == ASSERT_SCENARIO_REGISTRY_NAME or scenario_result.scenario_name == ASSERT_SCENARIO_CLASS_NAME:
-        return
+    identifier = scenario_result.scenario_identifier
+    if registry_name:
+        if registry_name == ASSERT_SCENARIO_REGISTRY_NAME:
+            return
+        source = registry_name
+    else:
+        if identifier.class_name == ASSERT_SCENARIO_CLASS_NAME and (
+            not identifier.class_module or identifier.class_module in ASSERT_SCENARIO_MODULES
+        ):
+            return
+        source = (
+            f"{identifier.class_module}.{identifier.class_name}" if identifier.class_module else identifier.class_name
+        )
     raise NotAssertPolicyRunError(
         f"ASSERT metrics need a {ASSERT_SCENARIO_REGISTRY_NAME} result, but scenario result "
-        f"{scenario_result.id} came from '{registry_name or scenario_result.scenario_name}'."
+        f"{scenario_result.id} came from '{source}'."
     )
 
 
@@ -511,13 +536,15 @@ def _dimension_scores(*, objective: Score | None, piece_scores: Sequence[Score])
     Select the objective score and the newest ASSERT judge score for each other dimension.
 
     ASSERT judges record each score's dimension with ``AssertDimensionResult``. Results saved before
-    the marker existed fall back to scores from the objective score's scorer class. Scores with equal
+    the marker existed fall back to scores from the objective score's scorer class. A supplied
+    objective scorer's uncategorized score is reported as the ``objective`` dimension. Scores with equal
     timestamps are ordered by ID, so a re-judged dimension resolves the same way on every read.
 
     Returns:
         dict[str, Score]: Scores keyed by dimension name.
     """
-    objective_name = (_dimension_name(objective) or POLICY_VIOLATION) if objective is not None else None
+    # An uncategorized objective score comes from a supplied scorer, not ASSERT's policy judge.
+    objective_name = (_dimension_name(objective) or OBJECTIVE) if objective is not None else None
     marked = [score for score in piece_scores if (result := _dimension_result(score)) and result.dimension]
     if marked or objective is None:
         candidates = marked

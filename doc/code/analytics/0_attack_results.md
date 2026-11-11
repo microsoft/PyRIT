@@ -231,7 +231,11 @@ and graded dimensions add grade counts and the median. It also reports a violati
 rate for each taxonomy category over the conversations that judged it relevant,
 and why unjudged conversations have no verdict. Every rate is an `AssertBinaryRate`
 with ASSERT's 90% Wilson interval and a flag for fewer than 5 applicable
-conversations. See the [Foundry scenarios](../../scanner/foundry.ipynb) page for
+conversations. The result must come from `foundry.assert_policy`: its saved
+registry name decides, and an older result without one must come from PyRIT's
+`AssertPolicy` class, not another class with the same name. A supplied
+`objective_scorer`'s uncategorized verdicts are reported as the `objective`
+dimension. See the [Foundry scenarios](../../scanner/foundry.ipynb) page for
 an example.
 
 ### Scenario producer accounting
