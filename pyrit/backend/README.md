@@ -501,6 +501,12 @@ count, and a clipping flag. These use the same metadata model as the generic att
 Use the saved-conversation APIs above for reference continuation and all transcript
 bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
 
+`GET /api/scenarios/runs/{scenario_result_id}/assert-metrics` returns the SDK's
+`AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
+return 400, runs that haven't completed return 409, and saved results that can't be
+read as ASSERT metrics return 500. The run page shows these metrics for completed
+ASSERT runs.
+
 An entirely rootless saved graph, such as a closed cycle, returns a bounded
 `diagnostics.rootless_result_ids` sample with its total count and clipping flag.
 It does not invent lineage or promote a cycle member to a true root. The sampled

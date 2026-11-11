@@ -213,6 +213,27 @@ supported. The reported difference is descriptive and does not establish that
 the attack caused an outcome to change. No confidence interval is provided,
 because small and constant paired samples need careful uncertainty treatment.
 
+### ASSERT policy metrics
+
+`compute_assert_policy_metrics_async` reports ASSERT's headline rates for a
+`foundry.assert_policy` result: **impermissible behavior violated** and
+**permissible behavior violated**. Each counts a judged conversation once, as
+flagged when any relevant category with that permissibility was violated, and
+as not applicable when none was relevant. Relevance comes from the judge's
+per-category judgments in `category_validated` mode, and permissibility from
+the conversation's own stored taxonomy, not the category it was generated for.
+Rows are the effective execution units that `compute_scenario_statistics`
+counts. Rates are reported separately for each attack technique, by name, and
+for the baseline, and are never pooled. Each technique also reports a violation
+rate for each judge dimension, read independently of the others: not-applicable
+answers and judge replies without a verdict are counted outside its denominator,
+and graded dimensions add grade counts and the median. It also reports a violation
+rate for each taxonomy category over the conversations that judged it relevant,
+and why unjudged conversations have no verdict. Every rate is an `AssertBinaryRate`
+with ASSERT's 90% Wilson interval and a flag for fewer than 5 applicable
+conversations. See the [Foundry scenarios](../../scanner/foundry.ipynb) page for
+an example.
+
 ### Scenario producer accounting
 
 Scenario counts also expose `producer_counts`, separating target-facing,
