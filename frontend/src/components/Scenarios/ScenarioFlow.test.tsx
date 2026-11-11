@@ -23,6 +23,7 @@ jest.mock('@/hooks/useScenarioRunProgress', () => ({
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
+    readiness: jest.fn().mockResolvedValue({ bindings: [], issues: [] }),
     cancelRun: jest.fn(),
     estimateRun: jest.fn(),
     getRunHierarchy: jest.fn(() => new Promise(() => {})),

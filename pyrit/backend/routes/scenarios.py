@@ -38,6 +38,7 @@ from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, Cursor
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import (
     ScenarioRunConflictError,
     ScenarioRunNotCompletedError,
@@ -55,6 +56,7 @@ from pyrit.models import (
     ScenarioRunState,
 )
 from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.scenario_readiness import ScenarioReadiness
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,26 @@ async def get_scan_conversation_async(
 # ============================================================================
 # Scenario Catalog
 # ============================================================================
+
+
+@router.post("/catalog/{scenario_name}/readiness", response_model=ScenarioReadiness)
+async def get_scenario_readiness_async(
+    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest
+) -> ScenarioReadiness:
+    """
+    Resolve scan roles independently of run-size estimation or dataset preparation.
+
+    Returns:
+        ScenarioReadiness: Effective roles and configuration issues.
+    """
+    try:
+        return await run_in_threadpool(
+            ScenarioConfigurationResolver.resolve_readiness,
+            scenario_name=scenario_name,
+            request=request,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.get(
