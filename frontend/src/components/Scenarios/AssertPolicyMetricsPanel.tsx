@@ -50,6 +50,7 @@ interface AssertPolicyMetricsPanelProps {
 export default function AssertPolicyMetricsPanel({ scenarioResultId }: AssertPolicyMetricsPanelProps) {
   const styles = useAssertPolicyMetricsPanelStyles()
   const { status, metrics, error, retry } = useAssertPolicyMetrics(scenarioResultId)
+  if (status === 'not_assert') return null
   return (
     <section className={styles.root} aria-labelledby="assert-metrics-heading" data-testid="assert-policy-metrics">
       <Text as="h2" id="assert-metrics-heading" size={500} weight="semibold">ASSERT policy metrics</Text>
@@ -152,7 +153,7 @@ function exclusionNote(technique: AssertTechniqueMetrics, splitAvailable: boolea
     .map((reason) => `${technique.not_judged[reason]} ${NOT_JUDGED_LABELS[reason]}`)
   const policyNoVerdict = technique.dimension_no_verdict.policy_violation ?? 0
   const splitOnly = [
-    technique.unresolved_policy > 0 ? `${technique.unresolved_policy} without a stored policy` : null,
+    technique.unresolved_policy > 0 ? `${technique.unresolved_policy} without a matching stored policy` : null,
     splitAvailable && technique.rows_without_node_judgments > 0
       ? `${technique.rows_without_node_judgments} without per-category judgments`
       : null,
@@ -167,15 +168,26 @@ function exclusionNote(technique: AssertTechniqueMetrics, splitAvailable: boolea
 
 function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] }) {
   const styles = useAssertPolicyMetricsPanelStyles()
-  const rows = new Map<string, { behavior: string; name: string; permissible: boolean }>()
+  const rows = new Map<string, { behavior: string; policy: string; name: string; permissible: boolean }>()
   for (const technique of techniques) {
     for (const category of technique.categories) {
-      rows.set(`${category.behavior_name}:${category.name}`, {
-        behavior: category.behavior_name, name: category.name, permissible: category.permissible,
+      rows.set(`${category.policy_id}:${category.name}`, {
+        behavior: category.behavior_name,
+        policy: category.policy_id,
+        name: category.name,
+        permissible: category.permissible,
       })
     }
   }
-  const qualify = new Set([...rows.values()].map((row) => row.behavior)).size > 1
+  const policies = new Map<string, string>()
+  for (const row of rows.values()) policies.set(row.policy, row.behavior)
+  const behaviors = [...policies.values()]
+  const policyLabel = (row: { behavior: string; policy: string }): string | null => {
+    if (policies.size < 2) return null
+    // Policies that share a behavior name are told apart by a short taxonomy ID.
+    const shared = behaviors.filter((behavior) => behavior === row.behavior).length > 1
+    return shared ? `${row.behavior} (policy ${row.policy.slice(0, 8)})` : row.behavior
+  }
   return (
     <div className={styles.tableScroll}>
       <Table aria-label="Rates by policy category" size="small">
@@ -189,18 +201,21 @@ function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] })
           </TableRow>
         </TableHeader>
         <TableBody>
-          {[...rows.entries()].map(([key, row]) => (
-            <TableRow key={key}>
-              <TableCell>{qualify ? `${row.behavior}: ${row.name}` : row.name}</TableCell>
-              <TableCell>{row.permissible ? 'Permissible' : 'Impermissible'}</TableCell>
-              {techniques.map((technique) => {
-                const category = technique.categories.find(
-                  (entry) => entry.behavior_name === row.behavior && entry.name === row.name,
-                )
-                return <TableCell key={technique.technique}><RateCell rate={category?.node_violation ?? null} /></TableCell>
-              })}
-            </TableRow>
-          ))}
+          {[...rows.entries()].map(([key, row]) => {
+            const policy = policyLabel(row)
+            return (
+              <TableRow key={key}>
+                <TableCell>{policy ? `${policy}: ${row.name}` : row.name}</TableCell>
+                <TableCell>{row.permissible ? 'Permissible' : 'Impermissible'}</TableCell>
+                {techniques.map((technique) => {
+                  const category = technique.categories.find(
+                    (entry) => entry.policy_id === row.policy && entry.name === row.name,
+                  )
+                  return <TableCell key={technique.technique}><RateCell rate={category?.node_violation ?? null} /></TableCell>
+                })}
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>

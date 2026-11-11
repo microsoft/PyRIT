@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { scenariosApi } from '@/services/api'
 import type { AssertPolicyMetrics } from '@/types'
 
-import { useAssertPolicyMetrics } from './useAssertPolicyMetrics'
+import { NOT_ASSERT_POLICY_RUN_TYPE, useAssertPolicyMetrics } from './useAssertPolicyMetrics'
 
 jest.mock('@/services/api', () => ({ scenariosApi: { getAssertPolicyMetrics: jest.fn() } }))
 let runtime = { ready: true, generation: 'one' }
@@ -40,6 +40,31 @@ describe('useAssertPolicyMetrics', () => {
     expect(view.result.current.status).toBe('loading')
     await waitFor(() => expect(view.result.current.status).toBe('success'))
     expect(getMetrics).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats only the identified not-an-ASSERT-run answer as no metrics', async () => {
+    getMetrics.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 400, data: { type: NOT_ASSERT_POLICY_RUN_TYPE, detail: 'Another scenario' } },
+    })
+    const view = renderHook(() => useAssertPolicyMetrics('run'))
+
+    await waitFor(() => expect(view.result.current.status).toBe('not_assert'))
+    expect(view.result.current.error).toBeNull()
+  })
+
+  it.each([
+    ['a compatibility check', 400, { type: 'urn:pyrit:compatibility:invalid', detail: 'Reload the page' }],
+    ['an untyped bad request', 400, { detail: 'Bad request' }],
+    ['a validation error', 400, { type: '/errors/validation-error', detail: 'Invalid ID' }],
+    ['an unfinished run', 409, { type: NOT_ASSERT_POLICY_RUN_TYPE, detail: 'Not completed' }],
+    ['a server error', 500, { detail: 'Failed' }],
+  ])('reports %s as an error', async (_name, status, data) => {
+    getMetrics.mockRejectedValueOnce({ isAxiosError: true, response: { status, data } })
+    const view = renderHook(() => useAssertPolicyMetrics('run'))
+
+    await waitFor(() => expect(view.result.current.status).toBe('error'))
+    expect(view.result.current.error).toBe(data.detail)
   })
 
   it('waits for the runtime and ignores a request from an older runtime', async () => {

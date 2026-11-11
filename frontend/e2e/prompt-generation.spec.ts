@@ -162,8 +162,10 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await expect(page.getByRole('heading', { level: 2, name: FOLLOW_UP_SCENARIO })).toBeVisible({ timeout: JOB_TIMEOUT_MS })
   const selected = page.getByRole('table', { name: 'Selected datasets' })
   await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
-  await expect(page.getByTestId('requested-datasets-warning')).toHaveCount(0)
-  await expect(page.getByRole('link', { name: 'Generate an ASSERT policy dataset' })).toBeVisible()
+  const actions = page.getByRole('group', { name: 'Dataset actions' })
+  await expect(actions.getByRole('link', { name: 'Browse datasets', exact: true })).toHaveAttribute('href', '/datasets')
+  await expect(actions.getByRole('link', { name: 'Generate datasets', exact: true }))
+    .toHaveAttribute('href', '/datasets/generate/new?generator=assert')
 
   // Without a link, the scenario starts with no dataset and the generated one can be chosen.
   await page.goto(`/scanner/launch/${FOLLOW_UP_SCENARIO}`)

@@ -48,6 +48,13 @@ function singleValue(params: URLSearchParams, name: string): string | undefined 
   return value || undefined
 }
 
+/** Reads one opaque value exactly as written, since whitespace can be part of a dataset's identity. */
+function exactValue(params: URLSearchParams, name: string): string | undefined {
+  const values = params.getAll(name)
+  const value = values.length === 1 ? values[0] : undefined
+  return value?.trim() ? value : undefined
+}
+
 /** Reads the new-generation query. A missing or repeated parameter is ignored. */
 export function newGenerationParamsFromSearch(params: URLSearchParams): NewGenerationParams {
   return {
@@ -55,6 +62,6 @@ export function newGenerationParamsFromSearch(params: URLSearchParams): NewGener
     template: singleValue(params, TEMPLATE_PARAM),
     suite: singleValue(params, SUITE_PARAM),
     from: singleValue(params, FROM_PARAM),
-    selectionKey: singleValue(params, SELECTION_KEY_PARAM),
+    selectionKey: exactValue(params, SELECTION_KEY_PARAM),
   }
 }

@@ -27,5 +27,13 @@ describe('promptGenerationRoutes', () => {
       from: 'gen-1',
       selectionKey: 'dataset:named:x',
     })
+    expect(newGenerationParamsFromSearch(new URLSearchParams('selection_key=%20')).selectionKey).toBeUndefined()
+  })
+
+  it('round-trips a selection key exactly, so whitespace still names a different dataset', () => {
+    for (const selectionKey of ['dataset:named: returns ', 'dataset:named:returns ', 'dataset:named:returns']) {
+      const search = new URL(newPromptGenerationRoutePath({ selectionKey }), 'http://localhost').searchParams
+      expect(newGenerationParamsFromSearch(search).selectionKey).toBe(selectionKey)
+    }
   })
 })

@@ -17,6 +17,7 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import (
@@ -61,6 +62,9 @@ from pyrit.models.scenario_readiness import ScenarioReadiness
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+# The problem type for ASSERT metrics requested for another scenario's run.
+NOT_ASSERT_POLICY_RUN_TYPE = "/errors/not-assert-policy-run"
 
 
 @router.get("/runs/{scenario_result_id}/launch-configuration", response_model=RunScenarioRequest)
@@ -680,22 +684,29 @@ async def get_paired_outcomes_async(
     "/runs/{scenario_result_id}/assert-metrics",
     response_model=AssertPolicyMetrics,
     responses={
-        400: {"model": ProblemDetail, "description": "Run is not a foundry.assert_policy run"},
+        400: {
+            "model": ProblemDetail,
+            "description": f"Run is not a foundry.assert_policy run (type '{NOT_ASSERT_POLICY_RUN_TYPE}')",
+        },
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
         500: {"model": ProblemDetail, "description": "Saved results could not be read as ASSERT metrics"},
     },
 )
-async def get_assert_policy_metrics_async(*, scenario_result_id: IdentifierStr) -> AssertPolicyMetrics:
+async def get_assert_policy_metrics_async(
+    *, request: Request, scenario_result_id: IdentifierStr
+) -> AssertPolicyMetrics | JSONResponse:
     """
     Report ASSERT's metrics for a completed foundry.assert_policy run.
 
-    Unfinished runs return 409 and other scenarios 400. Saved results that can't be loaded or read
-    as ASSERT metrics are internal failures: they're logged and return a sanitized 500 rather than
-    reaching the global ValueError-to-400 handler.
+    Unfinished runs return 409. Other scenarios return 400 with the problem type
+    ``NOT_ASSERT_POLICY_RUN_TYPE``, so clients can tell them from other bad requests. Saved results
+    that can't be loaded or read as ASSERT metrics are internal failures: they're logged and return a
+    sanitized 500 rather than reaching the global ValueError-to-400 handler.
 
     Returns:
-        AssertPolicyMetrics: Per-technique permissibility split, judge-dimension rates, and category rates.
+        AssertPolicyMetrics | JSONResponse: Per-technique permissibility split, judge-dimension rates, and
+            category rates, or the not-an-ASSERT-run problem.
     """
     try:
         result = await get_scenario_run_service().get_run_results_async(scenario_result_id=scenario_result_id)
@@ -707,7 +718,18 @@ async def get_assert_policy_metrics_async(*, scenario_result_id: IdentifierStr) 
     except ScenarioRunNotCompletedError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
     except NotAssertPolicyRunError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        problem = ProblemDetail(
+            type=NOT_ASSERT_POLICY_RUN_TYPE,
+            title="Not an ASSERT run",
+            status=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+            instance=request.url.path,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/problem+json",
+            content=problem.model_dump(exclude_none=True),
+        )
     except ValueError as exc:
         logger.exception("Could not compute ASSERT metrics for scenario run %s.", scenario_result_id)
         raise HTTPException(

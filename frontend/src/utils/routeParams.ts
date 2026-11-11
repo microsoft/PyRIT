@@ -88,14 +88,17 @@ export function scenarioLaunchRoutePath(scenarioName: string, datasetNames: read
   return `${path}?${params.toString()}`
 }
 
-/** Reads the distinct, non-empty dataset names requested for preselection. */
+/**
+ * Reads the distinct dataset names requested for preselection, exactly as written. Names are
+ * opaque, so whitespace is kept; blank values are kept too so the form can reject them.
+ */
 export function datasetNamesFromSearchParams(params: URLSearchParams): string[] {
-  const names: string[] = []
-  for (const value of params.getAll(DATASET_QUERY_PARAM)) {
-    const name = value.trim()
-    if (name && !names.includes(name)) names.push(name)
-  }
-  return names
+  return [...new Set(params.getAll(DATASET_QUERY_PARAM))]
+}
+
+/** Whether a linked dataset name is blank, which no dataset can be named. */
+export function isBlankDatasetName(name: string): boolean {
+  return name.trim() === ''
 }
 
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {

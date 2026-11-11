@@ -59,7 +59,9 @@ class _TargetTraceProcessor(SpanProcessor):
         self._roots_ended: set[int] = set()
         self._lock = Lock()
 
-    def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+    def on_start(  # pyrit-keyword-only-exempt OpenTelemetry SpanProcessor.on_start(span, parent_context)
+        self, span: Span, parent_context: Context | None = None
+    ) -> None:
         context = span.get_span_context()
         parent = span.parent
         with self._lock:

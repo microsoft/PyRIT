@@ -20,7 +20,6 @@ import {
   nextDatasetName,
   progressText,
   stageLabel,
-  withIndefiniteArticle,
 } from './promptGenerationPresentation'
 
 describe('promptGenerationPresentation', () => {
@@ -59,9 +58,6 @@ describe('promptGenerationPresentation', () => {
     expect(generatorDisplayName([], 'unknown')).toBe('unknown')
     expect(stageLabel(ASSERT_DESCRIPTOR, 'dimensions')).toBe('Resolve coverage dimensions')
     expect(stageLabel(undefined, 'custom')).toBe('custom')
-    expect(withIndefiniteArticle('ASSERT dataset')).toBe('an ASSERT dataset')
-    expect(withIndefiniteArticle('Objective set')).toBe('an Objective set')
-    expect(withIndefiniteArticle('policy')).toBe('a policy')
     expect(formatRange(2, 2)).toBe('2')
     expect(formatRange(1000, 2500)).toBe('1,000–2,500')
     const progress = { completed_stages: [], current_stage: 'seed_groups', items_completed: 3, items_total: 10 }

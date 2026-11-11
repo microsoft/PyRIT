@@ -103,8 +103,9 @@ interface InitialFormInput {
   /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
   initialRun?: RunScenarioRequest
   /**
-   * Stored datasets a link preselected. When non-empty they replace the dataset sources from
-   * the saved run or preset; that request's other dataset settings, such as limits, still apply.
+   * Dataset names a link preselected. When given, even empty because every linked name was
+   * blank, they replace the sources from the saved run or preset, so a link never falls back to
+   * the defaults; that request's other dataset settings, such as limits, still apply.
    */
   datasetNames?: readonly string[]
 }
@@ -117,7 +118,7 @@ function initialDatasetEdits(
   base: ScenarioDatasetRequest,
   datasetNames: readonly string[] | undefined,
 ): ScenarioDatasetRequest {
-  if (!datasetNames || datasetNames.length === 0) return base
+  if (datasetNames === undefined) return base
   return { ...base, sources: datasetNames.map((name) => ({ name })) }
 }
 

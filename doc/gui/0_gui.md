@@ -281,7 +281,9 @@ results, next to media output. Each completed generation stores a new dataset; t
 change a dataset, edit its policy and regenerate it under a new name. When an ASSERT
 dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
 To list the datasets you generated, set the catalog's **Origins** filter to
-**Generated**.
+**Generated**. A scanner's Datasets section also has **Browse datasets** and
+**Generate datasets**; Generate opens the ASSERT form for `foundry.assert_policy`,
+which needs at least one dataset, and the generator list for other scanners.
 
 ## History
 
