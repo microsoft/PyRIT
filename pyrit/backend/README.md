@@ -379,11 +379,20 @@ once per scenario/runtime, keeps it through form edits, and offers retry only af
 failed load. Fixed/subset source restrictions still apply; the general dataset catalog
 remains unfiltered. Launch and resume validate the actual selected contents again.
 
-The ASSERT launch form opts into that compatible-only picker. Other scenarios and
-preset editing keep provider-inclusive metadata browsing and their existing reload/reset
-behavior; non-ASSERT scanner pages retain the explicit missing-only `Load datasets`
-action. `Stored only`, `Load missing`, and `Refresh` remain scan fetch policies, not
-replacements for that manual action.
+Scanner and preset forms share the scenario-compatible listing. They automatically
+prepare selected default, linked, saved, or newly added sources through the existing
+`POST /api/scenarios/catalog/{scenario_name}/datasets/load` route. Stored contents are
+reused; only missing provider-backed sources load. Missing sources without a provider
+produce an explicit error and Retry action. Listing choices does not fetch providers,
+and parameter, technique, limit, or filter edits do not reload them. Launch waits for
+the current selection's preparation and still validates it server-side.
+
+The GUI has no loading-policy selector or manual Load datasets action. Saved explicit
+GUI `never`/`always` policies are explained and submitted as `if_missing`; fixed refresh
+configurations that cannot safely be overridden require the SDK. Stored generated data
+is never regenerated implicitly: use the separate Edit & regenerate workflow. Direct
+SDK and REST callers retain all loading policies. Generic forms retain Reset defaults;
+ASSERT keeps its compatible-only, no-Reset selection.
 
 `POST /api/scenarios/catalog/{scenario_name}/datasets/assess` accepts the same
 configuration as the scenario estimate route. By default it lists scenario-permitted
@@ -395,8 +404,8 @@ Add `?validate_selected=true` to validate the selected stored contents with the 
 scenario requirements, technique preparation, and named adversarial-prompt checks.
 The response includes structured reasons and separate usable/skipped counts for each
 technique and baseline, before selection limits. Techniques can use disjoint subsets.
-Unloaded providers remain `not_verified`; the existing `datasets/load` action loads
-missing data explicitly, after which callers reassess it.
+Unloaded providers remain `not_verified`; `datasets/load` prepares missing selected
+data, after which callers reassess it.
 
 ASSERT requires valid policy-generation metadata and case inputs for every group,
 including imported groups, independently of technique. A prompt case stores a user

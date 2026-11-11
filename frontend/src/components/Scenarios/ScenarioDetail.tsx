@@ -33,11 +33,11 @@ import TargetSelect from '@/components/Config/TargetSelect'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import type { RequestedDatasetsState } from '@/types'
-import { resolveRequestedDatasets } from '@/utils/requestedDatasets'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
+import { useScenarioDatasetPreparation } from '@/hooks/useScenarioDatasetPreparation'
 import { useScenarioDetail } from '@/hooks/useScenarioDetail'
 import { useScenarioPreset } from '@/hooks/useScenarioPreset'
 import { useScenarioLaunch } from '@/hooks/useScenarioLaunch'
@@ -165,7 +165,7 @@ interface ScenarioDetailContentProps extends ScenarioDetailProps {
   initialConversationId: string
   /** The saved preset that pre-fills the form, or empty for none. */
   presetName: string
-  /** Stored datasets a link asked to preselect, before they are checked against the catalog. */
+  /** Explicit linked selections, including missing sources that preparation must resolve. */
   datasetNames: string[]
 }
 
@@ -212,11 +212,10 @@ function ScenarioDetailContent({
   const supportsDatasets = scenario !== null && supportsParameter(scenario, 'dataset_config')
   const datasetMetadata = useScenarioDatasets(
     decodedScenarioName, supportsDatasets || (scenario !== null && scenarioDatasetDefaults(scenario).sources.length > 0),
-    scenario !== null && usesDefaultAssertScoring(scenario),
   )
-  const requestedDatasets = supportsDatasets
-    ? resolveRequestedDatasets(datasetNames, { ...datasetMetadata, loading: datasetMetadata.initialLoading })
-    : { loading: false, known: datasetNames, unknown: [], error: null }
+  const requestedDatasets: RequestedDatasetsState = {
+    loading: false, known: datasetNames, unknown: [], error: null,
+  }
 
   const handleRetry = (): void => {
     retryScenario()
@@ -354,7 +353,7 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
   initialConversationId: string
-  /** Stored datasets from the link, checked against the catalog; known names replace the preset's sources. */
+  /** Explicit linked sources replace the preset's selection; preparation validates their availability. */
   requestedDatasets?: RequestedDatasetsState
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
@@ -601,7 +600,6 @@ function ScenarioLaunchForm({
     paused: staleSelection,
   })
   const estimateState = runEstimate.state
-  const currentDatasetEstimate = runEstimate.current
 
   const datasetProjection = runEstimate.datasetProjection
   const datasetDefaults: ScenarioDatasetSettings = datasetProjection?.dataset_defaults
@@ -610,29 +608,16 @@ function ScenarioLaunchForm({
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
-  const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
-  const previousDatasetSelection = useRef(datasetSelectionKey)
-  const reloadDatasetMetadata = datasetMetadata.reload
-  useEffect(() => {
-    if (previousDatasetSelection.current !== datasetSelectionKey) {
-      previousDatasetSelection.current = datasetSelectionKey
-      if (!defaultAssertScoring) reloadDatasetMetadata()
-    }
-  }, [datasetSelectionKey, defaultAssertScoring, reloadDatasetMetadata])
-  const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
-    ? currentDatasetEstimate.datasetSettings : undefined
-  const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
-  const unconfirmedRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0
-    && !checkingRefreshPolicies && confirmedDatasetSettings === undefined
-  const refreshDatasets = [...new Set((confirmedDatasetSettings?.sources ?? [])
-    .filter((source) => source.fetch === 'always').map((source) => source.name))]
-  const editedRefreshDatasets = refreshDatasets.filter((name) => {
-    const metadata = datasetMetadata.items.find((item) => item.name === name)
-    return metadata?.loaded && (!metadata.origins?.length
-      || metadata.origins.some((origin) => origin === 'user' || origin === 'unknown'))
+  const datasetPreparation = useScenarioDatasetPreparation({
+    scenarioName: scenario.scenario_name,
+    datasetNames: selectedDatasetNames,
+    request: estimateRequest,
+    metadata: datasetMetadata.items,
+    metadataLoading: datasetMetadata.loading,
+    metadataError: datasetMetadata.error,
+    enabled: runtime.ready && !staleSelection,
+    onPrepared: datasetMetadata.reload,
   })
-  const uncheckedRefreshDatasets = refreshDatasets.filter((name) => datasetMetadata.loading || datasetMetadata.error
-    || !datasetMetadata.items.some((item) => item.name === name))
 
   const newAttackContext = useMemo(() => ({
     generation: runtime.generation,
@@ -668,11 +653,10 @@ function ScenarioLaunchForm({
     requestResult,
     submitBlocked: conversationBusy || Boolean(techniqueEditError),
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
-      || staleSelection || unavailableSelection || checkingRefreshPolicies,
+      || staleSelection || unavailableSelection || !datasetPreparation.prepared,
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
-      if (!defaultAssertScoring) datasetMetadata.reload()
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
@@ -1034,16 +1018,10 @@ function ScenarioLaunchForm({
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
-                compatibleOnly={defaultAssertScoring} allowSourceReset={!defaultAssertScoring}
-                preparing={!defaultAssertScoring && datasetMetadata.preparing}
-                loadError={defaultAssertScoring ? null : datasetMetadata.loadError}
-                loadEnabled={!defaultAssertScoring && runtime.ready && !staleSelection && estimateRequest !== null
-                  && confirmedDatasetSettings !== undefined
-                  && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
-                    && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
-                onLoad={defaultAssertScoring ? undefined : () => {
-                  if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
-                }}
+                allowSourceReset={!defaultAssertScoring}
+                preparing={datasetPreparation.preparing}
+                preparationError={datasetPreparation.error}
+                onRetryPreparation={datasetPreparation.retry}
                 required={defaultAssertScoring} showCatalogLink={false}
                 onReload={datasetMetadata.retry} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
@@ -1113,7 +1091,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || !datasetPreparation.prepared || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
@@ -1163,16 +1141,16 @@ function ScenarioLaunchForm({
             open={previewOpen}
             submitting={submitting}
             confirmDisabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
-              || checkingRefreshPolicies}
+              || !datasetPreparation.prepared}
             onOpenChange={changePreviewOpen}
             onCancel={dismissPreview}
             onConfirm={() => void confirmLaunch()}
             refresh={{
-              checking: checkingRefreshPolicies,
-              unconfirmed: unconfirmedRefreshPolicies,
-              refreshed: refreshDatasets,
-              edited: editedRefreshDatasets,
-              unchecked: uncheckedRefreshDatasets,
+              checking: false,
+              unconfirmed: false,
+              refreshed: [],
+              edited: [],
+              unchecked: [],
             }}
             objectiveTarget={supportsObjectiveTarget ? targetName : null}
             objectiveScorer={scenario.supports_objective_scorer && !defaultAssertScoring

@@ -1,11 +1,9 @@
 import type {
-  DatasetFetchPolicy,
   DatasetInfo,
   RegisteredScenario,
   ScenarioDatasetOptions,
   ScenarioDatasetRequest,
   ScenarioDatasetSettings,
-  ScenarioDatasetSourceInput,
   ScenarioDatasetSourceSettings,
 } from '@/types'
 
@@ -47,32 +45,27 @@ export function datasetTotalLimit(
     ? request.max_total : defaults.max_total
 }
 
-function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
-  return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
+/** GUI preparation reuses stored contents; replacement remains an explicit Edit & regenerate action. */
+export function automaticDatasetRequest(
+  request: ScenarioDatasetRequest, defaults?: ScenarioDatasetSettings,
+): ScenarioDatasetRequest {
+  return {
+    ...request,
+    ...(request.fetch === 'always' || request.fetch === 'never' ? { fetch: 'if_missing' as const } : {}),
+    ...(request.sources ? {
+      sources: request.sources.map((source) => ({
+        ...source,
+        ...(source.fetch === 'always' || source.fetch === 'never'
+          || defaults?.sources.some((item) => item.name === source.name && item.fetch === 'always')
+          ? { fetch: 'if_missing' as const } : {}),
+      })),
+    } : {}),
+  }
 }
 
-export function canEditDatasetLoading(effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions): boolean {
-  return options.supports_overrides && (options.source_settings !== false
-    || effective.sources.every((source) => source.fetch === effective.fetch))
-}
-
-export function datasetPolicies(
-  request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
-  effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions,
-): Array<{ name: string; fetch: DatasetFetchPolicy }> {
-  const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
-  const canEditSources = options.supports_overrides && options.source_settings !== false
-  const globalDraft = canEditDatasetLoading(effective, options) ? explicitDatasetPolicy(request.fetch) : undefined
-  return selected.map((source) => {
-    const settings = effective.sources.find((item) => item.name === source.name)
-      ?? defaults.sources.find((item) => item.name === source.name)
-    return {
-      name: source.name,
-      fetch: canEditSources ? explicitDatasetPolicy(source.fetch) ?? settings?.fetch
-        ?? explicitDatasetPolicy(request.fetch) ?? defaults.fetch
-        : globalDraft ?? settings?.fetch ?? defaults.fetch,
-    }
-  })
+export function hasSavedDatasetPolicy(request: ScenarioDatasetRequest): boolean {
+  return request.fetch === 'always' || request.fetch === 'never'
+    || Boolean(request.sources?.some((source) => source.fetch === 'always' || source.fetch === 'never'))
 }
 
 export function parseCaseLimit(text: string): number | null {

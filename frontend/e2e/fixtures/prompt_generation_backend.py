@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from frontend.e2e.fixtures import analytics_backend
 if TYPE_CHECKING:
     from pyrit.memory import SQLiteMemory
     from pyrit.models import Message
+    from pyrit.scenario.core.scenario_context import ScenarioContext
 
 TARGET_NAME = "Offline generation target"
 ROLE_TARGET_NAMES = ("adversarial_chat", "objective_scorer_chat")
@@ -179,7 +181,106 @@ def _register_target() -> None:
 
 
 async def _seed_async(memory: SQLiteMemory) -> None:
-    from pyrit.models import SeedObjective
+    from pyrit.backend.main import app
+    from pyrit.common import apply_defaults
+    from pyrit.datasets import SeedDatasetProvider
+    from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
+    from pyrit.models import DatasetFetchPolicy, SeedDataset, SeedObjective
+    from pyrit.registry import ScenarioRegistry
+    from pyrit.scenario import (
+        AtomicAttack,
+        AttackTechnique,
+        BaselineAttackPolicy,
+        DatasetAttackConfiguration,
+        DatasetSource,
+        Scenario,
+        ScenarioTechnique,
+    )
+    from pyrit.score import SubStringScorer
+
+    counts = dict.fromkeys(
+        ("offline_provider", "offline_retry_provider", "offline_added_provider", "offline_stored"), 0
+    )
+
+    class OfflineProvider(SeedDatasetProvider):
+        @property
+        def dataset_name(self) -> str:
+            return "offline_provider"
+
+        async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+            if not cache:
+                raise ValueError("The offline provider must not be refreshed automatically.")
+            name = self.dataset_name
+            counts[name] += 1
+            await asyncio.sleep(0.05)
+            if name == "offline_retry_provider" and counts[name] == 1:
+                raise ValueError("Synthetic dataset provider is temporarily unavailable.")
+            return SeedDataset(
+                dataset_name=name,
+                seeds=[
+                    SeedObjective(
+                        value=f"Synthetic public-policy objective {index}.",
+                        dataset_name=name,
+                        harm_categories=["synthetic"],
+                    )
+                    for index in range(3)
+                ],
+            )
+
+    class OfflineRetryProvider(OfflineProvider):
+        @property
+        def dataset_name(self) -> str:
+            return "offline_retry_provider"
+
+    class OfflineAddedProvider(OfflineProvider):
+        @property
+        def dataset_name(self) -> str:
+            return "offline_added_provider"
+
+    class OfflineStoredProvider(OfflineProvider):
+        @property
+        def dataset_name(self) -> str:
+            return "offline_stored"
+
+    class OfflineTechnique(ScenarioTechnique):
+        ALL = ("all", {"all"})
+        PromptSending = ("prompt_sending", {"local"})
+
+    class OfflinePreparationScenario(Scenario):
+        VERSION: int = 1
+        BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Forbidden
+
+        @apply_defaults
+        def __init__(self, *, scenario_result_id: str | None = None) -> None:
+            super().__init__(
+                version=self.VERSION,
+                technique_class=OfflineTechnique,
+                default_dataset_config=DatasetAttackConfiguration(
+                    sources=[DatasetSource(name="offline_provider", fetch=DatasetFetchPolicy.NEVER)]
+                ),
+                objective_scorer=SubStringScorer(substring="published"),
+                scenario_result_id=scenario_result_id,
+                uses_default_adversarial_target=False,
+            )
+
+        async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+            return [
+                AtomicAttack(
+                    atomic_attack_name="offline_prepared",
+                    technique_name="prompt_sending",
+                    attack_technique=AttackTechnique(
+                        attack=PromptSendingAttack(
+                            objective_target=context.objective_target,
+                            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
+                        )
+                    ),
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            ]
+
+    async def preparation_counts_async() -> dict[str, int]:
+        return dict(counts)
 
     fixture_directory = Path(memory.db_path).resolve().parent.parent
     # Generation records live next to media output, so both must stay inside the fixture directory.
@@ -187,14 +288,44 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         raise RuntimeError("Refusing to store generation records outside the fixture-owned directory.")
     memory.disable_embedding()
     _register_target()
+    ScenarioRegistry.get_registry_singleton().register_class(OfflinePreparationScenario, name="offline.auto_prepare")
+    app.add_api_route("/api/offline-dataset-preparation", preparation_counts_async, methods=["GET"])
     await memory.add_seeds_to_memory_async(
-        seeds=[SeedObjective(value="An ordinary objective without policy metadata.", dataset_name="offline_plain")],
+        seeds=[
+            SeedObjective(value="An ordinary objective without policy metadata.", dataset_name="offline_plain"),
+            SeedObjective(
+                value="Original stored synthetic objective.",
+                dataset_name="offline_stored",
+                harm_categories=["synthetic"],
+            ),
+        ],
         added_by="prompt-generation-browser-fixture",
     )
 
 
 def _serve(*, directory: Path, port: int) -> None:
-    with patch.dict(os.environ, OFFLINE_OPENAI_ENVIRONMENT):
+    from pyrit.datasets import SeedDatasetProvider
+
+    original_lookup = SeedDatasetProvider.get_providers_by_name_async
+
+    async def offline_lookup_async(
+        cls: type[SeedDatasetProvider], *, dataset_names: list[str]
+    ) -> dict[str, SeedDatasetProvider]:
+        allowed = {
+            "offline_provider",
+            "offline_retry_provider",
+            "offline_added_provider",
+            "offline_stored",
+            "offline_missing",
+        }
+        if set(dataset_names) - allowed:
+            raise ValueError("This offline fixture only loads synthetic dataset providers.")
+        return await original_lookup(dataset_names=dataset_names)
+
+    with (
+        patch.dict(os.environ, OFFLINE_OPENAI_ENVIRONMENT),
+        patch.object(SeedDatasetProvider, "get_providers_by_name_async", classmethod(offline_lookup_async)),
+    ):
         _serve_analytics(directory=directory, port=port)
 
 

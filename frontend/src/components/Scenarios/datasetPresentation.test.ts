@@ -1,6 +1,6 @@
-import type { ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
+import type { ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
 
-import { datasetNameWithOrigin, datasetPolicies, datasetTotalLimit } from './datasetPresentation'
+import { automaticDatasetRequest, datasetNameWithOrigin, datasetTotalLimit, hasSavedDatasetPolicy } from './datasetPresentation'
 
 const SETTINGS: ScenarioDatasetSettings = {
   sources: [
@@ -8,9 +8,6 @@ const SETTINGS: ScenarioDatasetSettings = {
     { name: 'fresh', max_size: 5, fetch: 'always', configured_provider: true },
   ],
   max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
-}
-const OPTIONS: ScenarioDatasetOptions = {
-  mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true, filters: true,
 }
 
 describe('datasetTotalLimit', () => {
@@ -38,43 +35,24 @@ describe('datasetNameWithOrigin', () => {
   })
 })
 
-describe('datasetPolicies', () => {
-  it('uses effective source policies rather than the default global policy', () => {
-    expect(datasetPolicies({}, SETTINGS, SETTINGS, OPTIONS)).toEqual([
-      { name: 'stored', fetch: 'never' }, { name: 'fresh', fetch: 'always' },
-    ])
-  })
-
-  it('keeps explicit source policies when applying a global request', () => {
-    expect(datasetPolicies({
-      fetch: 'always', sources: [{ name: 'stored', fetch: 'never' }, { name: 'new' }],
-    }, SETTINGS, SETTINGS, OPTIONS)).toEqual([
-      { name: 'stored', fetch: 'never' }, { name: 'new', fetch: 'always' },
-    ])
-  })
-
-  it('does not overwrite protected policies with global draft settings', () => {
-    expect(datasetPolicies({ fetch: 'always' }, SETTINGS, SETTINGS, {
-      ...OPTIONS, source_settings: false,
-    })).toEqual([{ name: 'stored', fetch: 'never' }, { name: 'fresh', fetch: 'always' }])
-  })
-
-  it('shows a permitted global draft instead of a stale protected-source projection', () => {
-    const defaults: ScenarioDatasetSettings = {
-      ...SETTINGS,
-      sources: [{ name: 'stored', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+describe('automaticDatasetRequest', () => {
+  it('keeps selection, filters and limits while deliberately replacing saved policies', () => {
+    const request: ScenarioDatasetRequest = {
+      fetch: 'always', max_total: 'all', max_per_dataset: 3, filters: { data_types: ['text'] },
+      sources: [{ name: 'stored', max_size: 2, fetch: 'never' }, { name: 'fresh' }],
     }
-    expect(datasetPolicies({ fetch: 'always' }, defaults, defaults, {
-      ...OPTIONS, source_settings: false,
-    })).toEqual([{ name: 'stored', fetch: 'always' }])
-    expect(datasetPolicies({ fetch: 'if_missing' }, defaults, defaults, {
-      ...OPTIONS, source_settings: false,
-    })).toEqual([{ name: 'stored', fetch: 'if_missing' }])
+    expect(automaticDatasetRequest(request, SETTINGS)).toEqual({
+      ...request, fetch: 'if_missing',
+      sources: [{ name: 'stored', max_size: 2, fetch: 'if_missing' }, { name: 'fresh', fetch: 'if_missing' }],
+    })
+    expect(hasSavedDatasetPolicy(request)).toBe(true)
+    expect(request.fetch).toBe('always')
   })
 
-  it('uses retained effective policies and treats default as inheritance', () => {
-    expect(datasetPolicies({
-      fetch: 'always', sources: [{ name: 'stored', fetch: 'default' }],
-    }, SETTINGS, SETTINGS, OPTIONS)).toEqual([{ name: 'stored', fetch: 'never' }])
+  it('does not invent unrelated overrides when no saved policy was supplied', () => {
+    expect(automaticDatasetRequest({ max_total: 'all', sources: [{ name: 'stored' }] })).toEqual({
+      max_total: 'all', sources: [{ name: 'stored' }],
+    })
+    expect(hasSavedDatasetPolicy({})).toBe(false)
   })
 })

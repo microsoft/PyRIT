@@ -117,6 +117,36 @@ async def test_manual_load_keeps_edited_data_and_does_not_call_provider(policy: 
     assert [seed.value for seed in await memory.get_seeds_async(dataset_name="manual_load")] == ["Edited objective"]
 
 
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+async def test_mixed_preparation_reuses_stored_data_and_fetches_only_missing_once() -> None:
+    memory = CentralMemory.get_memory_instance()
+    await memory.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Stored original", dataset_name="manual_stored")], added_by="test"
+    )
+    provider = _provider()
+    with patch.object(ScenarioRegistry, "_discover"):
+        registry = ScenarioRegistry()
+        registry.register_class(_LoadScenario, name="test.load")
+    request = ScenarioRunSizeEstimateRequest(
+        datasets=ScenarioDatasetRequest.model_validate(
+            {"sources": [{"name": "manual_stored"}, {"name": "manual_load"}], "fetch": "always", "max_total": 1}
+        )
+    )
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"manual_load": provider}),
+        patch.object(SeedDatasetProvider, "get_all_dataset_names_async", return_value=["manual_load"]),
+    ):
+        service = ScenarioService()
+        result = await service.load_datasets_async(scenario_name="test.load", request=request)
+        await service.load_datasets_async(scenario_name="test.load", request=request)
+    assert result is not None
+    assert {item.name: item.logical_examples for item in result.items} == {"manual_stored": 1, "manual_load": 2}
+    provider.fetch_dataset_async.assert_awaited_once()
+    assert [seed.value for seed in await memory.get_seeds_async(dataset_name="manual_stored")] == ["Stored original"]
+    assert await memory.get_scenario_results_async() == []
+
+
 @pytest.mark.usefixtures("patch_central_database")
 async def test_load_failure_surfaces_and_stores_no_partial_dataset() -> None:
     provider = _provider()

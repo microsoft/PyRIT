@@ -141,6 +141,32 @@ describe('scenario launch requests', () => {
     expect(after).toEqual(before)
   })
 
+  it('overrides editable source refresh defaults but explicitly rejects protected hidden refresh', () => {
+    const scenario = makeScenario({
+      dataset_defaults: {
+        sources: [{ name: 'fresh', max_size: 5, fetch: 'always', configured_provider: true }],
+        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+      },
+    })
+    const input = makeInput({ scenario, datasetEdits: { sources: [{ name: 'fresh' }], max_total: 2 } })
+    const safe = buildEstimateRequest(input)
+    expect(safe.ok && safe.request.datasets).toEqual({
+      sources: [{ name: 'fresh', fetch: 'if_missing' }], max_total: 2,
+    })
+    expect(buildEstimateRequest({ ...input, datasetEdits: {} }).ok).toBe(false)
+    const protectedScenario = { ...scenario, dataset_options: {
+      mode: 'any' as const, allowed_names: [], supports_overrides: true, source_settings: false,
+      per_dataset_limit: false, total_limit: true, filters: true,
+    } }
+    expect(buildEstimateRequest({ ...input, scenario: protectedScenario })).toEqual({
+      ok: false,
+      error: 'This scenario has a source-specific refresh policy. Use the SDK to preserve it; this form only loads missing data.',
+    })
+    expect(buildEstimateRequest({
+      ...input, scenario: protectedScenario, datasetEdits: { sources: [{ name: 'stored' }] },
+    }).ok).toBe(true)
+  })
+
   it('omits saved default ASSERT judge settings instead of sending hidden overrides', () => {
     const parameter: Parameter = { name: 'judge_samples', type_name: 'int', default: 1, required: false }
     const scenario = makeScenario({

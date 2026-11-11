@@ -10,6 +10,8 @@ import type {
   ScenarioTechniqueSummary,
 } from '@/types'
 
+import { automaticDatasetRequest } from './datasetPresentation'
+
 /**
  * Common/opaque parameters every scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form already exposes a
@@ -165,7 +167,7 @@ export function buildScenarioConfig({
 
   const config: ScenarioConfigFields = { techniques, include_baseline: includeBaseline }
   if (!datasetRequestIsEmpty(datasets)) {
-    config.datasets = datasets
+    config.datasets = automaticDatasetRequest(datasets)
   }
   if (scenarioParams) {
     config.scenario_params = scenarioParams

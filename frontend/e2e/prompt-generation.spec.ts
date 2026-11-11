@@ -6,6 +6,7 @@ import type {
   PromptGenerationPreflightResponse,
   PromptGenerationReview,
   DatasetListResponse,
+  ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
 } from '../src/types'
 import { formatRange } from '../src/components/PromptGeneration/promptGenerationPresentation'
@@ -23,6 +24,125 @@ const pageErrors = new WeakMap<Page, string[]>()
 
 interface JourneyContext {
   readonly page: Page
+}
+
+interface PreparationCounts {
+  readonly offline_provider: number
+  readonly offline_retry_provider: number
+  readonly offline_added_provider: number
+  readonly offline_stored: number
+}
+
+async function preparationCounts(page: Page, compatibilityId: string): Promise<PreparationCounts> {
+  const response = await page.request.get('/api/offline-dataset-preparation', {
+    headers: { 'PyRIT-Compatibility-ID': compatibilityId },
+  })
+  expect(response.status(), await response.text()).toBe(200)
+  return response.json()
+}
+
+async function limitObjectives(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Edit Maximum objectives', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'All available for Maximum objectives', exact: true }).uncheck()
+  await page.getByRole('textbox', { name: 'Maximum objectives', exact: true }).fill('2')
+  await page.keyboard.press('Escape')
+}
+
+async function verifyAutomaticPreparation(page: Page, testInfo: TestInfo): Promise<void> {
+  const catalog = page.waitForResponse((response: Response) =>
+    apiPath(response) === '/api/datasets' && response.request().method() === 'GET')
+  await page.goto('/datasets')
+  const listed = await catalog
+  expect(listed.status(), await listed.text()).toBe(200)
+  const compatibilityId = listed.request().headers()['pyrit-compatibility-id']
+  if (!compatibilityId) throw new Error('The dataset catalog did not send its compatibility identity.')
+  expect(await preparationCounts(page, compatibilityId)).toEqual({
+    offline_provider: 0, offline_retry_provider: 0, offline_added_provider: 0, offline_stored: 0,
+  })
+  const path = '/scanner/launch/offline.auto_prepare'
+  const loadPath = '/api/scenarios/catalog/offline.auto_prepare/datasets/load'
+  let preparations = 0
+  const countPreparation = (request: Request): void => {
+    if (new URL(request.url()).pathname === loadPath && request.method() === 'POST') preparations += 1
+  }
+  page.on('request', countPreparation)
+  const preparingDefaults = page.waitForResponse((response: Response) => apiPath(response) === loadPath)
+  await page.goto(path)
+  const defaults = await preparingDefaults
+  expect(defaults.status(), await defaults.text()).toBe(200)
+  const defaultData: ScenarioDatasetLoadResponse = await defaults.json()
+  expect(defaultData.items).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: 'offline_provider', loaded: true, logical_examples: 3 }),
+  ]))
+  // Preparation does not rewrite the scenario's SDK policy or fetch stored data.
+  expect(defaultData.settings.sources[0]?.fetch).toBe('never')
+  expect(await preparationCounts(page, compatibilityId)).toEqual({
+    offline_provider: 1, offline_retry_provider: 0, offline_added_provider: 0, offline_stored: 0,
+  })
+  await expect(page.getByRole('radiogroup', { name: 'Dataset loading' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Load datasets', exact: true })).toHaveCount(0)
+  await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
+  await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+  const sizing = page.waitForResponse((response: Response) => apiPath(response).endsWith('/offline.auto_prepare/estimate')
+    && response.request().postDataJSON()?.datasets?.max_total === 2)
+  await limitObjectives(page)
+  expect((await sizing).status()).toBe(200)
+  expect(preparations).toBe(1)
+
+  const failing = page.waitForResponse((response: Response) => apiPath(response) === loadPath)
+  await page.goto(`${path}?dataset=offline_stored&dataset=offline_retry_provider`)
+  const failed = await failing
+  expect(failed.status(), await failed.text()).toBe(400)
+  await expect(page.getByRole('alert').filter({ hasText: 'Synthetic dataset provider is temporarily unavailable.' }).first())
+    .toBeVisible()
+  await expect(page.getByRole('table', { name: 'Selected datasets' })).toContainText('offline_stored')
+  await expect(page.getByRole('table', { name: 'Selected datasets' })).toContainText('offline_retry_provider')
+  await expect(page.getByTestId('launch-scenario-btn')).toBeDisabled()
+  await limitObjectives(page)
+  expect(preparations).toBe(2)
+  const retrying = page.waitForResponse((response: Response) => apiPath(response) === loadPath)
+  await page.getByRole('button', { name: 'Retry dataset preparation', exact: true }).click()
+  const retried = await retrying
+  expect(retried.status(), await retried.text()).toBe(200)
+  await expect(page.getByRole('button', { name: 'Edit Maximum objectives' })).toContainText('Up to 2')
+  await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
+  await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+  expect(await preparationCounts(page, compatibilityId)).toEqual({
+    offline_provider: 1, offline_retry_provider: 2, offline_added_provider: 0, offline_stored: 0,
+  })
+
+  const adding = page.waitForResponse((response: Response) => apiPath(response) === loadPath)
+  await page.getByRole('combobox', { name: 'Add dataset', exact: true }).fill('offline_added_provider')
+  await page.getByRole('option', { name: 'offline_added_provider (unknown)', exact: true }).click()
+  const added = await adding
+  expect(added.status(), await added.text()).toBe(200)
+  const addedData: ScenarioDatasetLoadResponse = await added.json()
+  expect(addedData.settings.max_total).toBe(2)
+  await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+  expect(await preparationCounts(page, compatibilityId)).toEqual({
+    offline_provider: 1, offline_retry_provider: 2, offline_added_provider: 1, offline_stored: 0,
+  })
+  const original = await page.request.get('/api/datasets/seeds?selection_key=dataset%3Anamed%3Aoffline_stored', {
+    headers: { 'PyRIT-Compatibility-ID': compatibilityId },
+  })
+  expect(original.status(), await original.text()).toBe(200)
+  expect(JSON.stringify(await original.json())).toContain('Original stored synthetic objective.')
+  for (const [label, width, height] of [['desktop', 1440, 1050], ['mobile', 390, 844]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.getByRole('region', { name: 'Datasets', exact: true }).scrollIntoViewIfNeeded()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`automatic-datasets-${label}.png`), fullPage: true, animations: 'disabled' })
+  }
+  await page.setViewportSize({ width: 1440, height: 1050 })
+  const missing = page.waitForResponse((response: Response) => apiPath(response) === loadPath)
+  await page.goto(`${path}?dataset=offline_missing`)
+  const unavailable = await missing
+  expect(unavailable.status(), await unavailable.text()).toBe(400)
+  await expect(page.getByRole('alert').filter({ hasText: 'offline_missing' }).first()).toBeVisible()
+  await expect(page.getByRole('table', { name: 'Selected datasets' })).toContainText('offline_missing')
+  await expect(page.getByTestId('launch-scenario-btn')).toBeDisabled()
+  expect(preparations).toBe(5)
+  page.off('request', countPreparation)
 }
 
 function datasetName(prefix: string, testInfo: TestInfo): string {
@@ -94,6 +214,8 @@ test.afterEach(async ({ page }: JourneyContext): Promise<void> => {
 })
 
 test('generates a reviewed ASSERT dataset, opens its scenario preselected, and launches it from an empty form', async ({ page }: JourneyContext, testInfo: TestInfo): Promise<void> => {
+  test.setTimeout(120_000)
+  await verifyAutomaticPreparation(page, testInfo)
   const name = datasetName('returns_privacy', testInfo)
   await page.goto('/datasets')
   await expect(page.getByRole('heading', { level: 1, name: 'Datasets' })).toBeVisible()
@@ -258,6 +380,10 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
     const current: ScenarioRunSummary = await response.json()
     if (current.status === 'FAILED' || current.status === 'CANCELLED') {
       throw new Error(`Offline scenario ended with ${current.status}: ${current.error}`)
+    }
+    if (current.status === 'COMPLETED') {
+      expect(current.total_attacks).toBe(8)
+      expect(current.completed_attacks).toBe(8)
     }
     return current.status
   }, { timeout: JOB_TIMEOUT_MS }).toBe('COMPLETED')

@@ -28,6 +28,7 @@ import {
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
+import { useScenarioDatasetPreparation } from '@/hooks/useScenarioDatasetPreparation'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -199,7 +200,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }, [])
 
   const scenarioIsCurrent = scenario !== null && scenario.scenario_name === selectedScenarioName
-  const datasetMetadata = useScenarioDatasets(selectedScenarioName)
+  const datasetMetadata = useScenarioDatasets(selectedScenarioName, scenarioIsCurrent)
   const datasetBaseline = useMemo(
     () => (scenario
       ? {
@@ -229,6 +230,16 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   )
   const scenarioName = scenario?.scenario_name
   const projectionRequest = !scenarioLoading && scenarioIsCurrent && builtConfig?.ok ? builtConfig.config : null
+  const datasetPreparation = useScenarioDatasetPreparation({
+    scenarioName: selectedScenarioName,
+    datasetNames: (config?.datasets.sources ?? datasetBaseline?.defaults.sources ?? []).map((source) => source.name),
+    request: projectionRequest,
+    metadata: datasetMetadata.items,
+    metadataLoading: datasetMetadata.loading,
+    metadataError: datasetMetadata.error,
+    enabled: scenarioIsCurrent && !scenarioLoading,
+    onPrepared: datasetMetadata.reload,
+  })
   const projectionIsCurrent = datasetProjectionResult?.request === projectionRequest
     && datasetProjectionResult?.scenarioName === scenarioName
   const datasetProjectionLoading = Boolean(scenarioName && projectionRequest && !projectionIsCurrent)
@@ -518,6 +529,9 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     disabled={saving}
                     loading={datasetMetadata.loading}
                     metadataError={datasetMetadata.error}
+                    preparing={datasetPreparation.preparing}
+                    preparationError={datasetPreparation.error}
+                    onRetryPreparation={datasetPreparation.retry}
                     onReload={datasetMetadata.retry}
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}

@@ -9,6 +9,8 @@ import type {
   TechniqueOverride,
 } from '@/types'
 
+import { automaticDatasetRequest } from './datasetPresentation'
+
 /**
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
@@ -174,6 +176,17 @@ export function buildEstimateRequest({
 
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
+  const selectedRefreshSource = scenario.dataset_defaults?.sources.some((source) => source.fetch === 'always'
+    && (!datasetEdits.sources || datasetEdits.sources.some((selected) => selected.name === source.name)))
+  if (supportsDatasets && selectedRefreshSource
+    && (!datasetEdits.sources || scenario.dataset_options?.source_settings === false
+      || scenario.dataset_options?.supports_overrides === false)) {
+    return { ok: false, error: 'This scenario has a source-specific refresh policy. Use the SDK to preserve it; this form only loads missing data.' }
+  }
+  if (supportsDatasets && scenario.dataset_defaults?.fetch === 'always'
+    && scenario.dataset_options?.supports_overrides === false) {
+    return { ok: false, error: 'This scenario has a fixed refresh policy. Use the SDK to preserve it; this form only loads missing data.' }
+  }
   const request: ScenarioRunSizeEstimateRequest = {}
   if (scoringTargetName) request.scoring_target_name = scoringTargetName
   if (objectiveScorer) request.objective_scorer = objectiveScorer
@@ -191,7 +204,10 @@ export function buildEstimateRequest({
     request.adversarial_target_name = adversarialTargetName
   }
   if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
-    request.datasets = datasetEdits
+    request.datasets = automaticDatasetRequest(datasetEdits, scenario.dataset_defaults)
+  }
+  if (supportsDatasets && scenario.dataset_defaults?.fetch === 'always') {
+    request.datasets = { ...request.datasets, fetch: 'if_missing' }
   }
   const sentPresetParams = Object.fromEntries(Object.entries(presetScenarioParams).filter(
     ([name]) => !isScorerOwnedParameter(scenario, name)

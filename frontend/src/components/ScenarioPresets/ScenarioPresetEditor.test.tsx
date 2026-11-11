@@ -12,6 +12,7 @@ import { makeScenario } from '@/test-utils/scenarioFixtures'
 import type {
   Parameter,
   RegisteredScenario,
+  ScenarioDatasetLoadResponse,
   ScenarioDatasetSettings,
   ScenarioPreset,
   ScenarioPresetResponse,
@@ -36,6 +37,7 @@ jest.mock('@/services/api', () => ({
     update: jest.fn(),
   },
   scenariosApi: {
+    loadDatasets: jest.fn(),
     listCompatibleDatasets: jest.fn().mockResolvedValue({
       items: ['harmbench', 'xstest'].map((name) => ({
         name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
@@ -55,6 +57,8 @@ const mockUpdate = scenarioPresetsApi.update as jest.Mock
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
 const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
+const mockListCompatibleDatasets = jest.mocked(scenariosApi.listCompatibleDatasets)
+const mockLoadDatasets = jest.mocked(scenariosApi.loadDatasets)
 
 const mockNavigate = jest.fn()
 
@@ -134,6 +138,14 @@ function renderEdit(name = 'nightly_probe') {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockListCompatibleDatasets.mockReset().mockResolvedValue({
+    items: ['harmbench', 'xstest'].map((name) => ({
+      name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+      logical_examples: 8, modalities: ['text'], harm_categories: ['violence'],
+      has_unlabeled_harm_categories: false,
+    })),
+  })
+  mockLoadDatasets.mockReset()
   for (const mock of [mockGet, mockCreate, mockUpdate, mockListCatalog, mockGetScenario, mockEstimateRun]) {
     mock.mockReset()
   }
@@ -150,6 +162,34 @@ beforeEach(() => {
 })
 
 describe('ScenarioPresetEditor create mode', () => {
+  it('automatically prepares selected default sources while retaining preset and limit edits', async () => {
+    const user = userEvent.setup()
+    const pending = deferred<ScenarioDatasetLoadResponse>()
+    const items = [{
+      name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true,
+      logical_examples: null, modalities: [], harm_categories: [], has_unlabeled_harm_categories: false,
+    }]
+    mockListCompatibleDatasets.mockResolvedValueOnce({ items })
+    mockLoadDatasets.mockReturnValueOnce(pending.promise)
+    renderCreate()
+    await user.type(await screen.findByTestId('preset-name-input'), 'auto_prepared')
+    await selectScenario(user, 'foundry.red_team_agent')
+    await waitFor(() => expect(mockLoadDatasets).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('progressbar', { name: 'Preparing selected datasets...' })).toBeVisible()
+    expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load datasets', exact: true })).not.toBeInTheDocument()
+    await editLimit(user, 'Maximum objectives', '2')
+    await user.keyboard('{Escape}')
+    await act(async () => { pending.resolve({
+      items: items.map((item) => ({ ...item, loaded: true, logical_examples: 3 })),
+      settings: { sources: [], max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {} },
+    }) })
+    await waitFor(() => expect(screen.queryByRole('progressbar', { name: 'Preparing selected datasets...' })).not.toBeInTheDocument())
+    expect(screen.getByTestId('preset-name-input')).toHaveValue('auto_prepared')
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 2')
+    expect(mockLoadDatasets).toHaveBeenCalledTimes(1)
+  })
+
   it('cannot save before a scenario is chosen', async () => {
     renderCreate()
 

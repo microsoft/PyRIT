@@ -39,14 +39,14 @@ interface HarnessProps {
   metadataError?: string | null
   onReload?: jest.Mock
   compatibleOnly?: boolean
-  onLoad?: jest.Mock
   preparing?: boolean
-  loadError?: string | null
+  preparationError?: string | null
+  onRetryPreparation?: jest.Mock
 }
 function Harness({
   options = OPTIONS, defaults = DEFAULTS, datasets = DATASETS, initialRequest = {}, onChange = jest.fn(),
   loading = false, metadataError = null, onReload = jest.fn(),
-  compatibleOnly = true, onLoad, preparing = false, loadError = null,
+  compatibleOnly = true, preparing = false, preparationError = null, onRetryPreparation,
 }: HarnessProps) {
   const [request, setRequest] = useState<ScenarioDatasetRequest>(initialRequest)
   const [validation, setValidation] = useState<string | null>(null)
@@ -64,7 +64,8 @@ function Harness({
   return <FluentProvider theme={webLightTheme}><MemoryRouter>
     <ScenarioDatasetTable request={request} defaults={defaults} effective={effective} options={options}
       datasets={datasets} disabled={false} loading={loading} metadataError={metadataError}
-      compatibleOnly={compatibleOnly} onLoad={onLoad} loadEnabled preparing={preparing} loadError={loadError}
+      required={compatibleOnly} allowSourceReset={!compatibleOnly}
+      preparing={preparing} preparationError={preparationError} onRetryPreparation={onRetryPreparation}
       onReload={onReload} onValidationChange={setValidation}
       onChange={(next) => { setRequest(next); onChange(next) }} />
     <button disabled={validation !== null}>Launch</button>
@@ -87,16 +88,13 @@ async function addDataset(user: ReturnType<typeof userEvent.setup>, name: string
 }
 
 describe('ScenarioDatasetTable', () => {
-  describe('non-ASSERT restoration', () => {
-    it('retains the explicit load-missing action and does not load a provider automatically', async () => {
-      const user = userEvent.setup()
-      const onLoad = jest.fn()
-      render(<Harness compatibleOnly={false} onLoad={onLoad} initialRequest={{ sources: [{ name: 'remote' }] }} />)
-      expect(screen.getByRole('button', { name: 'Load datasets', exact: true })).toBeEnabled()
-      expect(screen.getByRole('radio', { name: 'Load missing' })).toBeChecked()
-      expect(onLoad).not.toHaveBeenCalled()
-      await user.click(screen.getByRole('button', { name: 'Load datasets', exact: true }))
-      expect(onLoad).toHaveBeenCalledTimes(1)
+  describe('shared automatic preparation', () => {
+    it('shows selected preparation without manual loading or policy controls', () => {
+      render(<Harness compatibleOnly={false} preparing initialRequest={{ sources: [{ name: 'remote' }] }} />)
+      expect(screen.getByRole('progressbar')).toHaveAccessibleName('Preparing selected datasets...')
+      expect(screen.queryByRole('button', { name: 'Load datasets', exact: true })).not.toBeInTheDocument()
+      expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
     })
 
     it('restores Reset defaults and keeps the final generic source selected', async () => {
@@ -110,7 +108,7 @@ describe('ScenarioDatasetTable', () => {
       expect(screen.queryByRole('button', { name: 'Remove stored' })).not.toBeInTheDocument()
     })
 
-    it('includes configured defaults absent from metadata and reloads on dropdown open', async () => {
+    it('uses only compatible listing choices without rereading them on dropdown open', async () => {
       const user = userEvent.setup()
       const onReload = jest.fn()
       const defaults: ScenarioDatasetSettings = {
@@ -119,20 +117,15 @@ describe('ScenarioDatasetTable', () => {
       render(<Harness compatibleOnly={false} defaults={defaults} onReload={onReload}
         initialRequest={{ sources: [{ name: 'remote' }] }} />)
       await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-      expect(screen.getByRole('option', { name: 'configured_default (unknown)', exact: true })).toBeInTheDocument()
-      expect(onReload).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('option', { name: 'configured_default (unknown)', exact: true })).not.toBeInTheDocument()
+      expect(onReload).not.toHaveBeenCalled()
     })
 
-    it('does not refresh missing Refresh sources through the manual load action', async () => {
-      const user = userEvent.setup()
-      const onLoad = jest.fn()
-      render(<Harness compatibleOnly={false} onLoad={onLoad}
+    it('explains that saved policies no longer refresh data implicitly', () => {
+      render(<Harness compatibleOnly={false}
         initialRequest={{ sources: [{ name: 'remote', fetch: 'always' }] }} />)
-      expect(screen.getByRole('button', { name: 'Load datasets', exact: true })).toBeDisabled()
-      expect(screen.getByText(/Datasets set to refresh will load when the scan starts/)).toBeInTheDocument()
-      await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-      expect(screen.getByRole('button', { name: 'Load datasets', exact: true })).toBeEnabled()
-      expect(onLoad).not.toHaveBeenCalled()
+      expect(screen.getByText(/Saved loading policies are not applied here/)).toBeInTheDocument()
+      expect(screen.queryByRole('radio')).not.toBeInTheDocument()
     })
 
     it('keeps preset metadata/reset behavior without inventing a manual-load button', () => {
@@ -141,10 +134,16 @@ describe('ScenarioDatasetTable', () => {
       expect(screen.queryByRole('button', { name: 'Load datasets', exact: true })).not.toBeInTheDocument()
     })
 
-    it('surfaces generic load failures rather than swallowing them', () => {
+    it('surfaces preparation errors and offers an explicit Retry without changing the selection', async () => {
+      const user = userEvent.setup()
+      const retry = jest.fn()
+      const onChange = jest.fn()
       render(<Harness compatibleOnly={false} initialRequest={{ sources: [{ name: 'remote' }] }}
-        loadError="The provider could not be loaded." />)
+        preparationError="The provider could not be loaded." onRetryPreparation={retry} onChange={onChange} />)
       expect(screen.getByRole('alert')).toHaveTextContent('The provider could not be loaded.')
+      await user.click(screen.getByRole('button', { name: 'Retry dataset preparation' }))
+      expect(retry).toHaveBeenCalledTimes(1)
+      expect(onChange).not.toHaveBeenCalled()
     })
   })
 
@@ -196,7 +195,7 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Dataset service is offline.')
     expect(screen.queryByText('No compatible datasets available.')).not.toBeInTheDocument()
     expect(onReload).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Retry loading datasets' }))
+    await user.click(screen.getByRole('button', { name: 'Retry loading dataset choices' }))
     expect(onReload).toHaveBeenCalledTimes(1)
   })
 
@@ -354,31 +353,22 @@ describe('ScenarioDatasetTable', () => {
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({})
   })
 
-  it('uses pill radios that update all selected source loading policies', async () => {
+  it('keeps selection, filters and objective limits usable while preparing', async () => {
     const user = userEvent.setup()
     const onChange = jest.fn()
-    render(<Harness onChange={onChange} />)
+    render(<Harness onChange={onChange} preparing />)
     await addDataset(user, 'remote')
-    await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({
-      fetch: 'if_missing', sources: [{ name: 'stored', fetch: 'if_missing' }, { name: 'remote', fetch: 'if_missing' }],
-    })
-    await user.click(screen.getByRole('radio', { name: 'Stored only' }))
-    expect(onChange.mock.calls.at(-1)?.[0].sources.every((source: { fetch: string }) => source.fetch === 'never')).toBe(true)
+    expect(onChange.mock.calls.at(-1)?.[0].sources).toEqual([{ name: 'stored' }, { name: 'remote' }])
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Filter data type Text' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
   })
 
-  it('keeps missing-data loading on by default and allows refresh after data is loaded', async () => {
-    const user = userEvent.setup()
-    const onChange = jest.fn()
-    const defaults = { ...DEFAULTS, sources: [{ name: 'remote', max_size: 4 as const, fetch: 'if_missing' as const, configured_provider: false }] }
-    const view = render(<Harness defaults={defaults} onChange={onChange} />)
-    expect(screen.getByRole('radio', { name: 'Load missing' })).toBeChecked()
-    view.rerender(<Harness defaults={defaults} onChange={onChange} datasets={[{ ...REMOTE, loaded: true, logical_examples: 100 }]} />)
-    expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('radio', { name: 'Refresh' }))
-    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ fetch: 'always', sources: [{ name: 'remote', fetch: 'always' }] })
-    expect(screen.queryByText(/All selected datasets are loaded/)).not.toBeInTheDocument()
+  it('distinguishes metadata reads from actual selected-source preparation', () => {
+    const view = render(<Harness loading />)
+    expect(screen.getByRole('progressbar')).toHaveAccessibleName('Loading dataset choices...')
+    view.rerender(<Harness preparing />)
+    expect(screen.getByRole('progressbar')).toHaveAccessibleName('Preparing selected datasets...')
   })
 
   it('does not assume stored counts are exact selected sizes after filters and a total cap', () => {
@@ -421,30 +411,25 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['other (local)'])
   })
 
-  it('does not pretend a global policy can replace protected source-specific loading rules', () => {
+  it('does not expose hidden policy choices for fixed source configurations', () => {
     render(<Harness options={{ ...OPTIONS, mode: 'fixed', source_settings: false }}
       datasets={[{ ...STORED, loaded: false, provider_available: true }]} />)
-    expect(screen.getByRole('radio', { name: 'Stored only' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Stored only' })).toBeDisabled()
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
   })
 
-  it('keeps refresh and missing-only policies as launch settings, without a separate load action', async () => {
-    const user = userEvent.setup()
-    const onChange = jest.fn()
-    render(<Harness onChange={onChange} initialRequest={{
+  it('keeps saved selections visible while explaining the missing-only contract', () => {
+    render(<Harness initialRequest={{
       sources: [{ name: 'remote', fetch: 'always' }],
     }} />)
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-    expect(onChange).toHaveBeenLastCalledWith({
-      fetch: 'if_missing', sources: [{ name: 'remote', fetch: 'if_missing' }],
-    })
+    expect(screen.getByText('remote (unknown)')).toBeInTheDocument()
+    expect(screen.getByText(/Stored datasets are reused/)).toBeInTheDocument()
   })
 
   it('keeps metadata refresh status outside responsive table columns and clears it after checking', () => {
     const view = render(<Harness loading />)
-    expect(screen.getByRole('progressbar')).toHaveAccessibleName('Loading datasets...')
+    expect(screen.getByRole('progressbar')).toHaveAccessibleName('Loading dataset choices...')
     expect(within(screen.getByRole('table', { name: 'Selected datasets' })).queryByRole('progressbar')).not.toBeInTheDocument()
     view.rerender(<Harness />)
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
@@ -452,7 +437,7 @@ describe('ScenarioDatasetTable', () => {
 
   it('does not demand a selection or show an empty state while the first load is pending', () => {
     render(<Harness defaults={{ ...DEFAULTS, sources: [] }} datasets={[]} loading />)
-    expect(screen.getByRole('progressbar')).toHaveAccessibleName('Loading datasets...')
+    expect(screen.getByRole('progressbar')).toHaveAccessibleName('Loading dataset choices...')
     expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
     expect(screen.queryByText('No compatible datasets available.')).not.toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeDisabled()
@@ -467,18 +452,13 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('option', { name: 'remote (unknown)' })).toBeInTheDocument()
   })
 
-  it('supports keyboard selection and terse policy descriptions', async () => {
+  it('keeps keyboard selection without a loading-policy selector', async () => {
     const user = userEvent.setup()
-    render(<Harness />)
-    const group = screen.getByRole('radiogroup', { name: 'Dataset loading' })
-    const stored = within(group).getByRole('radio', { name: 'Stored only' })
-    await user.click(stored)
-    expect(screen.getByText('Only use datasets already in memory')).toBeInTheDocument()
-    await user.keyboard('{ArrowRight}')
-    expect(within(group).getByRole('radio', { name: 'Load missing' })).toBeChecked()
-    expect(screen.getByText('Load missing datasets')).toBeInTheDocument()
-    await user.keyboard('{ArrowRight}')
-    expect(within(group).getByRole('radio', { name: 'Refresh' })).toBeChecked()
-    expect(screen.getByText('Refresh datasets for each new scan')).toBeInTheDocument()
+    const onChange = jest.fn()
+    render(<Harness onChange={onChange} />)
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.keyboard('{ArrowDown}{Enter}')
+    expect(onChange.mock.calls.at(-1)?.[0].sources).toHaveLength(2)
+    expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
   })
 })
