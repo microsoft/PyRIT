@@ -334,7 +334,8 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             <div className={styles.titleRow}>
               <Text as="h1" size={700} weight="semibold">{run.scenario_registry_name ?? run.scenario_name}</Text>
               <Badge appearance="tint" color={STATE_COLORS[run.status]} data-testid="run-state-badge">
-                {run.status === 'IN_PROGRESS' ? 'Executing' : run.status.charAt(0) + run.status.slice(1).toLowerCase()}
+                {active && run.dataset_preparation_pending ? 'Preparing datasets'
+                  : run.status === 'IN_PROGRESS' ? 'Executing' : run.status.charAt(0) + run.status.slice(1).toLowerCase()}
               </Badge>
             </div>
             {run.description && <Text className={styles.sectionHint}>{run.description}</Text>}
@@ -343,7 +344,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             {active && <Link className={styles.backLink} to="/scanner/queue">View queue</Link>}
             <Button icon={<ArrowClockwiseRegular />} disabled={rerunPending} onClick={() => { void rerun() }}>{rerunPending ? 'Loading...' : 'Rerun'}</Button>
             {active ? <Button icon={<StopRegular />} className={styles.touchTarget} onClick={() => { setCancelError(null); setCancelOpen(true) }}>Cancel</Button>
-              : (run.status === 'FAILED' || run.status === 'CANCELLED') && <Button appearance="primary" icon={<PlayRegular />}
+              : !run.dataset_preparation_pending && (run.status === 'FAILED' || run.status === 'CANCELLED') && <Button appearance="primary" icon={<PlayRegular />}
                 disabled={resume.pendingRunId !== null} onClick={() => { setRerunError(null); resume.requestResume(scenarioResultId) }}>Resume</Button>}
           </div>
         </header>
@@ -367,7 +368,8 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         </section>
         {(run.status === 'FAILED' || run.error || overall.errors > 0) && <MessageBar
           intent={run.status === 'FAILED' ? 'error' : run.status === 'CANCELLED' && overall.errors === 0 ? 'info' : 'warning'}>
-          <MessageBarBody>{run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
+          <MessageBarBody>{run.dataset_preparation_pending ? 'Dataset preparation did not finish. Rerun to review the sources, then use Retry loading datasets before starting a new scan.'
+            : run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
             : run.status === 'CANCELLED' ? 'Scan cancelled.'
             : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
             {firstError && <Button appearance="transparent" onClick={(event) => { openDetails(firstError, event.currentTarget) }}>View attack</Button>}
@@ -395,7 +397,9 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         </MessageBar>}
         {active && <section className={styles.progressSurface} aria-label="Scan progress">
           <div className={styles.progressPrimary}>
-            <Text weight="semibold">{run.status === 'QUEUED' ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}` : `${overall.completed}${overall.planned === null ? '' : ` of ${overall.planned}`} attacks complete`}</Text>
+            <Text weight="semibold">{run.status === 'QUEUED' ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}`
+              : run.dataset_preparation_pending ? 'Preparing selected datasets. Execution will start when loading finishes.'
+              : `${overall.completed}${overall.planned === null ? '' : ` of ${overall.planned}`} attacks complete`}</Text>
             <ProgressBar value={overall.planned ? overall.completed / overall.planned : undefined} aria-label="Scan progress" />
           </div>
           <ScenarioRunTiming run={run} overall={overall} />

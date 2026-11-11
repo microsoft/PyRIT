@@ -62,45 +62,15 @@ describe('useScenarioDatasets', () => {
     view.unmount()
   })
 
-  it('loads only on explicit action and refreshes metadata after success', async () => {
+  it('never prepares providers while reading or refreshing metadata', async () => {
     list.mockResolvedValue({ items: [NAMED] })
     loadDatasets.mockResolvedValue({})
     const view = renderHook(() => useScenarioDatasets('test'))
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     expect(loadDatasets).not.toHaveBeenCalled()
-    const request = { datasets: { max_total: 4 } }
-    await act(async () => { await view.result.current.loadSelected('test', request) })
-    expect(loadDatasets).toHaveBeenCalledWith('test', request)
+    act(() => { view.result.current.reload() })
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-    expect(view.result.current.loadError).toBeNull()
-  })
-
-  it('retains load failures and still refreshes current metadata', async () => {
-    list.mockResolvedValue({ items: [NAMED] })
-    loadDatasets.mockRejectedValue(new Error('Load failed'))
-    const view = renderHook(() => useScenarioDatasets('test'))
-    await act(async () => { await view.result.current.loadSelected('test', {}) })
-    await waitFor(() => expect(view.result.current.loadError).not.toBeNull())
-    expect(view.result.current.preparing).toBe(false)
-    expect(list).toHaveBeenCalledTimes(2)
-  })
-
-  it('deduplicates load clicks and ignores completion from a previous generation', async () => {
-    list.mockResolvedValue({ items: [NAMED] })
-    let finish: () => void = () => {}
-    loadDatasets.mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
-    const view = renderHook(() => useScenarioDatasets('test'))
-    let pending: Promise<void>
-    act(() => {
-      pending = view.result.current.loadSelected('test', {})
-      void view.result.current.loadSelected('test', {})
-    })
-    expect(loadDatasets).toHaveBeenCalledTimes(1)
-    generation = 'two'
-    view.rerender()
-    await act(async () => { finish(); await pending })
-    expect(view.result.current.preparing).toBe(false)
-    expect(view.result.current.loadError).toBeNull()
+    expect(loadDatasets).not.toHaveBeenCalled()
   })
 
   it('uses one read-only compatible listing in StrictMode and scopes cached choices to scenario', async () => {

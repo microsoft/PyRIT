@@ -26,6 +26,9 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
     supported_parameters: [OBJECTIVE, HISTORY],
     uses_default_adversarial_target: true,
     max_concrete_techniques: null,
+    default_datasets: [],
+    dataset_defaults: { sources: [], max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {} },
+    dataset_options: { mode: 'any', allowed_names: [], supports_overrides: true, per_dataset_limit: true, total_limit: true, filters: true },
     ...overrides,
   } as RegisteredScenario
 }
@@ -61,6 +64,7 @@ describe('scenario launch requests', () => {
     if (!estimate.ok || !run.ok) return
     expect(run.request).toEqual({
       scenario_name: 'garak.api_key',
+      prepare_in_background: true,
       ...estimate.request,
       operation_id: 'operation',
       max_concurrency: 4,
@@ -72,7 +76,7 @@ describe('scenario launch requests', () => {
       include_baseline: true,
       target_name: 'target',
       adversarial_target_name: 'adversary',
-      datasets: { max_total: 3 },
+      datasets: { max_total: 3, fetch: 'if_missing' },
       scenario_params: { objective: 'steal a key' },
     })
   })
@@ -86,7 +90,7 @@ describe('scenario launch requests', () => {
 
     const run = buildRunRequest(makeInput({ scenario, datasetEdits: { max_total: 3 } }))
 
-    expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation' } })
+    expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation', prepare_in_background: true } })
   })
 
   it('carries explicitly selected generation and scoring targets through estimates and launches', () => {
@@ -103,7 +107,7 @@ describe('scenario launch requests', () => {
     }
   })
 
-  it('omits unchanged datasets and an unset operation', () => {
+  it('keeps already missing-only defaults and omits an unset operation', () => {
     const run = buildRunRequest(makeInput({ operationId: null }))
 
     expect(run.ok && 'datasets' in run.request).toBe(false)

@@ -1855,6 +1855,7 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  prepare_in_background?: boolean
   scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
@@ -1993,6 +1994,7 @@ export type ScenarioRunEstimateResult =
       scope: 'default' | 'request'
       label: string
       note?: string
+      deferredCount?: boolean
     }
 
 export type ScenarioRunEstimateState =
@@ -2058,6 +2060,7 @@ export interface ScenarioOverloadSummary {
 }
 
 export interface ScenarioRunSummary {
+  dataset_preparation_pending?: boolean
   scenario_result_id: string
   scenario_name: string
   scenario_registry_name?: string | null
@@ -2135,6 +2138,7 @@ export interface ScenarioRunListResponse {
 
 /** Compact persisted run header returned by the progress endpoint. */
 export interface ScenarioProgressHeader {
+  dataset_preparation_pending?: boolean
   scenario_result_id: string
   scenario_name: string
   scenario_registry_name?: string | null

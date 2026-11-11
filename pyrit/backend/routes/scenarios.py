@@ -279,7 +279,7 @@ async def assess_scenario_datasets_async(
     },
 )
 async def load_scenario_datasets_async(
-    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest
+    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest, retry: bool = False
 ) -> ScenarioDatasetLoadResponse:
     """
     Load missing selected datasets on explicit request, without starting a scan.
@@ -288,7 +288,9 @@ async def load_scenario_datasets_async(
         ScenarioDatasetLoadResponse: Selected settings and stored metadata.
     """
     try:
-        result = await get_scenario_service().load_datasets_async(scenario_name=scenario_name, request=request)
+        result = await get_scenario_service().load_datasets_async(
+            scenario_name=scenario_name, request=request, retry=retry
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     if result is None:
@@ -317,7 +319,7 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
     """
     Start a new scenario run as a background task.
 
-    Initialization runs eagerly so configuration errors surface here, then the run
+    Initialization validates eagerly; background-preparation requests defer dataset work. The run
     itself continues in the background. Returns a scenario_result_id that can be
     polled for status.
 

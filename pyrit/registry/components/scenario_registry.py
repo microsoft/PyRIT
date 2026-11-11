@@ -303,6 +303,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         initial_metadata: Mapping[str, Any] | None = None,
         constructor_kwargs: dict[str, Any] | None = None,
         configuration_metadata: Callable[[Scenario], Mapping[str, Any]] | None = None,
+        defer_dataset_preparation: bool = False,
         **initialize_kwargs: Any,
     ) -> Scenario:
         """
@@ -338,11 +339,13 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 persist atomically when a fresh scenario result is created.
             constructor_kwargs (dict[str, Any] | None): Explicit constructor inputs for this run.
             configuration_metadata: Validate resolved configuration and capture identities before initialization.
+            defer_dataset_preparation: Persist a validated pending run without loading providers.
+                Its owner must call ``initialize_async()`` before execution.
             **initialize_kwargs (Any): Common run-resolved parameters merged into the
                 param bag (notably ``objective_target``).
 
         Returns:
-            Scenario: The fully initialized scenario, ready for ``run_async``.
+            Scenario: The initialized scenario, or a pending one when preparation was deferred.
         """
         constructor_kwargs = dict(constructor_kwargs or {})
         if scenario_result_id:
@@ -358,7 +361,10 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         if configuration_metadata is not None:
             metadata = await run_legacy_sync_async(configuration_metadata, scenario)
             scenario.set_initial_metadata(metadata={**(initial_metadata or {}), **metadata})
-        await scenario.initialize_async()
+        if defer_dataset_preparation:
+            await scenario.create_pending_run_async()
+        else:
+            await scenario.initialize_async()
         return scenario
 
     @staticmethod

@@ -65,6 +65,7 @@ from pyrit.models import (
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateCondition,
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
     ScenarioRunState,
@@ -326,6 +327,7 @@ class Scenario(ABC):
         self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
+        self._pending_initialization: ScenarioResult | None = None
         self._active_atomic_groups: dict[str, str] = {}
         self._active_executor: AttackExecutor | None = None
 
@@ -849,7 +851,9 @@ class Scenario(ABC):
                 note=budget.detail, dataset_size=budget, dataset_limit=dataset_limit
             )
         if isinstance(budget, AllAvailableDatasetSize):
-            return ScenarioRunSizeEstimate.unavailable(
+            return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 dataset_size=budget,
                 dataset_limit=dataset_limit,
                 note=(
@@ -1761,6 +1765,35 @@ class Scenario(ABC):
                 ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
+        if self._pending_initialization is not None:
+            await self._initialize_attacks_async(stored_result=None)
+            return
+        stored_result = await self._initialize_runtime_async()
+        await self._initialize_attacks_async(stored_result=stored_result)
+
+    async def create_pending_run_async(self) -> None:
+        """
+        Validate a new run and persist its identity before dataset preparation.
+
+        Raises:
+            ValueError: If this scenario already refers to a run.
+        """
+        if self._scenario_result_id is not None:
+            raise ValueError("Only a new run can defer dataset preparation.")
+        await self._initialize_runtime_async()
+        result = ScenarioResult(
+            scenario_identifier=self._build_scenario_identifier(),
+            scenario_description=self._description,
+            labels=self._memory_labels,
+            operation_id=self._operation_id,
+            attack_results={},
+            metadata={**self._initial_metadata, "dataset_preparation_pending": True},
+        )
+        await self._memory.add_scenario_results_to_memory_async(scenario_results=[result])
+        self._scenario_result_id = str(result.id)
+        self._pending_initialization = result
+
+    async def _initialize_runtime_async(self) -> ScenarioResult | None:
         if not self._params_resolved:
             self.set_params_from_args(args=self.params)
         raw_operation_id = self.params.get("operation_id")
@@ -1779,6 +1812,11 @@ class Scenario(ABC):
             if not stored:
                 raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
             stored_result = stored[0]
+            if stored_result.metadata.get("dataset_preparation_pending"):
+                raise ValueError(
+                    "This run never finished dataset preparation. "
+                    "Retry loading its sources and start a new configuration."
+                )
             stored_id = stored_result.operation_id
             # A run may be resumed with the name it was started with, or a name of its saved Operation.
             if operation_name is not None and operation_name != stored_result.labels.get("operation"):
@@ -1821,6 +1859,10 @@ class Scenario(ABC):
                 )
         else:
             self._initial_metadata[SCENARIO_ROLE_REFERENCES_METADATA_KEY] = references
+        return stored_result
+
+    async def _initialize_attacks_async(self, *, stored_result: ScenarioResult | None) -> None:
+        pending = self._pending_initialization
         stored_plan = self._get_stored_run_plan(stored_result=stored_result) if stored_result is not None else None
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
@@ -1833,7 +1875,7 @@ class Scenario(ABC):
         #
         # Resolve without sampling on resume, then restore the planned population before
         # builders check compatibility. Inputs outside the saved run must not affect resume.
-        is_resume = self._scenario_result_id is not None
+        is_resume = stored_result is not None
         if not is_resume:
             await self._prepare_datasets_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
@@ -1862,7 +1904,7 @@ class Scenario(ABC):
                     key=lambda name, _: name,
                 )
         # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
-        new_result_id = uuid.uuid4()
+        new_result_id = pending.id if pending is not None else uuid.uuid4()
         context = self._build_scenario_context(
             seed_groups_by_dataset=seed_groups_by_dataset,
             scenario_result_id=self._scenario_result_id or str(new_result_id),
@@ -1934,7 +1976,18 @@ class Scenario(ABC):
             },
         )
 
-        (await self._memory.add_scenario_results_to_memory_async(scenario_results=[result]))
+        if pending is not None:
+            header = await self._memory.get_scenario_result_header_async(scenario_result_id=str(pending.id))
+            if header is None:
+                raise RuntimeError("The preparing scenario run no longer exists.")
+            result.creation_time = header.creation_time
+            result.completion_time = header.completion_time
+            result.scenario_run_state = header.scenario_run_state
+            result.metadata = {**header.metadata, **result.metadata, "dataset_preparation_pending": False}
+            await self._memory.update_scenario_result_async(scenario_result=result)
+            self._pending_initialization = None
+        else:
+            await self._memory.add_scenario_results_to_memory_async(scenario_results=[result])
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
 

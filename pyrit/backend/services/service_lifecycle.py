@@ -8,6 +8,7 @@ import asyncio
 from pyrit.backend.services.analytics_service import close_analytics_service_async, get_analytics_service
 from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.dataset_preparation_service import close_dataset_preparation_async
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.initializer_service import get_initializer_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
@@ -43,6 +44,7 @@ async def close_services_async() -> None:
     errors: list[BaseException] = []
     for operation_name, close in (
         ("cached backend services", _close_cached_services_async),
+        ("dataset preparation", close_dataset_preparation_async),
         ("analytics service", close_analytics_service_async),
     ):
         try:

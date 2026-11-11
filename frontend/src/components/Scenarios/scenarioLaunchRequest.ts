@@ -1,4 +1,5 @@
 import { buildParametersFromForm, type ParameterFormValue } from '@/components/Parameters/parameterForm'
+import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import type {
   Parameter,
   RegisteredComponentReference,
@@ -210,6 +211,18 @@ export function buildEstimateRequest({
 
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
+  const defaults = scenarioDatasetDefaults(scenario)
+  const options = scenarioDatasetOptions(scenario)
+  const sources = datasetEdits.sources ?? defaults.sources
+  const protectedPolicies = sources.some((source) => {
+    const inherited = defaults.sources.find((item) => item.name === source.name)?.fetch ?? defaults.fetch
+    return (source.fetch ?? datasetEdits.fetch ?? inherited) !== 'if_missing'
+      && (!options.supports_overrides || options.source_settings === false)
+  })
+  if (protectedPolicies) return {
+    ok: false,
+    error: 'This scenario protects source-specific loading policies. Use the SDK/API to preserve them; scans here only load missing data.',
+  }
   const request: ScenarioRunSizeEstimateRequest = {}
   if (scoringTargetName) request.scoring_target_name = scoringTargetName
   if (objectiveScorer) request.objective_scorer = objectiveScorer
@@ -226,8 +239,21 @@ export function buildEstimateRequest({
   if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
-  if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
-    request.datasets = datasetEdits
+  if (supportsDatasets && options.supports_overrides && (
+    Object.keys(datasetEdits).length > 0 || defaults.fetch !== 'if_missing'
+    || sources.some((source) => source.fetch && source.fetch !== 'if_missing')
+  )) {
+    request.datasets = {
+      ...datasetEdits,
+      fetch: 'if_missing',
+      ...(options.source_settings === false || sources.length === 0
+        || (!datasetEdits.sources && !sources.some((source) => source.fetch && source.fetch !== 'if_missing')) ? {} : {
+        sources: sources.map((source) => ({
+          ...datasetEdits.sources?.find((item) => item.name === source.name),
+          name: source.name, fetch: 'if_missing',
+        })),
+      }),
+    }
   }
   const sentPresetParams = Object.fromEntries(Object.entries(presetScenarioParams).filter(
     ([name]) => !isScorerOwnedParameter(scenario, name)
@@ -282,6 +308,7 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
 
   const request: RunScenarioRequest = {
     scenario_name: input.scenario.scenario_name,
+    prepare_in_background: true,
     ...estimateResult.request,
   }
   if (input.operationId) request.operation_id = input.operationId

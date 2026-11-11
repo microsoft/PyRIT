@@ -49,7 +49,7 @@ function statusLabel(state: ScenarioRunEstimateState): string {
     case 'stale':
       return 'Previous estimate'
     case 'unavailable':
-      return 'Estimate unavailable'
+      return state.deferredCount ? 'All available' : 'Estimate unavailable'
   }
 }
 

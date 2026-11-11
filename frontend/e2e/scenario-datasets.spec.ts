@@ -22,9 +22,11 @@ const STORED = [
 ]
 
 type ControlAction = 'reset' | 'status' | 'hold_estimate' | 'release_estimate' | 'fail_estimate'
-  | 'hold_metadata' | 'release_metadata' | 'fail_metadata'
+  | 'hold_metadata' | 'release_metadata' | 'fail_metadata' | 'hold_provider' | 'release_provider'
 
 interface FixtureStatus {
+  provider_calls: number
+  provider_waiting: boolean
   estimate_waiting: boolean
   metadata_waiting: boolean
   preparations: number
@@ -185,6 +187,62 @@ test.afterEach(async ({ request }: { request: APIRequestContext }, testInfo: Tes
   }
   if (testInfo.status === 'passed') expect(status.preset_mutations.length).toBeGreaterThan(0)
   await attachJson(testInfo, 'fixture-isolation-and-estimates', status)
+})
+
+test('opens a preparing run while its one background provider invocation is blocked', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
+  const scenarioName = 'offline.background_datasets'
+  const name = `background_loading_${presetSuffix(testInfo)}`
+  await savePreset(request, {
+    name, scenario_name: scenarioName, techniques: ['dataset_direct'],
+    datasets: { fetch: 'always', sources: [{ name: 'acceptance_background', fetch: 'always' }] },
+  })
+  await control(request, 'hold_provider')
+  try {
+    await page.goto(presetEditorRoutePath(name))
+    await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(name)
+    await expect(page.getByText(/Editing this preset does not load datasets/)).toBeVisible()
+    await assertNoPreparation(request)
+    await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Preserved SDK refresh policy')
+    const saving = page.waitForResponse((response: Response) =>
+      new URL(response.url()).pathname.includes('/api/scenario-presets/') && response.request().method() === 'PUT')
+    await page.getByRole('button', { name: 'Save preset', exact: true }).click()
+    const saved: ScenarioPresetResponse = await (await saving).json()
+    expect(saved.preset.datasets).toMatchObject({
+      fetch: 'always', sources: [{ name: 'acceptance_background', fetch: 'always' }],
+    })
+    await page.goto(presetScannerRoutePath(scenarioName, name))
+    await expect.poll(async () => (await control(request, 'status')).provider_waiting).toBe(true)
+    await expect(page.getByText(/Loading selected datasets in the background/)).toBeVisible()
+    await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
+    await expect(page.getByRole('button', { name: 'Edit Maximum objectives' })).toBeEnabled()
+    await setLimit(page, 'Maximum objectives', '2')
+    await page.getByRole('spinbutton', { name: 'Max concurrency', exact: true }).fill('2')
+    const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
+    await expect(launch).toBeEnabled()
+    await launch.click()
+    const preview = page.getByRole('dialog', { name: 'Run preview' })
+    await expect(preview).toBeVisible()
+    const starting = page.waitForResponse((response: Response) =>
+      new URL(response.url()).pathname === '/api/scenarios/runs' && response.request().method() === 'POST')
+    await preview.getByRole('button', { name: 'Launch scan', exact: true }).click()
+    const response = await starting
+    expect(response.status(), await response.text()).toBe(202)
+    const run: ScenarioRunSummary = await response.json()
+    expect(run.dataset_preparation_pending).toBe(true)
+    await expect(page).toHaveURL(new RegExp(`${scenarioRunRoutePath(run.scenario_result_id)}$`))
+    await expect(page.getByTestId('run-state-badge')).toHaveText('Preparing datasets')
+    const blocked = await control(request, 'status')
+    expect(blocked.provider_waiting).toBe(true)
+    expect(blocked.provider_calls).toBe(1)
+    expect(blocked.sent).toEqual([])
+    await control(request, 'release_provider')
+    const finished = await completedRun(request, run)
+    expect(finished.dataset_preparation_pending).toBe(false)
+    expect(finished.completed_attacks).toBe(1)
+    expect((await control(request, 'status')).provider_calls).toBe(1)
+  } finally {
+    await control(request, 'release_provider')
+  }
 })
 
 test('configures, saves, refreshes, estimates without a target, and launches the same dataset request', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {

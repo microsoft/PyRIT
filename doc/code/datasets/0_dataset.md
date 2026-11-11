@@ -66,6 +66,29 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
 
+## Background scanner preparation
+
+The scanner automatically prepares only selected missing sources. Discovery and estimates
+remain read-only. Stored contents win, including edited and generated datasets; filters and
+selection limits never trigger a replacement or another provider call.
+
+Loading does not disable the form or Launch. Confirming Launch creates a run immediately;
+its normal queue/execution lifecycle shows dataset preparation before any attacks start.
+The backend shares missing-only provider work across selections, tabs, and launch within
+one runtime and memory lifetime. Registered providers share by provider class and source;
+configured providers share only when they are the same live instance, not merely the same
+dataset name. Distinct configured providers are not assumed equivalent.
+
+Provider failures stay visible until **Retry loading datasets** is selected. They cannot
+silently restart on a parameter edit or execute an incomplete run. Cancellation stops that
+run's wait without cancelling work another caller may need. Runtime replacement refuses
+active preparation, and shutdown drains owned provider work before disposing memory.
+
+The scanner uses `if_missing`. Saved `never`/`always` settings are visibly normalized for
+that scan when overrides are permitted; protected policies are rejected instead. Preset
+editing never prepares data and preserves its SDK-capable loading settings on save. Python
+and ordinary API launches retain `never`, `if_missing`, and explicit `always` refresh.
+
 ## Generated Datasets
 
 A generation provider uses a configured `PromptTarget` to create a dataset. Store the result

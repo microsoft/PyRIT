@@ -75,6 +75,7 @@ from pyrit.models import (
     AttackResult,
     AttackResultMetadata,
     ComponentIdentifier,
+    DatasetFetchPolicy,
     ScenarioActiveConversation,
     ScenarioAttackResultDelta,
     ScenarioHierarchyNode,
@@ -105,6 +106,7 @@ from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
+from pyrit.scenario.core.dataset_overrides import project_dataset_settings
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +227,7 @@ class _ActiveTask:
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
+    prepare_datasets: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -753,10 +756,9 @@ class ScenarioRunService:
         """
         Initialize and schedule a scenario run.
 
-        Performs all validation and initialization eagerly (initializers, target
-        resolution, technique validation, scenario.initialize_async) so errors are
-        returned immediately. On success, starts execution when idle or appends
-        the initialized run to the FIFO waiting queue.
+        Validates configuration eagerly. Missing-only background requests persist a
+        pending run; other requests finish initialization before admission. On success,
+        starts preparation/execution when idle or appends the run to the FIFO queue.
 
         Args:
             request: The run request with scenario name, target, and options.
@@ -842,6 +844,7 @@ class ScenarioRunService:
             scenario_registry_name=request.scenario_name,
             created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
+            prepare_datasets=request.prepare_in_background and not request.scenario_result_id,
         )
         await self._enqueue_run_async(scheduled=scheduled)
 
@@ -975,7 +978,7 @@ class ScenarioRunService:
                 fresh scenario result.
 
         Returns:
-            _PreparedRun: The initialized scenario and its scoped default.
+            _PreparedRun: The initialized or pending scenario and its scoped default.
 
         Raises:
             ValueError: If scenario, target, initializer, or technique cannot be found.
@@ -1036,11 +1039,14 @@ class ScenarioRunService:
                 references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY) if stored is not None else None
                 if isinstance(references, dict):
                     metadata["scenario_expected_role_references_v1"] = references
-            scenario = await self._initialize_scenario_async(
-                request=request,
-                init_kwargs=init_kwargs,
-                initial_metadata=metadata,
-            )
+            from pyrit.backend.services.dataset_preparation_service import get_dataset_preparation_service
+
+            with get_dataset_preparation_service().scope():
+                scenario = await self._initialize_scenario_async(
+                    request=request,
+                    init_kwargs=init_kwargs,
+                    initial_metadata=metadata,
+                )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
     @staticmethod
@@ -1771,7 +1777,9 @@ class ScenarioRunService:
             configuration_metadata=partial(
                 self._resolved_role_metadata,
                 expected_references=(initial_metadata or {}).get("scenario_expected_role_references_v1"),
+                missing_only=request.prepare_in_background and not request.scenario_result_id,
             ),
+            defer_dataset_preparation=request.prepare_in_background and not request.scenario_result_id,
             initial_metadata={
                 **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
@@ -1785,10 +1793,18 @@ class ScenarioRunService:
         scenario: Scenario,
         *,
         expected_references: Mapping[str, str] | None = None,
+        missing_only: bool = False,
     ) -> dict[str, Any]:
         readiness = scenario.get_readiness()
         if readiness.issues:
             raise ScenarioConfigurationError(issues=readiness.issues)
+        if missing_only:
+            settings = project_dataset_settings(scenario._dataset_config, required_data=scenario._required_data)
+            if any(source.fetch is not DatasetFetchPolicy.IF_MISSING for source in settings.sources):
+                raise ValueError(
+                    "Background preparation requires missing-only dataset loading. "
+                    "Use the SDK/API eager path for fixed 'never' or 'always' policies."
+                )
         references = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
         if expected_references is not None and references != expected_references:
             raise ScenarioRunConflictError(
@@ -1800,7 +1816,7 @@ class ScenarioRunService:
         """
         Execute a scenario run (background task entry point).
 
-        Only calls scenario.run_async on the already-initialized scenario.
+        Completes deferred initialization before calling scenario.run_async.
 
         Terminal handoff releases executable objects. Bounded error evidence is
         retained separately for later status polling.
@@ -1814,6 +1830,11 @@ class ScenarioRunService:
 
         try:
             with override_default_adversarial_target(active.adversarial_target):
+                if active.prepare_datasets:
+                    from pyrit.backend.services.dataset_preparation_service import get_dataset_preparation_service
+
+                    with get_dataset_preparation_service().scope():
+                        await active.scenario.initialize_async()
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:
@@ -2035,6 +2056,7 @@ class ScenarioRunService:
             scenario_registry_name=plan.scenario_registry_name if plan else None,
             scenario_version=scenario_result.scenario_version,
             status=status,
+            dataset_preparation_pending=bool(scenario_result.metadata.get("dataset_preparation_pending")),
             created_at=scenario_result.creation_time,
             started_at=self._load_started_at(scenario_result=scenario_result),
             updated_at=updated_at,
@@ -2907,6 +2929,7 @@ class ScenarioRunService:
         scenario_identity.parameters = filter_sensitive_fields(scenario_identity.parameters)
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
+                dataset_preparation_pending=bool(header_result.metadata.get("dataset_preparation_pending")),
                 scenario_result_id=scenario_result_id,
                 scenario_name=header_result.scenario_name,
                 scenario_registry_name=plan.scenario_registry_name if plan else None,

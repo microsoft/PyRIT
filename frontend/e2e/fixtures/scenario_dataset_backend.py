@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         ScenarioPreset,
         ScenarioRunSizeEstimate,
         ScenarioRunSizeEstimateRequest,
+        SeedDataset,
         StoredPreset,
     )
     from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -46,6 +47,8 @@ class FixtureAction(str, Enum):
     HOLD_METADATA = "hold_metadata"
     RELEASE_METADATA = "release_metadata"
     FAIL_METADATA = "fail_metadata"
+    HOLD_PROVIDER = "hold_provider"
+    RELEASE_PROVIDER = "release_provider"
 
 
 class FixtureControl(BaseModel):
@@ -139,6 +142,16 @@ def _register_components(sent: list[str]) -> None:
                 scenario_result_id=scenario_result_id,
             )
 
+    class BackgroundDatasetScenario(DatasetAcceptanceScenario):
+        """A missing synthetic source that can be held until Launch has opened its run."""
+
+        @apply_defaults
+        def __init__(self, *, scenario_result_id: str | None = None) -> None:
+            super().__init__(scenario_result_id=scenario_result_id)
+            self._default_dataset_config = DatasetAttackConfiguration(
+                sources=[DatasetSource(name="acceptance_background")], max_total=1
+            )
+
     techniques = AttackTechniqueRegistry.get_registry_singleton()
     techniques.register_from_factories(
         [
@@ -151,6 +164,7 @@ def _register_components(sent: list[str]) -> None:
     scenarios = ScenarioRegistry.get_registry_singleton()
     scenarios.register_class(DatasetAcceptanceScenario, name="offline.datasets")
     scenarios.register_class(DatasetCacheBenchmark, name="offline.dataset_cache")
+    scenarios.register_class(BackgroundDatasetScenario, name="offline.background_datasets")
 
 
 def _configure_preset_storage(*, database_path: str, patches: ExitStack, mutations: list[dict[str, str]]) -> None:
@@ -212,9 +226,38 @@ def _install_controls(
     estimate_waiting = metadata_waiting = False
     preparations = provider_lookups = 0
     estimates: list[dict[str, Any]] = []
+    provider_gate = asyncio.Event()
+    provider_gate.set()
+    provider_calls = 0
+    provider_waiting = False
+    preparations_active = 0
+    preparation_idle = asyncio.Event()
+    preparation_idle.set()
+
+    class HeldDatasetProvider(SeedDatasetProvider):
+        @property
+        def dataset_name(self) -> str:
+            """The isolated synthetic source name."""
+            return "acceptance_background"
+
+        async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+            nonlocal provider_calls, provider_waiting
+            from pyrit.models import SeedDataset, SeedObjective
+
+            provider_calls += 1
+            provider_waiting = True
+            try:
+                await asyncio.wait_for(provider_gate.wait(), timeout=120)
+            finally:
+                provider_waiting = False
+            return SeedDataset(
+                dataset_name=self.dataset_name,
+                seeds=[SeedObjective(value="Say hello from the offline provider.", dataset_name=self.dataset_name)],
+            )
 
     async def control_async(command: FixtureControl) -> dict[str, Any]:
         nonlocal hold_estimate, hold_metadata, fail_estimate, fail_metadata, preparations, provider_lookups
+        nonlocal provider_calls
         action = command.action
         if action is FixtureAction.RESET:
             random.seed(612)
@@ -225,6 +268,14 @@ def _install_controls(
             preset_mutations.clear()
             estimate_gate.set()
             metadata_gate.set()
+            provider_gate.set()
+            await asyncio.wait_for(preparation_idle.wait(), timeout=120)
+            if "acceptance_background" in await memory.get_seed_dataset_names_async():
+                await memory.delete_dataset_async(dataset_name="acceptance_background")
+            from pyrit.backend.services.dataset_preparation_service import close_dataset_preparation_async
+
+            await close_dataset_preparation_async()
+            provider_calls = 0
         elif action is FixtureAction.HOLD_ESTIMATE:
             hold_estimate = True
             estimate_gate.clear()
@@ -239,11 +290,17 @@ def _install_controls(
             metadata_gate.set()
         elif action is FixtureAction.FAIL_METADATA:
             fail_metadata = True
+        elif action is FixtureAction.HOLD_PROVIDER:
+            provider_gate.clear()
+        elif action is FixtureAction.RELEASE_PROVIDER:
+            provider_gate.set()
         return {
             "estimate_waiting": estimate_waiting,
             "metadata_waiting": metadata_waiting,
             "preparations": preparations,
             "provider_lookups": provider_lookups,
+            "provider_calls": provider_calls,
+            "provider_waiting": provider_waiting,
             "sent": list(sent),
             "preset_source": ScenarioPresetRegistry.get_registry_singleton().source,
             "preset_mutations": list(preset_mutations),
@@ -304,15 +361,24 @@ def _install_controls(
         return await original_metadata(self, loaded_only=loaded_only)
 
     async def prepare_async(self: DatasetConfiguration, *, fetch: DatasetFetchPolicy | None = None) -> None:
-        nonlocal preparations
+        nonlocal preparations, preparations_active
         if estimating.get():
             raise AssertionError("A Scenario estimate attempted to prepare datasets.")
         preparations += 1
-        await original_prepare(self, fetch=fetch)
+        preparations_active += 1
+        preparation_idle.clear()
+        try:
+            await original_prepare(self, fetch=fetch)
+        finally:
+            preparations_active -= 1
+            if not preparations_active:
+                preparation_idle.set()
 
     async def providers_async(*, dataset_names: list[str]) -> dict[str, SeedDatasetProvider]:
         nonlocal provider_lookups
         provider_lookups += 1
+        if dataset_names == ["acceptance_background"]:
+            return {"acceptance_background": HeldDatasetProvider()}
         raise AssertionError(f"The offline acceptance server attempted provider lookup: {dataset_names}")
 
     patches.enter_context(patch.object(ScenarioService, "estimate_scenario_run_size_async", estimate_async))

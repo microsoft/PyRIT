@@ -86,6 +86,14 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     await runtime.apply_task
 
 
+async def test_active_dataset_preparation_blocks_runtime_replacement_async(runtime: RuntimeLifecycle) -> None:
+    with patch.object(lifecycle_module, "has_active_dataset_preparation", return_value=True):
+        assert runtime._has_active_work()
+        await apply_async(runtime)
+    assert runtime.outcome == "busy"
+    assert runtime.generation == "original"
+
+
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])
 async def test_runtime_readiness_reports_state_async(*, runtime: RuntimeLifecycle, state: str | None) -> None:
     if state is None:

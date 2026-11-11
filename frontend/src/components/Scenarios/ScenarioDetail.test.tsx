@@ -398,6 +398,20 @@ describe('ScenarioDetail', () => {
     })
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
     mockStartRun.mockResolvedValue({ scenario_result_id: 'sr-default' })
+    jest.mocked(datasetsApi.listDatasets).mockReset().mockResolvedValue({
+      items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
+        name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+        logical_examples: 8, modalities: ['text', 'image_path', 'audio_path'],
+        harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
+      })),
+    })
+    jest.mocked(scenariosApi.loadDatasets).mockReset().mockImplementation(async (_name, request) => ({
+      settings: { sources: [], max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {} },
+      items: (request.datasets?.sources ?? [{ name: 'harmbench' }]).map(({ name }) => ({
+        name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+        logical_examples: 8, modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
+      })),
+    }))
     mockTechniques.getConfiguration.mockReset()
     mockTechniques.getConfiguration.mockImplementation(async (name: string) => techniqueConfiguration(name))
     mockTechniques.validateEdit.mockReset()
@@ -920,6 +934,7 @@ describe('ScenarioDetail', () => {
       scenario_name: 'foundry.red_team_agent',
       target_name: 'target-a',
       include_baseline: false,
+      prepare_in_background: true,
     })
     expect(screen.queryByText('Select at least one attack technique.')).not.toBeInTheDocument()
   })
@@ -975,6 +990,7 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).toHaveBeenCalledWith({
       scenario_name: 'foundry.red_team_agent',
       scenario_params: { note: 'Keep this value' },
+      prepare_in_background: true,
     })
   })
 
@@ -1170,6 +1186,7 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
     expect(mockStartRun.mock.calls[0][0]).toEqual({
       ...estimateRequest,
+      prepare_in_background: true,
       scenario_name: 'foundry.red_team_agent',
       max_concurrency: 10,
       max_retries: 0,
@@ -2287,7 +2304,7 @@ describe('ScenarioDetail', () => {
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
-    expect(request.datasets.sources).toEqual([{ name: 'ds_a' }, { name: 'ds_b' }])
+    expect(request.datasets.sources).toEqual([{ name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' }])
     expect(request.datasets.max_total).toBe(25)
     expect(request.datasets.filters).toEqual({
       harm_categories: ['cyber', 'violence'],
@@ -2299,7 +2316,8 @@ describe('ScenarioDetail', () => {
         target_name: 'target-a',
         techniques: ['default_technique'],
         datasets: {
-          sources: [{ name: 'ds_a' }, { name: 'ds_b' }],
+          fetch: 'if_missing',
+          sources: [{ name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' }],
           max_total: 25,
           filters: {
           harm_categories: ['cyber', 'violence'],
@@ -2372,79 +2390,57 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
-  it.each(['user', 'unknown'])('warns before replacing %s data and confirms through Run preview', async (origin) => {
+  it.each(['never', 'always'] as const)('normalizes saved %s policies without refreshing stored data', async (policy) => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValueOnce({ items: [{
-      name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
-      logical_examples: 8, origins: [origin], modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
-    }] })
-    mockEstimateRun.mockResolvedValue({
-      ...makeEstimate(8), effective_datasets: {
-        sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: false }],
-        max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
-      },
-    })
-    renderDetail('/scanner/launch/foundry.red_team_agent')
+    renderDetail('/scanner/launch/foundry.red_team_agent', { initialRun: {
+      scenario_name: 'foundry.red_team_agent',
+      target_name: 'target-a',
+      datasets: { fetch: policy, sources: [{ name: 'harmbench', fetch: policy }] },
+    } })
     await flushRenderedPromises()
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     await advanceTimers(300)
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
-    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
-    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
-    expect(within(preview).getByRole('alert')).toHaveTextContent('full stored datasets: harmbench')
-    expect(within(preview).getByRole('alert')).toHaveTextContent('User or unknown-origin data will be replaced: harmbench')
-    expect(within(preview).getByRole('alert')).toHaveTextContent('prevent older runs from resuming')
-    await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
-    expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
-    const confirmed = await screen.findByRole('dialog', { name: 'Run preview' })
-    await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
+    expect(screen.getByText(/Saved never\/always policies are normalized/)).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: 'Refresh' })).not.toBeInTheDocument()
+    await confirmRunPreview(user)
     expect(mockStartRun).toHaveBeenCalledTimes(1)
     expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
-      fetch: 'always', sources: [{ name: 'harmbench', fetch: 'always' }],
+      fetch: 'if_missing', sources: [{ name: 'harmbench', fetch: 'if_missing' }],
     })
+    expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
   })
 
-  it('shows a replacement warning when dataset metadata cannot be checked', async () => {
+  it('keeps Launch available when dataset discovery fails and never guesses a refresh', async () => {
     const user = userEvent.setup()
     jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Metadata unavailable'))
-    mockEstimateRun.mockResolvedValue({
-      ...makeEstimate(8), effective_datasets: {
-        sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: false }],
-        max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
-      },
-    })
     renderDetail('/scanner/launch/foundry.red_team_agent')
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
-    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
-    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
-    expect(within(preview).getByRole('alert')).toHaveTextContent('Existing data could not be checked for: harmbench')
+    await screen.findByText('Metadata unavailable')
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+    expect(within(preview).queryByText(/full stored datasets/)).not.toBeInTheDocument()
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
-  it('uses current backend policies instead of a global refresh draft for the warning', async () => {
+  it('keeps the form and Launch available while a selected provider is still blocked', async () => {
     const user = userEvent.setup()
-    mockEstimateRun.mockResolvedValue({
-      ...makeEstimate(8), effective_datasets: {
-        sources: [
-          { name: 'harmbench', max_size: 5, fetch: 'never', configured_provider: false },
-          { name: 'remote', max_size: 5, fetch: 'always', configured_provider: false },
-        ],
-        max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
-      },
+    const stored = await datasetsApi.listDatasets()
+    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({
+      items: stored.items.map((item) => item.name === 'harmbench' ? { ...item, loaded: false } : item),
     })
+    jest.mocked(scenariosApi.loadDatasets).mockReturnValue(new Promise(() => {}))
     renderDetail('/scanner/launch/foundry.red_team_agent')
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await screen.findByText(/Loading selected datasets in the background/)
+    expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
+    await user.click(screen.getByRole('checkbox', { name: 'crescendo' }))
+    await setObjectiveLimit(user, '3')
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1)
     const preview = await openRunPreview(user)
-    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
-    const warning = within(preview).getByRole('alert')
-    expect(warning).toHaveTextContent('full stored datasets: remote.')
-    expect(warning).not.toHaveTextContent('harmbench')
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan' }))
+    expect(mockStartRun.mock.calls[0][0].prepare_in_background).toBe(true)
+    expect(mockNavigate).toHaveBeenCalled()
   })
 
-  it('waits for the current projection after removing and re-adding a default source', async () => {
+  it('does not require an exact estimate to launch after source edits', async () => {
     const user = userEvent.setup()
     const defaults: ScenarioDatasetSettings = {
       sources: ['ds_a', 'ds_b'].map((name) => ({ name, max_size: 5, fetch: 'if_missing', configured_provider: false })),
@@ -2456,40 +2452,38 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
     await act(async () => resolveEstimate({ ...makeEstimate(8), effective_datasets: defaults }))
-    await user.click(screen.getByRole('radio', { name: 'Refresh' }))
     await user.click(screen.getByRole('button', { name: 'Remove ds_b' }))
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
     await user.click(screen.getByRole('option', { name: 'ds_b (unknown)', exact: true }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
-    expect(confirm).toBeDisabled()
-    expect(within(preview).getByRole('status')).toHaveTextContent('Checking dataset refresh policies')
+    expect(confirm).toBeEnabled()
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1].datasets?.sources).toEqual([
-      { name: 'ds_a', fetch: 'always' }, { name: 'ds_b' },
+      { name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' },
     ]))
     await act(async () => resolveEstimate({
       ...makeEstimate(8), effective_datasets: {
-        ...defaults, fetch: 'always', sources: defaults.sources.map((source) => ({ ...source, fetch: 'always' })),
+        ...defaults,
       },
     }))
     expect(confirm).toBeEnabled()
-    expect(within(preview).getByRole('alert')).toHaveTextContent('full stored datasets: ds_a, ds_b.')
+    expect(within(preview).queryByText(/full stored datasets/)).not.toBeInTheDocument()
     await user.click(confirm)
     expect(mockStartRun).toHaveBeenCalledTimes(1)
     expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
-      fetch: 'always', sources: [{ name: 'ds_a', fetch: 'always' }, { name: 'ds_b' }],
+      fetch: 'if_missing', sources: [{ name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' }],
     })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
   })
 
-  it.each(['always', 'if_missing'] as const)(
-    'preserves the visible %s draft and allows recovery when a protected-policy estimate fails', async (policy) => {
+  it.each(['always', 'never'] as const)(
+    'rejects protected %s policies without preparing providers', async (policy) => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({
       dataset_defaults: {
-        sources: [{ name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false }],
-        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+        sources: [{ name: 'harmbench', max_size: 5, fetch: policy, configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: policy, filters: {},
       },
       dataset_options: {
         mode: 'fixed', allowed_names: [], supports_overrides: true, source_settings: false,
@@ -2498,28 +2492,10 @@ describe('ScenarioDetail', () => {
     }))
     mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
     renderDetail('/scanner/launch/foundry.red_team_agent')
-    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
-    await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
-      'foundry.red_team_agent', expect.objectContaining({ datasets: { fetch: 'always' } }), expect.any(AbortSignal),
-    ))
-    const failedPreview = await openRunPreview(user)
-    await waitFor(() => expect(within(failedPreview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
-    expect(within(failedPreview).getByRole('alert')).toHaveTextContent('Cannot confirm which datasets will refresh')
-    await user.click(within(failedPreview).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
-    expect(screen.getByRole('radio', { name: 'Refresh' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Load missing' })).toBeEnabled()
-    if (policy === 'if_missing') {
-      await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-      expect(screen.getByRole('radio', { name: 'Load missing' })).toBeChecked()
-    }
-    const preview = await openRunPreview(user)
-    const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
-    await waitFor(() => expect(confirm).toBeEnabled())
-    expect(within(preview).getByRole('alert')).toHaveTextContent('Cannot confirm which datasets will refresh')
-    expect(within(preview).queryByRole('status')).not.toBeInTheDocument()
-    await user.click(confirm)
-    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ fetch: policy })
+    await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('protects source-specific loading policies')
+    expect(mockStartRun).not.toHaveBeenCalled()
+    expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -2580,6 +2556,7 @@ describe('ScenarioDetail', () => {
       scenario_name: 'foundry.red_team_agent',
       target_name: 'target-a',
       techniques: ['default_technique'],
+      prepare_in_background: true,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: true,
@@ -2713,7 +2690,7 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
-    expect(mockStartRun).toHaveBeenCalledWith(expectedRunRequest)
+    expect(mockStartRun).toHaveBeenCalledWith({ ...expectedRunRequest, prepare_in_background: true })
     expect(mockStartRun.mock.calls[0][0].techniques).not.toContain('default')
     expect(expectedEstimateRequest.techniques).toEqual(expectedRunRequest.techniques)
     expect(expectedEstimateRequest.scenario_params).toEqual(expectedRunRequest.scenario_params)
@@ -2928,6 +2905,7 @@ describe('ScenarioDetail', () => {
         scenario_name: 'foundry.red_team_agent',
         target_name: 'target-a',
         techniques: ['crescendo', CONVERTER_TOKEN],
+        prepare_in_background: true,
         max_concurrency: 10,
         max_retries: 0,
         include_baseline: true,
@@ -3112,7 +3090,10 @@ describe('ScenarioDetail', () => {
       await confirmRunPreview(user)
 
       await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
-      expect(mockStartRun.mock.calls[0][0].datasets).toEqual(datasets)
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+        ...datasets, fetch: 'if_missing',
+        sources: datasets.sources?.map((source) => ({ ...source, fetch: 'if_missing' })),
+      })
     })
 
     it('should seed rendered parameters and carry the remaining preset parameters into the run', async () => {

@@ -123,6 +123,7 @@ class ScenarioRunPlan(BaseModel):
 class ScenarioProgressHeader(BaseModel):
     """Compact persisted run header returned by the progress endpoint."""
 
+    dataset_preparation_pending: bool = False
     scenario_result_id: str
     scenario_name: str
     scenario_registry_name: str | None = None

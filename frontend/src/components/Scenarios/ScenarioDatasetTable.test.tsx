@@ -61,7 +61,7 @@ function Harness({
     <ScenarioDatasetTable request={request} defaults={defaults} effective={effective} options={options}
       datasets={datasets} disabled={false} loading={loading} preparing={preparing} metadataError={metadataError}
       compatibleOnly={compatibleOnly}
-      loadEnabled onLoad={onLoad} onReload={onReload} onValidationChange={setValidation}
+      automaticLoading onRetryPreparation={onLoad} onReload={onReload} onValidationChange={setValidation}
       onChange={(next) => { setRequest(next); onChange(next) }} />
     <button disabled={validation !== null}>Launch</button>
   </MemoryRouter></FluentProvider>
@@ -159,8 +159,7 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('button', { name: 'Edit remote objective limit' })).toHaveTextContent('Up to 4')
     expect(screen.getByText('Not stored in memory')).toBeInTheDocument()
     expect(onLoad).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Load datasets' }))
-    expect(onLoad).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
   })
 
   it('keeps required reference sources complete and does not expose source edits', () => {
@@ -285,30 +284,24 @@ describe('ScenarioDatasetTable', () => {
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({})
   })
 
-  it('uses pill radios that update all selected source loading policies', async () => {
+  it('replaces loading-policy controls with missing-only loading information', async () => {
     const user = userEvent.setup()
     const onChange = jest.fn()
     render(<Harness onChange={onChange} />)
     await addDataset(user, 'remote')
-    await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({
-      fetch: 'if_missing', sources: [{ name: 'stored', fetch: 'if_missing' }, { name: 'remote', fetch: 'if_missing' }],
-    })
-    await user.click(screen.getByRole('radio', { name: 'Stored only' }))
-    expect(onChange.mock.calls.at(-1)?.[0].sources.every((source: { fetch: string }) => source.fetch === 'never')).toBe(true)
-    expect(screen.getByRole('button', { name: 'Load datasets' })).toBeEnabled()
+    expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
+    expect(screen.getByText(/This scan loads only missing selected datasets/)).toBeInTheDocument()
+    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ sources: [{ name: 'stored' }, { name: 'remote' }] })
   })
 
-  it('keeps missing-data loading on by default and allows refresh after data is loaded', async () => {
-    const user = userEvent.setup()
+  it('keeps stored contents and never exposes implicit regeneration', () => {
     const onChange = jest.fn()
     const defaults = { ...DEFAULTS, sources: [{ name: 'remote', max_size: 4 as const, fetch: 'if_missing' as const, configured_provider: false }] }
     const view = render(<Harness defaults={defaults} onChange={onChange} />)
-    expect(screen.getByRole('radio', { name: 'Load missing' })).toBeChecked()
+    expect(screen.queryByRole('radio', { name: 'Refresh' })).not.toBeInTheDocument()
     view.rerender(<Harness defaults={defaults} onChange={onChange} datasets={[{ ...REMOTE, loaded: true, logical_examples: 100 }]} />)
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('radio', { name: 'Refresh' }))
-    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ fetch: 'always', sources: [{ name: 'remote', fetch: 'always' }] })
+    expect(onChange).not.toHaveBeenCalled()
     expect(screen.queryByText(/All selected datasets are loaded/)).not.toBeInTheDocument()
   })
 
@@ -356,38 +349,31 @@ describe('ScenarioDatasetTable', () => {
   it('does not pretend a global policy can replace protected source-specific loading rules', () => {
     render(<Harness options={{ ...OPTIONS, mode: 'fixed', source_settings: false }}
       datasets={[{ ...STORED, loaded: false, provider_available: true }]} />)
-    expect(screen.getByRole('radio', { name: 'Stored only' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Stored only' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Load datasets' })).toBeEnabled()
+    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+    expect(screen.getByText(/protected policies require the SDK\/API/)).toBeInTheDocument()
   })
 
-  it('does not preload missing refresh sources and permits loading after changing the policy', async () => {
-    const user = userEvent.setup()
+  it('explains normalization without changing saved refresh settings', () => {
     const onLoad = jest.fn()
     render(<Harness onLoad={onLoad} initialRequest={{
       sources: [{ name: 'remote', fetch: 'always' }],
     }} />)
-    const load = screen.getByRole('button', { name: 'Load datasets' })
-    expect(load).toBeDisabled()
-    expect(screen.getByText(/Datasets set to refresh will load when the scan starts/)).toBeInTheDocument()
-    await user.click(load)
+    expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Saved never\/always policies are normalized/)).toBeInTheDocument()
     expect(onLoad).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('radio', { name: 'Load missing' }))
-    expect(load).toBeEnabled()
-    await user.click(load)
-    expect(onLoad).toHaveBeenCalledTimes(1)
   })
 
-  it('allows loading missing non-refresh sources when the refresh source is already stored', async () => {
+  it('keeps source edits usable while provider preparation is blocked', async () => {
     const user = userEvent.setup()
     const onLoad = jest.fn()
-    render(<Harness onLoad={onLoad} initialRequest={{
+    render(<Harness onLoad={onLoad} preparing initialRequest={{
       sources: [{ name: 'stored', fetch: 'always' }, { name: 'remote', fetch: 'if_missing' }],
     }} />)
-    const load = screen.getByRole('button', { name: 'Load datasets' })
-    expect(load).toBeEnabled()
-    await user.click(load)
-    expect(onLoad).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Remove remote' }))
+    expect(screen.queryByRole('row', { name: /remote/ })).not.toBeInTheDocument()
+    expect(onLoad).not.toHaveBeenCalled()
   })
 
   it('keeps metadata refresh status outside responsive table columns and clears it after checking', () => {
@@ -400,7 +386,7 @@ describe('ScenarioDatasetTable', () => {
 
   it.each([true, false])('announces loading while reading metadata or importing data (metadata: %s)', (loading) => {
     render(<Harness initialRequest={{ sources: [{ name: 'remote' }] }} loading={loading} preparing={!loading} />)
-    expect(screen.getByRole('status')).toHaveTextContent(loading ? 'Checking dataset details...' : 'Loading datasets...')
+    expect(screen.getByRole('status')).toHaveTextContent(loading ? 'Checking dataset details...' : 'Loading selected datasets in the background')
     expect(screen.queryByText('Not stored in memory')).not.toBeInTheDocument()
   })
 
@@ -413,18 +399,8 @@ describe('ScenarioDatasetTable', () => {
     expect(screen.getByRole('option', { name: 'remote (unknown)' })).toBeInTheDocument()
   })
 
-  it('supports keyboard selection and terse policy descriptions', async () => {
-    const user = userEvent.setup()
+  it('explains that stored data wins', () => {
     render(<Harness />)
-    const group = screen.getByRole('radiogroup', { name: 'Dataset loading' })
-    const stored = within(group).getByRole('radio', { name: 'Stored only' })
-    await user.click(stored)
-    expect(screen.getByText('Only use datasets already in memory')).toBeInTheDocument()
-    await user.keyboard('{ArrowRight}')
-    expect(within(group).getByRole('radio', { name: 'Load missing' })).toBeChecked()
-    expect(screen.getByText('Load missing datasets')).toBeInTheDocument()
-    await user.keyboard('{ArrowRight}')
-    expect(within(group).getByRole('radio', { name: 'Refresh' })).toBeChecked()
-    expect(screen.getByText('Refresh datasets for each new scan')).toBeInTheDocument()
+    expect(screen.getByText(/Stored contents are kept, including generated datasets/)).toBeInTheDocument()
   })
 })

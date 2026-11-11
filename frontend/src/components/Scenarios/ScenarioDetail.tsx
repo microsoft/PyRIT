@@ -36,6 +36,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
+import { useScenarioDatasetPreparation } from '@/hooks/useScenarioDatasetPreparation'
 import { useScenarioDetail } from '@/hooks/useScenarioDetail'
 import { useScenarioPreset } from '@/hooks/useScenarioPreset'
 import { useScenarioLaunch } from '@/hooks/useScenarioLaunch'
@@ -609,7 +610,6 @@ function ScenarioLaunchForm({
     paused: staleSelection,
   })
   const estimateState = runEstimate.state
-  const currentDatasetEstimate = runEstimate.current
 
   const datasetProjection = runEstimate.datasetProjection
   const datasetDefaults: ScenarioDatasetSettings = datasetProjection?.dataset_defaults
@@ -622,25 +622,21 @@ function ScenarioLaunchForm({
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
   useEffect(() => {
-    if (!defaultAssertScoring && previousDatasetSelection.current !== datasetSelectionKey) {
+    if (previousDatasetSelection.current !== datasetSelectionKey) {
       previousDatasetSelection.current = datasetSelectionKey
       reloadDatasetMetadata()
     }
-  }, [datasetSelectionKey, reloadDatasetMetadata, defaultAssertScoring])
-  const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
-    ? currentDatasetEstimate.datasetSettings : undefined
-  const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
-  const unconfirmedRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0
-    && !checkingRefreshPolicies && confirmedDatasetSettings === undefined
-  const refreshDatasets = [...new Set((confirmedDatasetSettings?.sources ?? [])
-    .filter((source) => source.fetch === 'always').map((source) => source.name))]
-  const editedRefreshDatasets = refreshDatasets.filter((name) => {
-    const metadata = datasetMetadata.items.find((item) => item.name === name)
-    return metadata?.loaded && (!metadata.origins?.length
-      || metadata.origins.some((origin) => origin === 'user' || origin === 'unknown'))
+  }, [datasetSelectionKey, reloadDatasetMetadata])
+  const preparation = useScenarioDatasetPreparation({
+    scenarioName: scenario.scenario_name,
+    datasetNames: selectedDatasetNames,
+    request: estimateRequest,
+    metadata: datasetMetadata.items,
+    metadataLoading: datasetMetadata.loading,
+    metadataError: datasetMetadata.error,
+    enabled: !staleSelection,
+    onPrepared: datasetMetadata.reload,
   })
-  const uncheckedRefreshDatasets = refreshDatasets.filter((name) => datasetMetadata.loading || datasetMetadata.error
-    || !datasetMetadata.items.some((item) => item.name === name))
 
   const newAttackContext = useMemo(() => ({
     generation: runtime.generation,
@@ -676,7 +672,7 @@ function ScenarioLaunchForm({
     requestResult,
     submitBlocked: conversationBusy || Boolean(techniqueEditError),
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
-      || staleSelection || unavailableSelection || checkingRefreshPolicies,
+      || staleSelection || unavailableSelection || Boolean(preparation.error),
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
@@ -1036,16 +1032,10 @@ function ScenarioLaunchForm({
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
-                preparing={datasetMetadata.preparing} loadError={datasetMetadata.loadError}
-                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null
-                  && confirmedDatasetSettings !== undefined
-                  && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
-                    && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
-                onLoad={defaultAssertScoring ? undefined : () => {
-                  if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
-                }}
                 compatibleOnly={defaultAssertScoring}
                 required={defaultAssertScoring} showCatalogLink={false}
+                automaticLoading preparing={preparation.preparing} loadError={preparation.error}
+                onRetryPreparation={preparation.retry}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
             </section>
@@ -1114,7 +1104,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null) || linkedDatasetError !== null}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || Boolean(preparation.error) || (supportsDatasets && datasetError !== null) || linkedDatasetError !== null}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
@@ -1164,17 +1154,10 @@ function ScenarioLaunchForm({
             open={previewOpen}
             submitting={submitting}
             confirmDisabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
-              || checkingRefreshPolicies}
+              || Boolean(preparation.error)}
             onOpenChange={changePreviewOpen}
             onCancel={dismissPreview}
             onConfirm={() => void confirmLaunch()}
-            refresh={{
-              checking: checkingRefreshPolicies,
-              unconfirmed: unconfirmedRefreshPolicies,
-              refreshed: refreshDatasets,
-              edited: editedRefreshDatasets,
-              unchecked: uncheckedRefreshDatasets,
-            }}
             objectiveTarget={supportsObjectiveTarget ? targetName : null}
             objectiveScorer={scenario.supports_objective_scorer && !defaultAssertScoring
               ? objectiveScorer?.registry_name ?? 'Use scenario default' : null}

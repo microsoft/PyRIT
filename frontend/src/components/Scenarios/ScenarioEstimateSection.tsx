@@ -82,7 +82,7 @@ export default function ScenarioEstimateSection({
         ))}
       </dl>
       {state.status === 'unavailable' && (
-        <Text size={200} className={styles.warningText} role="status">
+        <Text size={200} className={state.deferredCount ? styles.hint : styles.warningText} role="status">
           {state.label}
           {state.note && state.note !== state.label ? ` ${state.note}` : ''}
         </Text>

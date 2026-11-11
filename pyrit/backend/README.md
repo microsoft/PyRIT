@@ -82,6 +82,22 @@ overrides; reconstruction preserves declarations from the source target.
 Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
+### Scenario dataset preparation
+
+See [background scanner preparation](../../doc/code/datasets/0_dataset.md#background-scanner-preparation)
+for the shared behavior. `POST /api/scenarios/catalog/{name}/datasets/load` accepts the
+same configuration as an estimate and loads selected missing sources only. `?retry=true`
+explicitly retries failed provider work; discovery GETs and estimates never prepare data.
+
+GUI launches send `prepare_in_background: true` to `POST /api/scenarios/runs`.
+Configuration, dependency, and Operation validation still precede acceptance. Fresh
+missing-only runs are persisted before provider loading, then admitted to the existing FIFO.
+The summary and progress header expose `dataset_preparation_pending`; no additional
+persisted run state is introduced. Attacks execute only after initialization completes.
+Preparation errors terminalize the run without executing attacks. A run without a prepared
+plan cannot resume; reopen its configuration, retry its sources, and start a new run.
+Omitting the flag preserves eager API initialization and all fetch-policy capabilities.
+
 ### Dataset creation, batch mutation, and deletion
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.

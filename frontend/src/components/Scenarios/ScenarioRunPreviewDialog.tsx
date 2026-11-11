@@ -7,8 +7,6 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  MessageBar,
-  MessageBarBody,
   Text,
 } from '@fluentui/react-components'
 
@@ -18,15 +16,6 @@ import type { Parameter, ScenarioRunEstimateState, TechniqueOverride } from '@/t
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
 import { estimateFromState, formatEffectiveParameterPreview } from './scenarioLaunchPresentation'
-
-/** Which datasets a confirmed run would replace, and how sure the backend answer is. */
-export interface DatasetRefreshPreview {
-  checking: boolean
-  unconfirmed: boolean
-  refreshed: string[]
-  edited: string[]
-  unchecked: string[]
-}
 
 /** The datasets section of the run preview, or null when the scenario takes no dataset input. */
 export interface DatasetSelectionPreview {
@@ -44,7 +33,6 @@ interface ScenarioRunPreviewDialogProps {
   onOpenChange: (open: boolean) => void
   onCancel: () => void
   onConfirm: () => void
-  refresh: DatasetRefreshPreview
   /** The objective target name, or null when the scenario takes no target. */
   objectiveTarget: string | null
   /** The objective scorer label, or null when the scenario takes no objective scorer. */
@@ -69,7 +57,6 @@ export default function ScenarioRunPreviewDialog({
   onOpenChange,
   onCancel,
   onConfirm,
-  refresh,
   objectiveTarget,
   objectiveScorer = null,
   adversarialTarget,
@@ -89,27 +76,6 @@ export default function ScenarioRunPreviewDialog({
         <DialogBody>
           <DialogTitle>Run preview</DialogTitle>
           <DialogContent className={styles.dialogContent}>
-            {refresh.checking && <Text role="status">Checking dataset refresh policies...</Text>}
-            {refresh.unconfirmed && <MessageBar intent="warning">
-              <MessageBarBody role="alert">
-                Cannot confirm which datasets will refresh. The backend settings could not be checked for this
-                request. A refresh replaces the full stored dataset, can remove manual edits, and can prevent
-                older runs from resuming. Filters and objective limits do not limit replacement.
-              </MessageBarBody>
-            </MessageBar>}
-            {refresh.refreshed.length > 0 && <MessageBar intent="warning">
-              <MessageBarBody role="alert">
-                Refresh will replace the full stored datasets: {refresh.refreshed.join(', ')}.
-                Filters and objective limits do not limit replacement. This can remove manual edits
-                and prevent older runs from resuming. Use a new dataset name to keep both batches.
-                {refresh.edited.length > 0 && <Text block>
-                  User or unknown-origin data will be replaced: {refresh.edited.join(', ')}.
-                </Text>}
-                {refresh.unchecked.length > 0 && <Text block>
-                  Existing data could not be checked for: {refresh.unchecked.join(', ')}.
-                </Text>}
-              </MessageBarBody>
-            </MessageBar>}
             <dl className={styles.previewList}>
               <div className={styles.previewGroup}>
                 {objectiveTarget !== null && <>

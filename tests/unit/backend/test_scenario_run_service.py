@@ -1206,6 +1206,7 @@ class TestScenarioRunServiceStartRun:
             scenario_result_id=None,
             constructor_kwargs={},
             configuration_metadata=ANY,
+            defer_dataset_preparation=False,
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,

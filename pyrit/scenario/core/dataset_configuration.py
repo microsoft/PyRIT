@@ -51,6 +51,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
+from pyrit.scenario.core.dataset_preparation import current_dataset_preparation
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -106,10 +107,14 @@ async def prepare_configurations_async(
     fetches = [(config, *await config._fetch_for_preparation_async(fetch=fetch)) for config in configurations]
     if not any(policies[name] is DatasetFetchPolicy.ALWAYS for _, fetched, policies in fetches for name in fetched):
         for config, fetched, _ in fetches:
-            for dataset in fetched.values():
-                await config._memory.add_seed_datasets_to_memory_async(
-                    datasets=[dataset], added_by="DatasetConfiguration"
-                )
+            for name, dataset in fetched.items():
+                owner = current_dataset_preparation(config._memory)
+                if owner is not None:
+                    await owner[0].store_missing_async(name=name, dataset=dataset)
+                elif name not in await config._memory.get_seed_dataset_names_async():
+                    await config._memory.add_seed_datasets_to_memory_async(
+                        datasets=[dataset], added_by="DatasetConfiguration"
+                    )
         return
     prepared: list[tuple[DatasetConfiguration, dict[str, PreparedSeedBatch], dict[str, DatasetFetchPolicy]]] = []
     for config, fetched, policies in fetches:
@@ -677,22 +682,33 @@ class DatasetConfiguration:
         fetched: dict[str, SeedDataset] = {}
         for name in to_fetch:
             refresh = policies[name] is DatasetFetchPolicy.ALWAYS
-            dataset = (
-                await providers[name].fetch_dataset_async(cache=False)
-                if refresh
-                else await providers[name].fetch_dataset_async()
-            )
-            if (
-                not dataset.seeds
-                or dataset.dataset_name != name
-                or any(seed.dataset_name != name for seed in dataset.seeds)
-            ):
-                raise DatasetConstraintError(
-                    f"Provider for '{name}' must return non-empty seeds with that dataset name."
+            owner = current_dataset_preparation(self._memory) if not refresh else None
+            if owner is not None:
+                preparation, retry_failed = owner
+                fetched[name] = await preparation.fetch_async(
+                    name=name,
+                    provider=providers[name],
+                    registered=configured_providers[name] is None,
+                    retry_failed=retry_failed,
+                    fetch=lambda name=name: self._fetch_provider_async(
+                        name=name, provider=providers[name], refresh=False
+                    ),
                 )
-            SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
-            fetched[name] = dataset
+            else:
+                fetched[name] = await self._fetch_provider_async(name=name, provider=providers[name], refresh=refresh)
         return fetched, policies
+
+    @staticmethod
+    async def _fetch_provider_async(*, name: str, provider: SeedDatasetProvider, refresh: bool) -> SeedDataset:
+        dataset = await provider.fetch_dataset_async(cache=False) if refresh else await provider.fetch_dataset_async()
+        if (
+            not dataset.seeds
+            or dataset.dataset_name != name
+            or any(seed.dataset_name != name for seed in dataset.seeds)
+        ):
+            raise DatasetConstraintError(f"Provider for '{name}' must return non-empty seeds with that dataset name.")
+        SeedDataset.group_seed_prompts_by_prompt_group_id(dataset.seeds)
+        return dataset
 
     async def _validate_candidate_population_async(self) -> None:
         """Validate raw configuration populations before replacement."""
