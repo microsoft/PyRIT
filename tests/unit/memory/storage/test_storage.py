@@ -1,17 +1,21 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from azure.storage.blob import BlobProperties
 
 from pyrit.memory import (
     AzureBlobStorageIO,
     DiskStorageIO,
+    StorageIO,
     SupportedContentType,
 )
+from unit.async_utils import wait_for_event_async
 
 
 @pytest.fixture
@@ -533,3 +537,271 @@ async def test_is_file_lazy_initializes_client(azure_blob_storage_io):
 
     mock_create.assert_called_once()
     assert result is True
+
+
+class _StorageWithoutListing(StorageIO):
+    async def read_file_async(self, path: Path | str) -> bytes:
+        return b""
+
+    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+        return None
+
+    async def path_exists_async(self, path: Path | str) -> bool:
+        return False
+
+    async def is_file_async(self, path: Path | str) -> bool:
+        return False
+
+    async def create_directory_if_not_exists_async(self, path: Path | str) -> None:
+        return None
+
+
+def _blob_listing(*names: str) -> MagicMock:
+    async def list_blobs_async() -> AsyncIterator[BlobProperties]:
+        for name in names:
+            yield BlobProperties(name=name)
+
+    client = MagicMock()
+    client.list_blobs = Mock(return_value=list_blobs_async())
+    client.close = AsyncMock()
+    return client
+
+
+async def test_storage_io_list_files_requires_an_implementation_async() -> None:
+    with pytest.raises(NotImplementedError, match="does not support listing files"):
+        await _StorageWithoutListing().list_files_async("records")
+
+
+async def test_disk_storage_lists_direct_files_in_name_order_async(tmp_path: Path) -> None:
+    storage = DiskStorageIO()
+    for name in ("b.json", "a.json", "notes.txt"):
+        await storage.write_file_async(tmp_path / name, b"{}")
+    nested = tmp_path / "nested"
+    await storage.create_directory_if_not_exists_async(nested)
+    await storage.write_file_async(nested / "c.json", b"{}")
+
+    files = await storage.list_files_async(tmp_path)
+
+    assert files == [str(tmp_path / name) for name in ("a.json", "b.json", "notes.txt")]
+    assert await storage.list_files_async(str(tmp_path)) == files
+    assert await storage.list_files_async(nested) == [str(nested / "c.json")]
+
+
+async def test_disk_storage_lists_empty_or_missing_directory_as_empty_async(tmp_path: Path) -> None:
+    storage = DiskStorageIO()
+    assert await storage.list_files_async(tmp_path) == []
+    assert await storage.list_files_async(tmp_path / "missing") == []
+    file_path = tmp_path / "file.json"
+    await storage.write_file_async(file_path, b"{}")
+    assert await storage.list_files_async(file_path) == []
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        "prompt_generations",
+        "prompt_generations/",
+        "https://account.blob.core.windows.net/container/prompt_generations",
+        Path("prompt_generations"),
+    ],
+)
+async def test_blob_storage_lists_direct_blobs_as_urls_async(directory: Path | str) -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container/")
+    client = _blob_listing("prompt_generations/b.json", "prompt_generations/nested/c.json", "prompt_generations/a.json")
+    storage._client_async = client
+
+    files = await storage.list_files_async(directory)
+
+    assert files == [
+        "https://account.blob.core.windows.net/container/prompt_generations/a.json",
+        "https://account.blob.core.windows.net/container/prompt_generations/b.json",
+    ]
+    client.list_blobs.assert_called_once_with(name_starts_with="prompt_generations/")
+    client.close.assert_awaited_once()
+    assert storage._client_async is None
+
+
+async def test_blob_storage_list_normalizes_nested_windows_directory_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    client = _blob_listing("results/prompt_generations/a.json")
+    storage._client_async = client
+
+    files = await storage.list_files_async("results\\prompt_generations")
+
+    assert files == ["https://account.blob.core.windows.net/container/results/prompt_generations/a.json"]
+    client.list_blobs.assert_called_once_with(name_starts_with="results/prompt_generations/")
+
+
+@pytest.mark.parametrize(
+    "container_url",
+    [
+        "https://account.blob.core.windows.net/container/subdir",
+        "https://account.blob.core.windows.net/container/subdir/",
+    ],
+)
+async def test_blob_storage_list_with_container_sub_path_returns_readable_urls_async(container_url: str) -> None:
+    storage = AzureBlobStorageIO(container_url=container_url)
+    client = _blob_listing("subdir/prompt_generations/a.json", "subdir/prompt_generations/nested/b.json")
+    storage._client_async = client
+
+    files = await storage.list_files_async(f"{container_url.rstrip('/')}/prompt_generations")
+
+    assert files == ["https://account.blob.core.windows.net/container/subdir/prompt_generations/a.json"]
+    client.list_blobs.assert_called_once_with(name_starts_with="subdir/prompt_generations/")
+    assert storage._resolve_blob_name(files[0]) == "subdir/prompt_generations/a.json"
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        "",
+        "/",
+        "https://account.blob.core.windows.net/container",
+        "https://account.blob.core.windows.net/container/",
+    ],
+)
+async def test_blob_storage_lists_container_root_without_prefix_async(directory: str) -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    client = _blob_listing("c.json", "nested/b.json", "a.json")
+    storage._client_async = client
+
+    files = await storage.list_files_async(directory)
+
+    assert files == [
+        "https://account.blob.core.windows.net/container/a.json",
+        "https://account.blob.core.windows.net/container/c.json",
+    ]
+    client.list_blobs.assert_called_once_with(name_starts_with=None)
+    client.close.assert_awaited_once()
+
+
+async def test_blob_storage_list_lazily_creates_client_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    client = _blob_listing()
+    with patch.object(storage, "_create_container_client_async", new_callable=AsyncMock, return_value=client) as create:
+        files = await storage.list_files_async("prompt_generations")
+    create.assert_awaited_once()
+    assert files == []
+    client.close.assert_awaited_once()
+
+
+async def test_blob_storage_list_closes_client_on_failure_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+
+    async def failing_listing_async() -> AsyncIterator[BlobProperties]:
+        yield BlobProperties(name="prompt_generations/a.json")
+        raise OSError("storage unavailable")
+
+    client = MagicMock()
+    client.list_blobs = Mock(return_value=failing_listing_async())
+    client.close = AsyncMock()
+    storage._client_async = client
+    with pytest.raises(OSError, match="storage unavailable"):
+        await storage.list_files_async("prompt_generations")
+    client.close.assert_awaited_once()
+    assert storage._client_async is None
+
+
+async def test_blob_storage_keeps_shared_client_open_for_concurrent_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    stream = AsyncMock()
+    stream.readall = AsyncMock(return_value=b"data")
+
+    async def held_download_async() -> AsyncMock:
+        started.set()
+        await release.wait()
+        return stream
+
+    slow_blob = MagicMock()
+    slow_blob.download_blob = AsyncMock(side_effect=held_download_async)
+    fast_blob = MagicMock()
+    fast_blob.get_blob_properties = AsyncMock()
+    client = MagicMock()
+    client.close = AsyncMock()
+    client.get_blob_client = Mock(side_effect=lambda blob: slow_blob if blob == "slow.txt" else fast_blob)
+    storage._client_async = client
+
+    read = asyncio.create_task(storage.read_file_async("slow.txt"))
+    await wait_for_event_async(event=started, tasks=[read])
+    assert await storage.path_exists_async("fast.txt")
+    client.close.assert_not_awaited()
+    release.set()
+    assert await read == b"data"
+    client.close.assert_awaited_once()
+    assert storage._client_async is None
+
+
+async def test_blob_storage_listed_names_with_reserved_characters_round_trip_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    names = ["records/report#1.json", "records/report?draft.json", "records/a b%41.json"]
+    blobs = {name: MagicMock() for name in names}
+    for blob in blobs.values():
+        stream = AsyncMock()
+        stream.readall = AsyncMock(return_value=b"data")
+        blob.download_blob = AsyncMock(return_value=stream)
+    client = _blob_listing(*names)
+    client.get_blob_client = Mock(side_effect=lambda blob: blobs[blob])
+    client.delete_blob = AsyncMock()
+    storage._client_async = client
+
+    files = await storage.list_files_async("records")
+
+    assert files == [
+        "https://account.blob.core.windows.net/container/records/a%20b%2541.json",
+        "https://account.blob.core.windows.net/container/records/report%231.json",
+        "https://account.blob.core.windows.net/container/records/report%3Fdraft.json",
+    ]
+    assert [storage._resolve_blob_name(file) for file in files] == sorted(names)
+    for file in files:
+        storage._client_async = client
+        assert await storage.read_file_async(file) == b"data"
+    storage._client_async = client
+    await storage.delete_file_async(files[1])
+    client.delete_blob.assert_awaited_once_with("records/report#1.json")
+
+
+async def test_blob_storage_creates_one_client_for_concurrent_first_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    client = MagicMock()
+    client.close = AsyncMock()
+    with patch("azure.storage.blob.aio.ContainerClient.from_container_url", return_value=client) as create:
+        acquired = await asyncio.gather(storage._acquire_client_async(), storage._acquire_client_async())
+
+    assert acquired == [client, client]
+    create.assert_called_once()
+    await storage._release_client_async()
+    client.close.assert_not_awaited()
+    await storage._release_client_async()
+    client.close.assert_awaited_once()
+
+
+async def test_blob_upload_stream_shares_the_client_with_concurrent_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    uploading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_upload_async(**kwargs: object) -> None:
+        uploading.set()
+        await release.wait()
+
+    blob = MagicMock()
+    blob.get_blob_properties = AsyncMock()
+    client = MagicMock()
+    client.close = AsyncMock()
+    client.upload_blob = AsyncMock(side_effect=held_upload_async)
+    client.get_blob_client = Mock(return_value=blob)
+    storage._client_async = client
+
+    async def chunks_async() -> AsyncIterator[bytes]:
+        yield b"data"
+
+    upload = asyncio.create_task(storage.write_stream_async(path="uploads/a.bin", chunks=chunks_async()))
+    await wait_for_event_async(event=uploading, tasks=[upload])
+    assert await storage.path_exists_async("uploads/b.bin")
+    client.close.assert_not_awaited()
+    release.set()
+    await upload
+    client.close.assert_awaited_once()
+    assert storage._client_async is None

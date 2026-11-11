@@ -9,6 +9,10 @@ import type {
   TechniqueOverride,
 } from '@/types'
 
+import { isBlankDatasetName } from '@/utils/routeParams'
+
+import { scenarioDatasetDefaults } from './datasetPresentation'
+
 /**
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
@@ -40,15 +44,60 @@ export const DEFAULT_MAX_RETRIES = 0
 export const CONVERSATION_PARAMETER_NAMES = new Set(['prepended_conversation_id', 'apply_converters_to_prepended_history'])
 export const OBJECTIVE_PARAMETER_NAMES = new Set(['objective', 'harm_categories'])
 
+const ASSERT_SCORER_PARAMETERS = new Set([
+  'judgment_mode', 'target_system_prompt', 'judge_presets', 'judge_preset_files',
+  'disabled_judge_dimensions', 'judge_samples', 'objective_dimension', 'scoring_target',
+  'trace_source', 'trace_requirement',
+])
+
+/** The ASSERT launch form always uses ASSERT's default scoring; custom scoring stays in the SDK. */
+export function usesDefaultAssertScoring(scenario: RegisteredScenario): boolean {
+  return scenario.scenario_name === 'foundry.assert_policy'
+}
+
+export function isScorerOwnedParameter(scenario: RegisteredScenario, name: string): boolean {
+  return usesDefaultAssertScoring(scenario) && ASSERT_SCORER_PARAMETERS.has(name)
+}
+
+/** Whether a saved value leaves a setting at its default; defaults arrive as display strings. */
+function isDefaultSetting(parameter: Parameter | undefined, value: unknown): boolean {
+  if (value == null) return true
+  if (parameter?.is_list) {
+    const defaults = parameter.default == null ? [] : [parameter.default].flat()
+    return Array.isArray(value) && value.length === defaults.length
+      && value.every((item, index) => String(item) === defaults[index])
+  }
+  return parameter?.default != null && ['string', 'number', 'boolean'].includes(typeof value)
+    && String(value) === String(parameter.default)
+}
+
 export function supportsParameter(scenario: RegisteredScenario, name: string): boolean {
   return scenario.supported_parameter_names.includes(name)
+}
+
+function linkedDatasetLabel(name: string): string {
+  return name !== '' && name === name.trim() ? name : JSON.stringify(name)
+}
+
+/**
+ * Why a link's dataset names can't launch, or null. A scenario without dataset input can't take
+ * any, and no dataset can have a blank name. Other names are left for the server to validate.
+ */
+export function linkedDatasetProblem(names: readonly string[], supportsDatasets: boolean): string | null {
+  if (names.length === 0) return null
+  if (!supportsDatasets) {
+    return "This scenario does not take datasets, so it can't launch with the linked datasets: "
+      + `${names.map(linkedDatasetLabel).join(', ')}.`
+  }
+  return names.some(isBlankDatasetName) ? "The link includes a blank dataset name, so this scan can't launch with it." : null
 }
 
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
     (parameter) => supportsParameter(scenario, parameter.name)
-      && !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name),
+      && !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name)
+      && !isScorerOwnedParameter(scenario, parameter.name),
   )
 }
 
@@ -71,6 +120,8 @@ export interface ScenarioLaunchInput {
   presetScenarioParams?: Record<string, unknown>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
+  /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
+  linkedDatasetError?: string | null
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
@@ -110,7 +161,20 @@ export function buildEstimateRequest({
   supportsPrompt = true,
   objectiveScorer,
   scorerError,
+  linkedDatasetError,
 }: ScenarioLaunchInput): BuildEstimateRequestResult {
+  if (linkedDatasetError) return { ok: false, error: linkedDatasetError }
+  if (usesDefaultAssertScoring(scenario)) {
+    if (objectiveScorer || scoringTargetName) {
+      return { ok: false, error: 'This saved ASSERT configuration uses a custom scorer. Use the SDK to preserve it; this form uses default scoring.' }
+    }
+    const nonDefaultScoring = Object.entries(presetScenarioParams).some(([name, value]) =>
+      isScorerOwnedParameter(scenario, name)
+      && !isDefaultSetting(scenario.supported_parameters.find((item) => item.name === name), value))
+    if (nonDefaultScoring) {
+      return { ok: false, error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.' }
+    }
+  }
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (scorerError) return { ok: false, error: scorerError }
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
@@ -133,7 +197,8 @@ export function buildEstimateRequest({
     }
     const result = buildParametersFromForm(
       dynamicParameters.filter((parameter) =>
-        (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
+        !isScorerOwnedParameter(scenario, parameter.name)
+        && (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(parameter.name))
         && (supportsPrompt || parameter.name !== 'prompt')),
       scenarioParamValues,
     )
@@ -165,7 +230,8 @@ export function buildEstimateRequest({
     request.datasets = datasetEdits
   }
   const sentPresetParams = Object.fromEntries(Object.entries(presetScenarioParams).filter(
-    ([name]) => supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(name),
+    ([name]) => !isScorerOwnedParameter(scenario, name)
+      && (supportsPrependedConversation || !CONVERSATION_PARAMETER_NAMES.has(name)),
   ))
   const mergedScenarioParams = Object.keys(sentPresetParams).length > 0
     ? { ...(scenarioParams ?? {}), ...sentPresetParams }
@@ -180,6 +246,10 @@ export function buildEstimateRequest({
 export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResult {
   if (supportsParameter(input.scenario, 'objective_target') && !input.targetName) {
     return { ok: false, error: 'Select a target.' }
+  }
+  if (usesDefaultAssertScoring(input.scenario)
+    && (input.datasetEdits.sources ?? scenarioDatasetDefaults(input.scenario).sources).length === 0) {
+    return { ok: false, error: 'Select an ASSERT dataset.' }
   }
   const estimateResult = buildEstimateRequest(input)
   if (!estimateResult.ok) {

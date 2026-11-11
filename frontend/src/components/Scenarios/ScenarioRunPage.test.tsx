@@ -18,6 +18,9 @@ import ScenarioRunPage from './ScenarioRunPage'
 
 jest.mock('@/hooks/useScenarioRunProgress', () => ({ useScenarioRunProgress: jest.fn() }))
 jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
+jest.mock('@/hooks/useAssertPolicyMetrics', () => ({
+  useAssertPolicyMetrics: () => ({ status: 'loading', metrics: null, error: null, retry: jest.fn() }),
+}))
 jest.mock('@/services/api', () => ({ scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
@@ -201,6 +204,20 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByText('False', { exact: true })).toBeInTheDocument()
   })
 
+  it('shows ASSERT metrics only for completed foundry.assert_policy runs', () => {
+    const completed = { ...RUN, status: 'COMPLETED' as const, completed_at: '2026-01-01T00:00:10Z' }
+    state = makeState({ run: { ...completed, scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy' } })
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('heading', { name: 'ASSERT policy metrics' })).toBeInTheDocument()
+
+    state = makeState({ run: completed })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
+
+    state = makeState({ run: { ...completed, scenario_registry_name: 'custom.scan', scenario_name: 'AssertPolicy' } })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
+  })
   it('preserves per-group expansion through polling and completion without collapse text', async () => {
     const user = userEvent.setup()
     const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)

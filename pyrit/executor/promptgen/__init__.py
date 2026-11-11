@@ -20,7 +20,10 @@ if TYPE_CHECKING:
         PromptGeneratorStrategyContext,
         PromptGeneratorStrategyResult,
     )
-    from pyrit.executor.promptgen.target_objective_generator import TargetObjectiveGenerator
+    from pyrit.executor.promptgen.target_objective_generator import (
+        TargetObjectiveGenerator,
+        TargetObjectiveGeneratorResult,
+    )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertGenerator": "pyrit.executor.promptgen.assert_generator",
@@ -30,6 +33,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AnecdoctorGenerator": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorResult": "pyrit.executor.promptgen.anecdoctor",
     "TargetObjectiveGenerator": "pyrit.executor.promptgen.target_objective_generator",
+    "TargetObjectiveGeneratorResult": "pyrit.executor.promptgen.target_objective_generator",
     "PromptGeneratorStrategy": "pyrit.executor.promptgen.core",
     "PromptGeneratorStrategyContext": "pyrit.executor.promptgen.core",
     "PromptGeneratorStrategyResult": "pyrit.executor.promptgen.core",

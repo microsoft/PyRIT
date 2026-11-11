@@ -44,7 +44,8 @@ function expectOnlyLoadedDatasetGets(): void {
   for (const call of mockGet.mock.calls) {
     const url = String(call[0])
     if (url === '/datasets') continue
-    expect(url === '/datasets/seeds' || url.startsWith('/datasets/seeds/')).toBe(true)
+    const regenerateLookup = url === '/prompt-generations/from-dataset'
+    expect(url === '/datasets/seeds' || url.startsWith('/datasets/seeds/') || regenerateLookup).toBe(true)
     const params = (call[1] as { params?: { selection_key?: unknown } } | undefined)?.params
     expect(typeof params?.selection_key).toBe('string')
     expect(params?.selection_key).not.toBe('')
@@ -90,6 +91,7 @@ function RefreshableRoutes() {
       <Routes key={epoch}>
         <Route path="/datasets" element={<DatasetCatalog />} />
         <Route path="/datasets/detail" element={<DatasetSelection />} />
+        <Route path="/datasets/generate" element={<p>Dataset generations</p>} />
       </Routes>
       <output aria-label="Current URL">{`${location.pathname}${location.search}${location.hash}`}</output>
       <button type="button" onClick={() => navigate(-1)}>History back</button>
@@ -157,6 +159,16 @@ describe('DatasetCatalog', () => {
     mockGet.mockReturnValue(new Promise(() => {}))
     render(<Harness initialPath="/datasets" />)
     expect(screen.getByText('Loading datasets...')).toBeInTheDocument()
+  })
+
+  it('opens dataset generation from the catalog header', async () => {
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    render(<Harness initialPath="/datasets" />)
+
+    await user.click(await screen.findByRole('button', { name: 'Generate dataset' }))
+
+    expect(await screen.findByText('Dataset generations')).toBeInTheDocument()
+    expect(currentUrl().pathname).toBe('/datasets/generate')
   })
 
   it('renders summary cards from the catalog response', async () => {
@@ -350,6 +362,26 @@ describe('DatasetCatalog', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Not labeled' }))
     expect(currentUrl().searchParams.get('unlabeled')).toBe('true')
     expect(screen.getByRole('link', { name: '(unnamed)' })).toBeInTheDocument()
+  })
+
+  it('filters to generated datasets from the origin control', async () => {
+    const user = userEvent.setup()
+    mockCatalog([
+      makeDataset({ name: 'support_policy', selection_key: 'dataset:named:support_policy', origins: ['generated'] }),
+      makeDataset({ name: 'harmbench', selection_key: 'dataset:named:harmbench', origins: ['remote'] }),
+    ])
+    render(<Harness initialPath="/datasets" />)
+    await screen.findByRole('link', { name: 'support_policy' })
+
+    await user.click(screen.getByTestId('dataset-origin-filter'))
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'Remote provider' })).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Generated' }))
+
+    expect(currentUrl().searchParams.getAll('origin')).toEqual(['generated'])
+    expect(screen.getByRole('link', { name: 'support_policy' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'harmbench' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.getByTestId('dataset-origin-filter')).toHaveValue('Origins: Generated')
   })
 
   it('reaches search, clear, and the dataset link from the keyboard', async () => {

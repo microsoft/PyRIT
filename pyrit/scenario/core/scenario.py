@@ -45,6 +45,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
+    DatasetSelectionMode,
     IndeterminateDatasetSize,
     Parameter,
     RegistryReference,
@@ -1117,7 +1118,17 @@ class Scenario(ABC):
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
-        """Return the scenario's named-dataset capabilities for the current parameters."""
+        """
+        Return the scenario's named-dataset capabilities for the current parameters.
+
+        Named sources can't replace inline seeds, so an inline configuration reports its sources as
+        fixed. Limits and filters keep their declared capabilities.
+
+        Returns:
+            ScenarioDatasetOptions: The permitted dataset overrides.
+        """
+        if self._dataset_config.source_kind is DatasetSourceKind.INLINE:
+            return self.DATASET_OPTIONS.model_copy(update={"mode": DatasetSelectionMode.FIXED, "allowed_names": []})
         return self.DATASET_OPTIONS
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
@@ -1864,6 +1875,20 @@ class Scenario(ABC):
 
         self._atomic_attacks = retained_attacks
 
+    def _get_identity_params(self) -> dict[str, Any]:
+        """
+        Return the scenario's own parameters recorded in its identity.
+
+        The framework common inputs are excluded: they are captured through the dedicated
+        identity fields and are often live, non-JSON-serializable objects. Saved launches
+        restore these parameters on resume.
+
+        Returns:
+            dict[str, Any]: The custom parameters that identify this run.
+        """
+        common_names = self._common_scenario_parameter_names()
+        return {name: value for name, value in self.params.items() if name not in common_names}
+
     def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
         Build the canonical ``ScenarioIdentifier`` for the current run.
@@ -1879,15 +1904,9 @@ class Scenario(ABC):
         # Required data first, so moving ingredients out of dataset_config keeps stored identities.
         required = self._required_data.dataset_names if self._required_data is not None else []
         datasets = [*required, *self._dataset_config.dataset_names]
-        # Persist only the scenario's own custom params. The framework common inputs
-        # (objective_target, techniques, dataset config, ...) are captured through the
-        # dedicated identity fields below and are often live, non-JSON-serializable
-        # objects, so they must not leak into the free-form params dict.
-        common_names = self._common_scenario_parameter_names()
-        custom_params = {name: value for name, value in self.params.items() if name not in common_names}
         return ScenarioIdentifier.of(
             self,
-            params=custom_params,
+            params=self._get_identity_params(),
             version=self._version,
             techniques=techniques,
             datasets=datasets,

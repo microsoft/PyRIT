@@ -141,11 +141,13 @@ print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_va
 # %% [markdown]
 # ## Score a tool call through an attack
 #
-# This local agent uses a real SDK provider and an in-process HTTP transport.
-# No server, model, credentials, or global instrumentation is needed.
-# `HTTPTarget` sends a fresh `traceparent` per request when you enable tracing, and
-# PyRIT saves the same context on the request. The agent extracts that context
-# before it runs a tool.
+# This local agent runs in the same process as PyRIT and uses a real SDK provider.
+# No server, model, credentials, or global instrumentation is needed. A small custom
+# target calls the agent. `PromptTarget` runs each call inside a fresh trace context
+# when tracing is enabled and saves the same context on the request, so the agent's
+# spans join the request's trace without any header handling. See
+# [Example: an in-process agent](../targets/6_custom_targets.ipynb#example-an-in-process-agent)
+# for a multi-turn version of this target.
 #
 # Here, the prompt `"my_tool_call"` tells the local agent to call the `my_tool_call()` tool.
 # The prompt and tool name are the same only to keep the example simple.
@@ -153,16 +155,15 @@ print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_va
 #
 # The caller owns capture completeness. This controlled agent has no background
 # work, sampling is disabled, and it checks export after its spans end. Only
-# then does it mark a request trace complete. An HTTP response alone would not
-# prove this for an arbitrary remote agent.
+# then does it mark a request trace complete. A response alone would not
+# prove this for an arbitrary agent.
 
 # %%
-import httpx
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from collections.abc import Awaitable, Callable
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackOutcome, MessageScorable
-from pyrit.prompt_target import HTTPTarget, TargetTraceConfig
+from pyrit.models import AttackOutcome, Message, MessageScorable, construct_response_from_request
+from pyrit.prompt_target import PromptTarget, TargetTraceConfig
 from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 
 client = InMemoryTraceClient()
@@ -171,25 +172,32 @@ provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_clie
 tracer = provider.get_tracer("local-attack-agent")
 
 
-async def local_agent_async(request: httpx.Request) -> httpx.Response:
-    """Execute the local agent under the received request context."""
-    context = TraceContextTextMapPropagator().extract(dict(request.headers))
-    prompt = request.content.decode()
-    with tracer.start_as_current_span("agent", context=context) as root:
+async def local_agent_async(*, prompt: str) -> str:
+    """Execute the local agent in the current request context."""
+    with tracer.start_as_current_span("agent") as root:
         if prompt == "my_tool_call":
             my_tool_call()
     if prompt != "pending":
         if not await asyncio.to_thread(provider.force_flush):
             raise RuntimeError("Local trace export did not finish.")
         client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
-    return httpx.Response(200, text="done")
+    return "done"
 
 
-target = HTTPTarget(
-    http_request="POST / HTTP/1.1\nHost: local-agent.test\n\n{PROMPT}",
-    transport=httpx.MockTransport(local_agent_async),
-    trace_config=TargetTraceConfig(enabled=True),
-)
+class LocalAgentTarget(PromptTarget):
+    """Send each prompt to an agent function in this process."""
+
+    def __init__(self, *, agent: Callable[..., Awaitable[str]], trace_config: TargetTraceConfig) -> None:
+        super().__init__(trace_config=trace_config)
+        self._agent = agent
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1].get_piece()
+        reply = await self._agent(prompt=request.converted_value)
+        return [construct_response_from_request(request=request, response_text_pieces=[reply])]
+
+
+target = LocalAgentTarget(agent=local_agent_async, trace_config=TargetTraceConfig(enabled=True))
 tool_scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
 attack = PromptSendingAttack(
     objective_target=target,
@@ -240,18 +248,21 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # %% [markdown]
 # ## Configure tracing
 #
-# `HTTPTarget` and `HTTPXAPITarget` disable tracing by default, because an arbitrary
-# HTTP endpoint is not known to accept W3C trace context. Set
-# `trace_config=TargetTraceConfig(enabled=True)` for an instrumented endpoint. Keep
-# tracing disabled if you supply manual `traceparent` or `tracestate` headers.
+# Custom targets disable tracing by default. For an agent in the same process, pass
+# `trace_config=TargetTraceConfig(enabled=True)` to its `PromptTarget` constructor, as
+# above. Pass `TargetTraceConfig(tracer=provider.get_tracer(...))` instead to also
+# record the target invocation as a span with a caller-owned provider. PyRIT does not
+# install a global provider or exporter. `LocalTraceCapture` bundles such a provider,
+# without span limits, with a span store and its `trace_config()`; see
+# [Judging with execution traces](./8_trace_evidence_scoring.ipynb).
 #
-# A custom local target can pass `TargetTraceConfig(tracer=provider.get_tracer(...))`
-# to its `PromptTarget` constructor. This captures the target invocation with a
-# caller-owned provider. PyRIT does not install a global provider or exporter.
-#
-# For a remote agent, use the normal HTTP transport. The agent must accept W3C
-# trace context and export its tool spans. Supply a `TraceClient` that can read
-# those spans; sending a header does not create a trace-store connection.
+# For a remote agent, use `HTTPTarget` or `HTTPXAPITarget`. They also disable tracing
+# by default, because an arbitrary HTTP endpoint is not known to accept W3C trace
+# context. Set `trace_config=TargetTraceConfig(enabled=True)` for an instrumented
+# endpoint, and each request sends a fresh `traceparent` header. Keep tracing
+# disabled if you supply manual `traceparent` or `tracestate` headers. The agent
+# must accept W3C trace context and export its tool spans. Supply a `TraceClient`
+# that can read those spans; sending a header does not create a trace-store connection.
 #
 # `LiteLLMChatTarget` accepts the same `trace_config` and also disables tracing by
 # default. When enabled, each request sends a fresh `traceparent` through LiteLLM's
