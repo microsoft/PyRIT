@@ -1745,6 +1745,7 @@ class SeedEntry(Base):
         String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
     )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    is_general_technique: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Decomposition members are deduplicated as whole trees, so the parent link has no foreign key:
     # bulk inserts and dataset replacement validate complete trees in code instead.
     parent_objective_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
@@ -1782,6 +1783,7 @@ class SeedEntry(Base):
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
         self.origin = entry.origin.value
+        self.is_general_technique = bool(entry.is_general_technique)
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
@@ -1914,6 +1916,7 @@ class SeedEntry(Base):
             parameters=self.parameters,
             conditions=self.conditions,
             response_json_schema=response_json_schema,
+            is_general_technique=self.is_general_technique,
             parent_objective_id=self.parent_objective_id,
             paths=self._decode_paths(),
         )
@@ -2003,6 +2006,7 @@ class SeedEntry(Base):
                     num_turns=config.get("num_turns", 3),
                     sequence=config.get("sequence", 0),
                     pyrit_version=config.get("pyrit_version"),
+                    is_general_technique=self.is_general_technique,
                     **prompt_config,
                 )
             except (OSError, ValueError) as exc:
@@ -2034,6 +2038,7 @@ class SeedEntry(Base):
             prompt_group_id=self.prompt_group_id,
             sequence=self.sequence or 0,
             role=self.role,
+            is_general_technique=self.is_general_technique,
         )
 
 
