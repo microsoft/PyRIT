@@ -29,6 +29,12 @@ class Contains(_TextMatcher):
     matcher_type: Literal["contains"] = "contains"
 
 
+class StartsWith(_TextMatcher):
+    """Compare a literal prefix, optionally stripping candidate whitespace and ignoring case."""
+
+    matcher_type: Literal["starts_with"] = "starts_with"
+
+
 class Regex(_TextMatcher):
     """Search text with the pattern as authored, without normalizing the pattern."""
 
@@ -55,4 +61,4 @@ class Regex(_TextMatcher):
         return value
 
 
-TextMatcher = Annotated[Equals | Contains | Regex, Field(discriminator="matcher_type")]
+TextMatcher = Annotated[Equals | Contains | StartsWith | Regex, Field(discriminator="matcher_type")]

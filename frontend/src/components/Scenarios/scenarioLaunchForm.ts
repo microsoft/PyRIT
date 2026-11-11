@@ -125,7 +125,8 @@ export function initialScenarioLaunchForm({
     targetName: initialRun ? initialRun.target_name ?? '' : defaultTargetName(defaultObjectiveTarget, targets),
     adversarialTargetName: initialRun
       ? initialRun.adversarial_target_name ?? ''
-      : defaultTargetName(defaultAdversarialTarget, adversarialTargets),
+      : scenario.uses_default_adversarial_target
+        ? defaultTargetName(defaultAdversarialTarget, adversarialTargets) : '',
     selectedTechniques: seededTechniques ?? defaultTechniques,
     baselineChecked: scenario.baseline_policy !== 'forbidden'
       && (initialRun?.include_baseline ?? preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
