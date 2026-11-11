@@ -27,7 +27,6 @@ jest.mock('@/services/api', () => ({
     assessDatasets: jest.fn().mockResolvedValue({
       requirements: [], items: [], selection_compatible: null, selection_reasons: [],
     }),
-    readiness: jest.fn().mockResolvedValue({ bindings: [], issues: [] }),
     cancelRun: jest.fn(),
     estimateRun: jest.fn(),
     getRunHierarchy: jest.fn(() => new Promise(() => {})),
