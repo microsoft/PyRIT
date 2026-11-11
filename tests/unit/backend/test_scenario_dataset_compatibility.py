@@ -11,12 +11,15 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.datasets import DatasetListResponse
 from pyrit.backend.services import ScenarioRunService, ScenarioService
+from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AssertGroupMetadata,
+    AttackSeedGroup,
     DatasetSelectionMode,
     DatasetSourceInput,
     ScenarioDatasetOptions,
@@ -24,6 +27,7 @@ from pyrit.models import (
     ScenarioRunSizeEstimateRequest,
     SeedObjective,
     SeedOrigin,
+    SeedPrompt,
 )
 from pyrit.models.dataset_compatibility import DatasetCompatibilityStatus, ScenarioDatasetCompatibility
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
@@ -67,11 +71,13 @@ def compatibility_service() -> Iterator[ScenarioService]:
     _build_assert_policy_technique.cache_clear()
 
 
-async def _store_imported_async() -> None:
-    groups = make_assert_result(config=make_assert_config(group_count=4)).seed_groups
+async def _store_imported_async(*, name: str = "imported", include_adversarial_prompt: bool = True) -> None:
+    groups = make_assert_result(
+        config=make_assert_config(group_count=4, include_adversarial_prompt=include_adversarial_prompt)
+    ).seed_groups
     for group in groups:
         for seed in group.seeds:
-            seed.dataset_name = "imported"
+            seed.dataset_name = name
             seed.origin = SeedOrigin.USER
             seed.source = "user-imported policy cases"
     await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
@@ -160,8 +166,14 @@ async def test_raw_hints_do_not_reject_a_compatible_filtered_population_async(
 async def test_missing_and_malformed_policy_data_are_not_compatible_async(
     *, compatibility_service: ScenarioService, metadata: dict[str, object] | None
 ) -> None:
+    group = AttackSeedGroup(
+        seeds=[
+            SeedObjective(value="Not a valid policy group", dataset_name="invalid", metadata=metadata),
+            SeedPrompt(value="A valid prompt with invalid policy context.", dataset_name="invalid"),
+        ]
+    )
     await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
-        seeds=[SeedObjective(value="Not a valid policy group", dataset_name="invalid", metadata=metadata)],
+        seeds=group.seeds,
         added_by="test",
     )
     result = await compatibility_service.assess_datasets_async(
@@ -240,3 +252,73 @@ async def test_assessment_route_accepts_encoded_registry_names_async(
             )
     assert response.status_code == 200
     assert service.assess_datasets_async.call_args.kwargs["scenario_name"] == scenario_name
+
+
+async def test_eligible_listing_checks_policy_and_both_case_forms_without_fetch_or_model_calls_async(
+    compatibility_service: ScenarioService,
+) -> None:
+    await _store_imported_async()
+    await _store_imported_async(name="prompt_cases", include_adversarial_prompt=False)
+    invalid_case = (
+        make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False))
+        .seed_groups[0]
+        .objective
+    )
+    invalid_case.dataset_name = "invalid_case"
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[
+            invalid_case,
+            SeedObjective(value="Generic objective", dataset_name="ordinary"),
+            SeedObjective(value="Malformed policy", dataset_name="malformed", metadata={"assert_generation": {}}),
+        ],
+        added_by="test",
+    )
+    dataset_service = get_dataset_service()
+    with (
+        patch.object(MockPromptTarget, "send_prompt_async", side_effect=AssertionError("No model calls.")),
+        patch.object(
+            AssertPolicy,
+            "_get_dataset_technique_factories",
+            side_effect=AssertionError("Dataset eligibility must not depend on delivery techniques."),
+        ),
+        patch.object(dataset_service, "list_datasets_async", wraps=dataset_service.list_datasets_async) as catalog,
+    ):
+        result = await compatibility_service.list_compatible_datasets_async(scenario_name="test.policy")
+    assert result is not None
+    assert {item.name for item in result.items} == {"imported", "prompt_cases"}
+    assert all(item.loaded for item in result.items)
+    assert catalog.call_count == 1
+    assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
+
+
+async def test_eligible_listing_keeps_subset_restrictions_and_observes_changed_data_async(
+    compatibility_service: ScenarioService,
+) -> None:
+    await _store_imported_async()
+    await _store_imported_async(name="other")
+    first = await compatibility_service.list_compatible_datasets_async(scenario_name="test.restricted")
+    assert first is not None
+    assert [item.name for item in first.items] == ["imported"]
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Changed after the picker loaded", dataset_name="imported")], added_by="test"
+    )
+    changed = await compatibility_service.list_compatible_datasets_async(scenario_name="test.restricted")
+    assert changed is not None
+    assert changed.items == []
+
+
+@pytest.mark.parametrize("scenario_name", ["test.policy", "test/policy"])
+async def test_eligible_route_is_one_read_only_request_with_encoded_names_async(
+    *, scenario_name: str, compatibility_headers: dict[str, str]
+) -> None:
+    service = MagicMock(spec=ScenarioService)
+    service.list_compatible_datasets_async = AsyncMock(return_value=DatasetListResponse(items=[]))
+    with patch("pyrit.backend.routes.scenarios.get_scenario_service", return_value=service):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=compatibility_headers
+        ) as client:
+            response = await client.get(f"/api/scenarios/catalog/{quote(scenario_name, safe='')}/datasets")
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+    service.list_compatible_datasets_async.assert_awaited_once()
+    assert service.list_compatible_datasets_async.call_args.kwargs["scenario_name"] == scenario_name

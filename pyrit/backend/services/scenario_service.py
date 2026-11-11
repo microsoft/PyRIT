@@ -13,7 +13,7 @@ from functools import lru_cache
 from time import monotonic
 
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
-from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
+from pyrit.backend.models.datasets import DatasetListResponse, ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.memory import CentralMemory
@@ -21,6 +21,7 @@ from pyrit.models import (
     DatasetSelectionMode,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
+    SeedGroupRequirements,
 )
 from pyrit.models.catalog import (
     RegisteredScenario,
@@ -33,7 +34,7 @@ from pyrit.models.dataset_compatibility import (
 )
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
 from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, describe_requirements
 
@@ -353,6 +354,50 @@ class ScenarioService:
                 result.selection_reasons = selected.selection_reasons
         return result
 
+    async def list_compatible_datasets_async(self, *, scenario_name: str) -> DatasetListResponse | None:
+        """
+        List datasets satisfying the scenario's contract, independently of launch-form settings.
+
+        Stored facts narrow the candidates; a schema hint never certifies a dataset. Providers are
+        not fetched, and only potentially suitable stored contents are fully checked.
+
+        Returns:
+            DatasetListResponse | None: Eligible named datasets, or None for an unknown scenario.
+        """
+        try:
+            scenario_class = self._registry.get_class(scenario_name)
+        except KeyError:
+            return None
+        scenario = await self._create_assessment_scenario_async(
+            scenario_name=scenario_name,
+            scenario_class=scenario_class,
+            request=ScenarioRunSizeEstimateRequest(),
+        )
+        metadata = await get_dataset_service().list_datasets_async()
+        named = [item for item in metadata.items if item.selection_key != "dataset:unnamed"]
+        if scenario.get_dataset_requirements() == SeedGroupRequirements():
+            return DatasetListResponse(items=named)
+        hints = await self._list_dataset_candidates_async(scenario, metadata=metadata)
+        candidates = {item.name for item in hints.items if item.status is not DatasetCompatibilityStatus.INCOMPATIBLE}
+        compatible = []
+        async with self._configured_estimate_semaphore:
+            for item in named:
+                if not item.loaded or item.name not in candidates:
+                    continue
+                configuration = scenario._dataset_config.with_overrides(
+                    sources=[DatasetSource(name=item.name, max_size="all")],
+                    max_per_dataset="all",
+                    max_total="all",
+                )
+                try:
+                    population = await configuration.get_attack_groups_by_dataset_async(apply_sampling=False)
+                    await asyncio.to_thread(scenario._validate_dataset_population, population)
+                except ValueError as error:
+                    logger.debug("Dataset '%s' is ineligible for '%s': %s", item.name, scenario_name, error)
+                    continue
+                compatible.append(item)
+        return DatasetListResponse(items=compatible)
+
     async def _create_assessment_scenario_async(
         self,
         *,
@@ -379,9 +424,12 @@ class ScenarioService:
         await asyncio.to_thread(scenario._resolve_runtime_configuration, require_objective_target=False)
         return scenario
 
-    async def _list_dataset_candidates_async(self, scenario: Scenario) -> ScenarioDatasetCompatibility:
+    async def _list_dataset_candidates_async(
+        self, scenario: Scenario, *, metadata: DatasetListResponse | None = None
+    ) -> ScenarioDatasetCompatibility:
         requirements = scenario.get_dataset_requirements()
-        metadata = await get_dataset_service().list_datasets_async()
+        if metadata is None:
+            metadata = await get_dataset_service().list_datasets_async()
         profiles = await CentralMemory.get_memory_instance().get_seed_dataset_group_profiles_async(
             metadata_keys=[requirement.key for requirement in requirements.metadata]
         )

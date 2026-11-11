@@ -120,7 +120,6 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.dataset_configuration import _ResolvedAttackGroups
-    from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 logger = logging.getLogger(__name__)
 
@@ -1108,8 +1107,10 @@ class Scenario(ABC):
     ) -> None:
         factory.validate_group_adversarial_prompts(seed_group)
 
-    def _get_dataset_target_requirements(self, factory: "AttackTechniqueFactory") -> "TechniqueRequirements":
-        return factory.requirements
+    def _get_dataset_target_errors(self, factory: "AttackTechniqueFactory") -> list[str]:
+        if self._objective_target is None:
+            return []
+        return factory.requirements.check_target(target=self._objective_target, attack_class=factory.attack_class)
 
     async def get_dataset_compatibility_async(self, *, allow_unloaded: bool = False) -> ScenarioDatasetCompatibility:
         """
@@ -1192,11 +1193,7 @@ class Scenario(ABC):
                         groups=groups,
                         requirements=factory.requirements.seed_group,
                         seed_technique=factory.seed_technique,
-                        target_errors=self._get_dataset_target_requirements(factory).check_target(
-                            target=self._objective_target, attack_class=factory.attack_class
-                        )
-                        if self._objective_target is not None
-                        else [],
+                        target_errors=self._get_dataset_target_errors(factory),
                         validate_group=lambda group, factory=factory: self._validate_dataset_technique_group(
                             factory=factory, seed_group=group
                         ),

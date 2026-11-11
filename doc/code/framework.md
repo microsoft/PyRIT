@@ -169,6 +169,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A scenario chooses whether to skip or raise for incompatible techniques.
 - A scenario declares evaluation-wide dataset requirements; techniques add delivery-specific inputs.
   Catalog facts are only hints. The selected contents are validated before sampling and checked again at launch/resume.
+  A scenario-aware picker validates its candidate snapshot against that same scenario contract,
+  independently of technique choices; it does not invent client-only eligibility rules.
 - No result should depend on previous results (that is an attack's job)
 - **Does not own**: the per-objective conversation logic. Branching, turn-by-turn adaptation, and scoring-based decisions belong to the attack; a scenario selects and packages existing attack techniques rather than defining new attack algorithms or datasets.
 

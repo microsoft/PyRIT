@@ -1130,18 +1130,72 @@ async def test_assert_package_gives_each_group_its_own_instructions_async(harnes
         assert sum(text in system for text in instructions) == 1
 
 
-async def test_assert_package_needs_tester_instructions_async(harness: _Harness) -> None:
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+async def test_assert_package_runs_mixed_prompt_and_conversation_cases_async(harness: _Harness, policy: str) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))
     await _store_async(
         name="assert_b", result=_result(include_adversarial_prompt=False, group_count=1, system_prompt=_SYSTEM_B)
     )
     args = {"include_baseline": False, **_datasets("assert_a", "assert_b")}
-    scenario = await harness.initialize_async(harness.scenario(), **args)
-    (attack,) = scenario._atomic_attacks
-    assert attack.seed_groups[0].adversarial_prompts is not None
+    scenario = await harness.initialize_async(harness.scenario(), incompatible_technique_policy=policy, **args)
+    assert len(scenario._atomic_attacks) == 2
+    assert {type(attack.attack_technique.attack) for attack in scenario._atomic_attacks} == {
+        PromptSendingAttack,
+        RedTeamingAttack,
+    }
+    assert {attack.display_group for attack in scenario._atomic_attacks} == {"assert_package"}
 
-    with pytest.raises(IncompatibleTechniqueError, match="stores no tester instructions"):
-        await harness.initialize_async(harness.scenario(), incompatible_technique_policy="raise", **args)
+
+@pytest.mark.parametrize("converted", [False, True])
+@pytest.mark.parametrize("multi_turn_target", [False, True])
+async def test_default_assert_package_runs_prompt_cases_without_a_comparison_baseline_async(
+    harness: _Harness, converted: bool, multi_turn_target: bool
+) -> None:
+    await _store_async(name="prompt_cases", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": multi_turn_target})
+    )
+    scenario = harness.scenario()
+    result = await harness.run_async(
+        scenario,
+        include_baseline=False,
+        technique_converters={"assert_package": [Base64Converter()]} if converted else {},
+        **_datasets("prompt_cases"),
+    )
+    (unit,) = scenario._atomic_attacks
+    assert isinstance(unit.attack_technique.attack, PromptSendingAttack)
+    assert unit.display_group == "assert_package"
+    assert unit.seed_groups[0].adversarial_prompts is None
+    assert harness.adversarial_requests == []
+    assert len(harness.target_requests) == 1
+    prompt = "Explain the return policy for item 0."
+    assert harness.target_requests[0][-1].get_value() == (
+        base64.b64encode(prompt.encode()).decode() if converted else prompt
+    )
+    assert len(harness.judge_systems) == 2
+    assert sum(len(items) for items in result.attack_results.values()) == 1
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+@pytest.mark.parametrize("description", [None, "   "])
+async def test_malformed_conversation_case_never_falls_back_to_prompt_sending_async(
+    harness: _Harness, policy: str, description: str | None
+) -> None:
+    group = _result(group_count=1).seed_groups[0]
+    prompts = group.adversarial_prompts
+    assert prompts is not None and prompts.system_prompt is not None
+    prompts = prompts.model_copy(
+        update={"system_prompt": prompts.system_prompt.model_copy(update={"description": description})}
+    )
+    group.adversarial_prompts = prompts
+    group.objective.metadata = {**(group.objective.metadata or {}), **prompts.to_metadata()}
+    with pytest.raises(ValueError, match="stores no tester instructions"):
+        await harness.initialize_async(
+            harness.scenario(),
+            dataset_config=DatasetAttackConfiguration(seed_groups=[group]),
+            include_baseline=False,
+            incompatible_technique_policy=policy,
+        )
 
 
 async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness: _Harness) -> None:
@@ -1212,7 +1266,8 @@ async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harn
         include_baseline=False,
         **_datasets("assert_b"),
     )
-    assert {attack.display_group for attack in scenario._atomic_attacks} == {"prompt_sending"}
+    expected = {"prompt_sending", "assert_package"} if technique == "assert_package" else {"prompt_sending"}
+    assert {attack.display_group for attack in scenario._atomic_attacks} == expected
 
 
 async def test_turn_settings_a_technique_sets_itself_are_kept_async(harness: _Harness) -> None:

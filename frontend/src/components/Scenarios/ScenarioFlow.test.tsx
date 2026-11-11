@@ -23,6 +23,7 @@ jest.mock('@/hooks/useScenarioRunProgress', () => ({
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
+    listCompatibleDatasets: jest.fn().mockResolvedValue({ items: [] }),
     assessDatasets: jest.fn().mockResolvedValue({
       requirements: [], items: [], selection_compatible: null, selection_reasons: [],
     }),

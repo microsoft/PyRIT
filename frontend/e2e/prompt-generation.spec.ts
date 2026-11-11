@@ -1,11 +1,11 @@
-import { expect, test, type Locator, type Page, type Response, type TestInfo } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Request, type Response, type TestInfo } from '@playwright/test'
 
 import type {
   PromptGenerationCreateRequest,
   PromptGenerationDetail,
   PromptGenerationPreflightResponse,
   PromptGenerationReview,
-  ScenarioDatasetCompatibility,
+  DatasetListResponse,
   ScenarioRunSummary,
 } from '../src/types'
 import { formatRange } from '../src/components/PromptGeneration/promptGenerationPresentation'
@@ -161,37 +161,32 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await expect(runScenario).toHaveAttribute(
     'href', `/scanner/launch/${FOLLOW_UP_SCENARIO}?dataset=${encodeURIComponent(name)}`,
   )
-  const assessing = page.waitForResponse((response: Response) =>
-    apiPath(response) === `/api/scenarios/catalog/${FOLLOW_UP_SCENARIO}/datasets/assess`
-    && new URL(response.url()).searchParams.get('validate_selected') === 'true'
-    && (response.request().postDataJSON().datasets?.sources ?? [])
-      .some((source: { name: string }) => source.name === name))
+  const eligibilityPath = `/api/scenarios/catalog/${FOLLOW_UP_SCENARIO}/datasets`
+  let eligibilityLoads = 0
+  page.on('request', (request: Request) => {
+    if (new URL(request.url()).pathname === eligibilityPath) eligibilityLoads += 1
+  })
+  const loadingChoices = page.waitForResponse((response: Response) => apiPath(response) === eligibilityPath)
   await runScenario.click()
-  const assessed = await assessing
-  expect(assessed.status(), await assessed.text()).toBe(200)
-  const compatibility: ScenarioDatasetCompatibility = await assessed.json()
-  expect(compatibility.selection_compatible).toBe(true)
-  const stored = compatibility.items.find((item) => item.name === name)
-  expect(stored?.status).toBe('compatible')
-  expect(stored?.techniques.find((technique) => technique.is_baseline)?.usable_count).toBe(4)
-  expect(stored?.techniques.some((technique) => !technique.is_baseline && technique.usable_count === 4)).toBe(true)
+  const eligible = await loadingChoices
+  expect(eligible.status(), await eligible.text()).toBe(200)
+  const choices: DatasetListResponse = await eligible.json()
+  expect(choices.items.find((item) => item.name === name)?.logical_examples).toBe(4)
+  expect(choices.items.some((item) => item.name === 'offline_plain')).toBe(false)
   await expect(page.getByRole('heading', { level: 2, name: FOLLOW_UP_SCENARIO })).toBeVisible({ timeout: JOB_TIMEOUT_MS })
   const selected = page.getByRole('table', { name: 'Selected datasets' })
   await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
   await expect(page.getByTestId('requested-datasets-warning')).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Generate an ASSERT policy dataset' })).toBeVisible()
-  await expect(selected.getByText('Validated', { exact: true })).toBeVisible()
-  await expect(selected.getByText('Baseline: 4 usable', { exact: true })).toBeVisible()
+  expect(eligibilityLoads).toBe(1)
+  await expect(page.getByRole('switch', { name: 'Show incompatible' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Reset datasets|Load and validate/ })).toHaveCount(0)
   const picker = page.getByRole('combobox', { name: 'Add dataset', exact: true })
   await picker.fill('offline_plain')
   await expect(page.getByRole('option', { name: /^offline_plain/ })).toHaveCount(0)
   await picker.press('Escape')
-  await page.getByRole('switch', { name: 'Show incompatible' }).check()
-  await picker.click()
-  const incompatible = page.getByRole('option', { name: /^offline_plain/ })
-  await expect(incompatible).toHaveAttribute('aria-disabled', 'true')
-  await expect(incompatible).toContainText('ASSERT generation metadata')
   await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible()
+  expect(eligibilityLoads).toBe(1)
 
   // Without a link, the scenario starts with no dataset and the generated one can be chosen.
   await page.goto(`/scanner/launch/${FOLLOW_UP_SCENARIO}`)
@@ -205,6 +200,12 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible()
   const estimate = await estimating
   expect(estimate.status(), await estimate.text()).toBe(200)
+  const resizing = page.waitForResponse((response: Response) =>
+    apiPath(response) === `/api/scenarios/catalog/${FOLLOW_UP_SCENARIO}/estimate`
+    && response.request().postDataJSON()?.scenario_params?.max_turns === 2)
+  await page.getByTestId('scenario-param-max_turns').fill('2')
+  expect((await resizing).status()).toBe(200)
+  expect(eligibilityLoads).toBe(2)
 
   await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
   await page.getByTestId('launch-scenario-btn').click()

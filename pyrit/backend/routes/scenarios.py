@@ -35,7 +35,7 @@ from pyrit.backend.models import (
     ScenarioRunListResponse,
 )
 from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
-from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
+from pyrit.backend.models.datasets import DatasetListResponse, ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
 from pyrit.backend.services.scenario_run_service import (
@@ -129,6 +129,23 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         cursor=cursor,
         include_estimates=include_estimates,
     )
+
+
+@router.get("/catalog/{scenario_name:path}/datasets", response_model=DatasetListResponse)
+async def list_compatible_scenario_datasets_async(scenario_name: IdentifierStr) -> DatasetListResponse:
+    """
+    List verified scenario-compatible choices without fetching providers or starting a scan.
+
+    Returns:
+        DatasetListResponse: Named datasets satisfying the scenario's data contract.
+    """
+    try:
+        result = await get_scenario_service().list_compatible_datasets_async(scenario_name=scenario_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
 
 
 @router.get(

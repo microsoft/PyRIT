@@ -199,7 +199,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }, [])
 
   const scenarioIsCurrent = scenario !== null && scenario.scenario_name === selectedScenarioName
-  const datasetMetadata = useScenarioDatasets()
+  const datasetMetadata = useScenarioDatasets(selectedScenarioName, scenarioIsCurrent)
   const datasetBaseline = useMemo(
     () => (scenario
       ? {
@@ -509,6 +509,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                 )}
                 {datasetBaseline && (
                   <ScenarioDatasetTable
+                    allowSourceReset
                     request={config.datasets}
                     defaults={datasetBaseline.defaults}
                     effective={datasetProjection?.effective_datasets ?? datasetBaseline.defaults}
@@ -517,7 +518,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                     disabled={saving}
                     loading={datasetMetadata.loading}
                     metadataError={datasetMetadata.error}
-                    onReload={datasetMetadata.reload}
+                    onReload={datasetMetadata.retry}
                     onChange={(datasets) => updateConfig({ datasets })}
                     onValidationChange={setDatasetError}
                   />

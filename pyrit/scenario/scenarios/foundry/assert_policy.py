@@ -55,6 +55,7 @@ from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
     TechniqueRequirements,
     check_target_compatibility,
+    describe_target_incompatibility,
     filter_seed_groups,
 )
 from pyrit.score import (
@@ -109,10 +110,11 @@ def _build_assert_package_factory() -> AttackTechniqueFactory:
         name=_ASSERT_PACKAGE,
         attack_class=RedTeamingAttack,
         description=(
-            "Red teaming whose tester uses ASSERT's own tester system prompt with each group's stored tester "
-            "instructions, like an ASSERT scenario case. Groups without tester instructions are skipped."
+            "Run ASSERT cases: send stored prompt cases directly, or use ASSERT's tester system prompt "
+            "with a conversation case's stored tester instructions."
         ),
         technique_tags=["multi_turn"],
+        supports_additional_request_converters=True,
     )
 
 
@@ -121,9 +123,8 @@ def _build_assert_policy_technique() -> type[ScenarioTechnique]:
     """
     Build the technique class from every registered attack technique plus ``assert_package``.
 
-    ``assert_package`` is the default: it follows each group's stored tester instructions with
-    ASSERT's tester prompt, like an ASSERT scenario case. The baseline sends each group's stored
-    prompts, like an ASSERT prompt case.
+    ``assert_package`` is the default: it sends prompt cases directly and follows conversation
+    cases' stored instructions with ASSERT's tester. The optional baseline sends stored prompts.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
@@ -304,11 +305,11 @@ class AssertPolicy(Scenario):
     Run stored ASSERT seed groups against a target and judge each conversation against its policy.
 
     The baseline sends each group's stored system and user prompts once, like an ASSERT prompt
-    case. The default technique, ``assert_package``, is ASSERT's scenario case: a red-teaming
-    tester that follows the group's stored tester instructions for ``max_turns`` turns with
-    ASSERT's own tester system prompt. Any registered technique can run too; ``red_teaming`` uses
-    the same attack with the group's stored PyRIT tester prompt. Judges built from each group's taxonomy then
-    read the whole conversation once per enabled judge dimension. By default these are policy
+    case. The default technique, ``assert_package``, sends prompt cases directly. Conversation
+    cases use a red-teaming tester that follows the group's stored tester instructions for
+    ``max_turns`` turns with ASSERT's own tester system prompt. Compatible registered techniques can run too;
+    ``red_teaming`` uses the same attack with the group's stored PyRIT tester prompt.
+    Judges built from each group's taxonomy read the whole conversation once per enabled dimension. These are policy
     violation (the objective score) and overrefusal (an auxiliary score). ``judge_presets`` adds
     dimensions from built-in presets and ``judge_preset_files`` from your own preset YAML files
     (Python callers only), ``disabled_judge_dimensions`` removes them,
@@ -649,16 +650,66 @@ class AssertPolicy(Scenario):
             extra_factories={_ASSERT_PACKAGE: _build_assert_package_factory()},
         )
 
-    def _get_dataset_target_requirements(self, factory: AttackTechniqueFactory) -> TechniqueRequirements:
-        return self._get_target_requirements(factory)
+    def _get_dataset_target_errors(self, factory: AttackTechniqueFactory) -> list[str]:
+        # ASSERT's normal recipe chooses its existing attack from the case data below.
+        if factory.name == _ASSERT_PACKAGE or self._objective_target is None:
+            return []
+        return self._get_target_requirements(factory).check_target(
+            target=self._objective_target, attack_class=factory.attack_class
+        )
 
     def _validate_dataset_technique_group(
         self, *, factory: AttackTechniqueFactory, seed_group: AttackSeedGroup
     ) -> None:
         if factory.name == _ASSERT_PACKAGE:
-            self._require_tester_instructions(seed_group)
+            self._validate_assert_package_group(factory=factory, group=seed_group, target=self._objective_target)
         else:
             super()._validate_dataset_technique_group(factory=factory, seed_group=seed_group)
+
+    def _validate_dataset_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        super()._validate_dataset_population(population)
+        self._validate_assert_cases(population)
+
+    def _validate_assert_cases(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        for name, groups in population.items():
+            for group in groups:
+                try:
+                    self._validate_assert_case(group)
+                except IncompatibleTechniqueError as error:
+                    raise DatasetConstraintError(
+                        f"Dataset '{name}' contains an invalid ASSERT case: {error}"
+                    ) from error
+
+    @classmethod
+    def _validate_assert_case(cls, group: AttackSeedGroup) -> None:
+        if group.adversarial_prompts is not None:
+            cls._require_tester_instructions(group)
+            return
+        errors = SeedGroupRequirements(required_user_prompt=True).check(seed_group=group)
+        if errors:
+            raise IncompatibleTechniqueError("An ASSERT prompt case requires a stored user prompt.")
+
+    def _validate_assert_package_group(
+        self, *, factory: AttackTechniqueFactory, group: AttackSeedGroup, target: PromptTarget | None
+    ) -> None:
+        self._validate_assert_case(group)
+        if target is not None:
+            delivery = self._get_assert_case_factory(factory=factory, group=group)
+            errors = self._get_target_requirements(delivery).check_target(
+                target=target, attack_class=delivery.attack_class
+            )
+            if errors:
+                raise IncompatibleTechniqueError(
+                    describe_target_incompatibility(technique_name=_ASSERT_PACKAGE, errors=errors)
+                )
+
+    @staticmethod
+    def _get_assert_case_factory(*, factory: AttackTechniqueFactory, group: AttackSeedGroup) -> AttackTechniqueFactory:
+        if group.adversarial_prompts is not None:
+            return factory
+        return AttackTechniqueFactory(
+            name=_ASSERT_PACKAGE, attack_class=PromptSendingAttack, supports_additional_request_converters=True
+        )
 
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
@@ -701,6 +752,7 @@ class AssertPolicy(Scenario):
         return selected
 
     def _validate_dataset_assessment_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        self._validate_assert_cases(population)
         self._resolve_trace_evidence()
         groups = [group for dataset_groups in population.values() for group in dataset_groups]
         repeated_seeds = [seed_id for seed_id, count in Counter(g.objective.id for g in groups).items() if count > 1]
@@ -847,7 +899,7 @@ class AssertPolicy(Scenario):
         attacks = self._build_baselines(context=context) if context.include_baseline else []
         local = {_ASSERT_PACKAGE: _build_assert_package_factory()}
         for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
-            if not check_target_compatibility(
+            if name != _ASSERT_PACKAGE and not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
                 requirements=self._get_target_requirements(factory),
@@ -864,8 +916,12 @@ class AssertPolicy(Scenario):
                     technique_name=name,
                     dataset_name=dataset_name,
                     policy=context.incompatible_technique_policy,
-                    validate_group=lambda group, factory=factory: self._validate_dataset_technique_group(
-                        factory=factory, seed_group=group
+                    validate_group=lambda group, factory=factory: (
+                        self._validate_assert_package_group(
+                            factory=factory, group=group, target=context.objective_target
+                        )
+                        if factory.name == _ASSERT_PACKAGE
+                        else self._validate_dataset_technique_group(factory=factory, seed_group=group)
                     ),
                 )
                 for group in sorted(selected, key=self._get_generation_order):
@@ -942,6 +998,9 @@ class AssertPolicy(Scenario):
         factory: AttackTechniqueFactory,
         group: AttackSeedGroup,
     ) -> AtomicAttack:
+        prompt_case = technique_name == _ASSERT_PACKAGE and group.adversarial_prompts is None
+        if technique_name == _ASSERT_PACKAGE:
+            factory = self._get_assert_case_factory(factory=factory, group=group)
         scoring = self._get_scoring(group)
         extra = context.technique_converters.get(technique_name)
         adversarial_chat = (
@@ -957,7 +1016,7 @@ class AssertPolicy(Scenario):
             "adversarial_chat": adversarial_chat,
             "extra_request_converters": ConverterConfiguration.from_converters(converters=extra) if extra else None,
         }
-        if technique_name == _ASSERT_PACKAGE:
+        if technique_name == _ASSERT_PACKAGE and not prompt_case:
             attack_technique = factory.create(**create_kwargs, **self._get_tester_prompts(group))
             # ASSERT's tester replaces the group's stored tester prompt; record the group's prompt on the
             # technique so the stored group still runs and resumes as-is.

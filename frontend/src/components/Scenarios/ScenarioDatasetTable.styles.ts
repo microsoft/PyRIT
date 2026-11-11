@@ -8,12 +8,11 @@ export const useScenarioDatasetTableStyles = makeStyles({
   browseLink: { color: tokens.colorBrandForegroundLink, ...mobileTouchTarget, display: 'inline-flex', alignItems: 'center' },
   scroll: { overflowX: 'auto' },
   table: { width: '100%', minWidth: '36em', borderCollapse: 'collapse' },
-  toolbar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalM },
+  empty: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalS },
   metadata: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalXS },
   chip: { ...mobileTouchTarget, padding: tokens.spacingHorizontalXXS, minWidth: 'unset' },
   actionsCell: { width: '3em' },
   datasetName: { overflowWrap: 'anywhere' },
-  compatibility: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, overflowWrap: 'anywhere' },
   limitButton: {
     ...mobileTouchTarget,
     justifyContent: 'flex-start',

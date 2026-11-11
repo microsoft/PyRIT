@@ -57,6 +57,15 @@ its database collation.
 
 ### Scenario dataset compatibility
 
+`GET /api/scenarios/catalog/{scenario_name}/datasets` supplies the launch picker's
+scenario-compatible choices. It takes no selected techniques or launch parameters.
+For a scenario with data requirements, grouped facts narrow the stored candidates,
+then the shared SDK checker validates every candidate group's schema and case inputs.
+Unknown/unloaded providers are not certified or fetched. The picker loads this snapshot
+once per scenario/runtime, keeps it through form edits, and offers retry only after a
+failed load. Fixed/subset source restrictions still apply; the general dataset catalog
+remains unfiltered. Launch and resume validate the actual selected contents again.
+
 `POST /api/scenarios/catalog/{scenario_name}/datasets/assess` accepts the same
 configuration as the scenario estimate route. By default it lists scenario-permitted
 candidates using grouped stored facts, without hydrating prompts, parsing policy
@@ -70,12 +79,15 @@ technique and baseline, before selection limits. Techniques can use disjoint sub
 Unloaded providers remain `not_verified`; the existing `datasets/load` action loads
 missing data explicitly, after which callers reassess it.
 
-ASSERT requires valid policy-generation metadata for every group, including imported
-groups, independently of technique. Its prompt baseline needs a stored user prompt;
-its default conversation technique needs stored tester instructions. Invalid policy
-groups reject the selection even under `skip`. A baseline does not rescue a selection
-with no usable selected technique. The GUI recommends generating both prompt types;
-the Python generation defaults remain unchanged.
+ASSERT requires valid policy-generation metadata and case inputs for every group,
+including imported groups, independently of technique. A prompt case stores a user
+prompt; a conversation case stores tester instructions. Its default `assert_package`
+recipe uses the existing `PromptSendingAttack` for prompt cases and ASSERT-framed
+`RedTeamingAttack` for conversation cases, including when the optional comparison
+baseline is off. It does not synthesize missing instructions or adapt unrelated
+techniques to the data. Invalid policy/case groups reject the selection even under
+`skip`. The GUI recommends generating both prompt types; the Python generation
+defaults remain unchanged.
 
 Assessments are read-only snapshots, not launch authorization. SDK estimates for
 scenarios with data requirements validate their selected stored data, and launch/resume

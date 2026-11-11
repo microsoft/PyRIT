@@ -25,6 +25,7 @@ from pyrit.models import (
     SeedMetadataRequirement,
     SeedObjective,
     SeedOrigin,
+    SeedPrompt,
 )
 from pyrit.models.dataset_compatibility import DatasetCompatibilityStatus
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
@@ -55,7 +56,7 @@ def dataset_techniques() -> Iterator[None]:
         [
             AttackTechniqueFactory(
                 name="objective_only",
-                attack_class=PromptSendingAttack,
+                attack_class=RedTeamingAttack,
                 requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
             ),
             AttackTechniqueFactory(
@@ -95,7 +96,9 @@ def _groups(*, group_count: int = 3) -> list[AttackSeedGroup]:
             config=make_assert_config(group_count=group_count, include_adversarial_prompt=False)
         ).seed_groups
     )
-    groups[0] = AttackSeedGroup(seeds=[groups[0].objective])
+    groups[0] = make_assert_result(
+        config=make_assert_config(group_count=1, include_user_prompt=False, include_adversarial_prompt=True)
+    ).seed_groups[0]
     for group in groups:
         for seed in group.seeds:
             seed.origin = SeedOrigin.USER
@@ -111,7 +114,13 @@ def _scenario(
     policy: str = "skip",
     cap: ResolvedDatasetLimit = "all",
 ) -> AssertPolicy:
-    scenario = AssertPolicy(judge_target=MockPromptTarget(), adversarial_chat=MockPromptTarget())
+    adversarial = MockPromptTarget()
+    adversarial.apply_capabilities(
+        capabilities=adversarial.capabilities.model_copy(
+            update={"supports_json_output": True, "supports_json_schema": True}
+        )
+    )
+    scenario = AssertPolicy(judge_target=MockPromptTarget(), adversarial_chat=adversarial)
     scenario.set_params_from_args(
         args={
             "objective_target": MockPromptTarget(),
@@ -148,25 +157,23 @@ async def test_default_assert_package_and_baseline_have_independent_coverage_asy
     assessment = await scenario.get_dataset_compatibility_async()
     assert assessment.selection_compatible is True
     counts = {item.technique_name: (item.usable_count, item.skipped_count) for item in assessment.items[0].techniques}
-    assert counts == {"assert_package": (2, 2), "baseline": (4, 0)}
+    assert counts == {"assert_package": (4, 0), "baseline": (4, 0)}
     await scenario.initialize_async()
-    assert len(scenario._atomic_attacks) == 6
+    assert len(scenario._atomic_attacks) == 8
 
 
-async def test_default_package_explains_missing_tester_inputs_before_judge_construction_async() -> None:
+async def test_default_package_accepts_native_prompt_cases_without_requiring_tester_inputs_async() -> None:
     groups = list(
         make_assert_result(config=make_assert_config(group_count=2, include_adversarial_prompt=False)).seed_groups
     )
     scenario = _package_scenario(groups=groups)
     assessment = await scenario.get_dataset_compatibility_async()
-    assert assessment.selection_compatible is False
+    assert assessment.selection_compatible is True
     coverage = {item.technique_name: item for item in assessment.items[0].techniques}
     assert coverage["baseline"].usable_count == 2
-    assert coverage["assert_package"].usable_count == 0
-    assert "include_adversarial_prompt=True" in coverage["assert_package"].reasons[0].message
-    with patch.object(scenario, "_configure_judges", side_effect=AssertionError("Unusable data needs no judges")):
-        with pytest.raises(ValueError, match="No usable selected techniques"):
-            await scenario.initialize_async()
+    assert coverage["assert_package"].usable_count == 2
+    await scenario.initialize_async()
+    assert all(isinstance(attack.attack_technique.attack, PromptSendingAttack) for attack in scenario._atomic_attacks)
 
 
 async def test_package_assessment_does_not_bind_unused_stored_prompt_slots_async() -> None:
@@ -195,7 +202,7 @@ async def test_assessment_keeps_assert_native_target_requirements_async() -> Non
     assert assessment.selection_compatible is False
     coverage = next(item for item in assessment.items[0].techniques if item.technique_name == "assert_package")
     assert coverage.usable_count == 0
-    assert coverage.reasons[0].code == "target_requirement"
+    assert "incompatible with the objective target" in coverage.reasons[0].message
 
 
 async def test_imported_groups_and_disjoint_techniques_are_assessed_independently_async() -> None:
@@ -224,7 +231,7 @@ async def test_zero_usable_selected_techniques_is_not_rescued_by_baseline_async(
 
 
 async def test_strict_metadata_validation_precedes_sampling_and_cannot_be_bypassed_async() -> None:
-    groups = [*_groups(), AttackSeedGroup(seeds=[SeedObjective(value="plain objective")])]
+    groups = [*_groups(), AttackSeedGroup(seeds=[SeedObjective(value="plain objective"), SeedPrompt(value="prompt")])]
     scenario = _scenario(groups=groups, cap=1)
     with patch("pyrit.scenario.core.dataset_configuration.random.sample") as sample:
         result = await scenario.get_dataset_compatibility_async()

@@ -1417,6 +1417,14 @@ export interface DatasetListResponse {
   items: DatasetInfo[]
 }
 
+/** Linked dataset names resolved against the scenario's eligible choices. */
+export interface RequestedDatasetsState {
+  readonly loading: boolean
+  readonly known: string[]
+  readonly unknown: string[]
+  readonly error: string | null
+}
+
 /** Stored seed kinds accepted by the dataset seed browser. */
 export type SeedType = 'prompt' | 'objective' | 'simulated_conversation'
 
