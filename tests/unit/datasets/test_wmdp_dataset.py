@@ -51,7 +51,12 @@ def _row(*, question: str, answer: int) -> dict[str, Any]:
 
 
 def test_fetch_wmdp_dataset_loads_single_category_and_builds_entries() -> None:
-    rows = {"wmdp-bio": [_row(question="bio question", answer=2)]}
+    rows = {
+        "wmdp-bio": [
+            _row(question="bio question", answer=2),
+            _row(question="bio question 2", answer=0),
+        ]
+    }
 
     with patch(
         "pyrit.datasets.executors.question_answer.wmdp_dataset.load_dataset",
@@ -61,10 +66,11 @@ def test_fetch_wmdp_dataset_loads_single_category_and_builds_entries() -> None:
 
     mock_load_dataset.assert_called_once_with("cais/wmdp", "wmdp-bio")
     assert dataset.name == "wmdp"
-    assert len(dataset.questions) == 1
+    assert [(entry.question, entry.correct_answer) for entry in dataset.questions] == [
+        ("bio question", 2),
+        ("bio question 2", 0),
+    ]
     entry = dataset.questions[0]
-    assert entry.question == "bio question"
-    assert entry.correct_answer == 2
     assert [(choice.index, choice.text) for choice in entry.choices] == [(0, "a"), (1, "b"), (2, "c"), (3, "d")]
 
 

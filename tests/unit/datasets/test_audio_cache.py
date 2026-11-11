@@ -90,7 +90,8 @@ async def test_path_exists_failure_is_logged_and_treated_as_cache_miss_async(cap
 
     with patch(_FACTORY_PATH, return_value=mock_serializer):
         with caplog.at_level(logging.WARNING):
-            await cache_audio_bytes_async(filename="clip.wav", audio_bytes=b"audio", log_prefix="TestLoader")
+            result = await cache_audio_bytes_async(filename="clip.wav", audio_bytes=b"audio", log_prefix="TestLoader")
 
     assert any("[TestLoader] Failed to check if cached audio clip.wav exists" in message for message in caplog.messages)
     mock_serializer.save_data_async.assert_called_once()
+    assert result == str(Path("/results") / "seed-prompt-entries" / "audio" / "clip.wav")
