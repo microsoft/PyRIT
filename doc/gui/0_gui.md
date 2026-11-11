@@ -99,6 +99,16 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
+### Temperature
+
+On supported targets, use the thermometer below **Send** to adjust temperature
+for subsequent messages. **Use target default** clears the override; shared
+defaults and saved messages are unchanged. Select a message's temperature footer
+to inspect its saved settings.
+
+See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
+for SDK usage.
+
 ## Scanner
 
 Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
@@ -116,7 +126,8 @@ Expand an attack group or objective to inspect its attempts. Technique, scorer,
 dataset/seed provenance, and scenario settings use inline identity JSON.
 Decided attack outcomes use **True** and **False**; execution errors remain separate.
 Groups and objectives show success rates and completion counts separately.
-The results page does not include a paired-outcome comparison.
+Completed scans offer an optional **Compare baseline and attack** disclosure
+below the objective results. It stays collapsed while you review individual attacks.
 
 **Watch live conversation** opens saved messages while an attack runs. This view
 is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
@@ -148,6 +159,27 @@ page; it does not start the scan.
 ![technique.execute scenario and technique selection](images/technique_execute.png)
 
 ![technique.execute objective and per-run technique settings](images/technique_execute_objective.png)
+
+### Paired outcomes
+
+On a completed scan, expand **Compare baseline and attack**, select the saved
+baseline and attack groups, then choose **Compare outcomes**. The comparison shows
+how often the baseline and attack succeeded on the same objective, and how many
+pairs changed from failure to success or from success to failure. Only pairs
+with a success or failure on both sides are counted, using the most recent
+top-level attempt, so retries and child attempts never add pairs.
+
+Expand a transition row to see the objectives behind its count. Each pair shows
+the baseline and attack outcomes side by side, with links to both saved
+conversations. When a compound result has no conversation of its own, the link
+opens one of its child conversations and labels that child's outcome
+separately. Pairs load in pages: use **Load more** for additional pairs, and
+retry from the row if a request fails. Selecting a different group clears the
+expanded details.
+
+![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](images/paired-outcomes-desktop.png)
+
+![Expanded paired outcomes at a mobile viewport width](images/paired-outcomes-mobile.png)
 
 ## Registry
 
@@ -223,6 +255,15 @@ remove a saved technique, delete its file (`techniques/<name>.json`) in
 `registry_recipes_source`, then restart the backend. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
+Use **Auto-detect capabilities** to select targets and run live checks. Results
+apply automatically for the current backend session. Checks can incur provider
+charges. Existing manual chats retain their saved capabilities, including chats
+using the default temperature. Legacy chats without a snapshot retain the source's
+pre-detection capabilities for this backend session. New chats use the detected
+capabilities.
+See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
+for shared behavior.
+
 ![Registry page with registered targets and component tabs](images/registry.png)
 
 ## Datasets
@@ -274,8 +315,7 @@ the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
 is a separate setting in `technique.execute`.
 
-Compound-attack hierarchy browsing is a separate GUI follow-up. The
-[backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
+The [backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
 provides paged roots and ordered child expansion without clipping run statistics.
 Conversation reads expose main and pruned conversations only; adversarial and
 preparation contexts remain internal. Transcript bodies load only for a selected

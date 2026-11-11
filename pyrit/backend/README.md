@@ -58,6 +58,33 @@ its database collation.
   modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
   at all (`not_saveable_reason`)
 - `POST /api/targets` - Create a target
+- `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
+  apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
+  Detection uses a private target, has a four-minute operation deadline, and
+  returns the updated target. Changes last only for the current backend session.
+  Unsupported reconstruction returns 400, an unknown target 404, a changed or
+  busy target 409, an inconclusive check 502, and an operation timeout 504.
+  Checks send provider requests and can incur charges. Request acceptance does
+  not verify full feature behavior; features without probes keep declared values.
+  Shared target discovery first requires a successful control request with a
+  declared input. A failed control request is inconclusive, not evidence that
+  features are unsupported, and leaves the target unchanged.
+  For round-robin targets, each child is checked on a private copy. The parent
+  reports shared input combinations and feature support, and all possible outputs.
+  Only the selected parent is updated, after every child check succeeds; child
+  configuration and round-robin rotation stay unchanged. The four-minute deadline
+  covers the entire operation. Other composite types remain unsupported.
+
+REST target descriptors expose `capabilities.supports_temperature` and a separate
+`generation_ranges` map, such as `{"temperature": [0, 2]}`, populated from the SDK's
+`target.generation_ranges` snapshot. Bounds are inclusive; missing entries mean
+unknown bounds, not lack of support. Clients must not substitute assumed bounds.
+OpenAI SDK constructors accept `generation_ranges={"temperature": (0, 1)}`;
+omitted entries retain inferred bounds, while descriptors include effective bounds.
+Range declarations remain Python-only constructor inputs, not REST `params`
+overrides; reconstruction preserves declarations from the source target.
+Per-send values use
+[`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 A created target is Temporary: a restart or a configuration apply removes it. With `"persist": true` (and `register`
 left on), the target is saved under `registry_recipes_source` and restored at every start, and the signed-in user is
@@ -333,6 +360,11 @@ maps the resulting stored data to the response, including stored target errors.
 All three use the application's `CentralMemory` instance. Both message endpoints use
 the same cached `MessageSendService`; the synchronous facade awaits its execution core
 directly, while the submission endpoint schedules that core and returns a transient handle.
+
+`_pyrit_generation` is server-authored evidence. Saves retain it only from verified,
+unchanged source pieces; edits, new pieces, prepended history, and `send=false`
+appends discard it. This does not strip unrelated metadata or
+[requested generation options](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 All manual-message service instances share one process-local scheduler. It admits up to
 64 operations (active and waiting), with a semaphore allowing up to 4 to execute at once.

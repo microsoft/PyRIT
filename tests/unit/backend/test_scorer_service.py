@@ -396,13 +396,13 @@ async def test_types_describe_sequences_as_lists() -> None:
         for entry in types.items
         for parameter in entry.model_dump(mode="json")["parameters"]
     }
-    assert serialized[("AgentThreatRulesScorer", "fields")] == ("list[str]", True, False)
+    assert serialized[("AgentThreatRulesScorer", "fields")] == ("list[str] | None", True, False)
     assert serialized[("InsecureCodeScorer", "harm_categories")] == ("list[str]", True, True)
     assert serialized[("InsecureCodeScorer", "system_prompt")] == ("str", False, True)
     metadata = ScorerRegistry.get_registry_singleton().get_registered_class_metadata("AgentThreatRulesScorer")
     assert metadata is not None
     assert next(parameter for parameter in metadata.parameters if parameter.name == "fields").type_name == (
-        "collections.abc.Sequence[str]"
+        "collections.abc.Sequence[str] | None"
     )
 
 
