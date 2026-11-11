@@ -43,6 +43,7 @@ export const OBJECTIVE_PARAMETER_NAMES = new Set(['objective', 'harm_categories'
 const ASSERT_SCORER_PARAMETERS = new Set([
   'judgment_mode', 'target_system_prompt', 'judge_presets', 'judge_preset_files',
   'disabled_judge_dimensions', 'judge_samples', 'objective_dimension', 'scoring_target',
+  'trace_source', 'trace_requirement',
 ])
 
 /** The ASSERT launch form always uses ASSERT's default scoring; custom scoring stays in the SDK. */

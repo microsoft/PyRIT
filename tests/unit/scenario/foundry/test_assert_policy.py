@@ -5,6 +5,7 @@
 
 import base64
 import json
+import logging
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -42,8 +43,8 @@ from pyrit.models import (
     SeedObjective,
     construct_response_from_request,
 )
-from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, SourceRegistry
 from pyrit.scenario import (
     AttackTechniqueFactory,
     BaselineAttackPolicy,
@@ -58,7 +59,9 @@ from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_
 from pyrit.score import (
     AssertJudgmentMode,
     AssertScoringDimension,
+    LocalTraceCapture,
     SubStringScorer,
+    TraceEvidenceRequirement,
     TrueFalseCompositeScorer,
     build_assert_policy_scorer,
     get_assert_failure_criterion,
@@ -260,6 +263,8 @@ def test_registry_name_and_argument_free_construction() -> None:
         "disabled_judge_dimensions": None,
         "judge_samples": 1,
         "objective_dimension": "policy_violation",
+        "trace_source": None,
+        "trace_requirement": TraceEvidenceRequirement.NONE,
     }
 
 
@@ -1275,6 +1280,8 @@ async def test_supplied_objective_scorer_runs_unchanged_without_default_judges_a
         {"judge_presets": ["safety-extended"]},
         {"judgment_mode": "direct"},
         {"target_system_prompt": "Owned instructions."},
+        {"trace_source": "saved"},
+        {"trace_requirement": "available"},
     ],
 )
 async def test_supplied_scorer_rejects_non_default_legacy_judge_settings_async(
@@ -1288,6 +1295,11 @@ async def test_supplied_scorer_rejects_non_default_legacy_judge_settings_async(
 def test_supplied_scorer_rejects_a_judge_target(harness: _Harness) -> None:
     with pytest.raises(ValueError, match="owns its judge target"):
         AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), judge_target=harness.judge)
+
+
+def test_supplied_scorer_rejects_a_trace_source(capture: LocalTraceCapture) -> None:
+    with pytest.raises(ValueError, match="owns its judge target and trace configuration"):
+        AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), trace_source=capture.source())
 
 
 async def test_supplied_scorer_identity_is_preserved_when_resuming_async(harness: _Harness) -> None:
@@ -1367,3 +1379,191 @@ async def test_supplied_scorer_needs_no_default_judge_target_async(harness: _Har
     assert not [issue for issue in readiness.issues if issue.role == "scoring_target"]
     (unit,) = scenario._atomic_attacks
     assert unit.attack_technique.attack.get_attack_scoring_config().objective_scorer is scorer
+
+
+class _TracedObjective(PromptTarget):
+    """An application target that records a trace for every request; its transport is patched."""
+
+    _DEFAULT_CONFIGURATION = MockPromptTarget._DEFAULT_CONFIGURATION
+
+    def __init__(self, *, capture: LocalTraceCapture) -> None:
+        super().__init__(trace_config=capture.trace_config())
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        raise NotImplementedError("The harness patches this transport.")
+
+
+@pytest.fixture
+def capture() -> Generator[LocalTraceCapture, None, None]:
+    capture = LocalTraceCapture()
+    yield capture
+    capture.close()
+
+
+async def _policy_score_async(result: Any) -> Any:
+    (attack_result,) = next(iter(result.attack_results.values()))
+    scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
+    return scores[AssertScoringDimension.POLICY_VIOLATION.value]
+
+
+async def test_trace_source_gives_judges_execution_evidence_async(
+    harness: _Harness, capture: LocalTraceCapture
+) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.objective = _TracedObjective(capture=capture)
+    harness.policy_violation = True
+
+    result = await harness.run_async(
+        harness.scenario(trace_source=capture.source()),
+        **_prompt_case(),
+        **_datasets("assert_a"),
+    )
+
+    assert len(harness.judge_systems) == 2
+    assert all("# Execution evidence" in system for system in harness.judge_systems)
+    policy = await _policy_score_async(result)
+    assert policy.get_value() is True
+    assert policy.score_metadata["trace_coverage"] == "complete"
+
+
+async def test_trace_source_can_be_named_from_the_registry_async(harness: _Harness, capture: LocalTraceCapture) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.objective = _TracedObjective(capture=capture)
+    SourceRegistry.reset_registry_singleton()
+    try:
+        capture.register(name="travel_agent")
+        result = await harness.run_async(
+            harness.scenario(),
+            **_prompt_case(),
+            trace_source="travel_agent",
+            trace_requirement="complete",
+            **_datasets("assert_a"),
+        )
+        with pytest.raises(ValueError, match="'missing' is not registered"):
+            await harness.initialize_async(harness.scenario(), trace_source="missing", **_datasets("assert_a"))
+    finally:
+        SourceRegistry.reset_registry_singleton()
+
+    policy = await _policy_score_async(result)
+    assert policy.score_metadata["trace_requirement"] == "complete"
+    assert policy.score_metadata["trace_coverage"] == "complete"
+
+
+async def test_trace_source_cannot_be_given_twice_async(harness: _Harness, capture: LocalTraceCapture) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    with pytest.raises(ValueError, match="either to the constructor or as the trace_source parameter"):
+        await harness.initialize_async(
+            harness.scenario(trace_source=capture.source()), trace_source="named", **_datasets("assert_a")
+        )
+
+
+@pytest.mark.parametrize("requirement", ["available", "complete"])
+async def test_trace_requirement_without_a_trace_source_is_rejected_async(
+    harness: _Harness, capture: LocalTraceCapture, requirement: str
+) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    with pytest.raises(ValueError, match="trace_requirement needs a trace source"):
+        await harness.initialize_async(
+            harness.scenario(), **_prompt_case(), trace_requirement=requirement, **_datasets("assert_a")
+        )
+    harness.objective = _TracedObjective(capture=capture)
+    with_source = await harness.initialize_async(
+        harness.scenario(trace_source=capture.source()),
+        **_prompt_case(),
+        trace_requirement=requirement,
+        **_datasets("assert_a"),
+    )
+    assert with_source._build_scenario_identifier().params["trace_requirement"] == requirement
+
+
+async def test_resume_after_the_capture_closes_keeps_trace_grounded_scores_async(harness: _Harness) -> None:
+    capture = LocalTraceCapture()
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.objective = _TracedObjective(capture=capture)
+    harness.policy_violation = True
+    args = {**_prompt_case(), **_datasets("assert_a")}
+    scenario = harness.scenario(trace_source=capture.source())
+    result = await harness.run_async(scenario, **args)
+    judged = len(harness.judge_systems)
+    capture.close()
+
+    resumed = await harness.run_async(
+        harness.scenario(trace_source=capture.source(), scenario_result_id=scenario._scenario_result_id), **args
+    )
+
+    assert len(harness.judge_systems) == judged
+    assert resumed.id == result.id
+    policy = await _policy_score_async(resumed)
+    assert policy.get_value() is True
+    assert policy.score_metadata["trace_coverage"] == "complete"
+
+
+async def test_untraced_target_warns_and_judges_the_transcript_async(
+    harness: _Harness, capture: LocalTraceCapture, caplog: pytest.LogCaptureFixture
+) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.policy_violation = True
+
+    with caplog.at_level(logging.WARNING):
+        result = await harness.run_async(
+            harness.scenario(trace_source=capture.source()),
+            **_prompt_case(),
+            **_datasets("assert_a"),
+        )
+
+    assert "does not record request traces, so judges will use the transcript alone" in caplog.text
+    assert harness.objective.trace_config.enabled is False
+    policy = await _policy_score_async(result)
+    assert policy.get_value() is True
+    assert policy.score_metadata["trace_coverage"] == "unavailable"
+
+
+@pytest.fixture
+def registered_trace_sources(capture: LocalTraceCapture) -> Generator[None, None, None]:
+    SourceRegistry.reset_registry_singleton()
+    capture.register(name="travel_agent")
+    capture.register(name="other_agent")
+    yield
+    SourceRegistry.reset_registry_singleton()
+
+
+async def test_default_trace_settings_keep_the_default_identity_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    default = await harness.initialize_async(harness.scenario(), **_datasets("assert_a"))
+    explicit = await harness.initialize_async(harness.scenario(), trace_requirement="none", **_datasets("assert_a"))
+
+    default_identity = default._build_scenario_identifier()
+    assert not {"trace_source", "trace_requirement"} & set(default_identity.params)
+    assert (
+        ScenarioEvaluationIdentifier(explicit._build_scenario_identifier()).eval_hash
+        == ScenarioEvaluationIdentifier(default_identity).eval_hash
+    )
+
+
+@pytest.mark.usefixtures("registered_trace_sources")
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"trace_source": "travel_agent"},
+        {"trace_source": "travel_agent", "trace_requirement": "available"},
+        {"trace_source": "other_agent", "trace_requirement": "complete"},
+    ],
+)
+async def test_resume_keeps_non_default_trace_settings_async(
+    harness: _Harness, capture: LocalTraceCapture, changed: dict[str, Any]
+) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    harness.objective = _TracedObjective(capture=capture)
+    settings = {"trace_source": "travel_agent", "trace_requirement": "complete", **_datasets("assert_a")}
+    original = await harness.initialize_async(harness.scenario(), **settings)
+
+    params = original._build_scenario_identifier().params
+    assert (params["trace_source"], params["trace_requirement"]) == ("travel_agent", "complete")
+    resumed = await harness.initialize_async(
+        harness.scenario(scenario_result_id=original._scenario_result_id), **settings
+    )
+    assert resumed._scenario_result_id == original._scenario_result_id
+    with pytest.raises(ValueError, match="matching configuration"):
+        await harness.initialize_async(
+            harness.scenario(scenario_result_id=original._scenario_result_id), **changed, **_datasets("assert_a")
+        )

@@ -199,4 +199,32 @@ describe('scenario launch requests', () => {
       })
     }
   })
+
+  it('keeps ASSERT trace settings out of the launch form and rejects saved non-default ones', () => {
+    const parameters: Parameter[] = [
+      { name: 'trace_source', description: 'Source.', type_name: 'str', choices: null, default: null, required: false },
+      {
+        name: 'trace_requirement', description: 'Requirement.', type_name: 'str',
+        choices: ['none', 'available', 'complete'], default: 'none', required: false,
+      },
+    ]
+    const scenario = makeScenario({
+      scenario_name: 'foundry.assert_policy',
+      supported_parameter_names: ['objective_target', 'scenario_techniques', 'dataset_config', 'trace_source', 'trace_requirement'],
+      supported_parameters: parameters,
+    })
+    const input = makeInput({
+      scenario, scenarioParamValues: {}, presetScenarioParams: { trace_source: null, trace_requirement: 'none' },
+    })
+    expect(scenarioDynamicParameters(scenario)).toEqual([])
+    const result = buildRunRequest(input)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.request.scenario_params).toBeUndefined()
+    for (const saved of [{ trace_source: 'travel_agent' }, { trace_requirement: 'complete' }]) {
+      expect(buildRunRequest({ ...input, presetScenarioParams: saved })).toEqual({
+        ok: false,
+        error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.',
+      })
+    }
+  })
 })

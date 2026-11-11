@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from pyrit.models import AssertTaxonomy
     from pyrit.models.score.assert_judge import AssertJudgeConfig
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.true_false.assert_policy_scorer import AssertTraceEvidence
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 ASSERT_JUDGE_PRESETS_PATH = Path(SCORER_SEED_PROMPT_PATH, "assert", "judge_presets").resolve()
@@ -39,6 +40,7 @@ def build_assert_judge_scorers(
     application_context: str,
     target_system_prompt: str | None,
     judgment_mode: AssertJudgmentMode,
+    trace_evidence: AssertTraceEvidence | None = None,
 ) -> dict[str, TrueFalseScorer]:
     """
     Bind a resolved judge configuration to one stored policy, without resolving presets again.
@@ -54,6 +56,8 @@ def build_assert_judge_scorers(
         application_context (str): Reference context and capabilities.
         target_system_prompt (str | None): The application's actual instructions, when known.
         judgment_mode (AssertJudgmentMode): How built-in dimensions are judged.
+        trace_evidence (AssertTraceEvidence | None): Execution traces every judge reads with the
+            transcript. Defaults to None.
 
     Returns:
         dict[str, TrueFalseScorer]: One judge per dimension, keyed by the dimension's score category.
@@ -69,6 +73,7 @@ def build_assert_judge_scorers(
                 target_system_prompt=target_system_prompt,
                 judgment_mode=judgment_mode,
                 samples=config.samples,
+                trace_evidence=trace_evidence,
             ).with_scorer_block_policy(raise_if_scorer_blocks=False),
         )
         for dimension in dimensions

@@ -12,6 +12,7 @@ import functools
 import json
 import logging
 from copy import deepcopy
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
@@ -32,7 +33,7 @@ from pyrit.models import (
 )
 from pyrit.registry import ScorerRegistry
 from pyrit.score.assert_dimension_scorer import _AssertDimensionScorer
-from pyrit.score.conversation_scorer import create_conversation_scorer
+from pyrit.score.conversation_scorer import TraceEvidenceRequirement, create_conversation_scorer
 from pyrit.score.response_handler import JsonSchemaResponseHandler
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 from pyrit.score.scorer import _set_snapshot_participation
@@ -51,9 +52,11 @@ if TYPE_CHECKING:
         ScorableUnion,
         Score,
         ScoringExpectation,
+        TraceScorable,
     )
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+    from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -71,6 +74,38 @@ class AssertJudgmentMode(str, Enum):
 
     DIRECT = "direct"
     CATEGORY_VALIDATED = "category_validated"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AssertTraceEvidence:
+    """
+    Execution trace evidence for ASSERT judges: where to read it and what the judge requires.
+
+    Args:
+        source (ObservationSource[TraceScorable]): Reads the traces linked to each conversation's
+            target requests, for example ``LocalTraceCapture.source()``.
+        requirement (TraceEvidenceRequirement): The evidence required before the judge is called.
+            ``NONE`` always judges, with whatever traces are available, as ASSERT does.
+            ``AVAILABLE`` and ``COMPLETE`` leave the result undetermined without some or complete
+            traces. Defaults to NONE.
+        max_rendered_trace_chars (int): Character budget for rendered execution steps.
+            Defaults to 60000.
+    """
+
+    source: ObservationSource[TraceScorable]
+    requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE
+    max_rendered_trace_chars: int = 60000
+
+    def __post_init__(self) -> None:
+        """
+        Validate the requirement and rendering budget.
+
+        Raises:
+            ValueError: If the requirement is unknown or the budget is not positive.
+        """
+        object.__setattr__(self, "requirement", TraceEvidenceRequirement(self.requirement))
+        if self.max_rendered_trace_chars < 1:
+            raise ValueError("max_rendered_trace_chars must be positive.")
 
 
 class _AssertCategoryResponseHandler(JsonSchemaResponseHandler):
@@ -154,6 +189,7 @@ def build_assert_policy_scorer(
     target_system_prompt: str | None = None,
     judgment_mode: AssertJudgmentMode = AssertJudgmentMode.DIRECT,
     samples: int = 1,
+    trace_evidence: AssertTraceEvidence | None = None,
 ) -> TrueFalseScorer:
     """
     Configure a true/false scorer for one ASSERT judge dimension across a retained conversation.
@@ -171,6 +207,9 @@ def build_assert_policy_scorer(
         samples (int): Independent judge calls whose verdicts are combined as in ASSERT: a majority
             vote with ties counted as failures. As in ASSERT, a sample whose judgment is still invalid
             after its retries is left out, and scoring fails only when every sample does. Defaults to 1.
+        trace_evidence (AssertTraceEvidence | None): Execution traces to judge with the transcript.
+            When set, the judge sees the steps each request produced, is told how to read and cite
+            them, and runs only when ``trace_evidence.requirement`` is met. Defaults to None.
 
     Returns:
         TrueFalseScorer: A conversation scorer. True means the dimension's failure occurred.
@@ -196,6 +235,7 @@ def build_assert_policy_scorer(
         application_context=application_context,
         target_system_prompt=target_system_prompt,
         judgment_mode=AssertJudgmentMode(judgment_mode),
+        trace_evidence=trace_evidence,
     )
     if samples == 1:
         return judge
@@ -270,9 +310,10 @@ def _build_dimension_judge(
     application_context: str,
     target_system_prompt: str | None,
     judgment_mode: AssertJudgmentMode,
+    trace_evidence: AssertTraceEvidence | None = None,
 ) -> TrueFalseScorer:
     """
-    Build one judge for one dimension over the retained conversation.
+    Build one judge for one dimension over the retained conversation and, optionally, its traces.
 
     Returns:
         TrueFalseScorer: The conversation judge.
@@ -297,7 +338,13 @@ def _build_dimension_judge(
             scorer=cast(
                 "FloatScaleScorer",
                 _as_conversation_scorer(
-                    _AssertDimensionScorer(chat_target=target, dimension=dimension, metadata=metadata)
+                    _AssertDimensionScorer(
+                        chat_target=target,
+                        dimension=dimension,
+                        metadata=metadata,
+                        additional_instructions=_execution_evidence_instructions() if trace_evidence else None,
+                    ),
+                    trace_evidence=trace_evidence,
                 ),
             ),
             threshold=dimension.violation_index / (len(grades) - 1),
@@ -319,6 +366,10 @@ def _build_dimension_judge(
             SCORER_SEED_PROMPT_PATH / "true_false_question" / template_name
         ),
     )
+    if trace_evidence is not None:
+        system_prompt = system_prompt.model_copy(
+            update={"value": f"{system_prompt.value.rstrip()}\n\n{_execution_evidence_instructions()}"}
+        )
     response_handler = None
     if judgment_mode == AssertJudgmentMode.CATEGORY_VALIDATED:
         if system_prompt.response_json_schema is None:
@@ -335,15 +386,23 @@ def _build_dimension_judge(
         system_prompt=system_prompt,
         response_handler=response_handler,
     )
-    conversation_scorer = _as_conversation_scorer(scorer)
+    conversation_scorer = _as_conversation_scorer(scorer, trace_evidence=trace_evidence)
     if not isinstance(conversation_scorer, TrueFalseScorer):
         raise TypeError("ASSERT policy scoring requires a true/false conversation scorer.")
     return conversation_scorer
 
 
-def _as_conversation_scorer(scorer: Scorer) -> Scorer:
+def _execution_evidence_instructions() -> str:
+    return SeedPrompt.from_yaml_file(
+        SCORER_SEED_PROMPT_PATH / "true_false_question" / "assert_execution_evidence_instructions.yaml"
+    ).value
+
+
+def _as_conversation_scorer(scorer: Scorer, *, trace_evidence: AssertTraceEvidence | None) -> Scorer:
     """
     Judge the whole retained conversation: text, errors, and tool calls and results, without reasoning.
+
+    With trace evidence, the conversation's execution traces are rendered after the turns they produced.
 
     Returns:
         Scorer: The conversation scorer.
@@ -356,6 +415,9 @@ def _as_conversation_scorer(scorer: Scorer) -> Scorer:
             enforce_all_pieces_valid=True,
         ),
         excluded_data_types=["reasoning"],
+        trace_source=trace_evidence.source if trace_evidence else None,
+        trace_requirement=trace_evidence.requirement if trace_evidence else TraceEvidenceRequirement.NONE,
+        max_rendered_trace_chars=trace_evidence.max_rendered_trace_chars if trace_evidence else 60000,
     )
 
 

@@ -322,6 +322,18 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 #
 # Standalone, `build_assert_policy_scorer` accepts any of these dimensions and a `samples` count.
 #
+# ### Execution traces
+#
+# Like ASSERT's traced targets, the judges can read what the application did,
+# not only what it said. Give the objective target `trace_config=capture.trace_config()` from a
+# `LocalTraceCapture`, and pass `trace_source=capture.source()` to `AssertPolicy`, or name a
+# registered source with the `trace_source` parameter. Each judge then reads the conversation's
+# model calls, tool calls with arguments and results, and agent steps, and is asked to cite them as `[T3]`.
+# `trace_requirement` sets the evidence a judge needs: `none` (the default) always judges, with whatever
+# traces exist, while `available` and `complete` leave results undetermined without some or complete
+# traces. If the target records no traces, the scenario logs a warning. See
+# [Judging with execution traces](../code/scoring/8_trace_evidence_scoring.ipynb).
+#
 # **Differences from ASSERT:**
 #
 # - Each conversation gets one judge call per dimension, so the verdicts can disagree. ASSERT's
@@ -340,6 +352,8 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 #   as JSON with a `next_message` field instead of plain text.
 # - Each group's system prompt is fixed when it's generated. `target_system_prompt` only describes
 #   instructions that the target already owns.
+# - Traces are linked to each request by its trace ID rather than grouped by `session.id`, and
+#   coverage is tracked explicitly, so incomplete traces can be required or reported.
 # - Tool simulation and ASSERT's reports and viewer aren't available. Results are stored in PyRIT
 #   memory.
 

@@ -19,7 +19,11 @@ if TYPE_CHECKING:
         load_assert_judge_preset_file,
     )
     from pyrit.score.batch_scorer import BatchScorer
-    from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
+    from pyrit.score.conversation_scorer import (
+        ConversationScorer,
+        TraceEvidenceRequirement,
+        create_conversation_scorer,
+    )
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
     from pyrit.score.float_scale.decision_scorer import DecisionScorer
@@ -52,7 +56,9 @@ if TYPE_CHECKING:
     from pyrit.score.observation.execution import NonReplayableObservationError
     from pyrit.score.observation.lifecycle import AttemptObserver, SurfaceLifecycleSource
     from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
+    from pyrit.score.observation.local_trace_capture import LocalTraceCapture
     from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.otel_execution_trace_source import OtelExecutionTraceSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
@@ -94,6 +100,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.assert_policy_scorer import (
         AssertJudgmentMode,
         AssertScoringDimension,
+        AssertTraceEvidence,
         build_assert_policy_scorer,
         get_assert_failure_criterion,
     )
@@ -186,6 +193,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "load_assert_judge_preset": "pyrit.score.assert_judge_presets",
     "load_assert_judge_preset_file": "pyrit.score.assert_judge_presets",
     "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
+    "AssertTraceEvidence": "pyrit.score.true_false.assert_policy_scorer",
+    "LocalTraceCapture": "pyrit.score.observation.local_trace_capture",
+    "OtelExecutionTraceSource": "pyrit.score.observation.otel_execution_trace_source",
+    "TraceEvidenceRequirement": "pyrit.score.conversation_scorer",
     "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
     "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
     "PhysicsConsistencyScorer": "pyrit.score.true_false.physics_consistency_scorer",
