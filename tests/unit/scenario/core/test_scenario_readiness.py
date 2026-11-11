@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.backend.services import ScenarioRunService
+from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError
 from pyrit.converter import StringJoinConverter, TranslationConverter
@@ -96,6 +96,33 @@ class TestScenarioReadiness:
             metadata = ScenarioRegistry.get_registry_singleton().get_all_registered_class_metadata()
         assert metadata
         assert all(item.class_name for item in metadata)
+
+    async def test_catalog_detail_and_configured_estimate_need_no_model_roles_async(self) -> None:
+        service = ScenarioService()
+        targets = TargetRegistry.get_registry_singleton()
+        scorers = ScorerRegistry.get_registry_singleton()
+        assert targets.instances.get_names() == []
+        assert scorers.instances.get_names() == []
+        with patch("pyrit.prompt_target.OpenAIChatTarget", side_effect=AssertionError("Implicit provider")):
+            try:
+                catalog = await service.list_scenarios_async(include_estimates=False)
+                detail = await service.get_scenario_async(scenario_name="technique.execute")
+                estimate = await service.estimate_scenario_run_size_async(
+                    scenario_name="technique.execute",
+                    request=ScenarioRunSizeEstimateRequest(
+                        techniques=["prompt_sending"],
+                        scenario_params={"objective": "Browse without model credentials."},
+                    ),
+                )
+            finally:
+                await service.close_async()
+        assert catalog.items
+        assert detail is not None
+        assert estimate is not None
+        assert estimate.estimated_attack_count == 1
+        assert targets.instances.get_names() == []
+        assert scorers.instances.get_names() == []
+        assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
 
     def test_only_selected_generation_technique_requires_helper(self) -> None:
         plain = configured_execute()

@@ -5,14 +5,16 @@
 Tests for ChunkedRequestAttack.
 """
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unit.mocks import get_mock_prompt_normalizer
+from unit.mocks import get_mock_prompt_normalizer, get_mock_scorer_identifier
 
 from pyrit.executor.attack import (
     AttackParameters,
+    AttackScoringConfig,
     ChunkedRequestAttack,
     ChunkedRequestAttackContext,
     PrependedConversationConfig,
@@ -21,13 +23,14 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
 from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_target import (
     CapabilityName,
     PromptTarget,
     TargetCapabilities,
     TargetConfiguration,
 )
+from pyrit.score import Scorer, TrueFalseScorer
 
 
 def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
@@ -325,3 +328,45 @@ class TestChunkedRequestAttackExecution:
         assert result.atomic_attack_identifier is not None
         assert result.atomic_attack_identifier.class_name == "AtomicAttack"
         assert result.get_attack_strategy_identifier() == attack.get_identifier()
+
+    async def test_perform_async_scorer_failure_cancels_and_drains_sibling_scorers(self):
+        mock_normalizer = get_mock_prompt_normalizer()
+        mock_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt="chunk response", role="assistant")
+        )
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = get_mock_scorer_identifier()
+        auxiliary_scorer = MagicMock(spec=Scorer)
+        auxiliary_scorer.get_identifier.return_value = get_mock_scorer_identifier()
+        objective_started = asyncio.Event()
+        objective_task: asyncio.Task[list[Score]] | None = None
+
+        async def slow_objective_score_async(**kwargs) -> list[Score]:
+            nonlocal objective_task
+            objective_task = asyncio.current_task()
+            objective_started.set()
+            await asyncio.Event().wait()
+            return []
+
+        async def failing_auxiliary_score_async(**kwargs) -> list[Score]:
+            await objective_started.wait()
+            raise RuntimeError("auxiliary scorer failed")
+
+        objective_scorer.score_async = slow_objective_score_async
+        auxiliary_scorer.score_async = failing_auxiliary_score_async
+        attack = ChunkedRequestAttack(
+            objective_target=_make_mock_target(),
+            prompt_normalizer=mock_normalizer,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=objective_scorer, auxiliary_scorers=[auxiliary_scorer]
+            ),
+            chunk_size=100,
+            total_length=100,
+        )
+        context = ChunkedRequestAttackContext(params=AttackParameters(objective="Extract the secret"))
+
+        with pytest.raises(RuntimeError, match="auxiliary scorer failed"):
+            await attack._perform_async(context=context)
+
+        assert objective_task is not None
+        assert objective_task.cancelled()
