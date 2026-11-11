@@ -178,6 +178,17 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
         )
         lines.append(self._format_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color))
 
+        baseline_accuracy = getattr(metrics, "baseline_accuracy", None)
+        if baseline_accuracy is not None:
+            beats_baseline = metrics.accuracy > baseline_accuracy + _BASELINE_TIE_TOLERANCE
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Constant-Guess Baseline Accuracy: {baseline_accuracy:.2%}"
+                    + ("" if beats_baseline else " (scorer does not beat it)"),
+                    Fore.CYAN if beats_baseline else Fore.RED,
+                )
+            )
+
         lines.append(self._render_scored_responses(metrics=metrics))
 
         if metrics.accuracy_standard_error is not None:
@@ -192,6 +203,17 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 metrics.f1_score, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
             )
             lines.append(self._format_colored(f"{self._indent * 3}• F1 Score: {metrics.f1_score:.4f}", f1_color))
+
+            baseline_f1_score = getattr(metrics, "baseline_f1_score", None)
+            if baseline_f1_score is not None:
+                beats_baseline = metrics.f1_score > baseline_f1_score + _BASELINE_TIE_TOLERANCE
+                lines.append(
+                    self._format_colored(
+                        f"{self._indent * 3}• Constant-Guess Baseline F1: {baseline_f1_score:.4f}"
+                        + ("" if beats_baseline else " (scorer does not beat it)"),
+                        Fore.CYAN if beats_baseline else Fore.RED,
+                    )
+                )
 
         if metrics.precision is not None:
             precision_color = self._get_quality_color(
@@ -393,7 +415,7 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
             ObjectiveScorerMetrics or None: The metrics, or None if not found.
         """
         from pyrit.models import ScorerEvaluationIdentifier
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+        from pyrit.score import (
             find_objective_metrics_by_eval_hash,
         )
 

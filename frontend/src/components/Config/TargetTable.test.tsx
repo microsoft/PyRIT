@@ -1,8 +1,10 @@
-import { act, render, screen, fireEvent, within } from '@testing-library/react'
+import { act, render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { useTargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
+import { targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TargetCapabilities, TargetInstance } from '@/types'
 import {
@@ -11,7 +13,25 @@ import {
   userPreferencesStorageKey,
   writeUserPreferences,
 } from '@/utils/userPreferences'
-import TargetTable from './TargetTable'
+import TargetTableView from './TargetTable'
+
+function TargetTable({
+  onTargetDetected,
+  visible = true,
+  ...props
+}: Omit<React.ComponentProps<typeof TargetTableView>, 'detection'> & {
+  onTargetDetected?: (updated: TargetInstance, previous: TargetInstance) => void
+  visible?: boolean
+}) {
+  const detection = useTargetCapabilityDetection({ generation: props.generation ?? '', onTargetDetected })
+  return visible ? <TargetTableView {...props} detection={detection} /> : null
+}
+
+jest.mock('@/services/api', () => ({
+  targetsApi: { detectCapabilities: jest.fn() },
+}))
+
+const detectCapabilities = jest.mocked(targetsApi.detectCapabilities)
 
 jest.mock('./TargetTable.styles', () => ({
   useTargetTableStyles: () => new Proxy({}, { get: () => '' }),
@@ -104,7 +124,167 @@ describe('TargetTable', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    detectCapabilities.mockReset()
     window.localStorage.clear()
+  })
+
+  it('should reveal all-selected checkboxes only after entering detection and cancel without requests', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
+    const controls = screen.getByRole('toolbar', { name: 'Target controls' })
+    expect(within(controls).getByRole('button', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(within(controls).getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByRole('checkbox', { name: 'Select all shown targets' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBeChecked()
+    for (const target of sampleTargets) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).toBeChecked()
+    }
+    expect(screen.getByRole('button', { name: 'Begin capability detection' })).toBeEnabled()
+    expect(screen.getByText('Checks may incur provider charges.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Select all' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Select none' })).not.toBeInTheDocument()
+    expect(detectCapabilities).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('checkbox', { name: 'Select all shown targets' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Checks may incur provider charges.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+    expect(detectCapabilities).not.toHaveBeenCalled()
+  })
+
+  it('should use the header checkbox for all, none, and a subset without a selected-count label', async () => {
+    const user = userEvent.setup()
+    detectCapabilities.mockResolvedValue(sampleTargets[1])
+    const onTargetDetected = jest.fn()
+    render(<TestWrapper><TargetTable {...defaultProps} onTargetDetected={onTargetDetected} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    expect(screen.getByRole('button', { name: 'Begin capability detection' })).toBeDisabled()
+    for (const target of sampleTargets) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).not.toBeChecked()
+    }
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBeChecked()
+    for (const target of sampleTargets) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).toBeChecked()
+    }
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    await user.click(screen.getByRole('checkbox', { name: `Select ${sampleTargets[1].target_registry_name}` }))
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBePartiallyChecked()
+    expect(screen.queryByText(/shown targets selected/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+    expect(detectCapabilities).toHaveBeenCalledWith(sampleTargets[1])
+    expect(onTargetDetected).toHaveBeenCalledWith(sampleTargets[1], sampleTargets[1])
+  })
+
+  it('should detect only selected shown targets after hiding and filtering rows', async () => {
+    const user = userEvent.setup()
+    detectCapabilities.mockResolvedValue(sampleTargets[1])
+    render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+    expect(detectCapabilities).toHaveBeenCalledWith(sampleTargets[1])
+  })
+
+  it('should keep a fixed batch while filters change and continue after an error', async () => {
+    const user = userEvent.setup()
+    let rejectFirst: (error: Error) => void = () => {}
+    detectCapabilities
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject }))
+      .mockResolvedValue(sampleTargets[1])
+    const onTargetDetected = jest.fn()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} onTargetDetected={onTargetDetected} />
+      </TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    expect(await screen.findByText('Checking...')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Detecting capabilities...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(screen.getAllByText('Waiting')).toHaveLength(2)
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
+    await act(async () => { rejectFirst(new Error('Endpoint unavailable')) })
+    expect(await screen.findByText(/openai_chat_gpt4: Endpoint unavailable/)).toBeInTheDocument()
+    await waitFor(() => expect(detectCapabilities).toHaveBeenCalledTimes(3))
+    expect(detectCapabilities.mock.calls.map(([target]) => target.target_registry_name))
+      .toEqual(sampleTargets.map((target: TargetInstance) => target.target_registry_name))
+    expect(onTargetDetected).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+  })
+
+  it('should use the latest parent callback when detection completes', async () => {
+    const user = userEvent.setup()
+    let finish: (target: TargetInstance) => void = () => {}
+    detectCapabilities.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const firstCallback = jest.fn()
+    const latestCallback = jest.fn()
+    const props = { ...defaultProps, targets: [sampleTargets[0]] }
+    const { rerender } = render(
+      <TestWrapper><TargetTable {...props} onTargetDetected={firstCallback} /></TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    rerender(<TestWrapper><TargetTable {...props} onTargetDetected={latestCallback} /></TestWrapper>)
+    await act(async () => { finish(sampleTargets[0]) })
+    expect(firstCallback).not.toHaveBeenCalled()
+    expect(latestCallback).toHaveBeenCalledWith(sampleTargets[0], sampleTargets[0])
+  })
+
+  it('should restore progress and the original selection when the table remounts during detection', async () => {
+    const user = userEvent.setup()
+    let finish!: (target: TargetInstance) => void
+    detectCapabilities.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const onTargetDetected = jest.fn()
+    const props = { ...defaultProps, onTargetDetected }
+    const { rerender } = render(<TestWrapper><TargetTable {...props} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Select all shown targets' }))
+    await user.click(screen.getByRole('checkbox', { name: `Select ${sampleTargets[1].target_registry_name}` }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    rerender(<TestWrapper><TargetTable {...props} visible={false} /></TestWrapper>)
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    rerender(<TestWrapper><TargetTable {...props} /></TestWrapper>)
+    expect(screen.getByText('Checking...')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Detecting capabilities...' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'Select all shown targets' })).toBePartiallyChecked()
+    expect(screen.getByRole('checkbox', { name: `Select ${sampleTargets[1].target_registry_name}` })).toBeChecked()
+    for (const target of [sampleTargets[0], sampleTargets[2]]) {
+      expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).not.toBeChecked()
+    }
+    await act(async () => finish(sampleTargets[1]))
+    expect(screen.getByText('Saved')).toBeInTheDocument()
+    expect(onTargetDetected).toHaveBeenCalledWith(sampleTargets[1], sampleTargets[1])
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+  })
+
+  it('should discard an old runtime batch without resetting table filters', async () => {
+    const user = userEvent.setup()
+    let finish: (target: TargetInstance) => void = () => {}
+    detectCapabilities.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const onTargetDetected = jest.fn()
+    const { rerender } = render(
+      <TestWrapper><TargetTable {...defaultProps} generation="first" onTargetDetected={onTargetDetected} /></TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Auto-detect capabilities' }))
+    await user.click(screen.getByRole('button', { name: 'Begin capability detection' }))
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
+    rerender(
+      <TestWrapper><TargetTable {...defaultProps} generation="second" onTargetDetected={onTargetDetected} /></TestWrapper>,
+    )
+    await act(async () => { finish(sampleTargets[0]) })
+    expect(onTargetDetected).not.toHaveBeenCalled()
+    expect(detectCapabilities).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: 'Filter by type:' })).toHaveValue('Type: AzureImageTarget')
   })
 
   it('should render a flat table with all targets visible', () => {
@@ -181,9 +361,9 @@ describe('TargetTable', () => {
 
     await user.click(screen.getByRole('button', { name: 'Hide target_one' }))
     expect(screen.queryByRole('button', { name: 'Identity for target_one' })).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
     expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
     expect(screen.getByRole('region', { name: 'Identity for target_one' })).toBeVisible()
   })
 
@@ -543,7 +723,7 @@ describe('TargetTable', () => {
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
 
     expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
 
     firstRender.unmount()
     render(
@@ -567,18 +747,24 @@ describe('TargetTable', () => {
     await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
     await user.click(screen.getByRole('button', { name: 'Show azure_image_dalle' }))
 
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (0)' })).toHaveAttribute('aria-pressed', 'false')
 
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
 
     expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('should merge a visibility change with the latest stored choices', async () => {
@@ -610,7 +796,7 @@ describe('TargetTable', () => {
     )
 
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
 
     act(() => {
       writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
@@ -620,12 +806,12 @@ describe('TargetTable', () => {
       }))
     })
 
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (0)' })).toBeDisabled()
 
     await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
 
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('should hide registry entries independently when they share an identifier', async () => {
@@ -654,7 +840,7 @@ describe('TargetTable', () => {
 
     expect(screen.queryByText('first_registry_name')).not.toBeInTheDocument()
     expect(screen.getByText('second_registry_name')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
   })
 
   it('should not show filter when only one target type exists', () => {
@@ -877,7 +1063,7 @@ describe('TargetTable', () => {
     expect(screen.getByText('#1 inner_a')).toBeInTheDocument()
   })
 
-  it('should ignore a selection the reloaded targets no longer offer', async () => {
+  it('should retain a selection when reloaded targets no longer match it', async () => {
     const user = userEvent.setup()
     const imageChat = makeModalityTarget('image_chat', ['text', 'image_path'], ['text'])
     const textChat = makeModalityTarget('text_chat', ['text'], ['text'])
@@ -895,13 +1081,16 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
+    expect(screen.queryByRole('row', { name: /text_chat/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /audio_chat/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('Inputs: Image')
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('No targets match the selected filters.')
+    await user.click(screen.getByRole('button', { name: 'Reset all filters' }))
     expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
-    expect(screen.getByRole('row', { name: /audio_chat/ })).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('should not bring back a selection when a later reload offers it again', async () => {
+  it('should keep a selection through disappearance and reappearance of its matching targets', async () => {
     const user = userEvent.setup()
     const imageChat = makeModalityTarget('image_chat', ['text', 'image_path'], ['text'])
     const textChat = makeModalityTarget('text_chat', ['text'], ['text'])
@@ -923,8 +1112,9 @@ describe('TargetTable', () => {
     renderWith([textChat, audioChat])
     renderWith([imageChat, textChat])
 
-    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
-    expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('Inputs: Image')
+    expect(screen.queryByRole('row', { name: /text_chat/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /image_chat/ })).toBeInTheDocument()
   })
 
   it('should keep the inner targets of a matching round robin target', async () => {

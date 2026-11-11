@@ -6,10 +6,18 @@ import userEvent from '@testing-library/user-event'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, operationsApi, scenariosApi } from '@/services/api'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+import { deferred } from '@/test-utils/deferred'
 import type { ScenarioRunListItem, ScenarioRunListResponse, ScenarioRunState, ScenarioRunSummary } from '@/types'
 
 import ScenarioHistory from './ScenarioHistory'
-import { DEFAULT_SCENARIO_HISTORY_FILTERS } from './scenarioHistoryFilters'
+import {
+  DEFAULT_SCENARIO_HISTORY_FILTERS,
+  scenarioHistoryFiltersFromSearchParams,
+  type ScenarioHistoryFilters,
+} from './scenarioHistoryFilters'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
@@ -273,7 +281,7 @@ describe('ScenarioHistory', () => {
       const message = error || 'The resumed run failed. Finished results remain available.'
       expect(await screen.findByText(message)).toBeInTheDocument()
       expect(await screen.findByRole('row', { name: /foundry.red_team.*Failed/ })).toHaveTextContent('1/2 attacks complete')
-      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
       expect(mockQueueRetry).toHaveBeenCalledTimes(1)
       expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
       expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
@@ -314,7 +322,7 @@ describe('ScenarioHistory', () => {
     await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
 
     expect(await screen.findByText(detail)).toBeInTheDocument()
-    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -362,7 +370,7 @@ describe('ScenarioHistory', () => {
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1')
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
     expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
   })
@@ -711,11 +719,10 @@ describe('ScenarioHistory', () => {
     renderHistory()
 
     expect(await screen.findByTestId('scenario-history-table')).toBeInTheDocument()
-    expect(screen.getByText(/filter options could not be loaded: scenario names/i)).toBeInTheDocument()
+    expect(screen.getByText('catalog unavailable')).toBeInTheDocument()
   })
 
-  it('shows request errors and retries without swallowing the failure', async () => {
-    const user = userEvent.setup()
+  it('shows request errors and recovers automatically without a Retry control', async () => {
     mockedScenariosApi.listRuns
       .mockRejectedValueOnce(new Error('history unavailable'))
       .mockResolvedValueOnce({
@@ -724,8 +731,9 @@ describe('ScenarioHistory', () => {
       })
     renderHistory()
 
-    expect(await screen.findByTestId('scenario-history-error')).toHaveTextContent('history unavailable')
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('history unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     expect(await screen.findByTestId('scenario-history-table')).toBeInTheDocument()
     expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
   })
@@ -768,69 +776,110 @@ describe('ScenarioHistory', () => {
     expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled')
   })
 
-  it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {
-    const user = userEvent.setup()
-    mockedScenariosApi.listRuns
-      .mockResolvedValueOnce({
-        items: [RUN],
-        pagination: { limit: 25, has_more: true, next_cursor: 'next-page' },
-      })
-      .mockResolvedValue({
-        items: [RUN],
-        pagination: { limit: 25, has_more: false },
-      })
-    const history = renderHistory({
+  it('requests QUEUED runs from a QUEUED-only URL filter', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+    renderHistory({
       ...defaultProps,
-      filters: {
-        ...DEFAULT_SCENARIO_HISTORY_FILTERS,
-        scenarioNames: ['foundry.red_team'],
-        statuses: ['IN_PROGRESS', 'FAILED'],
-        operator: ['alice'],
-        operationId: ['id-nightly'],
-        otherLabels: ['team:safety'],
-      },
+      filters: scenarioHistoryFiltersFromSearchParams(new URLSearchParams('status=QUEUED')),
     })
 
-    await screen.findByTestId('scenario-history-table')
-    expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(1, {
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ run_statuses: ['QUEUED'] }),
+    ))
+  })
+
+  it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {
+    const user = userEvent.setup()
+    const nextPage = deferred<ScenarioRunListResponse>()
+    const filteredPage = deferred<ScenarioRunListResponse>()
+    const filters: ScenarioHistoryFilters = {
+      ...DEFAULT_SCENARIO_HISTORY_FILTERS,
+      scenarioNames: ['foundry.red_team'],
+      statuses: ['IN_PROGRESS', 'FAILED'],
+      operator: ['alice'],
+      operationId: ['id-nightly'],
+      otherLabels: ['team:safety'],
+    }
+    const firstPageRequest = {
       limit: 25,
       cursor: undefined,
       scenario_names: ['foundry.red_team'],
       run_statuses: ['IN_PROGRESS', 'FAILED'],
       label: ['operator:alice', 'team:safety'],
       operation_id: ['id-nightly'],
-    })
+    }
+    mockedScenariosApi.listRuns
+      .mockResolvedValueOnce({
+        items: [RUN],
+        pagination: { limit: 25, has_more: true, next_cursor: 'next-page' },
+      })
+      .mockReturnValueOnce(nextPage.promise)
+      .mockReturnValueOnce(filteredPage.promise)
+      .mockResolvedValue({
+        items: [{ ...RUN, scenario_result_id: 'refreshed-run' }],
+        pagination: { limit: 25, has_more: false },
+      })
+    const history = renderHistory({ ...defaultProps, filters })
+
+    await screen.findByTestId('scenario-history-table')
+    expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(1, firstPageRequest)
     expect(screen.getByTestId('scenario-operation-filter')).toHaveValue('Nightly')
 
     await user.click(screen.getByRole('button', { name: 'Next' }))
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ cursor: 'next-page' }),
+      { ...firstPageRequest, cursor: 'next-page' },
     ))
-    expect(screen.getByText('Page 2')).toBeInTheDocument()
+    expect(screen.getByText('Loading scanner history...')).toBeVisible()
+    expect(screen.queryByText('Page 1')).not.toBeInTheDocument()
+    expect(screen.queryByText('Page 2')).not.toBeInTheDocument()
+
+    nextPage.resolve({
+      items: [{ ...RUN, scenario_result_id: 'run-2' }],
+      pagination: { limit: 25, has_more: false },
+    })
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    expect(screen.getByTestId('scenario-history-row-run-2')).toBeInTheDocument()
 
     history.rerender(
       <FluentProvider theme={webLightTheme}>
-        <ScenarioHistory
-          {...defaultProps}
-          filters={{
-            ...DEFAULT_SCENARIO_HISTORY_FILTERS,
-            statuses: ['COMPLETED'],
-          }}
-        />
+        <main>
+          <ScenarioHistory
+            {...defaultProps}
+            filters={{
+              ...filters,
+              statuses: ['COMPLETED'],
+            }}
+          />
+        </main>
       </FluentProvider>,
     )
+    const filteredRequest = { ...firstPageRequest, run_statuses: ['COMPLETED'] }
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ cursor: undefined, run_statuses: ['COMPLETED'] }),
+      filteredRequest,
     ))
-    expect(await screen.findByText('Page 1')).toBeInTheDocument()
+    expect(screen.getByText('Loading scanner history...')).toBeVisible()
+    expect(screen.queryByText('Page 2')).not.toBeInTheDocument()
+    await act(async () => {
+      filteredPage.resolve({
+        items: [RUN],
+        pagination: { limit: 25, has_more: false },
+      })
+    })
+    expect(await screen.findByText('Page 1')).toBeVisible()
 
-    await user.click(screen.getByTestId('scenario-history-refresh'))
+    await advanceAutoRefresh()
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(
       4,
-      expect.objectContaining({ cursor: undefined }),
+      filteredRequest,
     ))
+    expect(await screen.findByTestId('scenario-history-row-refreshed-run')).toBeInTheDocument()
+    expect(screen.getByText('Page 1')).toBeVisible()
+    expect(screen.getByTestId('scenario-operation-filter')).toHaveValue('Nightly')
   })
 
   it('hides stale pagination while changed filters are loading', async () => {

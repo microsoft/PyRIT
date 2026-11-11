@@ -3,11 +3,10 @@
 
 import pytest
 
-from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.local.jailbreak_dataset import (
+from pyrit.datasets import SeedDatasetFilter, SeedDatasetProvider
+from pyrit.datasets.seed_datasets.local import (
     _JailbreakTemplatesDataset,
 )
-from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetFilter
 from pyrit.models import SeedDataset, SeedPrompt
 
 _VALID_TEMPLATE = """

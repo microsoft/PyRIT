@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import NotRequired, TypedDict
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -20,7 +20,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/version", tags=["version"])
 
 
-def _load_build_info(build_info_path: Path) -> dict[str, Any]:
+class BuildInfo(TypedDict):
+    """Optional Docker build-info keys; commit may also be explicitly null."""
+
+    source: NotRequired[str]
+    commit: NotRequired[str | None]
+    modified: NotRequired[bool]
+    display: NotRequired[str]
+
+
+def _load_build_info(build_info_path: Path) -> BuildInfo:
     """
     Load Docker build metadata from disk.
 
@@ -28,10 +37,11 @@ def _load_build_info(build_info_path: Path) -> dict[str, Any]:
         build_info_path: Path to the build metadata JSON file.
 
     Returns:
-        dict[str, Any]: Parsed build metadata.
+        BuildInfo: Parsed build metadata; every key may be absent.
     """
     with open(build_info_path) as file:
-        return json.load(file)
+        info: BuildInfo = json.load(file)
+        return info
 
 
 class VersionResponse(BaseModel):

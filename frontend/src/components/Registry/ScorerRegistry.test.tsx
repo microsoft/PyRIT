@@ -7,6 +7,9 @@ import { readUserPreferences } from '@/utils/userPreferences'
 import type { ScorerInstance } from '@/types'
 
 import ScorerRegistry from './ScorerRegistry'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 const scorers: ScorerInstance[] = [
   { scorer_registry_name: 'judge', identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'judge-hash', scorer_type: 'true_false' } },
@@ -35,7 +38,8 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByRole('option', { name: /criteria/ })).not.toBeInTheDocument()
     expect(screen.getByText('ScaleScorer')).toBeVisible()
     expect(screen.queryByText(/personal to this account and browser/)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     expect(onRefresh).toHaveBeenCalledTimes(1)
     const selector = screen.getByRole('combobox', { name: 'Default objective scorer for chats' })
     expect(selector).toHaveValue('last-used')
@@ -87,7 +91,7 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByText('Message * true_false')).not.toBeInTheDocument()
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell')
     expect(cells.slice(2).map((cell: HTMLElement) => cell.textContent)).toEqual([
-      'Message', '95.7%', '0.0%', '94.0%', '91.0%', '0.25s',
+      'Message', '95.7%', '0.0%', '94.0%', '0.9100', '0.25s',
     ])
     await user.hover(within(cells[3]).getByText('95.7%'))
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Recorded value: 0.95678')

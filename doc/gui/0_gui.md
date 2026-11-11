@@ -23,12 +23,21 @@ For other setup options, see [Docker](../getting_started/install_docker.md) or t
 
 ## Home
 
-Home shows your last-used objective target and recent attacks grouped by operation.
-Open an attack to return to its conversation, or go to Registry to configure a
-target. The shared labels bar sets the operator, operation, and custom labels
-for new work; it does not change saved results.
+Home puts **Attacks**, **Scans**, **Recent work**, and **Operations** first.
+Select **New attack** to start a fresh chat, or **Configure scan** to open scanner
+setup. These actions do not send prompts or start a scan. The sidebar's
+**Attacks** entry returns to your last conversation or unsent draft.
+Each workflow has its own history link. Recent work shows up to five saved
+attacks and scans; filter by type. The visible page checks for updates each minute.
+Open a saved operation to review its work and findings. Registry remains
+available below these sections for setup. Operation links put the selected saved
+operation first, then the newest-created records, not the most recently active
+records. When the complete registry confirms that no targets are registered, the
+secondary setup action offers **Register a target**.
+The shared labels bar applies the selected operator, operation, and custom labels
+to new work; changes do not alter saved results.
 
-![Home page with target and recent work](images/home.png)
+![Home page with workflows and recent work](images/home.png)
 
 ## Chat
 
@@ -62,11 +71,43 @@ Use **New attack** to start a blank draft. The **History** tab
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
 
+Drop files onto the chat or an editable conversation prompt to attach them.
+Converter file fields also accept drops, including **New converter** in the
+chat pane. File drops use the existing attachment or **Upload** handling;
+the click controls and typed path fields remain available.
+The attachment chooser's file-type filter is browser guidance, not an
+application-enforced allowlist. Both entry paths keep the existing read and
+configured-component checks. A file in the draft is not a guarantee that the
+selected target can use it.
+
+A drop outside these writable surfaces, including on a dialog that has no
+file input, does not attach a file or replace the page. A file drag shows one
+drop target for the chat. Read-only and disabled inputs remain locked.
+During a blocked file drag, Chat shows the same reason as its disabled prompt.
+Newly selected converter files show their name and size with **Replace** and
+**Remove**, instead of an encoded value. Supported image previews also show a
+thumbnail. Existing encoded values without file details use a generic label;
+unknown names and sizes are not guessed. Typed and pasted paths or values stay
+editable. **Remove** restores path entry. If a converter file
+cannot be read, the dialog reports the error and keeps the previous value.
+Converter file fields still use only the first selected file. If a selection
+contains extra files, the dialog reports how many were ignored.
+
 Older `/attacks/{attackId}` and
 `/attacks/{attackId}/conversations/{conversationId}` links redirect to the
 corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
+
+### Temperature
+
+On supported targets, use the thermometer below **Send** to adjust temperature
+for subsequent messages. **Use target default** clears the override; shared
+defaults and saved messages are unchanged. Select a message's temperature footer
+to inspect its saved settings.
+
+See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
+for SDK usage.
 
 ## Scanner
 
@@ -85,7 +126,8 @@ Expand an attack group or objective to inspect its attempts. Technique, scorer,
 dataset/seed provenance, and scenario settings use inline identity JSON.
 Decided attack outcomes use **True** and **False**; execution errors remain separate.
 Groups and objectives show success rates and completion counts separately.
-The results page does not include a paired-outcome comparison.
+Completed scans offer an optional **Compare baseline and attack** disclosure
+below the objective results. It stays collapsed while you review individual attacks.
 
 **Watch live conversation** opens saved messages while an attack runs. This view
 is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
@@ -117,6 +159,27 @@ page; it does not start the scan.
 ![technique.execute scenario and technique selection](images/technique_execute.png)
 
 ![technique.execute objective and per-run technique settings](images/technique_execute_objective.png)
+
+### Paired outcomes
+
+On a completed scan, expand **Compare baseline and attack**, select the saved
+baseline and attack groups, then choose **Compare outcomes**. The comparison shows
+how often the baseline and attack succeeded on the same objective, and how many
+pairs changed from failure to success or from success to failure. Only pairs
+with a success or failure on both sides are counted, using the most recent
+top-level attempt, so retries and child attempts never add pairs.
+
+Expand a transition row to see the objectives behind its count. Each pair shows
+the baseline and attack outcomes side by side, with links to both saved
+conversations. When a compound result has no conversation of its own, the link
+opens one of its child conversations and labels that child's outcome
+separately. Pairs load in pages: use **Load more** for additional pairs, and
+retry from the row if a request fails. Selecting a different group clears the
+expanded details.
+
+![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](images/paired-outcomes-desktop.png)
+
+![Expanded paired outcomes at a mobile viewport width](images/paired-outcomes-mobile.png)
 
 ## Registry
 
@@ -150,6 +213,15 @@ Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
+Use **Auto-detect capabilities** to select targets and run live checks. Results
+apply automatically for the current backend session. Checks can incur provider
+charges. Existing manual chats retain their saved capabilities, including chats
+using the default temperature. Legacy chats without a snapshot retain the source's
+pre-detection capabilities for this backend session. New chats use the detected
+capabilities.
+See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
+for shared behavior.
+
 ![Registry page with registered targets and component tabs](images/registry.png)
 
 ## Datasets
@@ -158,7 +230,27 @@ Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
 previewed on request.
 
-Load data through PyRIT before refreshing this catalog. See
+Use **Import into Chat** to stage an example directly into Chat without copying
+text or reattaching files:
+- **Single prompt or multimodal message**: loads the text and attachments into the
+  editable composer.
+- **Multi-turn conversation**: opens the conversation editor with all turns intact,
+  mapping assistant and tool messages to simulated roles. If the conversation ends
+  in a user turn, that turn is also visible and editable in the editor. Saving
+  stores the preceding history and restores the edited final turn in the prompt box,
+  ready for an explicit send.
+- **Import destinations**: choose between starting a new attack, continuing the
+  current conversation, or creating a new conversation within the current attack.
+- **Preserve evidence**: multi-turn imports can extend an unsent conversation in
+  place. For a conversation containing sent responses or request traces, choose a
+  new conversation or new attack instead. Conflicting system or developer instructions
+  require an explicit choice; they are never silently combined.
+- **Keep setup**: replacing a prompt retains the destination's system prompt and
+  configured converter pipelines, but clears generated conversion results.
+- **No automatic sending**: importing and saving do not make model calls or execute
+  tools; edits remain under your control until you explicitly send or save.
+
+Load data through PyRIT; the visible catalog checks for changes each minute. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
@@ -181,8 +273,7 @@ the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
 is a separate setting in `technique.execute`.
 
-Compound-attack hierarchy browsing is a separate GUI follow-up. The
-[backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
+The [backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
 provides paged roots and ordered child expansion without clipping run statistics.
 Conversation reads expose main and pruned conversations only; adversarial and
 preparation contexts remain internal. Transcript bodies load only for a selected
@@ -223,6 +314,10 @@ store and share exported files with care.
 Configuration is for backend administration, not per-chat settings. Administrators
 edit the PyRIT configuration and environment sources, inspect the initializer
 sequence, and manage trusted custom initializer scripts.
+
+After a save-version conflict, select **Reload from disk** and confirm
+**Discard and reload** to load the current file. Canceling or a failed read keeps
+your draft.
 
 Saving a change does not apply it to the running backend. Reinitialize PyRIT,
 when supported, or restart the backend to apply saved setup changes. This affects

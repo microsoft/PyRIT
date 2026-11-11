@@ -15,6 +15,8 @@ from pyrit.backend.models.operations import (
     FindingExportRequest,
     FindingListResponse,
     FindingOptionsResponse,
+    FindingUpdateRequest,
+    OperationCreateRequest,
     OperationDetail,
     OperationListResponse,
     OperationUpdateRequest,
@@ -29,7 +31,7 @@ from pyrit.backend.services.operation_service import (
     OperationService,
 )
 from pyrit.memory.memory_interface import OperationInUseError
-from pyrit.models import Finding, FindingCreate, Operation, OperationCreate
+from pyrit.models import Finding, Operation
 from pyrit.models.harm_category import HarmCategory
 
 T = TypeVar("T")
@@ -38,7 +40,7 @@ router = APIRouter(prefix="/operations", tags=["operations"])
 
 
 @router.post("", response_model=Operation, status_code=status.HTTP_201_CREATED)
-async def create_operation_async(request: OperationCreate) -> Operation:
+async def create_operation_async(request: OperationCreateRequest) -> Operation:
     """
     Create an operation. Names must be unique, ignoring case and surrounding whitespace.
 
@@ -153,7 +155,10 @@ async def list_operation_findings_async(
     operation_id: UUID,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    title: str | None = None,
+    title: str | None = Query(None, max_length=1000, description="Case-insensitive literal title substring"),
+    title_pattern: str | None = Query(
+        None, max_length=1000, description="Full case-insensitive LIKE pattern instead of title: % and _, / escaping"
+    ),
 ) -> FindingListResponse:
     """
     List one page of an operation's findings, by severity and then newest first.
@@ -162,7 +167,9 @@ async def list_operation_findings_async(
         FindingListResponse: One page of findings.
     """
     return await _require_operation_async(
-        OperationService().list_findings_async(operation_id=operation_id, limit=limit, offset=offset, title_query=title)
+        OperationService().list_findings_async(
+            operation_id=operation_id, limit=limit, offset=offset, title_query=title, title_pattern=title_pattern
+        )
     )
 
 
@@ -185,7 +192,9 @@ async def export_operation_findings_async(*, operation_id: UUID, request: Findin
 
 
 @router.put("/{operation_id}/findings/{finding_id}", response_model=Finding)
-async def update_operation_finding_async(*, operation_id: UUID, finding_id: UUID, request: FindingCreate) -> Finding:
+async def update_operation_finding_async(
+    *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
+) -> Finding:
     """
     Replace the editable fields of a finding in its operation.
 

@@ -16,8 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pyrit.models.catalog.scenario import ScenarioRunSizeEstimate
-from pyrit.models.catalog.scenario_preset import PresetIssue, ScenarioPreset
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.models import PresetIssue, ScenarioPreset, ScenarioRunSizeEstimate
 
 __all__ = [
     "PresetIssue",
@@ -41,8 +41,8 @@ class ScenarioPresetResponse(BaseModel):
     version: str | None = Field(
         ...,
         description=(
-            "Opaque version of the stored document, required to update it. None for a registered preset, "
-            "which has no document to guard and nothing to round-trip into a write."
+            "Opaque version of the stored document, required to update it and optionally sent to delete it. "
+            "None for a registered preset, which has no document to guard and nothing to round-trip into a write."
         ),
     )
     issues: list[PresetIssue] = Field(
@@ -78,4 +78,4 @@ class UpdateScenarioPresetRequest(BaseModel):
     """
 
     preset: ScenarioPreset = Field(..., description="The replacement preset")
-    expected_version: str = Field(..., description="Version returned when the preset being edited was read")
+    expected_version: IdentifierStr = Field(..., description="Version returned when the preset being edited was read")

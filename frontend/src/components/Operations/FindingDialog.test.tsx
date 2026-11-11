@@ -9,6 +9,12 @@ jest.mock('@/services/api', () => ({ operationsApi: { getFindingOptions: jest.fn
 
 const ATTEMPT = { id: expect.any(String), attackResultId: '' }
 
+function requestPageUnload(): Event {
+  const event = new Event('beforeunload', { cancelable: true })
+  fireEvent(window, event)
+  return event
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Hate Speech', 'Malware', 'Other'] })
@@ -33,23 +39,98 @@ describe('FindingDialog', () => {
     }, ATTEMPT) })
   })
 
-  it('arms the unsaved changes guard for a severity only edit', async () => {
+  it('arms the unsaved changes guard for a severity only change in a new finding', async () => {
     const user = userEvent.setup()
-    const events: Event[] = []
-    const listener = (event: Event): void => { events.push(event) }
-    window.addEventListener('beforeunload', listener)
     render(<FluentProvider theme={webLightTheme}><FindingDialog onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harm-type' })).toBeEnabled())
 
-    // No field the guard watches has a value yet, so nothing is armed. The
-    // prevented flag is read after the dispatch, when every listener has run.
-    fireEvent(window, new Event('beforeunload', { cancelable: true }))
-    expect(events[0].defaultPrevented).toBe(false)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'critical')
-    fireEvent(window, new Event('beforeunload', { cancelable: true }))
-    expect(events[1].defaultPrevented).toBe(true)
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+  })
 
-    window.removeEventListener('beforeunload', listener)
+  it('does not arm the unsaved changes guard for an untouched edit dialog', async () => {
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'low', description: 'Details' }}
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harm-type' })).toBeEnabled())
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it.each([
+    ['Title', 'Existing'],
+    ['Description', 'Details'],
+    ['Other severity', 'Team severity'],
+    ['Other harm-type', 'Team harm'],
+  ])('protects a %s edit and disarms the guard when its original value is restored', async (label: string, originalValue: string) => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{
+        title: 'Existing', description: 'Details', severity: 'other', severity_other: 'Team severity',
+        harm_type: 'Other', harm_type_other: 'Team harm',
+      }} onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harm-type' })).toBeEnabled())
+    const field = screen.getByRole('textbox', { name: label })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.type(field, ' edited')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.clear(field)
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.type(field, originalValue)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it('protects a severity edit and disarms the guard when the original severity is restored', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'low', description: 'Details' }}
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harm-type' })).toBeEnabled())
+    const severity = screen.getByRole('combobox', { name: 'Severity' })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.selectOptions(severity, 'critical')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.selectOptions(severity, 'low')
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it('protects a harm-type edit and disarms the guard when the original category is restored', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'low', description: 'Details', harm_type: 'Malware' }}
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    const harmType = screen.getByRole('combobox', { name: 'Harm-type' })
+    await waitFor(() => expect(harmType).toBeEnabled())
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.click(harmType)
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Hate Speech', exact: true }))
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.click(harmType)
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Malware', exact: true }))
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it('protects evidence changes, disarms the guard when cleared, and removes it on unmount', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harm-type' })).toBeEnabled())
+    const evidence = screen.getByRole('textbox', { name: 'Evidence attack ID' })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.type(evidence, 'attack-1')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.clear(evidence)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.type(evidence, 'attack-2')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    unmount()
+    expect(requestPageUnload().defaultPrevented).toBe(false)
   })
 
   it('retains an edited draft on error and permits a corrected retry', async () => {
@@ -193,5 +274,66 @@ describe('FindingDialog', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'With evidence' }), {
       id: expect.any(String), attackResultId: 'attack-1',
     })
+  })
+
+  it('shows the API field message on the Evidence attack ID and keeps it invalid until edited', async () => {
+    const user = userEvent.setup()
+    const rejection = Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [{ field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' }],
+        },
+      },
+    })
+    const onSave = jest.fn().mockRejectedValueOnce(rejection).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField onSave={onSave} onClose={jest.fn()} />
+    </FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Bad evidence')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'not-a-uuid')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(/Input should be a valid UUID/)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'x')
+    expect(screen.queryByText(/Input should be a valid UUID/)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+  })
+
+  it.each([false, true])('preserves mixed validation feedback with evidenceField=%s', async evidenceField => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [
+            { field: 'body.attack_result_id', message: 'Attack is unavailable', code: 'value_error' },
+            { field: 'body.title', message: 'Title is invalid', code: 'value_error' },
+          ],
+        },
+      },
+    }))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField={evidenceField}
+      initialValues={{ title: 'Assessment', severity: 'low', description: '' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const save = screen.getByRole('button', { name: 'Save finding' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
+    const feedback = await screen.findByText(/title: Title is invalid/)
+    if (evidenceField) {
+      expect(feedback).not.toHaveTextContent('attack_result_id')
+      expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+      expect(save).toBeDisabled()
+    } else {
+      expect(feedback).toHaveTextContent('attack_result_id: Attack is unavailable')
+      expect(save).toBeEnabled()
+    }
   })
 })

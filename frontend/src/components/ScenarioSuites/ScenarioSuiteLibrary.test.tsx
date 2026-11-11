@@ -10,6 +10,9 @@ import { deferred } from '@/test-utils/deferred'
 import type { ScenarioSuiteListResponse, ScenarioSuiteResponse } from '@/types'
 
 import ScenarioSuiteLibrary from './ScenarioSuiteLibrary'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenarioSuitesApi: {
@@ -233,9 +236,50 @@ describe('ScenarioSuiteLibrary', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
     expect(await screen.findByTestId('suite-empty-state')).toBeInTheDocument()
-    expect(mockRemove).toHaveBeenCalledWith('nightly_suite')
+    expect(mockRemove).toHaveBeenCalledWith('nightly_suite', 'suite-v1')
     expect(mockList).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('reloads instead of deleting a suite that changed since it was loaded', async () => {
+    const user = userEvent.setup()
+    mockList
+      .mockResolvedValueOnce(listOf(makeSuite()))
+      .mockResolvedValueOnce(listOf({ ...makeSuite(), version: 'suite-v2' }))
+    mockRemove.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { detail: 'Mismatch.' } } })
+
+    renderLibrary()
+
+    await user.click(await screen.findByTestId('delete-suite-nightly_suite'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByText(
+      "Suite 'nightly_suite' changed since it was loaded. Review it and try again.",
+    )).toBeInTheDocument()
+    expect(mockRemove).toHaveBeenCalledWith('nightly_suite', 'suite-v1')
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByTestId('suite-row-nightly_suite')).toBeInTheDocument()
+    expect(screen.queryByText('Mismatch.')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('edit-suite-nightly_suite')).toHaveFocus())
+  })
+
+  it('focuses New suite when a conflicting suite is gone after reloading', async () => {
+    const user = userEvent.setup()
+    mockList
+      .mockResolvedValueOnce(listOf(makeSuite()))
+      .mockResolvedValueOnce(listOf())
+    mockRemove.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { detail: 'Mismatch.' } } })
+
+    renderLibrary()
+
+    await user.click(await screen.findByTestId('delete-suite-nightly_suite'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByTestId('suite-empty-state')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('new-suite-btn')).toHaveFocus())
   })
 
   it('holds the confirmation until the server finishes deleting', async () => {
@@ -311,16 +355,15 @@ describe('ScenarioSuiteLibrary', () => {
     expect(mockRemove).not.toHaveBeenCalled()
   })
 
-  it('reports load failures and retries', async () => {
-    const user = userEvent.setup()
+  it('reports load failures and recovers automatically', async () => {
     mockList.mockRejectedValueOnce(new Error('suite storage unavailable'))
 
     renderLibrary()
 
-    const failure = await screen.findByTestId('suite-error-state')
-    expect(within(failure).getByText('suite storage unavailable')).toBeInTheDocument()
+    expect(await screen.findByText('suite storage unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     mockList.mockResolvedValueOnce(listOf(makeSuite()))
-    await user.click(screen.getByTestId('retry-suites-btn'))
+    await advanceAutoRefresh()
 
     expect(await screen.findByTestId('suite-row-nightly_suite')).toBeInTheDocument()
     expect(screen.queryByTestId('suite-error-state')).not.toBeInTheDocument()
