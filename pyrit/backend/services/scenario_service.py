@@ -375,7 +375,12 @@ class ScenarioService:
             request=ScenarioRunSizeEstimateRequest(),
         )
         metadata = await get_dataset_service().list_datasets_async()
-        named = [item for item in metadata.items if item.selection_key != "dataset:unnamed"]
+        allowed = self._permitted_dataset_names(scenario)
+        named = [
+            item
+            for item in metadata.items
+            if item.selection_key != "dataset:unnamed" and (allowed is None or item.name in allowed)
+        ]
         if scenario.get_dataset_requirements() == SeedGroupRequirements():
             return DatasetListResponse(items=named)
         hints = await self._list_dataset_candidates_async(scenario, metadata=metadata)
@@ -426,6 +431,19 @@ class ScenarioService:
         await asyncio.to_thread(scenario._resolve_runtime_configuration, require_objective_target=False)
         return scenario
 
+    @staticmethod
+    def _permitted_dataset_names(scenario: Scenario) -> set[str] | None:
+        """Return source restrictions including required ingredients, or None for a general catalog."""
+        options = scenario.get_dataset_options()
+        if options.mode is DatasetSelectionMode.ANY:
+            return None
+        allowed = set(options.allowed_names)
+        if options.mode is DatasetSelectionMode.FIXED:
+            allowed = {source.name for source in scenario.get_default_dataset_settings().sources}
+        if scenario._required_data is not None:
+            allowed.update(scenario._required_data.dataset_names)
+        return allowed
+
     async def _list_dataset_candidates_async(
         self, scenario: Scenario, *, metadata: DatasetListResponse | None = None
     ) -> ScenarioDatasetCompatibility:
@@ -438,18 +456,15 @@ class ScenarioService:
         by_name = {}
         for profile in profiles:
             by_name.setdefault(profile.dataset_name, []).append(profile)
-        options = scenario.get_dataset_options()
         selected = set(scenario._dataset_config.dataset_names)
         required = scenario._required_data
         if required is not None:
             selected.update(required.dataset_names)
-        allowed = set(options.allowed_names)
-        if options.mode is DatasetSelectionMode.FIXED:
-            allowed = {source.name for source in scenario.get_default_dataset_settings().sources}
+        allowed = self._permitted_dataset_names(scenario)
         candidates = {item.name for item in metadata.items if item.selection_key != "dataset:unnamed"} | selected
         items = []
         for name in sorted(candidates):
-            if options.mode is not DatasetSelectionMode.ANY and name not in allowed:
+            if allowed is not None and name not in allowed:
                 continue
             item = assess_candidate_profiles(name=name, profiles=by_name.get(name, []), requirements=requirements)
             if item.status is DatasetCompatibilityStatus.INCOMPATIBLE and (
