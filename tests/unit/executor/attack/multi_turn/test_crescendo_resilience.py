@@ -20,7 +20,6 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -1051,8 +1050,5 @@ class TestCrescendoTerminalBoundaries:
             "response-3",
             "response-4",
         ]
-        [cancelled_result] = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
-        assert cancelled_result.outcome == AttackOutcome.UNDETERMINED
-        assert cancelled_result.conversation_id == context.session.conversation_id
-        assert AttackCancellation.from_result(result=cancelled_result) is not None
+        assert (await attack._memory.get_attack_results_async(objective=_OBJECTIVE)) == []
         assert get_retry_collector() is None

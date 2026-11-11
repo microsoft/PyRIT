@@ -15,7 +15,6 @@ from openai.types.chat.chat_completion import Choice
 
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig, CrescendoAttack
-from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -659,14 +658,8 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
         cancelled_result = (await memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id]))[0]
         assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
         assert cancelled_result.number_tries == 1
-        # The interrupted attempt at B is kept as an UNDETERMINED, cancelled record without a verdict.
-        assert [result.objective for result in cancelled_result.attack_results[_ATOMIC_ATTACK_NAME]] == [
-            _OBJECTIVE_A,
-            _OBJECTIVE_B,
-        ]
-        [cancelled_b_result] = await memory.get_attack_results_async(objective=_OBJECTIVE_B)
-        assert cancelled_b_result.outcome == AttackOutcome.UNDETERMINED
-        assert AttackCancellation.from_result(result=cancelled_b_result) is not None
+        assert [result.objective for result in cancelled_result.attack_results[_ATOMIC_ATTACK_NAME]] == [_OBJECTIVE_A]
+        assert (await memory.get_attack_results_async(objective=_OBJECTIVE_B)) == []
 
         partial_piece = next(
             piece for piece in (await memory.get_message_pieces_async()) if piece.original_value == "B progress 4"
@@ -695,18 +688,16 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
         ) as resumed_teardown:
             completed_result = await resumed_scenario.run_async()
 
-    # Resume executes only the incomplete objective B; the cancelled attempt does not count as completed.
+    # Resume executes only the incomplete objective B.
     resumed_teardown.assert_awaited_once()
     attack_results = completed_result.attack_results[_ATOMIC_ATTACK_NAME]
     assert completed_result.scenario_run_state == ScenarioRunState.COMPLETED
     assert completed_result.number_tries == 2
-    assert [result.objective for result in attack_results] == [_OBJECTIVE_A, _OBJECTIVE_B, _OBJECTIVE_B]
-    assert len({result.attack_result_id for result in attack_results}) == 3
-    assert len({result.conversation_id for result in attack_results}) == 3
+    assert [result.objective for result in attack_results] == [_OBJECTIVE_A, _OBJECTIVE_B]
+    assert len({result.attack_result_id for result in attack_results}) == 2
+    assert len({result.conversation_id for result in attack_results}) == 2
 
-    objective_a_result, cancelled_attempt, objective_b_result = attack_results
-    assert cancelled_attempt.attack_result_id == cancelled_b_result.attack_result_id
-    assert cancelled_attempt.conversation_id == partial_conversation_id
+    objective_a_result, objective_b_result = attack_results
     assert objective_a_result.executed_turns == 1
     assert objective_b_result.executed_turns == 1
     assert objective_b_result.conversation_id != partial_conversation_id
