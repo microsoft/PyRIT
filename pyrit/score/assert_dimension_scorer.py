@@ -122,8 +122,8 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
             dimension (AssertJudgeDimension): The custom dimension.
             metadata (str): Reference context: the taxonomy, application context, and target instructions.
             validator (ScorerPromptValidator | None): The evidence validator. Defaults to text only.
-            additional_instructions (str | None): Text appended to the system prompt, such as how to
-                read execution traces. Defaults to None.
+            additional_instructions (str | None): Instructions rendered at the end of the system
+                prompt template, such as how to read execution traces. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._prompt_target = chat_target
@@ -136,9 +136,8 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
             rubric=dimension.rubric.strip(),
             answer_instructions=_build_answer_instructions(dimension),
             metadata=metadata,
+            additional_instructions=additional_instructions or "",
         )
-        if additional_instructions:
-            self._system_prompt = f"{self._system_prompt.rstrip()}\n\n{additional_instructions}"
         self._user_prompt = SeedPrompt.from_yaml_file(self.USER_PROMPT_PATH)
 
     def get_chat_target(self) -> PromptTarget:

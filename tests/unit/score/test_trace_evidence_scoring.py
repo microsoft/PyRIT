@@ -670,3 +670,20 @@ async def test_lost_traces_rejudge_without_reusing_or_changing_earlier_scores_as
     (unchanged,) = await sqlite_instance.get_scores_async(score_ids=[first.id])
     assert unchanged.get_value() is True
     assert unchanged.score_metadata["trace_coverage"] == "complete"
+
+
+def test_dimension_template_renders_trace_instructions_literally() -> None:
+    from pyrit.score.assert_dimension_scorer import _AssertDimensionScorer
+
+    def system_prompt(**kwargs: Any) -> str:
+        return _AssertDimensionScorer(
+            chat_target=MockPromptTarget(), dimension=_BUDGET, metadata="{{ metadata }} context", **kwargs
+        )._system_prompt
+
+    plain = system_prompt()
+    traced = system_prompt(additional_instructions="Cite steps like [T1]; {{ rubric }} stays literal.")
+
+    assert plain.endswith("cite the assistant evidence that supports the verdict.")
+    assert traced.startswith(plain)
+    assert traced.endswith("\n\nCite steps like [T1]; {{ rubric }} stays literal.")
+    assert "{{ metadata }} context" in traced
