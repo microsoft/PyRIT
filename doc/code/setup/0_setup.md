@@ -27,9 +27,10 @@ select the target to test and any scoring or adversarial targets the chosen tech
 needs, or configure them through an initializer. Deterministic scorers do not need a
 scoring model, and techniques without generation do not need an adversarial model.
 
-In CoPyRIT, you can create targets and scorers from the launch form without losing
-your draft. Missing roles are shown before a scan starts rather than filled with an
-implicit OpenAI target. To use the same target for multiple roles, select it for each.
+In CoPyRIT, configure targets in the Registry and scorer defaults through initializers.
+Select registered targets and an objective scorer in the scan form; suite launches use
+configured scorer defaults. Missing launch requirements produce configuration errors
+rather than an implicit OpenAI target. Helper roles must be configured explicitly.
 See the [scanner options](../../scanner/0_scanner.md#running-scans) for CLI selections.
 
 ## Configuration Options
