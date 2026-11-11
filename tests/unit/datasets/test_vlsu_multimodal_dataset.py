@@ -476,7 +476,7 @@ class TestVLSUMultimodalDataset:
         assert first_image.value.endswith(f"ml_vlsu_{row_uuid}.png")
         download.assert_awaited_once()
 
-    @pytest.mark.parametrize("bad_uuid", ["", "not-a-uuid", "a/vlsu_victim"])
+    @pytest.mark.parametrize("bad_uuid", ["", "not-a-uuid", "a/vlsu_victim", "a/../vlsu_victim"])
     async def test_rows_without_a_valid_uuid_get_separate_images(self, bad_uuid):
         """Rows without a valid uuid get random image names, so they can't share or overwrite a cached image."""
         victim_path = await fetch_and_cache_image_async(filename="vlsu_victim.png", image_bytes=b"existing image")
