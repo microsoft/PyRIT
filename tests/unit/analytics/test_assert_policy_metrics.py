@@ -43,9 +43,11 @@ from pyrit.models import (
     AssertBinaryRate,
     AssertCategoryJudgment,
     AssertDimensionResult,
+    AssertGroupMetadata,
     AssertNodeJudgment,
     AssertPolicyMetrics,
     AssertSkipReason,
+    AssertTaxonomy,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -60,11 +62,12 @@ from pyrit.models import (
     SeedPrompt,
     construct_response_from_request,
 )
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
-from pyrit.score import AssertScoringDimension, get_assert_failure_criterion
+from pyrit.score import AssertScoringDimension, LocalTraceCapture, SubStringScorer, get_assert_failure_criterion
 from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
@@ -178,8 +181,10 @@ class _Harness:
         ):
             yield
 
-    async def run_async(self, **args: Any) -> ScenarioResult:
-        scenario = AssertPolicy(adversarial_chat=self.adversarial, judge_target=self.judge)
+    async def run_async(self, *, scenario_args: dict[str, Any] | None = None, **args: Any) -> ScenarioResult:
+        scenario_args = scenario_args or {}
+        judges = {} if "objective_scorer" in scenario_args else {"judge_target": self.judge}
+        scenario = AssertPolicy(adversarial_chat=self.adversarial, **judges, **scenario_args)
         scenario.set_params_from_args(args={"objective_target": self.objective, "max_turns": 1, **args})
         await scenario.initialize_async()
         with self.patched():
@@ -391,6 +396,123 @@ async def test_same_objective_with_different_prompts_resolves_each_group_async(h
     }
     single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
     assert single.unresolved_policy == 0
+
+
+async def _replace_stored_groups_async(result: AssertGeneratorResult, *, name: str = "assert_a") -> None:
+    await CentralMemory.get_memory_instance().remove_seed_groups_from_memory_async(dataset_name=name)
+    await _store_async(result, name=name)
+
+
+def _policy_groups(*, flip: bool) -> AssertGeneratorResult:
+    """The default groups' prompts, generated under the default policy or one with every stance flipped."""
+    return make_assert_result(
+        config=make_assert_config(group_count=4), system_prompt="You help.", taxonomy=_taxonomy(flip=flip)
+    )
+
+
+class _TracedObjective(PromptTarget):
+    """An application target that records a trace for every request; the harness patches its transport."""
+
+    _DEFAULT_CONFIGURATION = MockPromptTarget._DEFAULT_CONFIGURATION
+
+    def __init__(self, *, capture: LocalTraceCapture) -> None:
+        super().__init__(trace_config=capture.trace_config())
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        raise NotImplementedError("The harness patches this transport.")
+
+
+@pytest.mark.parametrize("judging", ["default", "sampled", "traced"])
+async def test_changed_stored_policy_is_unresolved_not_trusted_async(harness: _Harness, judging: str) -> None:
+    # Seed identities omit ASSERT's taxonomy, so a re-stored group with the same prompts matches by
+    # content. The taxonomy recorded in the persisted judge identifier shows the policy changed.
+    stored = _groups()
+    await _store_async(stored)
+    args: dict[str, Any] = {"judge_samples": 3} if judging == "sampled" else {}
+    scenario_args: dict[str, Any] = {}
+    capture = LocalTraceCapture() if judging == "traced" else None
+    if capture is not None:
+        harness.objective = _TracedObjective(capture=capture)
+        scenario_args["trace_source"] = capture.source()
+    try:
+        result = await harness.run_async(scenario_args=scenario_args, **_prompt_case(), **args, **_datasets())
+    finally:
+        if capture is not None:
+            capture.close()
+    before = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+    assert before.unresolved_policy == 0
+    assert before.categories
+
+    await _replace_stored_groups_async(_policy_groups(flip=True))
+    after = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+
+    assert after.unresolved_policy == after.scored_total == 4
+    assert after.policy_violation_on_not_permissible is None
+    assert after.policy_violation_on_permissible is None
+    assert after.categories == []
+    assert _counts(after.dimensions["policy_violation"]) == _counts(before.dimensions["policy_violation"])
+
+
+@pytest.mark.parametrize("flip", [False, True])
+async def test_replaced_group_with_other_prompts_is_unresolved_async(harness: _Harness, flip: bool) -> None:
+    stored = _groups()
+    await _store_async(stored)
+    result = await harness.run_async(**_prompt_case(), **_datasets())
+
+    await _replace_stored_groups_async(_distinct_user_prompts(_policy_groups(flip=flip)))
+    single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+
+    assert single.unresolved_policy == 4
+    assert single.policy_violation_on_not_permissible is None
+    assert single.categories == []
+
+
+async def test_supplied_scorer_with_a_policy_violation_category_is_not_the_policy_judge_async(
+    harness: _Harness,
+) -> None:
+    await _store_async(_groups())
+    scorer = SubStringScorer(substring="30 days", categories=["policy_violation"])
+
+    result = await harness.run_async(scenario_args={"objective_scorer": scorer}, **_prompt_case(), **_datasets())
+    metrics = await compute_assert_policy_metrics_async(result)
+
+    single = metrics.techniques["prompt_sending"]
+    assert list(single.dimensions) == ["objective"]
+    assert _counts(single.dimensions["objective"]) == (4, 4, 0)
+    assert metrics.judgment_mode is None
+    assert metrics.split_unavailable_reason == NODE_JUDGMENTS_UNAVAILABLE
+    assert single.categories == []
+
+
+def test_policies_sharing_behavior_and_category_names_are_rated_separately() -> None:
+    contexts = [
+        _GroupContext(
+            behavior_name="support",
+            permissible_by_category=(("refunds", permissible),),
+            assigned_category="refunds",
+            taxonomy=f"support-{permissible}",
+        )
+        for permissible in (True, False)
+    ]
+    rows = [
+        _Row(
+            technique="t",
+            not_judged_reason=None,
+            context=context,
+            judgment_mode="category_validated",
+            nodes=(_node("refunds", violated=violated),),
+            verdicts={"policy_violation": violated},
+        )
+        for context, violated in ((contexts[0], False), (contexts[0], True), (contexts[1], True))
+    ]
+
+    categories = _aggregate(scenario_result_id="run", rows=rows).techniques["t"].categories
+
+    assert [(category.permissible, _counts(category.node_violation)) for category in categories] == [
+        (True, (1, 2, 0)),
+        (False, (1, 1, 0)),
+    ]
+    assert len({category.policy_id for category in categories}) == 2
 
 
 def _user_prompt(result: AttackResult) -> str:
@@ -629,14 +751,38 @@ def _dimension_score(policy: Score, *, name: str, value: str | None, marked: boo
     )
 
 
-def _score(name: str, *, piece_id: uuid.UUID, scorer_class: str, marked: bool) -> Score:
+def _score(name: str, *, piece_id: uuid.UUID, scorer_class: str, marked: bool, assert_judge: bool = False) -> Score:
     return Score(
         score_value="true",
         score_type="true_false",
         score_category=[name],
         score_metadata=AssertDimensionResult(dimension=name).to_metadata() if marked else {},
         message_piece_id=piece_id,
-        scorer_class_identifier=ComponentIdentifier(class_name=scorer_class, class_module="tests"),
+        scorer_class_identifier=_assert_judge_identifier(scorer_class)
+        if assert_judge
+        else ComponentIdentifier(class_name=scorer_class, class_module="tests"),
+    )
+
+
+def _taxonomy(*, flip: bool = False) -> AssertTaxonomy:
+    taxonomy = AssertGroupMetadata.from_metadata(_groups().seed_groups[0].objective.metadata).taxonomy
+    if not flip:
+        return taxonomy
+    categories = [
+        category.model_copy(update={"permissible": not category.permissible})
+        for category in taxonomy.behavior_categories
+    ]
+    return taxonomy.model_copy(update={"behavior_categories": categories})
+
+
+def _assert_judge_identifier(scorer_class: str, *, taxonomy: AssertTaxonomy | None = None) -> ComponentIdentifier:
+    """A legacy ASSERT judge identifier: a wrapper around the question that records the judged taxonomy."""
+    metadata = json.dumps({"taxonomy": (taxonomy or _taxonomy()).model_dump(mode="json"), "application_context": ""})
+    question = ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer", class_module="pyrit.score", params={"question": {"metadata": metadata}}
+    )
+    return ComponentIdentifier(
+        class_name=scorer_class, class_module="pyrit.score", children={"sub_scorers": [question]}
     )
 
 
@@ -663,32 +809,21 @@ def test_marked_dimension_scores_are_selected_regardless_of_scorer_class() -> No
     assert set(row.verdicts) == {"policy_violation", "budget_compliance"}
 
 
-def test_unmarked_legacy_scores_fall_back_to_the_objective_judge_class() -> None:
+def test_unmarked_legacy_scores_are_recognized_by_assert_judge_provenance() -> None:
     piece_id = uuid.uuid4()
-    objective = _score("policy_violation", piece_id=piece_id, scorer_class="PolicyJudge", marked=False)
-    same_class = _score("overrefusal", piece_id=piece_id, scorer_class="PolicyJudge", marked=False)
-    other_class = _score("rescored", piece_id=piece_id, scorer_class="OtherScorer", marked=False)
+    objective = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=False, assert_judge=True)
+    auxiliary = _score("overrefusal", piece_id=piece_id, scorer_class="Judge", marked=False, assert_judge=True)
+    # Another scorer of the same class without ASSERT's judged taxonomy isn't an ASSERT dimension.
+    rescored = _score("rescored", piece_id=piece_id, scorer_class="Judge", marked=False)
 
     row = _build_row(
         technique="single_turn",
         result=_result(objective),
-        piece_scores=[objective, same_class, other_class],
+        piece_scores=[objective, auxiliary, rescored],
         context=None,
     )
 
     assert set(row.verdicts) == {"policy_violation", "overrefusal"}
-
-
-def test_supplied_objective_scorer_is_not_reported_as_the_policy_judge() -> None:
-    objective = _score("unused", piece_id=uuid.uuid4(), scorer_class="SubStringScorer", marked=False)
-    objective.score_category = []
-
-    row = _build_row(technique="t", result=_result(objective), piece_scores=[objective], context=None)
-    metrics = _aggregate(scenario_result_id="run", rows=[row])
-
-    assert row.verdicts == {"objective": True}
-    assert metrics.split_unavailable_reason == NODE_JUDGMENTS_UNAVAILABLE
-    assert "policy_violation" not in metrics.techniques["t"].dimensions
 
 
 def test_split_reads_policy_violation_when_another_dimension_is_the_objective() -> None:
@@ -754,7 +889,7 @@ def test_typed_skip_reason_excludes_the_conversation(reason: AssertSkipReason) -
 
 def test_scores_without_judgment_metadata_are_direct_and_ungraded() -> None:
     piece_id = uuid.uuid4()
-    objective = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=False)
+    objective = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=False, assert_judge=True)
     undetermined = _dimension_score(objective, name="overrefusal", value=None, marked=False)
 
     row = _build_row(technique="t", result=_result(objective), piece_scores=[objective, undetermined], context=None)
@@ -791,6 +926,7 @@ def test_violation_without_violated_category_is_attributed_to_assigned_category(
         behavior_name="support",
         permissible_by_category=(("public_policy", True), ("private_disclosure", False)),
         assigned_category="private_disclosure",
+        taxonomy="support-policy",
     )
     row = _Row(
         technique="single_turn",
@@ -851,6 +987,8 @@ async def test_non_assert_result_is_rejected_async() -> None:
         (AssertPolicy.__module__, "custom.scan"),
         # Without a registry name, a same-named class from another module isn't ASSERT.
         ("my_package.scenarios", None),
+        # Every saved AssertPolicy result records its module, so a missing one isn't evidence.
+        ("", None),
     ],
 )
 async def test_same_class_name_from_another_scenario_is_rejected_async(module: str, registry_name: str | None) -> None:

@@ -14,6 +14,8 @@ ASSERT's analysis: a 90% Wilson score interval and 5 applicable conversations.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import statistics
@@ -33,6 +35,7 @@ from pyrit.models import (
     AssertDimensionResult,
     AssertGroupMetadata,
     AssertPolicyMetrics,
+    AssertTaxonomy,
     AtomicAttackIdentifier,
     AttackOutcome,
     ComponentIdentifier,
@@ -145,6 +148,12 @@ class _GroupContext:
     behavior_name: str
     permissible_by_category: tuple[tuple[str, bool], ...]
     assigned_category: str
+    taxonomy: str
+
+    @property
+    def policy_id(self) -> str:
+        """A stable ID for the taxonomy, so policies that share a behavior name stay distinct."""
+        return hashlib.sha256(self.taxonomy.encode()).hexdigest()
 
     @property
     def permissibility(self) -> dict[str, bool]:
@@ -217,6 +226,7 @@ def _require_assert_run(scenario_result: ScenarioResult) -> None:
 
     A saved registry name decides. Results saved without one must come from the ``AssertPolicy`` class in
     the scenario's own module, so another scenario with the same class name isn't mistaken for ASSERT.
+    A result without a module is rejected: every saved ``AssertPolicy`` result records its module.
 
     Raises:
         NotAssertPolicyRunError: If another scenario produced the result.
@@ -229,9 +239,7 @@ def _require_assert_run(scenario_result: ScenarioResult) -> None:
             return
         source = registry_name
     else:
-        if identifier.class_name == ASSERT_SCENARIO_CLASS_NAME and (
-            not identifier.class_module or identifier.class_module in ASSERT_SCENARIO_MODULES
-        ):
+        if identifier.class_name == ASSERT_SCENARIO_CLASS_NAME and identifier.class_module in ASSERT_SCENARIO_MODULES:
             return
         source = (
             f"{identifier.class_module}.{identifier.class_name}" if identifier.class_module else identifier.class_name
@@ -323,10 +331,10 @@ async def _load_group_contexts_async(
 
     Candidate groups are read in batches by their objective's value hash. A result matches the
     stored group with the same complete seed identity (every seed in the group, not only the
-    objective), so groups that share an objective but not their prompts stay distinct. Identical
-    stored groups are told apart by the objective seed ID that ``foundry.assert_policy`` appends
-    to their atomic attack names. A result that still matches several different contexts, or
-    none, is unresolved.
+    objective), so groups that share an objective but not their prompts stay distinct, and a
+    replaced group with other prompts isn't mistaken for the source. Identical stored groups are
+    told apart by the objective seed ID that ``foundry.assert_policy`` appends to their atomic
+    attack names. A result that matches several different contexts, or none, is unresolved.
 
     Returns:
         dict[str, _GroupContext | None]: Contexts keyed by attack result ID.
@@ -381,7 +389,10 @@ def _resolve_context(
     *, key: _GroupKey, candidates: Sequence[_StoredGroup], atomic_attack_name: str
 ) -> _GroupContext | None:
     in_dataset = [group for group in candidates if key.dataset_name in (None, group.dataset_name)]
-    exact = [group for group in in_dataset if group.seed_hashes == key.seed_hashes] or in_dataset
+    # The result records its source group's seed identities, so only that group can be its source.
+    exact = [group for group in in_dataset if group.seed_hashes == key.seed_hashes]
+    if not exact:
+        return None
     distinct = {group.context for group in exact}
     if len(distinct) == 1:
         return next(iter(distinct))
@@ -435,6 +446,7 @@ def _parse_group_context(metadata: dict[str, Any] | None) -> _GroupContext | Non
             (category.name, category.permissible) for category in group.taxonomy.behavior_categories
         ),
         assigned_category=group.behavior_category,
+        taxonomy=_canonical_taxonomy(group.taxonomy),
     )
 
 
@@ -457,6 +469,11 @@ def _build_row(
     scores = _dimension_scores(objective=result.automated_score, piece_scores=piece_scores)
     if not scores:
         return _Row(technique=technique, not_judged_reason="not_scored", context=context)
+    if POLICY_VIOLATION in scores:
+        judged = _judged_taxonomies(scores[POLICY_VIOLATION].scorer_class_identifier)
+        if judged and (context is None or judged != {context.taxonomy}):
+            # The stored seed metadata changed after the run; trust only the policy the judge used.
+            context = None
     results = {name: _dimension_result(score) for name, score in scores.items()}
     skip_reason = next((result.skip_reason for result in results.values() if result and result.skip_reason), None)
     if skip_reason is not None:
@@ -536,23 +553,21 @@ def _dimension_scores(*, objective: Score | None, piece_scores: Sequence[Score])
     Select the objective score and the newest ASSERT judge score for each other dimension.
 
     ASSERT judges record each score's dimension with ``AssertDimensionResult``. Results saved before
-    the marker existed fall back to scores from the objective score's scorer class. A supplied
-    objective scorer's uncategorized score is reported as the ``objective`` dimension. Scores with equal
-    timestamps are ordered by ID, so a re-judged dimension resolves the same way on every read.
+    the marker existed are recognized by the taxonomy that ASSERT's judges record in their scorer
+    identifiers, and are named by their score category; once any score is marked, unmarked scores
+    are ignored. Any other objective score comes from a supplied scorer and is reported as the
+    ``objective`` dimension, whatever its category. Scores with equal timestamps are ordered by ID, so a re-judged
+    dimension resolves the same way on every read.
 
     Returns:
         dict[str, Score]: Scores keyed by dimension name.
     """
-    # An uncategorized objective score comes from a supplied scorer, not ASSERT's policy judge.
-    objective_name = (_dimension_name(objective) or OBJECTIVE) if objective is not None else None
-    marked = [score for score in piece_scores if (result := _dimension_result(score)) and result.dimension]
-    if marked or objective is None:
-        candidates = marked
-    else:
-        candidates = [score for score in piece_scores if _same_scorer_class(score, objective)]
+    objective_name = (_assert_dimension_name(objective) or OBJECTIVE) if objective is not None else None
+    marked = [score for score in piece_scores if _marked_dimension(score)]
+    legacy = not marked and objective is not None and _marked_dimension(objective) is None
     latest: dict[str, Score] = {}
-    for score in candidates:
-        name = _dimension_name(score)
+    for score in piece_scores:
+        name = _marked_dimension(score) or (_assert_dimension_name(score) if legacy else None)
         if not name or name == objective_name:
             continue
         if name not in latest or _score_order(score) > _score_order(latest[name]):
@@ -566,13 +581,62 @@ def _score_order(score: Score) -> tuple[datetime, str]:
     return score.timestamp, str(score.id)
 
 
-def _same_scorer_class(score: Score, objective: Score) -> bool:
-    identifier, reference = score.scorer_class_identifier, objective.scorer_class_identifier
-    return identifier is not None and reference is not None and identifier.class_name == reference.class_name
+def _assert_dimension_name(score: Score) -> str | None:
+    """
+    Return the ASSERT dimension a score judges, or None for a score from another scorer.
+
+    Returns:
+        str | None: The dimension name.
+    """
+    if marked := _marked_dimension(score):
+        return marked
+    if score.score_category and _judged_taxonomies(score.scorer_class_identifier):
+        return score.score_category[0]
+    return None
 
 
-def _dimension_name(score: Score) -> str | None:
-    return score.score_category[0] if score.score_category else None
+def _marked_dimension(score: Score) -> str | None:
+    result = _dimension_result(score)
+    return result.dimension if result is not None and result.dimension else None
+
+
+def _judged_taxonomies(identifier: ComponentIdentifier | None) -> frozenset[str]:
+    """
+    Return the taxonomies an ASSERT judge recorded in its scorer identifier.
+
+    ASSERT's built-in judges ask a true/false question whose metadata holds the taxonomy they judged
+    against. The identifier is saved with each score, so it still shows that taxonomy after the
+    stored seeds change. Other scorers record none.
+
+    Returns:
+        frozenset[str]: Canonical taxonomies, one per distinct judged policy.
+    """
+    found: set[str] = set()
+    pending = [identifier] if identifier is not None else []
+    while pending:
+        node = pending.pop()
+        question = node.params.get("question")
+        if isinstance(question, dict) and isinstance(raw := question.get("metadata"), str):
+            taxonomy = _parse_judged_taxonomy(raw)
+            if taxonomy is not None:
+                found.add(taxonomy)
+        for child in node.children.values():
+            pending.extend(child if isinstance(child, list) else [child])
+    return frozenset(found)
+
+
+def _parse_judged_taxonomy(raw: str) -> str | None:
+    try:
+        payload = json.loads(raw)
+        taxonomy = AssertTaxonomy.model_validate(payload["taxonomy"])
+    except (ValueError, KeyError, TypeError):
+        # Another scorer's question metadata, not an ASSERT judge's.
+        return None
+    return _canonical_taxonomy(taxonomy)
+
+
+def _canonical_taxonomy(taxonomy: AssertTaxonomy) -> str:
+    return json.dumps(taxonomy.model_dump(mode="json"), sort_keys=True)
 
 
 def _aggregate(*, scenario_result_id: str, rows: list[_Row]) -> AssertPolicyMetrics:
@@ -676,7 +740,8 @@ def _category_metrics(rows: Sequence[_Row]) -> list[AssertCategoryMetrics]:
     Rate each taxonomy category's violations over the conversations that judged it relevant.
 
     A violation verdict without a violated category is attributed to the assigned category,
-    as ASSERT's findings do.
+    as ASSERT's findings do. Categories are kept per policy, so policies that share a behavior or
+    category name but differ in their taxonomy aren't pooled.
 
     Returns:
         list[AssertCategoryMetrics]: One entry per category of each resolved taxonomy.
@@ -684,31 +749,32 @@ def _category_metrics(rows: Sequence[_Row]) -> list[AssertCategoryMetrics]:
     judged: Counter[tuple[str, str]] = Counter()
     violated: Counter[tuple[str, str]] = Counter()
     fallback: Counter[tuple[str, str]] = Counter()
-    taxonomies: dict[str, tuple[tuple[str, bool], ...]] = {}
+    policies: dict[str, _GroupContext] = {}
     for row in rows:
         if row.nodes is None or row.context is None:
             continue
-        behavior = row.context.behavior_name
-        taxonomies.setdefault(behavior, row.context.permissible_by_category)
+        policy = row.context.policy_id
+        policies.setdefault(policy, row.context)
         nodes = row.relevant_nodes()
         judged_names = {name for name, _ in nodes}
         violated_names = {name for name, flag in nodes if flag}
         if not violated_names and row.verdicts.get(POLICY_VIOLATION):
             violated_names = {row.context.assigned_category}
             judged_names.add(row.context.assigned_category)
-            fallback[(behavior, row.context.assigned_category)] += 1
-        judged.update((behavior, name) for name in judged_names)
-        violated.update((behavior, name) for name in violated_names)
+            fallback[(policy, row.context.assigned_category)] += 1
+        judged.update((policy, name) for name in judged_names)
+        violated.update((policy, name) for name in violated_names)
     return [
         AssertCategoryMetrics(
-            behavior_name=behavior,
+            behavior_name=context.behavior_name,
+            policy_id=policy,
             name=name,
             permissible=permissible,
-            node_violation=_rate(flagged=violated[(behavior, name)], applicable=judged[(behavior, name)]),
-            attributed_by_fallback=fallback[(behavior, name)],
+            node_violation=_rate(flagged=violated[(policy, name)], applicable=judged[(policy, name)]),
+            attributed_by_fallback=fallback[(policy, name)],
         )
-        for behavior, categories in taxonomies.items()
-        for name, permissible in categories
+        for policy, context in policies.items()
+        for name, permissible in context.permissible_by_category
     ]
 
 

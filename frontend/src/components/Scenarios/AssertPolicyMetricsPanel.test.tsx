@@ -37,8 +37,8 @@ function technique(name: string, overrides: Partial<AssertTechniqueMetrics> = {}
     dimension_no_verdict: { policy_violation: 0, overrefusal: 1, quality_failure: 0 },
     dimension_grades: { quality_failure: { counts: { '1': 4, '2': 1, '3': 1 }, median: 1 } },
     categories: [
-      { behavior_name: 'support', name: 'public_policy', permissible: true, node_violation: rate(1, 6), attributed_by_fallback: 0 },
-      { behavior_name: 'support', name: 'private_disclosure', permissible: false, node_violation: rate(2, 4), attributed_by_fallback: 0 },
+      { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'public_policy', permissible: true, node_violation: rate(1, 6), attributed_by_fallback: 0 },
+      { behavior_name: 'support', policy_id: 'a'.repeat(64), name: 'private_disclosure', permissible: false, node_violation: rate(2, 4), attributed_by_fallback: 0 },
     ],
     ...overrides,
   }
@@ -99,7 +99,7 @@ describe('AssertPolicyMetricsPanel', () => {
 
     expect(screen.getByText(
       'Some conversations are left out of these rates. red_teaming not judged: 1 target blocked; '
-        + 'left out of the stance rates only: 2 without a stored policy, 1 without a policy verdict.',
+        + 'left out of the stance rates only: 2 without a matching stored policy, 1 without a policy verdict.',
     )).toBeInTheDocument()
   })
 
@@ -110,6 +110,22 @@ describe('AssertPolicyMetricsPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Rates by policy category' }))
     const categories = screen.getByRole('table', { name: 'Rates by policy category' })
     expect(within(categories).getByRole('row', { name: /private_disclosure/ })).toHaveTextContent('Impermissible50.0%')
+  })
+
+  it('keeps policies that share a behavior and category name apart', async () => {
+    const user = userEvent.setup()
+    const variants = [
+      { behavior_name: 'support', policy_id: '1111aaaa'.repeat(8), name: 'refunds', permissible: true, node_violation: rate(1, 4), attributed_by_fallback: 0 },
+      { behavior_name: 'support', policy_id: '2222bbbb'.repeat(8), name: 'refunds', permissible: false, node_violation: rate(3, 5), attributed_by_fallback: 0 },
+    ]
+    renderPanel({ ...METRICS, techniques: { red_teaming: technique('red_teaming', { categories: variants }) } })
+
+    await user.click(screen.getByRole('button', { name: 'Rates by policy category' }))
+    const categories = screen.getByRole('table', { name: 'Rates by policy category' })
+    expect(within(categories).getByRole('row', { name: /support \(policy 1111aaaa\): refunds/ }))
+      .toHaveTextContent('Permissible25.0%1 / 4')
+    expect(within(categories).getByRole('row', { name: /support \(policy 2222bbbb\): refunds/ }))
+      .toHaveTextContent('Impermissible60.0%3 / 5')
   })
 
   it('explains when the split needs category judgments', () => {

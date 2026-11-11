@@ -48,10 +48,12 @@ class AssertCategoryMetrics(_AssertMetricsModel):
     How often one taxonomy category was violated when the judge found it relevant.
 
     ``attributed_by_fallback`` counts violation verdicts without a violated category, which are
-    attributed to the conversation's assigned category, as ASSERT's findings do.
+    attributed to the conversation's assigned category, as ASSERT's findings do. ``policy_id``
+    identifies the taxonomy, so policies that share a behavior name are reported separately.
     """
 
     behavior_name: str
+    policy_id: str
     name: str
     permissible: bool
     node_violation: AssertBinaryRate
