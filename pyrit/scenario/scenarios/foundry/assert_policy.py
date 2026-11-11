@@ -1037,7 +1037,7 @@ class AssertPolicy(Scenario):
                 group.atomic_attack_name: group.display_group for group in context.stored_run_plan.atomic_groups
             }
             return {name: recorded.get(name, name) for name in names}
-        if context.scenario_result_id == self._scenario_result_id and self._scenario_result_id is not None:
+        if context.is_resume:
             return {name: context.stored_display_group_map.get(name, name) for name in names}
         assignments: dict[str, tuple[str, str]] = {}
         policies: dict[str, str] = {}

@@ -537,7 +537,7 @@ class AdversarialBenchmark(Scenario):
             include_baseline=context.include_baseline,
             technique_converters=context.technique_converters,
         )
-        if not self._is_cache_reuse_enabled() or self._scenario_result_id:
+        if not self._is_cache_reuse_enabled() or context.is_resume:
             return atomic_attacks
 
         (await self._apply_reusable_cached_results_async(atomic_attacks=atomic_attacks))

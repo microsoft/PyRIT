@@ -117,7 +117,6 @@ class _InlineScenario(_Scenario):
         )
 
 
-
 class _DynamicSourceScenario(_Scenario):
     def __init__(self, *, scenario_result_id: str | None = None) -> None:
         super().__init__(scenario_result_id=scenario_result_id)

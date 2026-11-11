@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import subprocess
 from contextlib import ExitStack
 from contextvars import ContextVar
 from datetime import UTC
@@ -49,6 +50,7 @@ class FixtureAction(str, Enum):
     FAIL_METADATA = "fail_metadata"
     HOLD_PROVIDER = "hold_provider"
     RELEASE_PROVIDER = "release_provider"
+    FAIL_PROVIDER = "fail_provider"
 
 
 class FixtureControl(BaseModel):
@@ -61,13 +63,14 @@ def _register_components(sent: list[str]) -> None:
     from pyrit.common import apply_defaults
     from pyrit.common.async_compatibility import run_legacy_sync_async
     from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
-    from pyrit.models import Message, MessagePiece
+    from pyrit.models import DatasetSelectionMode, Message, MessagePiece, Parameter, ScenarioDatasetOptions
     from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
     from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
     from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, DatasetSource, Scenario
     from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, ScenarioTechnique
     from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
     from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
+    from pyrit.scenario.scenarios.technique import Execute
 
     class LocalDatasetTarget(PromptTarget):
         _DEFAULT_CONFIGURATION = TargetConfiguration(
@@ -152,6 +155,29 @@ def _register_components(sent: list[str]) -> None:
                 sources=[DatasetSource(name="acceptance_background")], max_total=1
             )
 
+    class FixedBackgroundDatasetScenario(BackgroundDatasetScenario):
+        """Named sources remain applicable without user-editable dataset inputs."""
+
+        DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, supports_overrides=False)
+
+        @classmethod
+        def supported_parameters(cls) -> list[Parameter]:
+            return [
+                parameter
+                for parameter in super().supported_parameters()
+                if parameter.name not in {"dataset_config", "dataset_overrides"}
+            ]
+
+    class InlineCaptureScenario(Execute):
+        """Real Execute lifecycle with only a local scorer and inline objective."""
+
+        @apply_defaults
+        def __init__(self, *, scenario_result_id: str | None = None) -> None:
+            super().__init__(
+                objective_scorer=pyrit.score.SubStringScorer(substring="Offline acceptance"),
+                scenario_result_id=scenario_result_id,
+            )
+
     techniques = AttackTechniqueRegistry.get_registry_singleton()
     techniques.register_from_factories(
         [
@@ -165,6 +191,8 @@ def _register_components(sent: list[str]) -> None:
     scenarios.register_class(DatasetAcceptanceScenario, name="offline.datasets")
     scenarios.register_class(DatasetCacheBenchmark, name="offline.dataset_cache")
     scenarios.register_class(BackgroundDatasetScenario, name="offline.background_datasets")
+    scenarios.register_class(FixedBackgroundDatasetScenario, name="offline.fixed_background_datasets")
+    scenarios.register_class(InlineCaptureScenario, name="technique.execute")
 
 
 def _configure_preset_storage(*, database_path: str, patches: ExitStack, mutations: list[dict[str, str]]) -> None:
@@ -202,7 +230,12 @@ def _configure_preset_storage(*, database_path: str, patches: ExitStack, mutatio
 
 
 def _install_controls(
-    *, memory: SQLiteMemory, patches: ExitStack, sent: list[str], preset_mutations: list[dict[str, str]]
+    *,
+    memory: SQLiteMemory,
+    patches: ExitStack,
+    sent: list[str],
+    preset_mutations: list[dict[str, str]],
+    source_snapshot: dict[str, str | bool],
 ) -> None:
     from fastapi import HTTPException
 
@@ -231,6 +264,7 @@ def _install_controls(
     provider_calls = 0
     provider_waiting = False
     preparations_active = 0
+    fail_provider = False
     preparation_idle = asyncio.Event()
     preparation_idle.set()
 
@@ -241,13 +275,16 @@ def _install_controls(
             return "acceptance_background"
 
         async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
-            nonlocal provider_calls, provider_waiting
+            nonlocal provider_calls, provider_waiting, fail_provider
             from pyrit.models import SeedDataset, SeedObjective
 
             provider_calls += 1
             provider_waiting = True
             try:
                 await asyncio.wait_for(provider_gate.wait(), timeout=120)
+                if fail_provider:
+                    fail_provider = False
+                    raise ValueError("Synthetic provider failed. Retry loading datasets to make a new attempt.")
             finally:
                 provider_waiting = False
             return SeedDataset(
@@ -257,7 +294,7 @@ def _install_controls(
 
     async def control_async(command: FixtureControl) -> dict[str, Any]:
         nonlocal hold_estimate, hold_metadata, fail_estimate, fail_metadata, preparations, provider_lookups
-        nonlocal provider_calls
+        nonlocal provider_calls, fail_provider
         action = command.action
         if action is FixtureAction.RESET:
             random.seed(612)
@@ -276,6 +313,7 @@ def _install_controls(
 
             await close_dataset_preparation_async()
             provider_calls = 0
+            fail_provider = False
         elif action is FixtureAction.HOLD_ESTIMATE:
             hold_estimate = True
             estimate_gate.clear()
@@ -294,6 +332,8 @@ def _install_controls(
             provider_gate.clear()
         elif action is FixtureAction.RELEASE_PROVIDER:
             provider_gate.set()
+        elif action is FixtureAction.FAIL_PROVIDER:
+            fail_provider = True
         return {
             "estimate_waiting": estimate_waiting,
             "metadata_waiting": metadata_waiting,
@@ -301,6 +341,7 @@ def _install_controls(
             "provider_lookups": provider_lookups,
             "provider_calls": provider_calls,
             "provider_waiting": provider_waiting,
+            "source": source_snapshot,
             "sent": list(sent),
             "preset_source": ScenarioPresetRegistry.get_registry_singleton().source,
             "preset_mutations": list(preset_mutations),
@@ -419,7 +460,25 @@ async def _seed_async(*, memory: SQLiteMemory, patches: ExitStack) -> None:
     )
     sent: list[str] = []
     _register_components(sent)
-    _install_controls(memory=memory, patches=patches, sent=sent, preset_mutations=preset_mutations)
+    source_snapshot = await asyncio.to_thread(_source_snapshot)
+    _install_controls(
+        memory=memory, patches=patches, sent=sent, preset_mutations=preset_mutations, source_snapshot=source_snapshot
+    )
+
+
+def _source_snapshot() -> dict[str, str | bool]:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
+
+    return {
+        "commit": git("rev-parse", "HEAD"),
+        "tree": git("rev-parse", "HEAD^{tree}"),
+        "dirty": bool(git("status", "--porcelain=v1", "--untracked-files=no")),
+    }
 
 
 if __name__ == "__main__":

@@ -804,14 +804,17 @@ class TestJailbreakSystemPromptDelivery:
 class TestJailbreakResumePersistence:
     """Tests for resume-stable template persistence."""
 
+    @pytest.mark.parametrize("pending", [False, True])
     async def test_metadata_records_resolved_templates(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
+        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, pending: bool
     ):
         with _patch_seed_groups(mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             scenario.set_params_from_args(
                 args=_default_args(mock_objective_target, jailbreak_names=["aim.yaml", "dan_11.yaml"])
             )
+            if pending:
+                await scenario.create_pending_run_async()
             await scenario.initialize_async()
             metadata = scenario._build_initial_scenario_metadata()
             assert metadata[_JAILBREAK_TEMPLATES_METADATA_KEY] == ["aim.yaml", "dan_11.yaml"]

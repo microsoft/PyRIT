@@ -109,7 +109,7 @@ describe('ScenarioDatasetTable', () => {
     render(<Harness datasets={[REMOTE]} onReload={reload} onLoad={load} />)
     expect(screen.queryByRole('button', { name: 'Remove stored' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reset datasets', exact: true })).toBeEnabled()
-    expect(screen.getByRole('radiogroup', { name: 'Dataset loading' })).toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Dataset loading' })).not.toBeInTheDocument()
     expect(load).not.toHaveBeenCalled()
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
     expect(reload).toHaveBeenCalledTimes(1)

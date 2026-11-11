@@ -1909,6 +1909,7 @@ class Scenario(ABC):
             scenario_result_id=self._scenario_result_id or str(new_result_id),
             stored_run_plan=stored_plan,
             stored_display_group_map=stored_result.display_group_map if stored_result is not None else {},
+            is_resume=is_resume,
         )
         with override_default_adversarial_target(self._resolved_adversarial_target):
             self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
@@ -2437,6 +2438,7 @@ class Scenario(ABC):
         stored_run_plan: ScenarioRunPlan | None = None,
         stored_display_group_map: dict[str, str] | None = None,
         scenario_result_id: str | None = None,
+        is_resume: bool = False,
     ) -> ScenarioContext:
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
@@ -2454,6 +2456,7 @@ class Scenario(ABC):
             stored_display_group_map (dict[str, str] | None): Recorded display labels for a
                 legacy run without a persisted plan.
             scenario_result_id (str | None): The id of the ``ScenarioResult`` this run writes to.
+            is_resume (bool): Whether the builder restores a prior run, including a legacy run without a plan.
 
         Returns:
             ScenarioContext: The immutable inputs for atomic-attack construction.
@@ -2481,6 +2484,7 @@ class Scenario(ABC):
             stored_run_plan=stored_run_plan,
             stored_display_group_map=stored_display_group_map or {},
             scenario_result_id=scenario_result_id,
+            is_resume=is_resume,
         )
 
     @abstractmethod

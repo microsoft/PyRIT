@@ -480,7 +480,7 @@ describe('ScenarioDetail', () => {
       name: 'required', selection_key: 'dataset:named:required', loaded: false, provider_available: true,
       logical_examples: null, modalities: [], harm_categories: [], has_unlabeled_harm_categories: false,
     }
-    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [metadata] })
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [metadata] })
     let finish: (value: { settings: ScenarioDatasetSettings; items: typeof metadata[] }) => void = () => {}
     const pending = new Promise<{ settings: ScenarioDatasetSettings; items: typeof metadata[] }>((resolve) => { finish = resolve })
     jest.mocked(scenariosApi.loadDatasets).mockReturnValue(pending)
@@ -492,7 +492,7 @@ describe('ScenarioDetail', () => {
     await user.click(within(preview).getByRole('button', { name: 'Launch scan', exact: true }))
     expect(mockStartRun.mock.calls[0][0].prepare_in_background).toBe(true)
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('datasets')
-    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [{ ...metadata, loaded: true }] })
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [{ ...metadata, loaded: true }] })
     await act(async () => { finish({ settings: defaults, items: [{ ...metadata, loaded: true }] }) })
   })
 
@@ -519,7 +519,7 @@ describe('ScenarioDetail', () => {
       name: 'resolved', selection_key: 'dataset:named:resolved', loaded: false, provider_available: true,
       logical_examples: null, modalities: [], harm_categories: [], has_unlabeled_harm_categories: false,
     }
-    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [metadata] })
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [metadata] })
     let finish: (value: { settings: ScenarioDatasetSettings; items: typeof metadata[] }) => void = () => {}
     const pending = new Promise<{ settings: ScenarioDatasetSettings; items: typeof metadata[] }>((resolve) => { finish = resolve })
     jest.mocked(scenariosApi.loadDatasets).mockReturnValue(pending)
@@ -538,7 +538,7 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
       fetch: 'if_missing', sources: [{ name: 'resolved', fetch: 'if_missing' }],
     })
-    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [{ ...metadata, loaded: true }] })
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({ items: [{ ...metadata, loaded: true }] })
     await act(async () => { finish({ settings: resolved, items: [{ ...metadata, loaded: true }] }) })
   })
 
@@ -2534,8 +2534,8 @@ describe('ScenarioDetail', () => {
 
   it('keeps the form and Launch available while a selected provider is still blocked', async () => {
     const user = userEvent.setup()
-    const stored = await datasetsApi.listDatasets()
-    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({
+    const stored = await scenariosApi.listCompatibleDatasets('foundry.red_team_agent')
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValue({
       items: stored.items.map((item) => item.name === 'harmbench' ? { ...item, loaded: false } : item),
     })
     jest.mocked(scenariosApi.loadDatasets).mockReturnValue(new Promise(() => {}))
@@ -3406,7 +3406,9 @@ describe('ScenarioDetail', () => {
       await confirmRunPreview(user)
 
       await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
-      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: 'ds_b' }], max_total: 5 })
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+        sources: [{ name: 'ds_b', fetch: 'if_missing' }], max_total: 5, fetch: 'if_missing',
+      })
     })
   })
 
@@ -3454,7 +3456,7 @@ describe('ScenarioDetail', () => {
       expect(mockStartRun.mock.calls[0][0]).toEqual(expect.objectContaining({
         scenario_name: 'foundry.assert_policy',
         target_name: 'target-a',
-        datasets: { sources: [{ name: 'ds_a' }] },
+        datasets: { sources: [{ name: 'ds_a', fetch: 'if_missing' }], fetch: 'if_missing' },
       }))
     })
 
@@ -3540,7 +3542,8 @@ describe('ScenarioDetail', () => {
 
       await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
       expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
-        sources: [{ name: 'ds_a' }, { name: 'missing_set' }, { name: 'ds_b' }],
+        fetch: 'if_missing',
+        sources: [{ name: 'ds_a', fetch: 'if_missing' }, { name: 'missing_set', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' }],
       })
     })
 
@@ -3590,7 +3593,9 @@ describe('ScenarioDetail', () => {
       await confirmRunPreview(user)
 
       await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
-      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: ' returns ' }, { name: 'returns ' }] })
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+        fetch: 'if_missing', sources: [{ name: ' returns ', fetch: 'if_missing' }, { name: 'returns ', fetch: 'if_missing' }],
+      })
     })
 
     it('rejects a blank linked dataset instead of falling back to the defaults', async () => {

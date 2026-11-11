@@ -645,11 +645,11 @@ function ScenarioLaunchForm({
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
   useEffect(() => {
-    if (previousDatasetSelection.current !== datasetSelectionKey) {
+    if (!defaultAssertScoring && previousDatasetSelection.current !== datasetSelectionKey) {
       previousDatasetSelection.current = datasetSelectionKey
       reloadDatasetMetadata()
     }
-  }, [datasetSelectionKey, reloadDatasetMetadata])
+  }, [datasetSelectionKey, reloadDatasetMetadata, defaultAssertScoring])
   const preparation = useScenarioDatasetPreparation({
     scenarioName: scenario.scenario_name,
     datasetNames: selectedDatasetNames,

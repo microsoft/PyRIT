@@ -212,7 +212,7 @@ class AdaptiveScenario(Scenario):
                         f"Scenario result id '{self._scenario_result_id}' cannot resume: "
                         f"atomic group '{group.atomic_attack_name}' has no saved adaptive technique choices."
                     )
-        elif self._scenario_result_id is not None:
+        elif context.is_resume:
             raise ValueError(
                 f"Scenario result id '{self._scenario_result_id}' cannot resume: "
                 "the run has no saved adaptive technique choices. Start a new scenario."

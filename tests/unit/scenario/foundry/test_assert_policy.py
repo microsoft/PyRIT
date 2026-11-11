@@ -364,13 +364,26 @@ async def test_each_unit_uses_its_own_group_judges_async(harness: _Harness, mode
             assert _judged(scorer).raise_if_scorer_blocks is False
 
 
-async def test_run_groups_baseline_and_selected_techniques_once_per_generated_category_async(harness: _Harness) -> None:
+@pytest.mark.parametrize("pending", [False, True])
+async def test_run_groups_baseline_and_selected_techniques_once_per_generated_category_async(
+    *, harness: _Harness, pending: bool
+) -> None:
     await _store_async(name="assert_a", result=_result(group_count=4))
-    scenario = await harness.initialize_async(
-        harness.scenario(),
-        scenario_techniques=[_technique("assert_package"), _technique("red_teaming")],
-        **_datasets("assert_a"),
+    scenario = harness.scenario()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": harness.objective,
+            "scenario_techniques": [_technique("assert_package"), _technique("red_teaming")],
+            **_datasets("assert_a"),
+        }
     )
+    if pending:
+        await scenario.create_pending_run_async()
+        stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
+            scenario_result_id=scenario._scenario_result_id
+        )
+        assert stored is not None and stored.display_group_map == {}
+    await scenario.initialize_async()
 
     groups: dict[str, set[str]] = {}
     for attack in scenario._atomic_attacks:
