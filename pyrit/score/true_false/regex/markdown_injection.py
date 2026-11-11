@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
@@ -189,11 +189,16 @@ def _has_shortcut_pair(text: str) -> bool:
     Returns:
         bool: True if the default shortcut-reference image pattern would match ``text``.
     """
-    closers = [closer.start() for closer in re.finditer(r"\]", text)]
+    closer = -1
 
     def label_end(start: int) -> int:
-        index = bisect_left(closers, start)
-        return closers[index] if index < len(closers) and closers[index] > start else -1
+        # Each sweep below reads labels in text order, so the search for "]" only moves forward.
+        nonlocal closer
+        if closer < start:
+            closer = text.find("]", start)
+            if closer < 0:
+                closer = len(text)
+        return closer if start < closer < len(text) else -1
 
     # (label start, label end, image start) for each image not followed by "[" or "(".
     images = []
@@ -206,6 +211,7 @@ def _has_shortcut_pair(text: str) -> bool:
     # (label start, label end, line start, value start) for each "[label]:" line with a value on that line.
     definitions = []
     values: dict[int, int] = {}
+    closer = -1
     for line in _DEFINITION_START.finditer(text):
         end = label_end(line.end())
         if end >= 0 and text.startswith(":", end + 1):
