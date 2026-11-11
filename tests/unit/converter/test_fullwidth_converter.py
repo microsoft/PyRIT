@@ -32,6 +32,21 @@ async def test_fullwidth_leaves_non_ascii_and_separators_unchanged_async() -> No
     assert result.output_text == "ｃａｆé 日本語"
 
 
+async def test_fullwidth_is_idempotent_on_already_fullwidth_text_async() -> None:
+    converter = FullwidthConverter()
+
+    once = (await converter.convert_async(prompt="Hello, World 123!", input_type="text")).output_text
+    twice = (await converter.convert_async(prompt=once, input_type="text")).output_text
+
+    assert twice == once
+
+
+async def test_fullwidth_leaves_emoji_and_surrogate_pairs_unchanged_async() -> None:
+    result = await FullwidthConverter().convert_async(prompt="hi 😀 🇺🇸", input_type="text")
+
+    assert result.output_text == "ｈｉ 😀 🇺🇸"
+
+
 async def test_fullwidth_respects_word_selection_strategy_async() -> None:
     converter = FullwidthConverter(word_selection_strategy=WordIndexSelectionStrategy(indices=[1]))
 
