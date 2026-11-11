@@ -97,6 +97,9 @@ Normalization uses parameter-resolved settings, not static catalog source names.
 Source settings report whether a global loading-policy override can control them; unknown
 inheritance is guarded rather than guessed. Confirmation can wait for this read-only
 configuration projection, but never for an exact attack count or provider completion.
+Inline-only scanners without dataset inputs or named sources keep their eager launch path;
+estimate failures remain advisory. Fixed named/required sources still use preparation even
+when the scenario exposes no dataset overrides.
 
 ## Generated Datasets
 

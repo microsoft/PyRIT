@@ -8,15 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.dataset_preparation_service import close_dataset_preparation_async
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     DatasetFetchPolicy,
+    DatasetSelectionMode,
+    Parameter,
+    ScenarioDatasetOptions,
     ScenarioDatasetRequest,
     ScenarioRunSizeEstimateRequest,
     ScenarioRunState,
@@ -24,9 +29,18 @@ from pyrit.models import (
     SeedObjective,
 )
 from pyrit.models.catalog import RunScenarioRequest
-from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioTechnique
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import (
+    AtomicAttack,
+    AttackTechniqueFactory,
+    DatasetAttackConfiguration,
+    DatasetSource,
+    Scenario,
+    ScenarioTechnique,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.scenarios.technique import Execute
+from pyrit.scenario.scenarios.technique.execute import _build_execute_technique
 from pyrit.score import SubStringScorer
 from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
@@ -79,6 +93,18 @@ class _RunScenario(Scenario):
                 seed_groups=context.seed_groups,
                 memory_labels=context.memory_labels,
             )
+        ]
+
+
+class _FixedRunScenario(_RunScenario):
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, supports_overrides=False)
+
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        return [
+            parameter
+            for parameter in super().supported_parameters()
+            if parameter.name not in {"dataset_config", "dataset_overrides"}
         ]
 
 
@@ -175,7 +201,10 @@ def test_load_route_errors_are_explicit(
 
 @pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
 @pytest.mark.parametrize(("fail", "cancel"), [(False, False), (True, False), (False, True)])
-async def test_launch_opens_while_preload_provider_is_held_and_joins_one_fetch(*, fail: bool, cancel: bool) -> None:
+@pytest.mark.parametrize("fixed", [False, True])
+async def test_launch_opens_while_preload_provider_is_held_and_joins_one_fetch(
+    *, fail: bool, cancel: bool, fixed: bool
+) -> None:
     """The actual run service and real SQLite header exist before the provider is released."""
     provider = _provider()
     entered, release = asyncio.Event(), asyncio.Event()
@@ -191,7 +220,7 @@ async def test_launch_opens_while_preload_provider_is_held_and_joins_one_fetch(*
     provider.fetch_dataset_async.side_effect = fetch_async
     with patch.object(ScenarioRegistry, "_discover"):
         registry = ScenarioRegistry()
-        registry.register_class(_RunScenario, name="test.background")
+        registry.register_class(_FixedRunScenario if fixed else _RunScenario, name="test.background")
     target = MockPromptTarget()
     await close_dataset_preparation_async()
     run_service = ScenarioRunService()
@@ -205,7 +234,7 @@ async def test_launch_opens_while_preload_provider_is_held_and_joins_one_fetch(*
             scenario_service = ScenarioService()
             preload = asyncio.create_task(
                 scenario_service.load_datasets_async(
-                    scenario_name="test.background", request=ScenarioRunSizeEstimateRequest()
+                    scenario_name="test.background", request=ScenarioRunSizeEstimateRequest(), automatic=True
                 )
             )
             await wait_for_event_async(event=entered, tasks=[preload])
@@ -356,3 +385,71 @@ async def test_automatic_load_api_keeps_failures_until_explicit_retry(
                 assert provider.fetch_dataset_async.await_count == 2
     finally:
         await close_dataset_preparation_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_real_inline_execute_launch_is_not_deferred_after_estimate_failure(
+    *, compatibility_headers: dict[str, str], block_dataset_provider_lookup: AsyncMock
+) -> None:
+    techniques = AttackTechniqueRegistry()
+    techniques.register_from_factories([AttackTechniqueFactory(name="direct", attack_class=PromptSendingAttack)])
+    target = MockPromptTarget()
+    _build_execute_technique.cache_clear()
+    await close_dataset_preparation_async()
+    runs = ScenarioRunService()
+    try:
+        with (
+            patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=techniques),
+            patch.object(Execute, "_get_default_objective_scorer", return_value=SubStringScorer(substring="hello")),
+            patch.object(TargetRegistry.get_registry_singleton().instances, "get", return_value=target),
+            patch.object(ScenarioRegistry, "_discover"),
+            patch.object(Execute, "create_pending_run_async", new_callable=AsyncMock) as pending,
+        ):
+            registry = ScenarioRegistry()
+            registry.register_class(Execute, name="technique.execute")
+            with (
+                patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+                patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=runs),
+                patch("pyrit.backend.routes.scenarios.get_scenario_service", side_effect=ScenarioService),
+                patch.object(
+                    ScenarioService,
+                    "estimate_scenario_run_size_async",
+                    new_callable=AsyncMock,
+                    side_effect=HTTPException(status_code=503, detail="Estimate temporarily unavailable"),
+                ),
+            ):
+                metadata = registry.get_class_metadata(Execute)
+                assert "dataset_config" not in {parameter.name for parameter in metadata.supported_parameters}
+                assert metadata.default_datasets == () and metadata.dataset_defaults.sources == []
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://test", headers=compatibility_headers
+                ) as client:
+                    estimate = await client.post("/api/scenarios/catalog/technique.execute/estimate", json={})
+                    assert estimate.status_code == 503
+                    response = await client.post(
+                        "/api/scenarios/runs",
+                        json={
+                            "scenario_name": "technique.execute",
+                            "target_name": "offline",
+                            "techniques": ["direct"],
+                            "scenario_params": {"objective": "Write a greeting."},
+                        },
+                    )
+                    assert response.status_code == 202, response.text
+                summary = response.json()
+                assert summary["dataset_preparation_pending"] is False
+                pending.assert_not_awaited()
+                active = runs._active_tasks.get(summary["scenario_result_id"])
+                if active is not None and active.task is not None:
+                    await wait_for_completion_async(future=active.task)
+                progress = await runs.get_run_progress_async(
+                    scenario_result_id=summary["scenario_result_id"], since=None, limit=10
+                )
+                assert progress is not None and not progress.run.dataset_preparation_pending
+                assert progress.run.status is ScenarioRunState.COMPLETED
+                assert target.prompt_sent == ["Write a greeting."]
+                block_dataset_provider_lookup.assert_not_awaited()
+    finally:
+        await runs.shutdown_async()
+        await close_dataset_preparation_async()
+        _build_execute_technique.cache_clear()

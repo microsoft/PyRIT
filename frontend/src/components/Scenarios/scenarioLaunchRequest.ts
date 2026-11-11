@@ -93,6 +93,13 @@ export function linkedDatasetProblem(names: readonly string[], supportsDatasets:
   return names.some(isBlankDatasetName) ? "The link includes a blank dataset name, so this scan can't launch with it." : null
 }
 
+/** Fixed required sources still need preparation even when the scenario exposes no dataset overrides. */
+export function usesScenarioDatasets(
+  scenario: RegisteredScenario, settings: ScenarioDatasetSettings = scenarioDatasetDefaults(scenario),
+): boolean {
+  return supportsParameter(scenario, 'dataset_config') || scenario.default_datasets.length > 0 || settings.sources.length > 0
+}
+
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
@@ -221,7 +228,8 @@ export function buildEstimateRequest({
   const defaults = datasetDefaults ?? scenarioDatasetDefaults(scenario)
   const options = datasetOptions ?? scenarioDatasetOptions(scenario)
   const sources = datasetEdits.sources ?? defaults.sources
-  const protectedPolicies = datasetPolicies(datasetEdits, defaults, defaults).filter((source) => {
+  const policies = usesScenarioDatasets(scenario, defaults) ? datasetPolicies(datasetEdits, defaults, defaults) : []
+  const protectedPolicies = policies.filter((source) => {
     const settings = defaults.sources.find((item) => item.name === source.name)
     const explicit = explicitDatasetPolicy(datasetEdits.sources?.find((item) => item.name === source.name)?.fetch)
     return source.fetch !== 'if_missing' && (!supportsDatasets || !options.supports_overrides
@@ -325,9 +333,9 @@ export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResu
 
   const request: RunScenarioRequest = {
     scenario_name: input.scenario.scenario_name,
-    prepare_in_background: true,
     ...estimateResult.request,
   }
+  if (usesScenarioDatasets(input.scenario, input.datasetDefaults)) request.prepare_in_background = true
   if (input.operationId) request.operation_id = input.operationId
   if (supportsParameter(input.scenario, 'max_concurrency')) {
     request.max_concurrency = input.maxConcurrency

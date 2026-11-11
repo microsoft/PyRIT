@@ -430,6 +430,72 @@ describe('ScenarioDetail', () => {
     jest.useRealTimers()
   })
 
+  it('launches an inline-only technique scanner despite an estimate failure without dataset preparation', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'technique.execute', scenario_type: 'Execute', max_concrete_techniques: 1,
+      default_datasets: [], uses_default_adversarial_target: false,
+      baseline_policy: 'disabled', include_baseline_by_default: false,
+      supported_parameter_names: ['objective_target', 'scenario_techniques', 'objective', 'max_concurrency', 'max_retries'],
+      supported_parameters: [{ name: 'objective', type_name: 'str', required: true, description: 'Objective' }],
+    }))
+    mockEstimateRun.mockRejectedValue(new Error('Estimate service unavailable'))
+    renderDetail('/scanner/launch/technique.execute')
+    await user.click(await screen.findByRole('radio', { name: 'default_technique', exact: true }))
+    await user.type(await screen.findByRole('textbox', { name: 'objective', exact: true }), 'Write a greeting.')
+    await screen.findByText(/Estimate service unavailable/)
+    expect(screen.queryByRole('region', { name: 'Datasets', exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Checking dataset configuration/)).not.toBeInTheDocument()
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toBeEnabled()
+    expect(within(preview).queryByRole('button', { name: 'Retry dataset configuration' })).not.toBeInTheDocument()
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan', exact: true }))
+    expect(mockStartRun).toHaveBeenCalledTimes(1)
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('prepare_in_background')
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('datasets')
+    expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
+  })
+
+  it('preloads fixed named sources and launches while that same preparation is pending without dataset overrides', async () => {
+    const user = userEvent.setup()
+    const defaults: ScenarioDatasetSettings = {
+      sources: [{ name: 'required', max_size: 'all', fetch: 'if_missing', fetch_inherited: true, configured_provider: false }],
+      max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {},
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'garak.exploitation', default_datasets: ['required'], dataset_defaults: defaults,
+      supported_parameter_names: ['objective_target', 'scenario_techniques'],
+      baseline_policy: 'forbidden', include_baseline_by_default: false,
+      dataset_options: {
+        mode: 'fixed', allowed_names: [], supports_overrides: false, per_dataset_limit: false,
+        total_limit: false, filters: false, source_settings: false,
+      },
+    }))
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(null), status: 'unavailable', count_deferred: true, dataset_size: { kind: 'all_available' },
+      minimum_attack_count: null, maximum_attack_count: null, components: [],
+      dataset_defaults: defaults, effective_datasets: defaults,
+    })
+    const metadata = {
+      name: 'required', selection_key: 'dataset:named:required', loaded: false, provider_available: true,
+      logical_examples: null, modalities: [], harm_categories: [], has_unlabeled_harm_categories: false,
+    }
+    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [metadata] })
+    let finish: (value: { settings: ScenarioDatasetSettings; items: typeof metadata[] }) => void = () => {}
+    const pending = new Promise<{ settings: ScenarioDatasetSettings; items: typeof metadata[] }>((resolve) => { finish = resolve })
+    jest.mocked(scenariosApi.loadDatasets).mockReturnValue(pending)
+    renderDetail('/scanner/launch/garak.exploitation')
+    await screen.findByText(/Loading selected datasets in the background/)
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1)
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toBeEnabled()
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan', exact: true }))
+    expect(mockStartRun.mock.calls[0][0].prepare_in_background).toBe(true)
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('datasets')
+    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [{ ...metadata, loaded: true }] })
+    await act(async () => { finish({ settings: defaults, items: [{ ...metadata, loaded: true }] }) })
+  })
+
   it('preloads and launches the displayed parameter-resolved sources without restoring static defaults', async () => {
     const user = userEvent.setup()
     const resolved: ScenarioDatasetSettings = {

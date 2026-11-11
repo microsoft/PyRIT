@@ -5,6 +5,7 @@ import {
   buildRunRequest,
   linkedDatasetProblem,
   scenarioDynamicParameters,
+  usesScenarioDatasets,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
 
@@ -140,7 +141,34 @@ describe('scenario launch requests', () => {
 
     const run = buildRunRequest(makeInput({ scenario, datasetEdits: { max_total: 3 } }))
 
-    expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation', prepare_in_background: true } })
+    expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation' } })
+  })
+
+  it.each([false, true])('keeps fixed required sources applicable without dataset overrides (legacy names: %s)', (legacyNames) => {
+    const scenario = makeScenario({
+      scenario_name: 'garak.exploitation', supported_parameter_names: ['objective_target'], supported_parameters: [],
+      default_datasets: legacyNames ? ['required'] : [],
+      dataset_defaults: {
+        sources: [{ name: 'required', max_size: 'all', fetch: 'if_missing', configured_provider: false }],
+        max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {},
+      },
+      dataset_options: {
+        mode: 'fixed', allowed_names: [], supports_overrides: false, per_dataset_limit: false,
+        total_limit: false, filters: false, source_settings: false,
+      },
+    })
+    expect(usesScenarioDatasets(scenario)).toBe(true)
+    const request = buildRunRequest(makeInput({ scenario }))
+    expect(request.ok && request.request.prepare_in_background).toBe(true)
+    const protectedRequest = buildRunRequest(makeInput({
+      scenario,
+      datasetDefaults: {
+        ...scenario.dataset_defaults,
+        sources: [{ name: 'required', max_size: 'all', fetch: 'never', fetch_inherited: false, configured_provider: false }],
+        max_per_dataset: 'all', max_total: 'all', fetch: 'never', filters: {},
+      },
+    }))
+    expect(!protectedRequest.ok && protectedRequest.error).toMatch(/protects source-specific loading policies/)
   })
 
   it('carries explicitly selected generation and scoring targets through estimates and launches', () => {

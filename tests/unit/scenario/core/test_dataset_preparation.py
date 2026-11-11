@@ -376,6 +376,86 @@ async def test_store_failure_surfaces_after_cancellation_and_remains_retryable(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("co_waiter", [False, True])
+async def test_cancelled_fetch_failure_is_logged_only_without_an_active_waiter_and_can_retry(
+    *, co_waiter: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = CentralMemory.get_memory_instance()
+    owner = DatasetPreparation(memory)
+    provider = _provider("fetch_failure")
+    entered, joined, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    active_reader = ContextVar("active_reader", default=False)
+    original_names = memory.get_seed_dataset_names_async
+    failure = RuntimeError("Synthetic provider failed after cancellation")
+    fetch_task: asyncio.Task[object] | None = None
+
+    async def names_async() -> list[str]:
+        names = await original_names()
+        if active_reader.get():
+            joined.set()
+        return list(names)
+
+    async def fetch_async(*, cache: bool = True) -> SeedDataset:
+        nonlocal fetch_task
+        fetch_task = asyncio.current_task()
+        entered.set()
+        await release.wait()
+        raise failure
+
+    async def prepare_async(*, other: bool = False, retry: bool = False) -> None:
+        with owner.scope(retry_failed=retry):
+            token = active_reader.set(other)
+            try:
+                dataset = await owner.fetch_async(
+                    name="fetch_failure",
+                    provider=provider,
+                    registered=False,
+                    retry_failed=retry,
+                    fetch=provider.fetch_dataset_async,
+                )
+            finally:
+                active_reader.reset(token)
+            if dataset is not None:
+                await owner.store_missing_async(name="fetch_failure", dataset=dataset)
+
+    provider.fetch_dataset_async.side_effect = fetch_async
+    tasks: list[asyncio.Task[None]] = []
+    try:
+        with patch.object(memory, "get_seed_dataset_names_async", side_effect=names_async):
+            first = asyncio.create_task(prepare_async())
+            tasks.append(first)
+            await wait_for_event_async(event=entered, tasks=tasks)
+            if co_waiter:
+                tasks.append(asyncio.create_task(prepare_async(other=True)))
+                await wait_for_event_async(event=joined, tasks=tasks)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            release.set()
+            assert fetch_task is not None
+            await asyncio.gather(fetch_task, return_exceptions=True)
+            if co_waiter:
+                with pytest.raises(RuntimeError, match="Synthetic provider failed") as raised:
+                    await wait_for_completion_async(future=tasks[1])
+                assert raised.value is failure
+            records = [record for record in caplog.records if "after its callers were cancelled" in record.message]
+            assert bool(records) is (not co_waiter)
+            if records:
+                assert records[0].exc_info is not None and records[0].exc_info[1] is failure
+            with pytest.raises(RuntimeError, match="Synthetic provider failed"):
+                await prepare_async()
+            provider.fetch_dataset_async.assert_awaited_once()
+            provider.fetch_dataset_async.side_effect = None
+            await prepare_async(retry=True)
+            assert provider.fetch_dataset_async.await_count == 2
+            assert await memory.get_seed_dataset_names_async() == ["fetch_failure"]
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await owner.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_explicit_always_policy_still_refreshes_without_sharing() -> None:
     memory = CentralMemory.get_memory_instance()
     owner = DatasetPreparation(memory)

@@ -103,6 +103,7 @@ import {
   linkedDatasetProblem,
   supportsParameter,
   usesDefaultAssertScoring,
+  usesScenarioDatasets,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 import DatasetActions from './DatasetActions'
@@ -624,8 +625,9 @@ function ScenarioLaunchForm({
   const effectiveDatasets = datasetProjection?.effective_datasets ?? datasetDefaults
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
-  const datasetConfigurationReady = datasetContextKey !== null
-    && runEstimate.datasetProjectionContextKey === datasetContextKey
+  const usesDatasets = usesScenarioDatasets(scenario, datasetDefaults)
+  const datasetConfigurationReady = !usesDatasets || (datasetContextKey !== null
+    && runEstimate.datasetProjectionContextKey === datasetContextKey)
   const resolvedLaunchInput = useMemo(() => ({
     ...launchInput, datasetDefaults, datasetOptions,
   }), [launchInput, datasetDefaults, datasetOptions])
@@ -637,7 +639,8 @@ function ScenarioLaunchForm({
   [datasetConfigurationReady, resolvedLaunchInput, launchInput])
   const datasetConfigurationError = !datasetConfigurationReady && runEstimate.current?.status === 'error'
     ? runEstimate.current.error : null
-  const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
+  const selectedDatasetNames = usesDatasets
+    ? (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name) : []
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
@@ -650,12 +653,12 @@ function ScenarioLaunchForm({
   const preparation = useScenarioDatasetPreparation({
     scenarioName: scenario.scenario_name,
     datasetNames: selectedDatasetNames,
-    request: datasetConfigurationReady && preparationRequestResult.ok ? preparationRequestResult.request : null,
+    request: usesDatasets && datasetConfigurationReady && preparationRequestResult.ok ? preparationRequestResult.request : null,
     metadata: datasetMetadata.items,
     metadataLoading: datasetMetadata.loading,
     metadataError: datasetMetadata.error,
     metadataRevision: datasetMetadata.revision,
-    enabled: !staleSelection && datasetConfigurationReady,
+    enabled: usesDatasets && !staleSelection && datasetConfigurationReady,
     onPrepared: datasetMetadata.reload,
   })
 

@@ -139,8 +139,13 @@ class DatasetPreparation:
         return None if work.published else dataset
 
     def _fetch_done(self, task: asyncio.Task[SeedDataset], *, key: tuple[str, object], work: _ProviderWork) -> None:
-        failed = task.cancelled() or task.exception() is not None
+        error = None if task.cancelled() else task.exception()
+        failed = task.cancelled() or error is not None
         self._fetches.discard(task)
+        if error is not None and work.users == 0:
+            logger.error(
+                "Dataset provider fetch failed for %s after its callers were cancelled.", key[0], exc_info=error
+            )
         if work.published or (not failed and work.users == 0):
             self._forget_work(key=key, work=work)
 
