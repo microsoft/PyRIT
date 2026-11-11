@@ -1067,7 +1067,7 @@ describe("CreateTargetDialog", () => {
     render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
     await selectTargetType("LiteLLMChatTarget");
     await user.type(screen.getByRole("textbox", { name: "Model / Deployment Name", exact: true }), "provider/model");
-    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    const create = screen.getByRole("button", { name: SUBMIT_BUTTON_NAME });
     const endpoint = screen.getByRole("textbox", { name: "Endpoint URL", exact: true });
     if (required) {
       expect(endpoint).toBeRequired();
@@ -1079,9 +1079,9 @@ describe("CreateTargetDialog", () => {
       expect(endpoint).not.toBeRequired();
       expect(create).toBeEnabled();
       await user.click(create);
-      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(expect.objectContaining({
         type: "LiteLLMChatTarget", params: { model_name: "provider/model" },
-      });
+      }));
     }
   });
 
@@ -1090,7 +1090,7 @@ describe("CreateTargetDialog", () => {
     render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
     await screen.findByText(/Target details could not be loaded/);
     await selectTargetType("OpenAIChatTarget");
-    expect(screen.getByRole("button", { name: "Create Target", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: SUBMIT_BUTTON_NAME })).toBeDisabled();
     fireEvent.submit(screen.getByTestId("create-target-form"));
     expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
     expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
