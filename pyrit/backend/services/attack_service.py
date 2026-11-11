@@ -95,6 +95,7 @@ from pyrit.models import (
     ConversationStats,
     Message,
     MessagePiece,
+    RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -337,7 +338,7 @@ class AttackService:
 
             page.append(
                 await attack_result_to_summary_async(
-                    ar,
+                    self._with_target_capabilities(ar),
                     stats=merged,
                     operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None,
                     scoring_inputs=get_chat_scoring_service().inputs(ar),
@@ -490,13 +491,71 @@ class AttackService:
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
         operation_names = await self._get_operation_names_async(results=[ar])
         return await attack_result_to_summary_async(
-            ar,
+            self._with_target_capabilities(ar),
             stats=stats,
             operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None,
             scoring_inputs=get_chat_scoring_service().inputs(ar),
             execution_read_only=in_progress or get_chat_scoring_service().execution_read_only(ar),
             in_progress=in_progress,
         )
+
+    @staticmethod
+    def _with_target_capabilities(ar: AttackResult) -> AttackResult:
+        """
+        Present saved flags and effective replay support for default-target manual chats.
+
+        Returns:
+            AttackResult: A presentation copy; saved metadata is not mutated.
+        """
+        if TargetBinding.from_metadata(ar.metadata) is not None:
+            return ar
+        identifier = ar.get_attack_strategy_identifier()
+        name = ar.metadata.get("target_registry_name")
+        if not identifier or get_chat_scoring_service().execution_read_only(ar):
+            return ar
+        service = get_target_service()
+        objective_target = identifier.get_child("objective_target")
+        if objective_target is None:
+            return ar
+        target = (
+            service.get_target_object(target_registry_name=name)
+            if isinstance(name, str)
+            else service.get_target_object_by_identifier_hash(objective_target.hash)
+        )
+        if not isinstance(target, PromptTarget) or target.get_identifier().hash != objective_target.hash:
+            return ar
+        capabilities = service.saved_capabilities(target=target, metadata=ar.metadata)
+        with service.capabilities_scope(target=target, metadata=ar.metadata):
+            try:
+                target.validate_history_replay()
+            except ValueError:
+                supports_history_replay = False
+            else:
+                supports_history_replay = True
+        return ar.model_copy(
+            update={
+                "metadata": {
+                    **ar.metadata,
+                    "target_capabilities": capabilities.model_dump(mode="json"),
+                    "target_supports_history_replay": supports_history_replay,
+                }
+            }
+        )
+
+    @staticmethod
+    def _target_capabilities_metadata(registry_name: str | None) -> dict[str, Any]:
+        """
+        Snapshot the current default target flags for a newly bound manual attack.
+
+        Returns:
+            dict[str, Any]: Server-owned snapshot, or no entry for an unbound target.
+        """
+        if registry_name is None:
+            return {}
+        target = get_target_service().get_target_object(target_registry_name=registry_name)
+        if target is None:
+            raise ValueError("The selected target is no longer registered")
+        return {"target_capabilities": target.capabilities.model_dump(mode="json")}
 
     async def _get_operation_names_async(self, *, results: Sequence[AttackResult]) -> dict[uuid.UUID, str]:
         """
@@ -628,6 +687,11 @@ class AttackService:
             registry_name=request.target_registry_name, binding=request.target_binding
         )
         copied: Sequence[MessagePiece] = []
+        # The two branching fields form one spec; the conversation endpoint
+        # rejects a half provided pair, and a silent fallthrough here would
+        # create an unbranched attack while the caller believes it branched.
+        if (request.source_conversation_id is None) != (request.cutoff_index is None):
+            raise ValueError("Both source_conversation_id and cutoff_index must be provided together")
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             conversation, copied = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,
@@ -683,11 +747,12 @@ class AttackService:
                     binding=request.target_binding,
                 )
                 try:
-                    if target_object:
-                        validate_history_replay(
-                            target=target_object,
-                            messages=group_conversation_message_pieces_by_sequence([*copied, *pieces]),
-                        )
+                    with get_target_service().capabilities_scope(target=target_object, metadata=attack_result.metadata):
+                        if target_object:
+                            validate_history_replay(
+                                target=target_object,
+                                messages=group_conversation_message_pieces_by_sequence([*copied, *pieces]),
+                            )
                 finally:
                     if request.target_binding and target_object:
                         await release_component_async(target_object)
@@ -755,6 +820,11 @@ class AttackService:
                 "target_unbound": conversation.target_identifier is None,
                 **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
                 **(request.target_binding.to_metadata() if request.target_binding else {}),
+                **(
+                    AttackService._target_capabilities_metadata(request.target_registry_name)
+                    if request.target_binding is None
+                    else {}
+                ),
                 **(
                     AttackScoringInputs(scorer=request.chat_scorer, revision=str(uuid.uuid4())).to_metadata()
                     if "chat_scorer" in request.model_fields_set
@@ -914,6 +984,7 @@ class AttackService:
         new_attack: AttackResult | None = None
         expected_fields: dict[str, Any] = {}
         update_fields: dict[str, Any] = {}
+        target_metadata: dict[str, Any] = {}
         binding = request.target_binding
         if same_attack:
             attack_result_id = str(request.attack_result_id)
@@ -921,6 +992,7 @@ class AttackService:
             if not results:
                 raise LookupError("The destination attack does not exist")
             attack = results[0]
+            target_metadata = attack.metadata
             get_chat_scoring_service().require_manual(attack)
             if request.operation_id is not None and request.operation_id != attack.operation_id:
                 raise ValueError("Operation attribution is immutable on continuation")
@@ -967,6 +1039,7 @@ class AttackService:
                 conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier),
                 objective=request.objective or "",
             )
+            target_metadata = new_attack.metadata
             if request.source_attack_result_id is not None:
                 [source] = await self._memory.get_attack_results_async(
                     attack_result_ids=[str(request.source_attack_result_id)]
@@ -993,13 +1066,14 @@ class AttackService:
         inserted = False
         save_failed = False
         try:
-            pieces = await self._prepare_message_pieces_async(
-                messages=request.messages,
-                source_pieces=source_pieces,
-                conversation_id=conversation_id,
-                persisted_paths=persisted_paths,
-                target=target,
-            )
+            with get_target_service().capabilities_scope(target=target, metadata=target_metadata):
+                pieces = await self._prepare_message_pieces_async(
+                    messages=request.messages,
+                    source_pieces=source_pieces,
+                    conversation_id=conversation_id,
+                    persisted_paths=persisted_paths,
+                    target=target,
+                )
             save_task = asyncio.create_task(
                 self._memory.add_conversation_branches_to_attack_async(
                     attack_result_id=attack_result_id,
@@ -1180,6 +1254,8 @@ class AttackService:
                 )
                 saved.set_simulated_role()
                 saved.prompt_metadata.pop("source_piece_id", None)
+                if not same_values:
+                    RequestGenerationInfo.clear_metadata(saved.prompt_metadata)
                 if source:
                     saved.prompt_metadata["source_piece_id"] = str(source.id)
                 if same_values and source and piece.applied_converter_ids is None:
@@ -1437,10 +1513,11 @@ class AttackService:
                 binding=binding,
             )
             try:
-                if target:
-                    validate_history_replay(
-                        target=target, messages=group_conversation_message_pieces_by_sequence(all_pieces)
-                    )
+                with get_target_service().capabilities_scope(target=target, metadata=ar.metadata):
+                    if target:
+                        validate_history_replay(
+                            target=target, messages=group_conversation_message_pieces_by_sequence(all_pieces)
+                        )
             finally:
                 if binding and target:
                     await release_component_async(target)
@@ -1582,6 +1659,7 @@ class AttackService:
             "target_unbound": False,
             "target_registry_name": registry_name,
             **(binding.to_metadata() if binding else {}),
+            **(self._target_capabilities_metadata(registry_name) if binding is None else {}),
         }
         await self._memory.update_attack_result_conditionally_async(
             attack_result_id=attack.attack_result_id,

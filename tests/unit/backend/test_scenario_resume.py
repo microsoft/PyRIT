@@ -20,6 +20,7 @@ from pyrit.backend.services.scenario_run_service import (
     _LAUNCH_REFERENCES_METADATA_KEY,
     _LAUNCH_REQUEST_FIELDS,
     _LAUNCH_REQUEST_METADATA_KEY,
+    _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
     _OPTIONAL_LAUNCH_FIELDS,
     ScenarioRunConflictError,
     ScenarioRunNotFoundError,
@@ -68,6 +69,7 @@ from pyrit.scenario.core import (
     Scenario,
     ScenarioTechnique,
     get_default_adversarial_target,
+    override_default_adversarial_target,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt import RapidResponse
@@ -1350,11 +1352,13 @@ def selected_adversarial_factory(
 
 
 @pytest.mark.parametrize("implicit", [False, True])
+@pytest.mark.parametrize("legacy_references", [False, True])
 async def test_rerun_pins_selected_adversarial_identity_and_rejects_replacement_async(
     *,
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
     selected_adversarial_factory: None,
     implicit: bool,
+    legacy_references: bool,
 ) -> None:
     service, _ = resume_environment
     registry = TargetRegistry.get_registry_singleton()
@@ -1383,8 +1387,18 @@ async def test_rerun_pins_selected_adversarial_identity_and_rejects_replacement_
 
     registry.instances.unregister(registry_name)
     registry.instances.register(ReplacementAdversarial(), name=registry_name)
-    with pytest.raises(ScenarioRunConflictError, match="saved adversarial target changed"):
-        await service.get_launch_configuration_async(response.scenario_result_id)
+    if legacy_references:
+        stored.metadata[_LEGACY_LAUNCH_REFERENCES_METADATA_KEY] = stored.metadata.pop(_LAUNCH_REFERENCES_METADATA_KEY)
+    expected_error = "saved adversarial target changed" if legacy_references else "saved scan dependencies changed"
+    count_before = len(await service._memory.get_scenario_results_async())
+    with (
+        patch.object(service._memory, "get_scenario_result_header_async", new_callable=AsyncMock, return_value=stored),
+        patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock) as prepare,
+    ):
+        with pytest.raises(ScenarioRunConflictError, match=expected_error):
+            await service.get_launch_configuration_async(response.scenario_result_id)
+        prepare.assert_not_awaited()
+    assert len(await service._memory.get_scenario_results_async()) == count_before
 
 
 async def test_rerun_rejects_unverifiable_old_adversarial_selection_async(
@@ -1392,7 +1406,8 @@ async def test_rerun_rejects_unverifiable_old_adversarial_selection_async(
     selected_adversarial_factory: None,
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=False)
+    with override_default_adversarial_target(target):
+        stored = await _create_failed_run_async(target=target, legacy=False)
     stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["adversarial_target_name"] = _TARGET_NAME
     with patch.object(service._memory, "get_scenario_result_header_async", new_callable=AsyncMock, return_value=stored):
         with pytest.raises(ScenarioRunConflictError, match="adversarial target identity is unavailable"):

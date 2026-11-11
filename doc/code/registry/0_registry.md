@@ -129,14 +129,19 @@ reconstruction:
 }
 ```
 
-Use `source.params` for overrides; do not also supply `params`. The backend
+Use `source.params` to override constructor defaults; do not also supply `params`. The backend
 keeps the source's other constructor inputs, including authentication, on the
 server. It does not change the source. Missing, changed, or ambiguous sources
 produce an error. If a source was renamed, a unique matching hash can resolve it.
 An optional `effective_hash` checks the reconstructed object's identity.
-Registered descriptors report `reconstructable` and, for targets,
-`supports_temperature_override`. Unsupported inputs can also report
-`reconstruction_error`.
+Converter descriptors expose `reconstructable` and `reconstruction_error`;
+target REST descriptors expose runtime support in `capabilities` and inclusive
+bounds in the `generation_ranges` map, such as `{"temperature": [0, 2]}`, independent
+of reconstruction. Missing entries mean unknown bounds, not lack of support.
+Reconstruction preserves explicitly configured ranges and leaves omitted entries
+to model inference. Use
+[runtime generation configuration](../targets/0_prompt_targets.md#runtime-generation-configuration)
+for per-request overrides instead of rebuilding a target.
 Constructor inputs that are not in the registry's build contract are not
 discarded silently: reconstruction is rejected. Such sources can still be used
 as registered objects.
@@ -158,8 +163,12 @@ local file input. Use `Path | str` when a component also supports a remote URL.
 For this union, the registry preserves the supplied type: a `Path` stays a `Path`,
 and a string stays a string. It never passes a URL through `Path`. Both union
 orders have the same metadata, `type_name: "Path | str"`, including after a JSON
-round-trip. Optional forms accept `None` in Python; the display type omits `None`,
-as it does for other optional parameters.
+round-trip. Nullable annotations retain ` | None` in `type_name`, for example
+`"int | None"`, `"list[int] | None"`, or `"Path | str | None"`. Registry references
+use `"str | None"` or `"list[str] | None"` for nullable names. Deserialization
+preserves these null values without a separate nullable flag. A plain type name
+from an older payload keeps its existing non-nullable contract. Nullability is
+independent of whether a parameter is required or has a default.
 
 External construction rejects a parameter whose type includes `Path`, because its
 value can name a file on the server. A caller that has made the value safe, as the
@@ -179,6 +188,36 @@ Scorer list responses build identifiers only for the requested page. Runtime
 replacement clears the cached scorer service so requests use the new registry.
 
 The backend owns file-upload handling and cleanup, not the registry.
+
+## Source Registry
+
+`SourceRegistry` holds observation sources, the components that acquire the
+evidence a source-backed scorer judges (a conversation, a trace, files on a
+surface). It discovers the source classes exported from
+`pyrit.score.observation` and holds configured instances under `.instances`,
+like the converter, scorer, and target registries. Sources have their own
+namespace rather than sharing the scorer namespace: a source is configured
+independently of the scorer that reads it, and one source can serve several
+scorers.
+
+A scorer's `source` argument is a registry reference, so a scorer can name a
+registered source instead of receiving the object:
+
+```python
+from pyrit.registry import ScorerRegistry, SourceRegistry
+
+SourceRegistry.get_registry_singleton().create_named_instance(
+    name="workspace",
+    type_name="LocalFileSurfaceSource",
+    params={"root": "/path/to/workspace"},
+)
+scorer = ScorerRegistry.get_registry_singleton().create_instance("FileWriteScorer", source="workspace")
+```
+
+A live source object is still accepted and passes through unchanged.
+`ScorerIdentifier` declares `source` in `constructor_references` rather than as
+a promoted field, so stored scorer identities, their hashes, and the memory
+schema are unchanged.
 
 ## Attack Class Registry
 
