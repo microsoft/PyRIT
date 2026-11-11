@@ -2632,7 +2632,7 @@ export interface AssertBinaryRate {
 
 export interface AssertCategoryMetrics {
   behavior_name: string
-  /** Identifies the taxonomy, so policies that share a behavior name stay separate. */
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
   policy_id: string
   name: string
   permissible: boolean

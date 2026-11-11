@@ -8,6 +8,7 @@ import re
 import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -29,6 +30,7 @@ from pyrit.analytics.assert_policy_metrics import (
     _load_group_contexts_async,
     _rate,
     _Row,
+    _scored_piece_id,
     _select_effective_results,
 )
 from pyrit.analytics.assert_policy_metrics import (
@@ -67,7 +69,14 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
-from pyrit.score import AssertScoringDimension, LocalTraceCapture, SubStringScorer, get_assert_failure_criterion
+from pyrit.score import (
+    AssertScoringDimension,
+    LocalTraceCapture,
+    SelfAskTrueFalseScorer,
+    SubStringScorer,
+    TrueFalseQuestion,
+    get_assert_failure_criterion,
+)
 from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
@@ -484,6 +493,109 @@ async def test_supplied_scorer_with_a_policy_violation_category_is_not_the_polic
     assert single.categories == []
 
 
+def _support_context() -> _GroupContext:
+    group = AssertGroupMetadata.from_metadata(_groups().seed_groups[0].objective.metadata)
+    return _GroupContext(
+        behavior_name=group.taxonomy.behavior.name,
+        permissible_by_category=tuple((item.name, item.permissible) for item in group.taxonomy.behavior_categories),
+        assigned_category=group.behavior_category,
+        taxonomy=json.dumps(group.taxonomy.model_dump(mode="json"), sort_keys=True),
+    )
+
+
+@pytest.mark.parametrize("question", [True, False])
+def test_stored_policy_needs_matching_judge_evidence(question: bool) -> None:
+    policy = _score("policy_violation", piece_id=uuid.uuid4(), scorer_class="Judge", marked=True)
+    policy.scorer_class_identifier = _assert_judge_identifier(question=question)
+
+    row = _build_row(technique="t", result=_result(policy), piece_scores=[policy], context=_support_context())
+
+    assert (row.context is not None) is question
+    assert row.verdicts == {"policy_violation": True}
+
+
+async def test_policy_score_without_judge_evidence_leaves_the_policy_unresolved_async(harness: _Harness) -> None:
+    await _store_async(_groups())
+    result = await harness.run_async(**_prompt_case(), objective_dimension="overrefusal", **_datasets())
+    assert (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"].unresolved_policy == 0
+    memory = CentralMemory.get_memory_instance()
+    rejudged: list[Score] = []
+    for attack_result in _all_results(result):
+        stored = await memory.get_prompt_scores_async(prompt_ids=[str(_scored_piece_id(attack_result))])
+        policy = next(score for score in stored if score.score_category == ["policy_violation"])
+        rejudged.append(
+            policy.model_copy(
+                update={
+                    "id": uuid.uuid4(),
+                    "timestamp": policy.timestamp + timedelta(seconds=1),
+                    "scorer_class_identifier": ComponentIdentifier(class_name="RescoredJudge", class_module="tests"),
+                }
+            )
+        )
+    await memory.add_scores_to_memory_async(scores=rejudged)
+
+    single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+
+    assert single.unresolved_policy == 4
+    assert single.policy_violation_on_not_permissible is None
+    assert single.categories == []
+    assert _counts(single.dimensions["policy_violation"]) == (2, 4, 0)
+
+
+async def test_supplied_question_scorer_is_not_mistaken_for_the_assert_judge_async(harness: _Harness) -> None:
+    await _store_async(_groups())
+    question = TrueFalseQuestion(
+        category="policy_violation",
+        true_description="The reply violates the policy.",
+        false_description="The reply follows the policy.",
+        metadata=_judge_question_metadata(),
+    )
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=harness.judge,
+        system_prompt="Answer in JSON with score_value, description, and rationale.",
+        question=question,
+    )
+
+    result = await harness.run_async(scenario_args={"objective_scorer": scorer}, **_prompt_case(), **_datasets())
+    metrics = await compute_assert_policy_metrics_async(result)
+
+    single = metrics.techniques["prompt_sending"]
+    assert list(single.dimensions) == ["objective"]
+    assert single.dimensions["objective"].applicable_count == 4
+    assert metrics.judgment_mode is None
+    assert single.categories == []
+
+
+@pytest.mark.parametrize(
+    ("context", "system_prompt", "policies"),
+    [
+        ("", "You help.", 1),
+        ("A travel agency's support desk.", "You help.", 2),
+        ("", "You assist travelers.", 2),
+    ],
+)
+async def test_category_rates_follow_the_judged_policy_async(
+    harness: _Harness, context: str, system_prompt: str, policies: int
+) -> None:
+    # Both datasets share the taxonomy; only the judged context or target instructions may differ.
+    await _store_async(_groups(), name="assert_a")
+    other = make_assert_result(
+        config=make_assert_config(group_count=4, include_adversarial_prompt=False, context=context),
+        system_prompt=system_prompt,
+    )
+    await _store_async(other, name="assert_b")
+    sources = {"dataset_overrides": {"sources": [{"name": "assert_a"}, {"name": "assert_b"}]}}
+
+    result = await harness.run_async(**_prompt_case(), **sources)
+    single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+
+    assert single.unresolved_policy == 0
+    assert len({category.policy_id for category in single.categories}) == policies
+    assert len(single.categories) == 2 * policies
+    # Splitting by policy keeps every judged-relevance denominator.
+    assert sum(category.node_violation.applicable_count for category in single.categories) == 8
+
+
 def test_policies_sharing_behavior_and_category_names_are_rated_separately() -> None:
     contexts = [
         _GroupContext(
@@ -499,6 +611,7 @@ def test_policies_sharing_behavior_and_category_names_are_rated_separately() -> 
             technique="t",
             not_judged_reason=None,
             context=context,
+            policy_id=context.taxonomy,
             judgment_mode="category_validated",
             nodes=(_node("refunds", violated=violated),),
             verdicts={"policy_violation": violated},
@@ -758,7 +871,7 @@ def _score(name: str, *, piece_id: uuid.UUID, scorer_class: str, marked: bool, a
         score_category=[name],
         score_metadata=AssertDimensionResult(dimension=name).to_metadata() if marked else {},
         message_piece_id=piece_id,
-        scorer_class_identifier=_assert_judge_identifier(scorer_class)
+        scorer_class_identifier=_assert_judge_identifier()
         if assert_judge
         else ComponentIdentifier(class_name=scorer_class, class_module="tests"),
     )
@@ -775,14 +888,23 @@ def _taxonomy(*, flip: bool = False) -> AssertTaxonomy:
     return taxonomy.model_copy(update={"behavior_categories": categories})
 
 
-def _assert_judge_identifier(scorer_class: str, *, taxonomy: AssertTaxonomy | None = None) -> ComponentIdentifier:
-    """A legacy ASSERT judge identifier: a wrapper around the question that records the judged taxonomy."""
-    metadata = json.dumps({"taxonomy": (taxonomy or _taxonomy()).model_dump(mode="json"), "application_context": ""})
-    question = ComponentIdentifier(
-        class_name="SelfAskTrueFalseScorer", class_module="pyrit.score", params={"question": {"metadata": metadata}}
+def _judge_question_metadata() -> str:
+    return json.dumps(
+        {"taxonomy": _taxonomy().model_dump(mode="json"), "application_context": "", "target_instructions": "You help."}
+    )
+
+
+def _assert_judge_identifier(*, question: bool = True) -> ComponentIdentifier:
+    """A built-in ASSERT judge's identifier: the scenario's wrapper around the question that records its policy."""
+    judge = ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer",
+        class_module="pyrit.score.true_false.self_ask_true_false_scorer",
+        params={"question": {"metadata": _judge_question_metadata()}},
     )
     return ComponentIdentifier(
-        class_name=scorer_class, class_module="pyrit.score", children={"sub_scorers": [question]}
+        class_name="_AssertJudgedScorer",
+        class_module=AssertPolicy.__module__,
+        children={"sub_scorers": [judge]} if question else {},
     )
 
 
@@ -932,6 +1054,7 @@ def test_violation_without_violated_category_is_attributed_to_assigned_category(
         technique="single_turn",
         not_judged_reason=None,
         context=context,
+        policy_id="support-policy",
         judgment_mode="category_validated",
         nodes=(_node("public_policy", violated=False), _node("unknown", violated=True)),
         verdicts={"policy_violation": True},
@@ -940,6 +1063,7 @@ def test_violation_without_violated_category_is_attributed_to_assigned_category(
         technique="single_turn",
         not_judged_reason=None,
         context=context,
+        policy_id="support-policy",
         judgment_mode="category_validated",
         nodes=(),
         verdicts={"policy_violation": False},

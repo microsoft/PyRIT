@@ -229,7 +229,8 @@ rate for each judge dimension, read independently of the others: not-applicable
 answers and judge replies without a verdict are counted outside its denominator,
 and graded dimensions add grade counts and the median. It also reports a violation
 rate for each taxonomy category over the conversations that judged it relevant,
-kept separate for policies that share a behavior or category name, and why
+kept separate for each policy the judge used (its taxonomy, application context,
+and target instructions), even when policies share a behavior or category name, and why
 unjudged conversations have no verdict. Every rate is an `AssertBinaryRate`
 with ASSERT's 90% Wilson interval and a flag for fewer than 5 applicable
 conversations.
@@ -238,10 +239,11 @@ The result must come from `foundry.assert_policy`: its saved registry name
 decides, and an older result without one must come from PyRIT's `AssertPolicy`
 class and module, not another class with the same name. A conversation's policy
 comes from the stored seed group with exactly the seeds the result recorded, and
-only when that group's taxonomy matches the one the policy judge recorded in its
-saved scorer identifier. Otherwise, for example after the dataset is replaced or
-its policy edited, the conversation is counted as having no matching stored
-policy and left out of the stance and category rates. The judge doesn't record
+only when that group's taxonomy matches the one ASSERT's built-in policy judge
+recorded in its saved scorer identifier. Otherwise, for example after the dataset
+is replaced or its policy edited, or when the policy score has no such record,
+the conversation is counted as having no matching stored policy and left out of
+the stance and category rates; its dimension rates still count it. The judge doesn't record
 the category a conversation was generated for, so that category, which only
 attributes a violation without a violated category, is read from the stored
 group. A supplied `objective_scorer`'s verdicts are reported as the `objective`

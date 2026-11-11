@@ -49,7 +49,8 @@ class AssertCategoryMetrics(_AssertMetricsModel):
 
     ``attributed_by_fallback`` counts violation verdicts without a violated category, which are
     attributed to the conversation's assigned category, as ASSERT's findings do. ``policy_id``
-    identifies the taxonomy, so policies that share a behavior name are reported separately.
+    identifies the policy the judge used (taxonomy, application context, and target instructions), so
+    policies that share a behavior or category name are reported separately.
     """
 
     behavior_name: str
