@@ -183,7 +183,7 @@ await output_attack_async(result)
 # - `audio_format`: The format of the saved audio, one of `wav` (default), `mp3`, `aac`, `flac`, `opus`, or `pcm16`. `pcm16` responses are saved as `.wav` files.
 # - `prefer_transcript_for_history`: When `True` (default), earlier user turns that contain both audio and a text transcript are sent as text only to save bandwidth and tokens. The latest user turn still includes its audio.
 #
-# The config is converted to Chat Completions request parameters and merged into `extra_body_parameters`. If the same key is also set in `extra_body_parameters`, the explicit value wins. Each reply contains a transcript `text` piece and an `audio_path` piece that points to the saved audio file. Assistant audio is not sent back on later turns because the transcript carries its content.
+# The config is converted to Chat Completions request parameters and merged into `extra_body_parameters`. If the same key is also set in `extra_body_parameters`, the explicit value wins. A typical audio reply contains a transcript `text` piece and an `audio_path` piece that points to the saved audio file; either piece is omitted if the API does not return it. Assistant audio is not sent back on later turns because the transcript carries its content.
 #
 # Audio output is only available through the Chat Completions API. The Responses API does not support it, and for live audio conversations use `RealtimeTarget` instead.
 #
