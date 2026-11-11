@@ -218,7 +218,7 @@ def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> Non
         for parameter in summary.model_dump(mode="json")["supported_parameters"]
     }
     assert described == {
-        "words": {"type_name": "list[str]", "is_list": True, "default": None},
+        "words": {"type_name": "list[str] | None", "is_list": True, "default": None},
         "size": {"type_name": "int", "is_list": False, "default": None},
     }
     assert metadata.supported_parameters[0].param_type == Collection[str] | None
@@ -337,7 +337,7 @@ class TestAdversarialEstimateScope:
         target_registry.instances.get.side_effect = targets.get
 
         async def estimate_async(scenario: Scam, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
-            assert scenario._adversarial_chat is selected
+            assert scenario._adversarial_chat is None
             assert get_default_adversarial_target() is selected
             return ScenarioRunSizeEstimate(total_attack_count=0)
 
@@ -346,7 +346,7 @@ class TestAdversarialEstimateScope:
             patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
             patch.object(Scam, "get_run_size_estimate_async", autospec=True, side_effect=estimate_async),
             patch(
-                "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
+                "pyrit.prompt_target.OpenAIChatTarget",
                 side_effect=AssertionError("The request must not construct the server fallback."),
             ),
         ):
