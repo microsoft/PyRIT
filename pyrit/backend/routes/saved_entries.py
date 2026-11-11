@@ -162,7 +162,7 @@ async def delete_saved_entry(  # pyrit-async-suffix-exempt
     },
 )
 async def update_saved_entry(  # pyrit-async-suffix-exempt
-    kind: RegistryRecipeKind, name: SavedEntryName, body: UpdateSavedEntryRequest, request: Request
+    *, kind: RegistryRecipeKind, name: SavedEntryName, body: UpdateSavedEntryRequest, request: Request
 ) -> SavedEntryUpdateResponse | JSONResponse:
     """
     Change a saved entry's settings: send back the recipe GET returned, changed, with its version.
