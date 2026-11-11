@@ -13,11 +13,13 @@ import type {
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
  * purpose-built control for each of these (target, techniques, datasets,
- * labels, concurrency, retries, baseline), and `technique_converters` has no
- * UI at all. They're hidden from the dynamic scenario-specific parameter list.
+ * labels, concurrency, retries, baseline). `technique_converters` and the
+ * configured `scoring_target` have no control. They're hidden from the dynamic
+ * scenario-specific parameter list.
  */
 export const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
   'objective_target',
+  'scoring_target',
   'scenario_techniques',
   'technique_converters',
   'local_technique_factory',
@@ -58,6 +60,7 @@ export interface ScenarioLaunchInput {
   scenario: RegisteredScenario
   targetName: string
   adversarialTargetName: string
+  scoringTargetName?: string
   techniques: string[]
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
@@ -93,6 +96,7 @@ export function buildEstimateRequest({
   scenario,
   targetName,
   adversarialTargetName,
+  scoringTargetName,
   techniques,
   dynamicParameters,
   scenarioParamValues,
@@ -142,6 +146,7 @@ export function buildEstimateRequest({
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
   const request: ScenarioRunSizeEstimateRequest = {}
+  if (scoringTargetName) request.scoring_target_name = scoringTargetName
   if (objectiveScorer) request.objective_scorer = objectiveScorer
   if (techniqueOverride) request.technique_override = techniqueOverride
   if (supportsParameter(scenario, 'scenario_techniques')) {
