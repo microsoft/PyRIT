@@ -13,8 +13,9 @@ import type {
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
  * purpose-built control for each of these (target, techniques, datasets,
- * labels, concurrency, retries, baseline), and `technique_converters` has no
- * UI at all. They're hidden from the dynamic scenario-specific parameter list.
+ * labels, concurrency, retries, baseline). `technique_converters` and the
+ * configured `scoring_target` have no control. They're hidden from the dynamic
+ * scenario-specific parameter list.
  */
 export const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
   'objective_target',
@@ -157,7 +158,7 @@ export function buildEstimateRequest({
   if (supportsParameter(scenario, 'objective_target') && targetName) {
     request.target_name = targetName
   }
-  if (adversarialTargetName) {
+  if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
   if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
