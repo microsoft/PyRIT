@@ -127,7 +127,6 @@ export interface ConversationEditState {
   sourceConversationId?: string | null
   sourceAttackId?: string | null
   sourcePieceIds?: string[]
-  temperature?: string
   target?: TargetReference | null
   pendingPromptId?: string
   unsavedImport?: boolean
@@ -138,7 +137,7 @@ export interface ChatDraftContent {
   attachments: MessageAttachment[]
   systemPrompt?: string
   objective?: string
-  temperature?: string
+  generationDraft?: RequestGenerationDraft
   chatScorer?: RegisteredComponentReference | null
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
@@ -285,6 +284,28 @@ export interface MessageMediaDisplayPiece {
 
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
+/** Provider-neutral options for one outbound send, not target defaults. */
+export interface RequestGenerationConfig {
+  readonly temperature?: number | null
+}
+
+/** Editable text is validated and converted to numeric request options at submission. */
+export type RequestGenerationDraft = {
+  readonly [Field in keyof RequestGenerationConfig]?: string
+}
+
+export interface ParameterResolution {
+  readonly requested: number | null
+  readonly resolved: number | null
+  readonly source: 'request' | 'target_default' | 'provider_default'
+}
+
+/** Framework-authored parameter evidence associated with the originating request. */
+export interface RequestGenerationInfo {
+  readonly temperature: ParameterResolution
+  readonly request_piece_ids: readonly string[]
+}
+
 export interface Message {
   /** Saved sequence used to keep a split turn stable across piece pages. */
   sequence?: number
@@ -313,6 +334,9 @@ export interface Message {
   originalContent?: string
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[]
+  /** Saved provider parameter evidence, not a new request option. */
+  generationDescription?: string
+  generationDetails?: string
 }
 
 export interface MessageError {
@@ -448,6 +472,8 @@ export interface ManualContinuation {
 }
 
 export interface TargetCapabilities {
+  input_modalities?: string[][]
+  output_modalities?: string[][]
   supports_multi_turn: boolean
   supports_multi_message_pieces?: boolean
   supports_json_schema: boolean
@@ -455,6 +481,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
@@ -486,13 +513,12 @@ export interface TargetInstance {
   saved_by?: string | null
   /** Whether the signed-in user is the one who saved the target. */
   saved_by_me?: boolean
-  reconstructable?: boolean
-  reconstruction_error?: string | null
-  supports_temperature_override?: boolean
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Inclusive runtime bounds by option; missing entries mean unknown bounds, not lack of support. */
+  generation_ranges?: Partial<Record<keyof RequestGenerationConfig, readonly [number, number]>>
   /** Effective replay support, including configured adapters and provider restoration. */
   supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
@@ -618,11 +644,13 @@ export interface TargetBinding {
   source_hash: string
   temperature: number
   effective_hash: string
+  capabilities?: TargetCapabilities | null
 }
 
 export interface UnregisteredTarget {
   identifier: TargetIdentifier
   capabilities: TargetCapabilities
+  generation_ranges?: TargetInstance['generation_ranges']
 }
 
 export interface UnregisteredConverter {
@@ -734,6 +762,7 @@ export interface RegistryReferenceOption {
 
 export interface Parameter {
   name: string
+  /** Serialized type, retaining nullability, e.g. `int | None` or `list[str] | None`. */
   type_name: string
   required: boolean
   /** Scalar default renders as a display string; a list default renders as a list of display strings. */
@@ -825,6 +854,8 @@ export interface TargetInfo {
   model_name?: string | null
   identifier_hash: string
   binding?: TargetBinding | null
+  capabilities?: TargetCapabilities | null
+  supports_history_replay?: boolean | null
 }
 
 export type AttackTargetResolutionStatus =
@@ -1122,7 +1153,6 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
-  temperature?: string
   unsavedImport?: boolean
   pendingPromptId?: string
 }
@@ -1761,6 +1791,8 @@ export interface ScenarioSuiteLaunchEntrySnapshot {
 
 /** Launch-owned fields and optimistic preconditions for one suite execution. */
 export interface LaunchScenarioSuiteRequest {
+  scoring_target_name?: string | null
+  objective_scorer?: RegisteredComponentReference | null
   expected_version: string | null
   entries: ScenarioSuiteLaunchEntrySnapshot[]
   target_name: string
@@ -1771,6 +1803,10 @@ export interface LaunchScenarioSuiteRequest {
   max_retries?: number | null
   operation_id?: string | null
   labels?: Record<string, string> | null
+}
+
+export interface ScenarioSuiteReadinessRequest extends Omit<LaunchScenarioSuiteRequest, 'target_name'> {
+  target_name?: string | null
 }
 
 export type ScenarioSuiteExecutionStatus =
@@ -1819,6 +1855,7 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
@@ -1889,6 +1926,7 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
@@ -1900,6 +1938,11 @@ export interface ScenarioRunSizeEstimateRequest {
   datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
+}
+
+export interface ScenarioReadiness {
+  bindings: Array<{ role: string; component: string; identifier: ComponentIdentifier }>
+  issues: Array<{ role: string; component: string; reason: string; remediation: string }>
 }
 
 export interface ScenarioRunEstimateComponent {
@@ -2196,6 +2239,68 @@ export interface ScenarioRunPlanSeedPrompt {
   role?: string | null
   sequence: number
   parameters: string[]
+}
+
+export interface PairedOutcomeStatistics {
+  baseline_group_id: string
+  attack_group_id: string
+  planned_pairs: number
+  decided_pairs: number
+  excluded_pairs: number
+  failure_to_success: number
+  success_to_failure: number
+  failure_to_failure: number
+  success_to_success: number
+  baseline_success_rate: number | null
+  attack_success_rate: number | null
+  paired_difference: number | null
+  missing_baseline: number
+  missing_attack: number
+  missing_both: number
+  baseline_errors: number
+  attack_errors: number
+  baseline_undetermined: number
+  attack_undetermined: number
+  unmatched_baseline_seeds: number
+  unmatched_attack_seeds: number
+  unattributed_attempts: number
+}
+
+/** Detail pages use the aggregate's exact pairing, exclusions, and latest top-level outcome. */
+export type PairedOutcomeTransition =
+  | 'failure_to_success'
+  | 'success_to_failure'
+  | 'failure_to_failure'
+  | 'success_to_success'
+
+export interface PairedOutcomeDetailSide {
+  outcome: AttackOutcome
+  attack_result_id: string
+  conversation_id: string
+  timestamp: string
+  outcome_reason: string | null
+  child_conversation?: {
+    attack_result_id: string
+    conversation_id: string
+    outcome: AttackOutcome
+  } | null
+}
+
+export interface PairedOutcomeDetail {
+  seed_group_id: string
+  objective: string
+  seed_prompts: ScenarioRunPlanSeedPrompt[]
+  baseline: PairedOutcomeDetailSide
+  attack: PairedOutcomeDetailSide
+}
+
+export interface PairedOutcomeDetailPage {
+  baseline_group_id: string
+  attack_group_id: string
+  transition: PairedOutcomeTransition
+  pairs: PairedOutcomeDetail[]
+  total_pairs: number
+  next_cursor: string | null
 }
 
 export interface ScenarioRunPlanAtomicGroup {

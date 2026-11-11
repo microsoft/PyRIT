@@ -6,7 +6,7 @@
 from collections.abc import Callable, Collection, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Union
+from typing import Any, Literal, Union, get_args
 
 import pytest
 from pydantic import ValidationError
@@ -124,6 +124,125 @@ def test_strict_json_reference_shape_and_nullable_names() -> None:
     assert parameter.validate_json_value(["one", "one"]) == ["one", "one"]
     with pytest.raises(ValidationError):
         parameter.validate_json_value([object()])
+
+
+@pytest.mark.parametrize(
+    ("parameter", "type_name"),
+    [
+        (Parameter(name="offset", description="", param_type=int | None), "int | None"),
+        (Parameter(name="values", description="", param_type=list[int] | None), "list[int] | None"),
+        (Parameter(name="mode", description="", param_type=Literal["a", "b"] | None), "str | None"),
+        (Parameter(name="flag", description="", param_type=bool | None), "bool | None"),
+        (Parameter(name="ratio", description="", param_type=float | None), "float | None"),
+        (Parameter(name="speed", description="", param_type=_Speed | None), "_Speed | None"),
+        (
+            Parameter(
+                name="target",
+                description="",
+                reference=RegistryReference(component_type=ComponentType.TARGET, annotation=object | None),
+            ),
+            "str | None",
+        ),
+        (
+            Parameter(
+                name="targets",
+                description="",
+                reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object] | None),
+            ),
+            "list[str] | None",
+        ),
+    ],
+    ids=["scalar", "list", "choices", "boolean", "float", "enum", "reference", "list-reference"],
+)
+def test_nullable_parameter_round_trip_keeps_accepting_none(parameter: Parameter, type_name: str) -> None:
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+    assert parameter.type_name == type_name
+    assert restored.type_name.endswith(" | None")
+    assert "nullable" not in parameter.model_dump()
+    assert parameter.validate_json_value(None) is None
+    assert restored.validate_json_value(None) is None
+
+
+@pytest.mark.parametrize(
+    ("annotation", "type_name", "choices", "values"),
+    [
+        (Literal[None, "a", "None"], "str | None", ["a", "None"], [None, "a", "None"]),
+        (Literal["a", None] | None, "str | None", ["a"], [None, "a"]),
+        (Literal[None, 1, 2], "int | None", ["1", "2"], [None, 1, 2]),
+        (Literal[None], "None", [], [None]),
+        (list[Literal[None, "a"]], "list[str | None]", ["a"], [[None, "a"]]),
+        (list[int | None], "list[int | None]", None, [[None, 1]]),
+        (list[int | None] | None, "list[int | None] | None", None, [None, [None, 1]]),
+    ],
+)
+def test_nullable_literal_and_list_elements_round_trip(
+    annotation: Any, type_name: str, choices: list[str] | None, values: list[Any]
+) -> None:
+    parameter = Parameter(name="setting", description="", param_type=annotation)
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.type_name == type_name
+        assert candidate.choices == choices
+        for value in values:
+            assert candidate.validate_json_value(value) == value
+            assert candidate.coerce_value(value) == value
+        with pytest.raises(ValueError):
+            candidate.validate_json_value({"invalid": "value"})
+
+
+@pytest.mark.parametrize(
+    ("type_name", "is_list", "value"),
+    [("int", False, 7), ("list[int]", True, [7]), ("str", False, "name")],
+)
+def test_legacy_wire_without_nullable_type_keeps_its_contract(type_name: str, is_list: bool, value: Any) -> None:
+    restored = Parameter.model_validate(
+        {"name": "setting", "description": "", "type_name": type_name, "is_list": is_list}
+    )
+    assert restored.type_name == type_name
+    assert restored.validate_json_value(value) == value
+    with pytest.raises(ValidationError):
+        restored.validate_json_value(None)
+
+
+def test_nullable_types_survive_constructor_derivation_and_catalog_json() -> None:
+    from pyrit.backend.models.targets import TargetTypeEntry, TargetTypeResponse
+    from pyrit.registry.resolution import derive_parameters
+
+    class Component:
+        def __init__(self, *, offset: int | None, values: list[int] | None = None) -> None:
+            pass
+
+    parameters = derive_parameters(cls=Component)
+    catalog = TargetTypeResponse(items=[TargetTypeEntry(target_type="Component", parameters=parameters)])
+    restored = TargetTypeResponse.model_validate_json(catalog.model_dump_json())
+
+    assert parameters[0].required
+    assert not parameters[1].required
+    for parameter in restored.items[0].parameters:
+        assert parameter.validate_json_value(None) is None
+    assert restored.items[0].parameters[0].validate_json_value(7) == 7
+    assert restored.items[0].parameters[1].validate_json_value([7]) == [7]
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        Parameter(name="offset", description="", param_type=int),
+        Parameter(name="values", description="", param_type=list[int]),
+        Parameter(name="target", description="", reference=RegistryReference(component_type=ComponentType.TARGET)),
+    ],
+    ids=["scalar", "list", "reference"],
+)
+def test_non_nullable_parameter_round_trip_keeps_rejecting_none(parameter: Parameter) -> None:
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+    assert "nullable" not in restored.model_dump()
+    for candidate in (parameter, restored):
+        with pytest.raises(ValidationError):
+            candidate.validate_json_value(None)
 
 
 def test_scalar_projection_keeps_enum_values_but_does_not_coerce_source_types() -> None:
@@ -270,6 +389,16 @@ class TestParameterSerialization:
         assert dumped["type_name"] == "str"
         assert dumped["choices"] == ["a", "b"]
 
+    @pytest.mark.parametrize("default", [REQUIRED_VALUE, None])
+    def test_required_status_round_trips(self, default: object) -> None:
+        original = Parameter(name="count", description="d", param_type=int, default=default)
+
+        restored = Parameter.model_validate_json(original.model_dump_json())
+
+        assert restored.required is original.required
+        assert restored.default is default
+        assert restored.coerce_value("5") == 5
+
     def test_enum_default_serializes_to_member_value(self) -> None:
         dumped = Parameter(name="speed", description="d", default=_Speed.FAST, param_type=_Speed).model_dump()
 
@@ -300,12 +429,12 @@ class TestParameterSerialization:
         """``Optional[int]`` renders the base scalar name, matching choices/coercion."""
         dumped = Parameter(name="n", description="d", param_type=int | None).model_dump()
 
-        assert dumped["type_name"] == "int"
+        assert dumped["type_name"] == "int | None"
 
     def test_optional_list_preserves_display_and_coercion(self) -> None:
         parameter = Parameter(name="values", description="", param_type=list[int] | None)
         parameter.validate()
-        assert parameter.type_name == "list[int]"
+        assert parameter.type_name == "list[int] | None"
         assert parameter.is_list
         assert parameter.coerce_value(None) is None
         assert parameter.coerce_value(["1"]) == [1]
@@ -340,7 +469,7 @@ def test_path_or_str_contract_round_trip(annotation: object) -> None:
         assert candidate.is_path is False
         assert candidate.is_path_or_str is True
         assert candidate.is_string_coercible is True
-        assert candidate.type_name == "Path | str"
+        assert candidate.type_name == ("Path | str | None" if type(None) in get_args(annotation) else "Path | str")
         assert candidate.is_list is False
         assert candidate.coerce_value(url) == url
         assert candidate.coerce_value(path) is path
@@ -829,14 +958,14 @@ class TestForExternalCatalog:
         ("param_type", "type_name", "is_list", "choices"),
         [
             (Collection[str], "list[str]", True, None),
-            (Sequence[int] | None, "list[int]", True, None),
+            (Sequence[int] | None, "list[int] | None", True, None),
             (Collection[_Speed], "list[str]", True, ["fast", "slow"]),
             (int | tuple[int, int], "int", False, None),
             (int | Literal["4", "8", "12"], "int", False, None),
             (str | list[str], "str", False, None),
             (Sequence[str] | str, "list[str]", True, None),
             (_Speed | str, "_Speed", False, ["fast", "slow"]),
-            (str | Callable[[], str] | None, "str", False, None),
+            (str | Callable[[], str] | None, "str | None", False, None),
         ],
     )
     def test_describes_the_external_form(

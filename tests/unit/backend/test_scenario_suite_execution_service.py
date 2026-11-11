@@ -24,6 +24,7 @@ from pyrit.backend.services.scenario_suite_execution_service import (
 )
 from pyrit.models import (
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
+    ComponentIdentifier,
     LaunchScenarioSuiteRequest,
     PresetEntry,
     PresetIssue,
@@ -39,6 +40,7 @@ from pyrit.models.catalog import (
     RunScenarioRequest,
     ScenarioRunSummary,
 )
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteLaunchConflictError,
@@ -141,6 +143,7 @@ async def _wait_for_submissions(service: ScenarioSuiteExecutionService) -> None:
 @pytest.fixture
 async def execution_context(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[
     tuple[
         ScenarioSuiteExecutionService,
@@ -153,6 +156,11 @@ async def execution_context(
     None,
 ]:
     """Create isolated registries and a controllable run service."""
+    monkeypatch.setattr(
+        _execution_mod.ScenarioConfigurationResolver,
+        "resolve_readiness",
+        MagicMock(return_value=ScenarioReadiness()),
+    )
     suite_registry = ScenarioSuiteRegistry(storage=ScenarioSuiteStorage(source=str(tmp_path)))
     preset_registry = MagicMock(spec=ScenarioPresetRegistry)
     presets = {
@@ -224,6 +232,24 @@ async def test_launch_queues_entries_in_order_and_stamps_versioned_metadata(
     """Test server-owned identity, launch propagation, ordering, and child metadata."""
     service, suite_registry, _, _, calls, _ = execution_context
     stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    bindings = [
+        [
+            ScenarioRoleBinding(
+                role=role, component=f"child-{index}", identifier=ComponentIdentifier(class_name=f"{role}-{index}")
+            )
+            for role in (
+                "objective_target",
+                "objective_scorer",
+                "scoring_target",
+                "adversarial_target",
+                "converter:flip:0",
+            )
+        ]
+        for index in (1, 2)
+    ]
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(bindings=child_bindings) for child_bindings in bindings
+    ]
 
     accepted = await service.launch_async(
         name="weekly",
@@ -247,6 +273,10 @@ async def test_launch_queues_entries_in_order_and_stamps_versioned_metadata(
         assert request.max_retries == 3
         assert request.operation_id == OPERATION_ID
         assert request.labels == {"team": "purple"}
+    for (_, metadata), child_bindings in zip(calls, bindings, strict=True):
+        assert metadata["scenario_expected_role_references_v1"] == {
+            f"{binding.role}_hash": binding.identifier.hash for binding in child_bindings
+        }
 
     first_metadata = calls[0][1][SCENARIO_SUITE_EXECUTION_METADATA_KEY]
     second_metadata = calls[1][1][SCENARIO_SUITE_EXECUTION_METADATA_KEY]
@@ -263,6 +293,29 @@ async def test_launch_queues_entries_in_order_and_stamps_versioned_metadata(
     assert second_metadata["suite_execution_id"] == str(accepted.suite_execution_id)
     assert second_metadata["suite_entry_id"] == str(ENTRY_TWO)
     assert second_metadata["entry_position"] == 2
+
+
+async def test_invalid_later_child_rejects_all_admission_async(execution_context) -> None:
+    service, suite_registry, _, run_service, calls, _ = execution_context
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(),
+        ScenarioReadiness(
+            issues=[
+                ScenarioConfigurationIssue(
+                    role="scoring_target",
+                    component="scenario.second",
+                    reason="No scoring model.",
+                    remediation="Select a scoring target.",
+                )
+            ]
+        ),
+    ]
+    with pytest.raises(ScenarioSuiteNotRunnableError, match="second.*scoring_target"):
+        await service.launch_async(name="weekly", request=_launch_request(suite_version=stored.version))
+    run_service.start_run_async.assert_not_awaited()
+    assert calls == []
+    assert service._executions == {}
 
 
 async def test_registered_suite_and_presets_launch_with_nullable_versions(

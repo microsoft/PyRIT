@@ -612,7 +612,7 @@ class TestListConverterTypes:
         assert metadata is not None
         registry_parameters = {parameter.name: parameter for parameter in metadata.parameters}
 
-        assert registry_parameters["font_color"].type_name == "tuple[int, int, int]"
+        assert registry_parameters["font_color"].type_name == "tuple[int, int, int] | None"
         assert not registry_parameters["font_color"].is_external_input
 
     async def test_types_describe_parameters_in_the_form_callers_send(self, upload_service: ConverterService) -> None:
@@ -634,7 +634,7 @@ class TestListConverterTypes:
         }
         for name in ("stopwords", "candidate_words"):
             assert serialized[("SATAMaskingConverter", name)] == {
-                "type_name": "list[str]",
+                "type_name": "list[str] | None",
                 "is_list": True,
                 "choices": None,
                 "default": None,
@@ -646,13 +646,13 @@ class TestListConverterTypes:
             for parameter in metadata.parameters
         }
         assert registry[("AddImageTextConverter", "font_size")] == "int | tuple[int, int]"
-        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str]"
+        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str] | None"
 
     @pytest.mark.parametrize(
         ("converter_type", "parameter_name", "type_name", "required", "is_list"),
         [
             ("SearchReplaceConverter", "replace", "str", True, False),
-            ("DenylistConverter", "denylist", "list[str]", False, True),
+            ("DenylistConverter", "denylist", "list[str] | None", False, True),
         ],
     )
     async def test_types_expose_structured_parameters(

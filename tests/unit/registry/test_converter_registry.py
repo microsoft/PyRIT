@@ -682,7 +682,7 @@ class TestDeriveParameters:
         params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
         offset_param = next(p for p in params if p.name == "offset")
         assert offset_param.param_type == int | None
-        assert offset_param.type_name == "int"
+        assert offset_param.type_name == "int | None"
         assert offset_param.coerce_value(None) is None
         assert offset_param.reference is None
         assert offset_param.is_string_coercible is True

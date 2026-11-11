@@ -56,6 +56,21 @@ describe('TechniqueEditor', () => {
     ] })
   })
 
+  it('should offer techniques with required nullable numeric parameters', async () => {
+    const user = userEvent.setup()
+    techniques.listTypes.mockResolvedValue({ items: [{
+      attack_type: 'nullable_attack', description: '', supports_converters: false, supports_adversarial: false,
+      parameters: [{ name: 'count', type_name: 'int | None', required: true }],
+    }] })
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider>
+      <TechniqueEditor />
+    </UserPreferencesProvider></FluentProvider>)
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Attack type' }), 'nullable_attack')
+    expect(screen.getByRole('spinbutton', { name: 'count' })).toBeEnabled()
+    await user.type(screen.getByRole('spinbutton', { name: 'count' }), '7')
+    expect(screen.getByRole('spinbutton', { name: 'count' })).toHaveValue(7)
+  })
+
   it('should exclude SDK-only targets from technique references', async () => {
     const original = configuration()
     original.parameters = [{
@@ -374,10 +389,10 @@ describe('TechniqueEditor', () => {
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
   })
 
-  it('should distinguish an explicit empty text value from an untouched default', async () => {
+  it.each(['str', 'str | None'])('should preserve explicit empty %s values', async (typeName: string) => {
     const user = userEvent.setup()
     const original = configuration()
-    original.parameters.push({ name: 'text_setting', type_name: 'str', required: false })
+    original.parameters.push({ name: 'text_setting', type_name: typeName, required: false })
     original.settings.params = { ...original.settings.params, text_setting: 'source text' }
     render(tree(original))
     await user.clear(await screen.findByRole('textbox', { name: 'text_setting' }))
