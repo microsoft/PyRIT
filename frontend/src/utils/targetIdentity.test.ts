@@ -13,6 +13,25 @@ import {
 } from './targetIdentity'
 
 describe('targetIdentity', () => {
+  it('persists a bound target by source identity without changing its execution identity', () => {
+    const source = makeTarget({ target_registry_name: 'chat', identifier_hash: 'source-hash' })
+    const bound = {
+      ...makeTarget({ target_registry_name: 'private-temperature-target', identifier_hash: 'effective-hash' }),
+      binding: {
+        version: 1 as const, source_name: 'chat', source_hash: 'source-hash',
+        effective_hash: 'effective-hash', temperature: 0.7,
+      },
+    }
+    expect(targetReference(bound)).toEqual(targetReference(source))
+    expect(resolveTargetReference(targetReference(bound), [source])).toBe(source)
+    expect(resolveTargetReference(targetReference(bound), [
+      makeTarget({ target_registry_name: 'chat', identifier_hash: 'replacement-hash' }),
+    ])).toBeNull()
+    expect(targetIdentifierHash(bound)).toBe('effective-hash')
+    expect(targetInfoMatchesTarget({ identifier_hash: 'effective-hash' }, bound)).toBe(true)
+    expect(bound.binding.temperature).toBe(0.7)
+  })
+
   it('resolves references against refreshed instances without accepting replaced targets', () => {
     const target = makeTarget({ target_registry_name: 'chat', identifier_hash: 'original' })
     const refreshed = { ...target }

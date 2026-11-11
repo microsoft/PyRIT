@@ -9,9 +9,8 @@ import pytest
 from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import EmbeddingDataEntry, MemoryInterface, PromptMemoryEntry
 from pyrit.memory.memory_interface import _normalize_attribution_filter_values
-from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.models import MessagePiece
 
 

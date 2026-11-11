@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.score import PathTraversalOutputScorer
 
 
@@ -34,6 +33,12 @@ from pyrit.score import PathTraversalOutputScorer
         "IIS config: ../../web.config",
         "IIS config backslashes: ..\\..\\web.config",
         "IIS config encoded dot: ../../web%2econfig",
+        "Null byte: ../../../etc/passwd\x00.png",
+        "Encoded null byte: ../../../etc/passwd%00",
+        "Encoded null byte before suffix: ../../../etc/passwd%00.png",
+        "Fully encoded with null byte: ..%2f..%2fetc%2fpasswd%00.png",
+        "Double-encoded null byte: ../../../etc/passwd%2500.jpg",
+        "Environment file with null byte: ../../.env%00.txt",
     ],
 )
 async def test_path_traversal_detected(text: str, patch_central_database):

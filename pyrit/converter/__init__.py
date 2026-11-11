@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from pyrit.converter.emoji_converter import EmojiConverter
     from pyrit.converter.first_letter_converter import FirstLetterConverter
     from pyrit.converter.flip_converter import FlipConverter
+    from pyrit.converter.fullwidth_converter import FullwidthConverter
     from pyrit.converter.grid_composite_converter import GridCompositeConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
@@ -72,6 +73,7 @@ if TYPE_CHECKING:
     from pyrit.converter.json_string_converter import JsonStringConverter
     from pyrit.converter.leetspeak_converter import LeetspeakConverter
     from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
+    from pyrit.converter.logic_jailbreak_converter import LogicJailbreakConverter
     from pyrit.converter.lsb_image_stego_converter import (
         LSBImageStegoConverter,
         LSBImageStegoDecodeConverter,
@@ -189,6 +191,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "EmojiConverter": "pyrit.converter.emoji_converter",
     "FirstLetterConverter": "pyrit.converter.first_letter_converter",
     "FlipConverter": "pyrit.converter.flip_converter",
+    "FullwidthConverter": "pyrit.converter.fullwidth_converter",
     "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
@@ -203,6 +206,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "KeywordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "LeetspeakConverter": "pyrit.converter.leetspeak_converter",
     "LLMGenericTextConverter": "pyrit.converter.llm_generic_text_converter",
+    "LogicJailbreakConverter": "pyrit.converter.logic_jailbreak_converter",
     "LSBImageStegoConverter": "pyrit.converter.lsb_image_stego_converter",
     "LSBImageStegoDecodeConverter": "pyrit.converter.lsb_image_stego_converter",
     "MaliciousQuestionGeneratorConverter": "pyrit.converter.malicious_question_generator_converter",

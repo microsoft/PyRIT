@@ -4,6 +4,9 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { readUserPreferences } from '@/utils/userPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { ScenarioSuiteResponse, TargetInstance } from '@/types'
 
@@ -14,8 +17,10 @@ jest.mock('@/services/api', () => ({
     launch: jest.fn(),
   },
 }))
+jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 const mockLaunch = scenarioSuitesApi.launch as jest.Mock
+const mockUseRuntime = jest.mocked(useRuntime)
 const mockNavigate = jest.fn()
 
 jest.mock('react-router', () => ({
@@ -81,6 +86,7 @@ function makeSuite({
 }
 
 interface RenderOptions {
+  targets?: TargetInstance[]
   suite?: ScenarioSuiteResponse
   defaultObjectiveTarget?: TargetInstance | null
   defaultAdversarialTarget?: TargetInstance | null
@@ -99,13 +105,14 @@ function renderDialog({
   labels = {},
   operationId = null,
   defaultsReady = true,
+  targets = [OBJECTIVE_TARGET, ADVERSARIAL_TARGET],
 }: RenderOptions = {}) {
   return render(
-    <FluentProvider theme={webLightTheme}>
+    <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <MemoryRouter>
         <LaunchSuiteDialog
           suite={suite}
-          targets={[OBJECTIVE_TARGET, ADVERSARIAL_TARGET]}
+          targets={targets}
           defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}
           labels={labels}
@@ -115,16 +122,115 @@ function renderDialog({
           onSuiteChanged={onSuiteChanged}
         />
       </MemoryRouter>
-    </FluentProvider>,
+    </UserPreferencesProvider></FluentProvider>,
   )
 }
 
 beforeEach(() => {
   jest.clearAllMocks()
+  window.localStorage.clear()
+  mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
   mockLaunch.mockResolvedValue({ suite_execution_id: 'execution-1' })
 })
 
 describe('LaunchSuiteDialog', () => {
+  it('keeps the original suite controls without inline component creation or readiness fields', () => {
+    renderDialog()
+    expect(screen.getAllByRole('combobox')).toHaveLength(2)
+    expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
+    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Use server default' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Create/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Suite configuration issues')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('confirm-launch-suite')).toBeEnabled()
+  })
+
+  function dialog(options: RenderOptions) {
+    return <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local"><MemoryRouter>
+      <LaunchSuiteDialog suite={makeSuite()} targets={options.targets ?? [OBJECTIVE_TARGET, ADVERSARIAL_TARGET]}
+        defaultObjectiveTarget={options.defaultObjectiveTarget ?? null}
+        defaultAdversarialTarget={options.defaultAdversarialTarget ?? null}
+        labels={{}} operationId={null} defaultsReady={options.defaultsReady ?? true}
+        onDismiss={onDismiss} onSuiteChanged={onSuiteChanged} />
+    </MemoryRouter></UserPreferencesProvider></FluentProvider>
+  }
+
+  it('hydrates untouched defaults when the registry arrives after opening', async () => {
+    const user = userEvent.setup()
+    const rendered = render(dialog({ targets: [], defaultsReady: false }))
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    rendered.rerender(dialog({
+      defaultObjectiveTarget: OBJECTIVE_TARGET, defaultAdversarialTarget: ADVERSARIAL_TARGET,
+    }))
+    expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
+    expect(await screen.findByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('adversarial-target')
+    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
+      target_name: 'objective-target', adversarial_target_name: 'adversarial-target',
+    }))
+  })
+
+  it('dismisses the dialog when reinitialization replaces targets under the same names', async () => {
+    const user = userEvent.setup()
+    const rendered = render(dialog({
+      defaultObjectiveTarget: OBJECTIVE_TARGET, defaultAdversarialTarget: ADVERSARIAL_TARGET,
+    }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'adversarial-target')
+    mockUseRuntime.mockReturnValue({ ready: false, state: 'initializing', generation: 'first' })
+    rendered.rerender(dialog({ defaultsReady: false }))
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+
+    const replacement = makeTarget({
+      target_registry_name: 'adversarial-target',
+      identifier: { ...ADVERSARIAL_TARGET.identifier, hash: 'replacement-identity' },
+    })
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+    rendered.rerender(dialog({ targets: [OBJECTIVE_TARGET, replacement] }))
+
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mockLaunch).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+  })
+
+  it('blocks submission while the runtime is unavailable even before defaults refresh', async () => {
+    const user = userEvent.setup()
+    mockUseRuntime.mockReturnValue({ ready: false, state: 'initializing', generation: 'first' })
+    renderDialog()
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    expect(mockLaunch).not.toHaveBeenCalled()
+  })
+
+  it('preserves changed targets and an explicit server-default choice on late hydration', async () => {
+    const user = userEvent.setup()
+    const rendered = render(dialog({ defaultAdversarialTarget: ADVERSARIAL_TARGET }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'adversarial-target')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Adversarial Target' }), '')
+    rendered.rerender(dialog({
+      defaultObjectiveTarget: OBJECTIVE_TARGET, defaultAdversarialTarget: ADVERSARIAL_TARGET,
+    }))
+    expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('adversarial-target')
+    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({ target_name: 'adversarial-target' }))
+    expect(mockLaunch.mock.calls[0][1]).not.toHaveProperty('adversarial_target_name')
+  })
+
+  it('does not replace an explicitly cleared objective or submit a removed target', async () => {
+    const user = userEvent.setup()
+    const rendered = render(dialog({ defaultObjectiveTarget: OBJECTIVE_TARGET }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), '')
+    rendered.rerender(dialog({ defaultObjectiveTarget: ADVERSARIAL_TARGET }))
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'objective-target')
+    rendered.rerender(dialog({ targets: [ADVERSARIAL_TARGET], defaultObjectiveTarget: ADVERSARIAL_TARGET }))
+    expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    expect(mockLaunch).not.toHaveBeenCalled()
+  })
+
   it('shows every entry in declared order', () => {
     renderDialog()
 
@@ -137,6 +243,7 @@ describe('LaunchSuiteDialog', () => {
   it('launches the reviewed suite and navigates to grouped progress', async () => {
     const user = userEvent.setup()
     renderDialog({ labels: { team: 'purple' }, operationId: OPERATION_ID })
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
 
     await user.click(screen.getByTestId('confirm-launch-suite'))
 
@@ -163,8 +270,9 @@ describe('LaunchSuiteDialog', () => {
       labels: { team: 'purple' },
     }))
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/scanner/suites/executions/execution-1',
+      '/scanner/history/suites/executions/execution-1',
     )
+    expect(readUserPreferences('local').lastUsedTargets?.objective?.registryName).toBe('objective-target')
   })
 
   it('launches code-defined suites and presets with null versions', async () => {
@@ -207,6 +315,7 @@ describe('LaunchSuiteDialog', () => {
     const retries = screen.getByTestId('suite-max-retries-input')
     await user.clear(retries)
     await user.type(retries, '2')
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-suite')).toBeEnabled())
     await user.click(screen.getByTestId('confirm-launch-suite'))
 
     await waitFor(() => expect(mockLaunch).toHaveBeenCalledWith(
