@@ -167,6 +167,7 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetGroupProfile,
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
@@ -5900,6 +5901,112 @@ class MemoryInterface(abc.ABC):
         """
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
+
+    @staticmethod
+    def _build_seed_dataset_group_profiles_statement(*, metadata_keys: Sequence[str]) -> "Select[Any]":
+        """
+        Bound profile materialization by boolean facts, not conversation lengths.
+
+        Returns:
+            Select[Any]: Portable aggregate query without seed bodies or taxonomy materialization.
+        """
+        keys = tuple(dict.fromkeys(metadata_keys))
+        objective = SeedEntry.seed_type == "objective"
+
+        def key_present(key: str) -> "ColumnElement[bool]":
+            items = JsonArrayItems(JsonContainer(SeedEntry.prompt_metadata, "$")).table_valued(column("key", Unicode))
+            return select(1).select_from(items).where(items.c.key == key).correlate(SeedEntry).exists()
+
+        flags = [
+            case((and_(objective, key_present(key)), 1), else_=0).label(f"metadata_{index}")
+            for index, key in enumerate(keys)
+        ]
+        # SQL Server requires correlated key-presence subqueries to be projected before aggregation.
+        seeds = (
+            select(
+                SeedEntry.dataset_name,
+                func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id).label("group_id"),
+                SeedEntry.seed_type,
+                SeedEntry.role,
+                case((and_(objective, key_present(AdversarialPrompts.METADATA_KEY)), 1), else_=0).label(
+                    "has_adversarial_prompts"
+                ),
+                *flags,
+            )
+            .where(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            .subquery()
+        )
+        groups = (
+            select(
+                seeds.c.dataset_name,
+                func.count().label("seed_count"),
+                func.sum(case((seeds.c.seed_type == "objective", 1), else_=0)).label("objective_count"),
+                func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role == "user"), 1), else_=0)).label(
+                    "user_prompt_count"
+                ),
+                func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role != "user"), 1), else_=0)).label(
+                    "non_user_prompt_count"
+                ),
+                func.sum(case((seeds.c.seed_type == "simulated_conversation", 1), else_=0)).label(
+                    "simulated_conversation_count"
+                ),
+                func.max(seeds.c.has_adversarial_prompts).label("has_adversarial_prompts"),
+                *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
+            )
+            .group_by(seeds.c.dataset_name, seeds.c.group_id)
+            .subquery()
+        )
+        columns = [
+            groups.c.dataset_name,
+            *(
+                case((condition, 1), else_=0).label(name)
+                for name, condition in (
+                    ("single_objective", groups.c.objective_count == 1),
+                    ("single_seed", groups.c.seed_count == 1),
+                    ("has_user_prompt", groups.c.user_prompt_count > 0),
+                    ("has_non_user_prompt", groups.c.non_user_prompt_count > 0),
+                    ("has_simulated_conversation", groups.c.simulated_conversation_count > 0),
+                )
+            ),
+            groups.c.has_adversarial_prompts,
+            *(groups.c[f"metadata_{index}"] for index in range(len(keys))),
+        ]
+        return select(*columns, func.count().label("group_count")).group_by(*columns)
+
+    def _execute_get_seed_dataset_group_profiles(
+        self, *, metadata_keys: Sequence[str]
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        keys = tuple(dict.fromkeys(metadata_keys))
+        statement = self._build_seed_dataset_group_profiles_statement(metadata_keys=keys)
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+        return [
+            SeedDatasetGroupProfile(
+                dataset_name=row["dataset_name"],
+                group_count=int(row["group_count"]),
+                single_objective=bool(row["single_objective"]),
+                single_seed=bool(row["single_seed"]),
+                has_user_prompt=bool(row["has_user_prompt"]),
+                has_non_user_prompt=bool(row["has_non_user_prompt"]),
+                has_simulated_conversation=bool(row["has_simulated_conversation"]),
+                has_adversarial_prompts=bool(row["has_adversarial_prompts"]),
+                metadata_keys=tuple(key for index, key in enumerate(keys) if row[f"metadata_{index}"]),
+            )
+            for row in rows
+        ]
+
+    async def get_seed_dataset_group_profiles_async(
+        self, *, metadata_keys: Sequence[str] = ()
+    ) -> Sequence[SeedDatasetGroupProfile]:
+        """
+        Read compressed group structure without hydrating seeds, policies, or prompt values.
+
+        Returns:
+            Sequence[SeedDatasetGroupProfile]: Counts of groups sharing the same stored structural facts.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_dataset_group_profiles, metadata_keys=tuple(metadata_keys)
+        )
 
     def _execute_get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
         """
