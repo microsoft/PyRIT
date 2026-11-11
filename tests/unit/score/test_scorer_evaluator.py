@@ -482,6 +482,67 @@ def test_compute_objective_metrics_partial_agreement(mock_objective_scorer):
     assert metrics.f1_score == pytest.approx(2 * 0.5 * 1.0 / (0.5 + 1.0))
 
 
+def test_compute_objective_metrics_reports_constant_guess_baselines(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # 5 responses, 2 of them true. Always answering false is right 3 times in 5; always answering
+    # true has precision 2/5 and recall 1, an F1 of 4/7.
+    all_human_scores = np.array([[1, 1, 0, 0, 0]])
+    all_model_scores = np.array([[1, 1, 0, 0, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_accuracy == pytest.approx(0.6)
+    assert metrics.baseline_f1_score == pytest.approx(4 / 7)
+    assert metrics.accuracy > metrics.baseline_accuracy
+    assert metrics.f1_score > metrics.baseline_f1_score
+
+
+def test_compute_objective_metrics_baseline_accuracy_guesses_the_more_common_label(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # 4 of 5 responses are true, so the best constant for accuracy is "true", not "false".
+    all_human_scores = np.array([[1, 1, 1, 1, 0]])
+    all_model_scores = np.array([[1, 1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_accuracy == pytest.approx(0.8)
+    assert metrics.baseline_f1_score == pytest.approx(8 / 9)
+
+
+def test_compute_objective_metrics_baselines_use_the_majority_vote_of_the_human_raters(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # Three raters; the majority vote is [1, 0, 0, 0], so one response in four is true.
+    all_human_scores = np.array([[1, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0]])
+    all_model_scores = np.array([[1, 0, 0, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_accuracy == pytest.approx(0.75)
+    assert metrics.baseline_f1_score == pytest.approx(0.4)
+
+
+def test_compute_objective_metrics_always_true_scorer_matches_the_f1_baseline(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 0, 1, 0]])
+    all_model_scores = np.array([[1, 1, 1, 1, 1]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.f1_score == pytest.approx(metrics.baseline_f1_score)
+    assert metrics.accuracy < metrics.baseline_accuracy
+
+
+def test_compute_objective_metrics_f1_baseline_is_zero_without_true_labels(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[0, 0, 0]])
+    all_model_scores = np.array([[0, 0, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_accuracy == 1.0
+    assert metrics.baseline_f1_score == 0.0
+
+
 def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     # 2 responses, 3 human scores each, all agree, model matches exactly
