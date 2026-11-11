@@ -24,6 +24,10 @@ def _is_compliant_wav(input_path: str, *, sample_rate: int, channels: int) -> bo
     """
     Check if the audio file is already a compliant WAV with the target format.
 
+    The file must be a WAV container whose path ends in ``.wav``, because
+    ``AzureSpeechAudioToTextConverter`` rejects any other path and sends the file's bytes as they are.
+    A matching PCM stream inside another container (such as MP4, MOV, MKV or AVI) is not compliant.
+
     Args:
         input_path (str): Path to the audio file.
         sample_rate (int): Expected sample rate in Hz.
@@ -32,9 +36,11 @@ def _is_compliant_wav(input_path: str, *, sample_rate: int, channels: int) -> bo
     Returns:
         bool: True if the file is already compliant, False otherwise.
     """
+    if not input_path.endswith(".wav"):
+        return False
     try:
         with av.open(input_path) as container:
-            if not container.streams.audio:
+            if container.format.name != "wav" or not container.streams.audio:
                 return False
             stream = container.streams.audio[0]
             codec_name = stream.codec_context.name
