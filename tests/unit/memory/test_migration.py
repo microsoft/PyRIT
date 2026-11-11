@@ -257,7 +257,10 @@ def test_score_piece_index_migration_round_trips() -> None:
             engine.dispose()
 
 
-@pytest.mark.parametrize("starting_revision", ["d6de1045cca4", "5d7f9b1c3e2a", "c4d1e8b72a90"])
+@pytest.mark.parametrize(
+    "starting_revision",
+    ["d6de1045cca4", "5d7f9b1c3e2a", "c4d1e8b72a90", "7f2c8a4d6e91", "c4e6a8b0d2f1"],
+)
 def test_score_piece_index_and_seed_decomposition_migrations_merge(starting_revision: str) -> None:
     engine = create_engine("sqlite:///:memory:")
     try:
@@ -275,6 +278,10 @@ def test_score_piece_index_and_seed_decomposition_migrations_merge(starting_revi
             assert {"parent_objective_id", "paths"} <= {
                 column["name"] for column in inspect(connection).get_columns("SeedPromptEntries")
             }
+            assert {"DatasetLifecycleLock", "DatasetLifecycleEntries", "DatasetMediaEntries"} <= set(
+                inspect(connection).get_table_names()
+            )
+            assert connection.execute(text("SELECT id FROM DatasetLifecycleLock")).scalar_one() == 1
             indexes = {
                 index["name"]: index["column_names"] for index in inspect(connection).get_indexes("ScoreEntries")
             }
