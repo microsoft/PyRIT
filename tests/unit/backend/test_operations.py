@@ -806,9 +806,9 @@ async def test_concurrent_attach_preserves_one_association_async(
 ) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "evidence.db", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "evidence.db", _defer_initialization=True)
     try:
-        await asyncio.to_thread(Base.metadata.create_all, memory.engine)
+        await memory.initialize_async()
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             operation, finding, attack = await _store_evidence_source_async(memory)
             request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id)

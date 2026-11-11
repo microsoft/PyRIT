@@ -383,6 +383,14 @@ export const runtimeApi = {
 }
 
 export const targetsApi = {
+  detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
+    const response = await apiClient.post<TargetInstance>(
+      `/targets/${encodeURIComponent(target.target_registry_name)}/detect-capabilities`,
+      { expected_hash: target.identifier.hash },
+    )
+    return response.data
+  },
+
   listTargetTypes: async (): Promise<TargetTypeListResponse> => {
     const response = await apiClient.get('/targets/types')
     return response.data
@@ -878,8 +886,14 @@ export const scenarioPresetsApi = {
     return response.data
   },
 
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
+  /**
+   * Deletes a stored preset. With `expectedVersion`, a preset that changed after that
+   * read fails with 409 instead of being deleted.
+   */
+  remove: async (name: string, expectedVersion?: string): Promise<void> => {
+    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`, {
+      params: { expected_version: expectedVersion },
+    })
   },
 }
 
@@ -914,8 +928,14 @@ export const scenarioSuitesApi = {
     return response.data
   },
 
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  /**
+   * Deletes a stored suite. With `expectedVersion`, a suite that changed after that
+   * read fails with 409 instead of being deleted.
+   */
+  remove: async (name: string, expectedVersion?: string): Promise<void> => {
+    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`, {
+      params: { expected_version: expectedVersion },
+    })
   },
 
   launch: async (

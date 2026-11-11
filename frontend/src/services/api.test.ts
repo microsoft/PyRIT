@@ -44,6 +44,7 @@ import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
 import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
 import { DEFAULT_FINDING_FIELDS_FIXTURE } from "@/test-utils/findingFieldsFixtures";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
@@ -162,6 +163,20 @@ describe("api service", () => {
         signal: controller.signal,
       });
     });
+
+    it("deletes an encoded name only at the version that was read", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await scenarioPresetsApi.remove("a/b", "v1");
+      await scenarioPresetsApi.remove("a/b");
+
+      expect(apiClient.delete).toHaveBeenNthCalledWith(1, "/scenario-presets/a%2Fb", {
+        params: { expected_version: "v1" },
+      });
+      expect(apiClient.delete).toHaveBeenNthCalledWith(2, "/scenario-presets/a%2Fb", {
+        params: { expected_version: undefined },
+      });
+    });
   });
 
   describe("scenarioSuitesApi", () => {
@@ -196,8 +211,14 @@ describe("api service", () => {
         suite,
         expected_version: "v1",
       });
+      await scenarioSuitesApi.remove("a/b", "v1");
+      expect(apiClient.delete).toHaveBeenLastCalledWith("/scenario-suites/a%2Fb", {
+        params: { expected_version: "v1" },
+      });
       await scenarioSuitesApi.remove("a/b");
-      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      expect(apiClient.delete).toHaveBeenLastCalledWith("/scenario-suites/a%2Fb", {
+        params: { expected_version: undefined },
+      });
       await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
       expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);
       await expect(scenarioSuitesApi.getExecution("execution/id", controller.signal)).resolves.toEqual(execution);
@@ -594,6 +615,21 @@ describe("api service", () => {
   });
 
   describe("targetsApi", () => {
+    it("should encode the detection name, guard the identifier, and unwrap the saved target", async () => {
+      const target = makeTarget({ target_registry_name: "team/a b?#" });
+      const updated = {
+        ...target,
+        capabilities: { ...target.capabilities, supports_multi_turn: false },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: updated });
+
+      expect(await targetsApi.detectCapabilities(target)).toBe(updated);
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        "/targets/team%2Fa%20b%3F%23/detect-capabilities",
+        { expected_hash: target.identifier.hash },
+      );
+    });
+
     it("should list target types from registry metadata", async () => {
       const response = { data: { items: [] } };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(response);

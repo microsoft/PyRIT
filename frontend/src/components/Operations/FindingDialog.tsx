@@ -93,12 +93,13 @@ export default function FindingDialog({
   const [blankOther, setBlankOther] = useState<Record<string, boolean>>({})
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
+  const [attackResultIdError, setAttackResultIdError] = useState('')
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
   const attempt = useRef<{ signature: string; id: string } | null>(null)
   const slots = [openFields.severity, ...openFields.fields]
   const values = { ...draft.field_values, [SEVERITY_KEY]: draft.severity }
-  const canSave = !saveDisabled && Boolean(draft.title.trim())
+  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim())
     && firstMissingRequired(openFields, draft.severity, draft.field_values) === null
     && !Object.values(blankOther).some(Boolean)
   const changed = !sameFinding(draft, opening.draft) || removed.size > 0 || attackResultId !== ''
@@ -122,6 +123,7 @@ export default function FindingDialog({
     submitting.current = true
     setSaving(true)
     setError('')
+    setAttackResultIdError('')
     const trimmedAttackResultId = attackResultId.trim()
     // The server clears a current field left out, and its fields may differ from those this dialog opened with.
     const filled = filledFinding(draft)
@@ -137,7 +139,15 @@ export default function FindingDialog({
     try {
       await onSave(finding, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
-      setError(toApiError(cause).detail)
+      const apiError = toApiError(cause)
+      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
+        .map(item => item.message)
+      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
+        .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
+      setAttackResultIdError(evidenceMessages.join(' '))
+      if (evidenceMessages.length === 0 || otherMessages.length > 0) {
+        setError([otherMessages.length > 0 ? '' : apiError.detail, ...otherMessages].filter(Boolean).join(' '))
+      }
     } finally {
       submitting.current = false
       setSaving(false)
@@ -174,10 +184,11 @@ export default function FindingDialog({
               onRemove={(key: string) => { setRemoved(previous => new Set([...previous, key])) }}
               onUndo={() => { setRemoved(new Set()) }} />
             {evidenceField && <Field label="Evidence attack ID"
+              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
               <Input className={styles.input} value={attackResultId} disabled={saving} name="attack_result_id"
                 autoComplete="off"
-                onChange={(_, data) => { setAttackResultId(data.value) }} />
+                onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />
             </Field>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>

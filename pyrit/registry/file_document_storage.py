@@ -91,6 +91,7 @@ class DocumentConflictError(ValueError):
         expected_version: str | None,
         actual_version: str | None,
         label: str = "Document",
+        action: str = "saved",
     ) -> None:
         """
         Initialize the error with the versions that failed to match.
@@ -100,6 +101,7 @@ class DocumentConflictError(ValueError):
             expected_version (str | None): The version the caller believed was stored.
             actual_version (str | None): The version storage actually held.
             label (str): Human-readable noun for the stored document. Defaults to "Document".
+            action (str): Past-tense verb for the refused operation. Defaults to "saved".
         """
         self.name = name
         self.expected_version = expected_version
@@ -110,7 +112,7 @@ class DocumentConflictError(ValueError):
             detail = "it already exists"
         else:
             detail = "it was changed by someone else"
-        super().__init__(f"{label} '{name}' could not be saved because {detail}. Reload it and reapply.")
+        super().__init__(f"{label} '{name}' could not be {action} because {detail}. Reload it and reapply.")
 
 
 class FileDocumentStorage:
@@ -287,10 +289,10 @@ class FileDocumentStorage:
         return hashlib.sha256(content).hexdigest()
 
     def _conflict_error(
-        self, *, name: str, expected_version: str | None, actual_version: str | None
+        self, *, name: str, expected_version: str | None, actual_version: str | None, action: str = "saved"
     ) -> DocumentConflictError:
         """
-        Build the error raised when a conditional write is refused.
+        Build the error raised when a conditional write or delete is refused.
 
         Subclasses override this to surface a domain-specific error type without
         reimplementing the comparison that detects the conflict.
@@ -303,6 +305,7 @@ class FileDocumentStorage:
             expected_version=expected_version,
             actual_version=actual_version,
             label=self._source_label,
+            action=action,
         )
 
     def _save_document_conditional(self, *, name: str, content: bytes, expected_version: str | None) -> str:
@@ -510,7 +513,7 @@ class FileDocumentStorage:
             temporary_path.unlink(missing_ok=True)
             raise
 
-    def _delete_document(self, name: str) -> bool:
+    def _delete_document(self, name: str, *, expected_version: str | None = None) -> bool:
         """
         Delete one document, reporting whether it was there to delete.
 
@@ -521,33 +524,122 @@ class FileDocumentStorage:
         a writer: without it, a delete landing inside a save's read-compare-replace
         sequence is reported as successful and then immediately undone by that replace.
 
+        With *expected_version*, the delete is refused if the document changed after the
+        caller read it, so a reviewed delete cannot discard an edit the caller never saw.
+        A document that is already gone is reported as absent rather than as a conflict,
+        because the caller's intended end state already holds.
+
         Args:
             name (str): The document name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
 
         Returns:
             bool: True if the document existed and was deleted, False if it was already gone.
 
         Raises:
+            DocumentConflictError: If the stored version does not match *expected_version*.
             ValueError: If *name* is not a legal registry name.
             TimeoutError: If a local delete could not acquire the document lock.
         """
         validate_registry_name(name)
         if self._is_blob:
-            from azure.core.exceptions import ResourceNotFoundError
+            return self._delete_blob(name=name, expected_version=expected_version)
+        return self._delete_local(name=name, expected_version=expected_version)
 
-            with self._open_container_client() as client:
-                try:
-                    client.delete_blob(self._get_blob_name(name))
-                except ResourceNotFoundError:
-                    return False
-            return True
+    def _delete_local(self, *, name: str, expected_version: str | None) -> bool:
+        """
+        Delete a local document while holding the lock that covers its version check.
 
+        Returns:
+            bool: True if the document existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the stored version does not match *expected_version*.
+            TimeoutError: If the document lock could not be acquired.
+        """
         path = self._local_directory(create=True) / f"{name}{self._extension}"
         with self._local_document_lock(path):
             try:
+                if expected_version is not None:
+                    actual_version = self._compute_version(path.read_bytes())
+                    if actual_version != expected_version:
+                        raise self._conflict_error(
+                            name=name,
+                            expected_version=expected_version,
+                            actual_version=actual_version,
+                            action="deleted",
+                        )
                 path.unlink()
             except FileNotFoundError:
                 return False
+        return True
+
+    def _delete_blob(self, *, name: str, expected_version: str | None) -> bool:
+        """
+        Delete a blob, behind an ETag precondition when the caller holds a version.
+
+        Returns:
+            bool: True if the blob existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the stored version does not match *expected_version*.
+            AzureError: If the container is unreachable or does not exist.
+        """
+        from azure.core.exceptions import ResourceNotFoundError
+
+        blob_name = self._get_blob_name(name)
+        with self._open_container_client() as client:
+            if expected_version is not None:
+                return self._delete_unmodified_blob(
+                    client=client, blob_name=blob_name, name=name, expected_version=expected_version
+                )
+            try:
+                client.delete_blob(blob_name)
+            except ResourceNotFoundError:
+                return False
+        return True
+
+    def _delete_unmodified_blob(
+        self, *, client: ContainerClient, blob_name: str, name: str, expected_version: str
+    ) -> bool:
+        """
+        Delete a blob only while it still holds *expected_version*.
+
+        As with a conditional write, the version is compared first and the ETag read
+        alongside it guards the delete against a write that lands in between.
+
+        Returns:
+            bool: True if the blob existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the blob no longer holds *expected_version*.
+        """
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+
+        try:
+            downloader = client.download_blob(blob_name)
+        except ResourceNotFoundError:
+            return False
+        actual_version = self._compute_version(downloader.readall())
+        if actual_version != expected_version:
+            raise self._conflict_error(
+                name=name, expected_version=expected_version, actual_version=actual_version, action="deleted"
+            )
+        try:
+            client.delete_blob(
+                blob_name, etag=downloader.properties.etag, match_condition=MatchConditions.IfNotModified
+            )
+        except ResourceNotFoundError:
+            return False
+        except ResourceModifiedError:
+            actual_version = self._read_blob_version(client=client, blob_name=blob_name)
+            if actual_version is None:
+                return False
+            raise self._conflict_error(
+                name=name, expected_version=expected_version, actual_version=actual_version, action="deleted"
+            ) from None
         return True
 
     def _local_directory(self, *, create: bool = False) -> Path:

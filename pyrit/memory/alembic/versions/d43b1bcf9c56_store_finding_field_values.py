@@ -11,7 +11,7 @@ new ``field_values`` column. Finding IDs, Operation links, creation times, and e
 Downgrading restores the old columns only while no findings exist.
 
 Revision ID: d43b1bcf9c56
-Revises: d6de1045cca4
+Revises: 91b3d5f7a2c6
 Create Date: 2026-10-27 12:00:00.000000
 """
 
@@ -25,7 +25,7 @@ from pyrit.memory.memory_models import CustomUUID
 
 # revision identifiers, used by Alembic.
 revision: str = "d43b1bcf9c56"
-down_revision: str | None = "d6de1045cca4"
+down_revision: str | None = "91b3d5f7a2c6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

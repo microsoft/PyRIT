@@ -439,4 +439,62 @@ describe('FindingDialog', () => {
       id: expect.any(String), attackResultId: 'attack-1',
     }))
   })
+
+  it('shows the API field message on the Evidence attack ID and keeps it invalid until edited', async () => {
+    const user = userEvent.setup()
+    const rejection = Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [{ field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' }],
+        },
+      },
+    })
+    const onSave = jest.fn().mockRejectedValueOnce(rejection).mockResolvedValue(undefined)
+    renderDialog({ evidenceField: true, onSave })
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Bad evidence')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'not-a-uuid')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(/Input should be a valid UUID/)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'x')
+    expect(screen.queryByText(/Input should be a valid UUID/)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+  })
+
+  it.each([false, true])('preserves mixed validation feedback with evidenceField=%s', async evidenceField => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [
+            { field: 'body.attack_result_id', message: 'Attack is unavailable', code: 'value_error' },
+            { field: 'body.title', message: 'Title is invalid', code: 'value_error' },
+          ],
+        },
+      },
+    }))
+    renderDialog({ evidenceField, onSave, initialValues: { title: 'Assessment', severity: 'low', field_values: {} } })
+    const save = screen.getByRole('button', { name: 'Save finding' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
+    const feedback = await screen.findByText(/title: Title is invalid/)
+    if (evidenceField) {
+      expect(feedback).not.toHaveTextContent('attack_result_id')
+      expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+      expect(save).toBeDisabled()
+    } else {
+      expect(feedback).toHaveTextContent('attack_result_id: Attack is unavailable')
+      expect(save).toBeEnabled()
+    }
+  })
 })

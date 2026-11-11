@@ -374,6 +374,36 @@ def test_capture_launch_references_includes_run_local_simulation_target() -> Non
     get_default.assert_called_once()
 
 
+@pytest.mark.parametrize("current_hash", ["launch-scorer", "changed-scorer"])
+def test_targetless_rerun_validates_all_modern_role_references(current_hash: str) -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = SimpleNamespace(scenario_version=1)
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+    )
+    request = RunScenarioRequest(scenario_name="test")
+    readiness = SimpleNamespace(
+        issues=[],
+        bindings=[SimpleNamespace(role="objective_scorer", identifier=SimpleNamespace(hash=current_hash))],
+    )
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service._configuration_resolver, "resolve_readiness", return_value=readiness) as resolve,
+    ):
+        if current_hash == "launch-scorer":
+            service._validate_rerun_references(stored=stored, request=request)
+        else:
+            with pytest.raises(ScenarioRunConflictError, match="dependencies changed"):
+                service._validate_rerun_references(stored=stored, request=request)
+    resolve.assert_called_once_with(scenario_name="test", request=request)
+    registry.create_and_initialize_async.assert_not_called()
+
+
 def test_rerun_validation_uses_saved_launch_scorer_not_effective_scorer() -> None:
     service = ScenarioRunService(memory=MagicMock())
     metadata = SimpleNamespace(
@@ -387,7 +417,7 @@ def test_rerun_validation_uses_saved_launch_scorer_not_effective_scorer() -> Non
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -413,7 +443,7 @@ def test_rerun_validation_uses_explicit_scorer_hash_without_resolving_provider()
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -449,7 +479,7 @@ def test_rerun_validation_rejects_changed_explicit_scorer_source() -> None:
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -489,7 +519,7 @@ def test_rerun_validation_rejects_changed_launch_scorer() -> None:
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "saved-launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "saved-launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -520,7 +550,7 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
         patch.object(Scam, "supported_parameters", return_value=declared),
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target") as resolve_target,
+        patch.object(type(service._configuration_resolver), "resolve_target") as resolve_target,
     ):
         await service._prepare_run_async(request=request)
         kwargs = registry.create_and_initialize_async.call_args.kwargs
@@ -534,7 +564,7 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
         )
         restored = service._restore_launch_request(stored=stored)
         if supports_common_inputs:
-            resolve_target.assert_called_once()
+            assert resolve_target.call_count == 2
             assert kwargs["max_concurrency"] == restored.max_concurrency == 10
             assert kwargs["max_retries"] == restored.max_retries == 0
             assert restored.target_name == "my_target"
@@ -569,7 +599,7 @@ async def test_prepare_persists_internal_initial_metadata_with_run_service_field
     with (
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target"),
+        patch.object(type(service._configuration_resolver), "resolve_target"),
     ):
         await service._prepare_run_async(
             request=RunScenarioRequest(scenario_name="test.support", target_name="my_target"),
@@ -601,15 +631,12 @@ async def test_start_rejects_caller_metadata_that_overwrites_run_service_fields(
 async def test_prepare_requires_target_for_scenarios_that_declare_it_async(
     patch_central_database: MagicMock,
 ) -> None:
-    registry = MagicMock(spec=ScenarioRegistry)
-    registry.get_class.return_value = Scam
     service = ScenarioRunService()
     with (
-        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        pytest.raises(ValueError, match="requires an objective target"),
+        pytest.raises(ValueError, match="objective_target"),
     ):
-        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="test.support"))
+        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="airt.scam"))
     await service.close_async()
 
 
@@ -1184,10 +1211,10 @@ class TestScenarioRunServiceStartRun:
             scenario_params=scenario_params,
             scenario_result_id=None,
             constructor_kwargs={},
+            configuration_metadata=ANY,
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
-                _svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {},
             },
             objective_target=objective_target,
             max_concurrency=10,
