@@ -503,9 +503,12 @@ bodies. There is no hierarchy-specific transcript format or conversation-preview
 
 `GET /api/scenarios/runs/{scenario_result_id}/assert-metrics` returns the SDK's
 `AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
-return 400, runs that haven't completed return 409, and saved results that can't be
-read as ASSERT metrics return 500. The run page shows these metrics for completed
-ASSERT runs.
+return 400 with problem type `/errors/not-assert-policy-run`, runs that haven't
+completed return 409, and saved results that can't be read as ASSERT metrics return
+500. A saved registry name identifies the run; older runs without one must come from
+the `AssertPolicy` class in PyRIT's Foundry scenario module. The run page shows these
+metrics for completed ASSERT runs and hides the panel when the route identifies
+another scenario.
 
 An entirely rootless saved graph, such as a closed cycle, returns a bounded
 `diagnostics.rootless_result_ids` sample with its total count and clipping flag.

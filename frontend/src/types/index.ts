@@ -2634,11 +2634,12 @@ export interface AssertBinaryRate {
 
 export interface AssertCategoryMetrics {
   behavior_name: string
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
+  policy_id: string
   name: string
   permissible: boolean
   /** Violated share of conversations that judged this category relevant. */
   node_violation: AssertBinaryRate
-  attributed_by_fallback: number
 }
 
 /** Grade counts in declared scale order and the median grade for a graded judge dimension. */

@@ -5,7 +5,11 @@ import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { AssertPolicyMetrics } from '@/types'
 
-export type AssertPolicyMetricsStatus = 'loading' | 'success' | 'error'
+/** RFC 7807 `type` of the metrics route's answer for a run that foundry.assert_policy didn't produce. */
+export const NOT_ASSERT_POLICY_RUN_TYPE = '/errors/not-assert-policy-run'
+
+/** `not_assert` means the backend identified the run as another scenario that shares the class name. */
+export type AssertPolicyMetricsStatus = 'loading' | 'success' | 'error' | 'not_assert'
 
 export interface AssertPolicyMetricsState {
   status: AssertPolicyMetricsStatus
@@ -35,9 +39,15 @@ export function useAssertPolicyMetrics(scenarioResultId: string): AssertPolicyMe
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
+        const apiError = toApiError(err)
         setMetrics(null)
+        if (apiError.status === 400 && apiError.type === NOT_ASSERT_POLICY_RUN_TYPE) {
+          setStatus('not_assert')
+          setError(null)
+          return
+        }
         setStatus('error')
-        setError(toApiError(err).detail)
+        setError(apiError.detail)
       })
     return () => {
       controller.abort()

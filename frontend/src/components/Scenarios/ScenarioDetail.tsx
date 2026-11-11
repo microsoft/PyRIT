@@ -96,9 +96,11 @@ import {
   MIN_MAX_CONCURRENCY,
   MIN_MAX_RETRIES,
   OBJECTIVE_PARAMETER_NAMES,
+  isScorerOwnedParameter,
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
   supportsParameter,
+  usesDefaultAssertScoring,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 
@@ -417,6 +419,7 @@ function ScenarioLaunchForm({
   const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
+  const defaultAssertScoring = usesDefaultAssertScoring(scenario)
   const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
   const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
@@ -508,7 +511,7 @@ function ScenarioLaunchForm({
   ) || (supportsTechniques
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
-  const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
+  const carriedScenarioParamNames = Object.keys(carriedScenarioParams).filter((name) => !isScorerOwnedParameter(scenario, name))
   const presetScenarioParams = useMemo(
     () => ({
       ...carriedScenarioParams,
@@ -962,7 +965,7 @@ function ScenarioLaunchForm({
                   )}
                 </>}
                 {objectiveParameters.map(renderScenarioParameter)}
-                {scenario.supports_objective_scorer && <ChatScorerPicker
+                {scenario.supports_objective_scorer && !defaultAssertScoring && <ChatScorerPicker
                   label="Objective scorer" usage="scenario" value={objectiveScorer}
                   scorers={scorers} loading={scorersLoading} error={scorersError}
                   disabled={submitting || previewOpen || !runtime.ready}
@@ -1155,7 +1158,7 @@ function ScenarioLaunchForm({
               unchecked: uncheckedRefreshDatasets,
             }}
             objectiveTarget={supportsObjectiveTarget ? targetName : null}
-            objectiveScorer={scenario.supports_objective_scorer
+            objectiveScorer={scenario.supports_objective_scorer && !defaultAssertScoring
               ? objectiveScorer?.registry_name ?? 'Use scenario default' : null}
             adversarialTarget={scenario.uses_default_adversarial_target ? adversarialTargetName || 'Use server default' : null}
             techniques={supportsTechniques || supportsBaseline ? {
