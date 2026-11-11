@@ -321,7 +321,8 @@ class AssertPolicy(Scenario):
 
     By default, judges built from each group's stored policy read the whole conversation once:
     policy violation is the objective score, and overrefusal is an auxiliary score. Blocked or
-    errored target replies stay undetermined. Results are grouped by technique.
+    errored target replies stay undetermined. Results are grouped by each case's generated category,
+    across baseline and selected techniques, qualified by policy when several policies are selected.
 
     SDK callers can supply a configured objective scorer instead of these defaults, which is used
     unchanged. The legacy judge settings (``judge_presets``, ``judge_preset_files``,
@@ -980,9 +981,13 @@ class AssertPolicy(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         self._warn_if_target_untraced(target=context.objective_target)
-        attacks = self._build_baselines(context=context) if context.include_baseline else []
         local = {name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES}
-        for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
+        factories = resolve_technique_factories(context=context, extra_factories=local)
+        display_groups = self._get_display_groups(context=context, technique_names=list(factories))
+        attacks = (
+            self._build_baselines(context=context, display_groups=display_groups) if context.include_baseline else []
+        )
+        for name, factory in factories.items():
             if name not in _ASSERT_PACKAGES and not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
@@ -1011,10 +1016,69 @@ class AssertPolicy(Scenario):
                 for group in sorted(selected, key=self._get_generation_order):
                     attacks.append(
                         await asyncio.to_thread(
-                            self._build_unit, context=context, technique_name=name, factory=factory, group=group
+                            self._build_unit,
+                            context=context,
+                            technique_name=name,
+                            factory=factory,
+                            group=group,
+                            display_group=display_groups[self._get_unit_name(prefix=name, group=group)],
                         )
                     )
         return attacks
+
+    def _get_display_groups(self, *, context: ScenarioContext, technique_names: list[str]) -> dict[str, str]:
+        names = [
+            self._get_unit_name(prefix=technique_name, group=group)
+            for group in context.seed_groups
+            for technique_name in ["baseline", *technique_names]
+        ]
+        if context.stored_run_plan is not None:
+            recorded = {
+                group.atomic_attack_name: group.display_group for group in context.stored_run_plan.atomic_groups
+            }
+            return {name: recorded.get(name, name) for name in names}
+        if context.scenario_result_id == self._scenario_result_id and self._scenario_result_id is not None:
+            return {name: context.stored_display_group_map.get(name, name) for name in names}
+        assignments: dict[str, tuple[str, str]] = {}
+        policies: dict[str, str] = {}
+        for group in context.seed_groups:
+            metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
+            policy = json.dumps(
+                {
+                    "taxonomy": metadata.taxonomy.model_dump(mode="json"),
+                    "behavior_description": metadata.config.behavior_description,
+                    "context": metadata.config.context,
+                    "effective_system_prompt": self._get_judged_system_prompt(group),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            policies[policy] = metadata.taxonomy.behavior.name
+            assignments[str(group.objective.id)] = (policy, metadata.behavior_category)
+
+        policies_by_name: dict[str, list[str]] = {}
+        for policy, name in policies.items():
+            policies_by_name.setdefault(name, []).append(policy)
+        policy_positions = {
+            policy: position
+            for named_policies in policies_by_name.values()
+            for position, policy in enumerate(sorted(named_policies), start=1)
+        }
+
+        display_groups: dict[str, str] = {}
+        for group in context.seed_groups:
+            policy, category = assignments[str(group.objective.id)]
+            category_label = category
+            if len(policies) > 1:
+                policy_name = policies[policy]
+                category_label = (
+                    f"{json.dumps(category, ensure_ascii=False)} / {json.dumps(policy_name, ensure_ascii=False)}"
+                )
+                if len(policies_by_name[policy_name]) > 1:
+                    category_label += f" (policy {policy_positions[policy]})"
+            for technique_name in ["baseline", *technique_names]:
+                display_groups[self._get_unit_name(prefix=technique_name, group=group)] = category_label
+        return display_groups
 
     @staticmethod
     def _get_target_requirements(factory: AttackTechniqueFactory) -> TechniqueRequirements:
@@ -1081,6 +1145,7 @@ class AssertPolicy(Scenario):
         technique_name: str,
         factory: AttackTechniqueFactory,
         group: AttackSeedGroup,
+        display_group: str,
     ) -> AtomicAttack:
         prompt_case = technique_name in _ASSERT_PACKAGES and group.adversarial_prompts is None
         if technique_name in _ASSERT_PACKAGES:
@@ -1119,7 +1184,7 @@ class AssertPolicy(Scenario):
             attack_technique = factory.create(**create_kwargs, seed_group=group)
         return AtomicAttack(
             atomic_attack_name=self._get_unit_name(prefix=technique_name, group=group),
-            display_group=technique_name,
+            display_group=display_group,
             technique_name=technique_name,
             attack_technique=attack_technique,
             seed_groups=[group],
@@ -1165,7 +1230,7 @@ class AssertPolicy(Scenario):
         description = prompts.system_prompt.description if prompts and prompts.system_prompt else None
         return description.strip() if description and description.strip() else None
 
-    def _build_baselines(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+    def _build_baselines(self, *, context: ScenarioContext, display_groups: dict[str, str]) -> list[AtomicAttack]:
         """
         Send each group's stored system and user prompts once, judged by that group's judges.
 
@@ -1197,7 +1262,7 @@ class AssertPolicy(Scenario):
             baselines.append(
                 AtomicAttack(
                     atomic_attack_name=self._get_unit_name(prefix="baseline", group=group),
-                    display_group="baseline",
+                    display_group=display_groups[self._get_unit_name(prefix="baseline", group=group)],
                     # Keep the stored group so baseline and technique results share its logical ID and resume.
                     # The prompt case doesn't use the group's tester prompts; this records that on the technique.
                     attack_technique=AttackTechnique(attack=attack, adversarial_prompts=group.adversarial_prompts),

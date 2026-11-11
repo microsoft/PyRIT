@@ -18,6 +18,7 @@ from pyrit.backend.services import AttackService, ScenarioRunService
 from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.memory import SQLiteMemory, set_message_piece_sha256_async
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
     AttackResultRole,
@@ -25,6 +26,8 @@ from pyrit.models import (
     ConversationType,
     MessagePiece,
     ScenarioHierarchyNode,
+    ScenarioIdentifier,
+    ScenarioRunState,
 )
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
@@ -43,6 +46,66 @@ async def _store_run_async(memory: SQLiteMemory) -> str:
         ]
     )
     return str(identifier)
+
+
+@pytest.mark.parametrize(
+    ("name", "module", "confirmed", "count"),
+    [
+        ("AssertPolicy", "pyrit.scenario.scenarios.foundry.assert_policy", True, 504),
+        ("AssertPolicy", "example.unrelated_scenario", False, 3),
+        ("AssertPolicy", "", False, 3),
+        ("OrdinaryScenario", "pyrit.scenario.scenarios.foundry.assert_policy", False, 3),
+    ],
+)
+async def test_planless_assert_recorded_map_paging_and_identity_async(
+    sqlite_instance: SQLiteMemory, name: str, module: str, confirmed: bool, count: int
+) -> None:
+    run_id = await _store_run_async(sqlite_instance)
+    (stored,) = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id])
+    stored.scenario_identifier = ScenarioIdentifier(
+        class_name=name, class_module=module, version=1, objective_target=get_mock_target_identifier()
+    )
+    stored.scenario_run_state = ScenarioRunState.COMPLETED
+    names = [f'Historical / "category" (policy 1) [{index}]' for index in range(count)]
+    stored.display_group_map = dict.fromkeys(names[:-1], 'Recorded / "label" (policy 2)')
+    results = [_result(run_id=run_id, index=index) for index in range(count)]
+    for result, atomic_name in zip(results, names, strict=True):
+        result.attribution_data["parent_collection"] = atomic_name
+    stored.attack_results = {atomic_name: [result] for atomic_name, result in zip(names, results, strict=True)}
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    await sqlite_instance.update_scenario_result_async(scenario_result=stored)
+    (stored,) = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id])
+    before = stored.model_dump(mode="json")
+    service = ScenarioRunService(memory=sqlite_instance)
+    first = await service.get_run_hierarchy_async(scenario_result_id=run_id)
+    assert first is not None
+    pages = [first]
+    if count > 500:
+        assert first.has_more and first.next_cursor
+        second = await service.get_run_hierarchy_async(scenario_result_id=run_id, cursor=first.next_cursor)
+        assert second is not None and not second.has_more
+        assert second.overall_counts == first.overall_counts
+        pages.append(second)
+    roots = [root for page in pages for group in page.groups for root in group.roots]
+    assert [sum(len(group.roots) for group in page.groups) for page in pages] == ([500, 4] if count > 500 else [count])
+    assert {root.attack_result_id for root in roots} == {result.attack_result_id for result in results}
+    assert len(roots) == count
+    assert first.overall_counts.completed == count
+    assert first.overall_counts.planned is None
+    assert first.overall_counts.producer_counts is not None
+    assert first.overall_counts.producer_counts.target_facing.attempts == count
+    expected = set(stored.display_group_map.values()) | {names[-1]} if confirmed else set(names)
+    assert {group.display_group for page in pages for group in page.groups} == expected
+
+    progress = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=1)
+    assert progress is not None and not progress.plan_complete
+    assert progress.run.is_assert_policy is confirmed
+    assert {group.display_group for group in progress.summary.display_groups} == expected
+    assert progress.summary.overall.completed == count
+    assert len(progress.results) == 1
+    (after,) = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id])
+    assert SCENARIO_RUN_PLAN_METADATA_KEY not in after.metadata
+    assert after.model_dump(mode="json") == before
 
 
 def _result(*, run_id: str, index: int, child_ids: list[Any] | None = None) -> AttackResult:

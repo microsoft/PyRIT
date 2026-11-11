@@ -1867,6 +1867,7 @@ class Scenario(ABC):
             seed_groups_by_dataset=seed_groups_by_dataset,
             scenario_result_id=self._scenario_result_id or str(new_result_id),
             stored_run_plan=stored_plan,
+            stored_display_group_map=stored_result.display_group_map if stored_result is not None else {},
         )
         with override_default_adversarial_target(self._resolved_adversarial_target):
             self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
@@ -1895,6 +1896,10 @@ class Scenario(ABC):
                 self._apply_persisted_run_plan(stored_plan=stored_plan)
             else:
                 self._apply_persisted_objectives(stored_result=stored_result)
+                self._display_group_map = {
+                    atomic_attack.atomic_attack_name: atomic_attack.display_group
+                    for atomic_attack in self._atomic_attacks
+                }
                 reconstructed_plan = self._build_run_plan()
                 metadata = dict(stored_result.metadata)
                 metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
@@ -2378,6 +2383,7 @@ class Scenario(ABC):
         *,
         seed_groups_by_dataset: dict[str, list[AttackSeedGroup]],
         stored_run_plan: ScenarioRunPlan | None = None,
+        stored_display_group_map: dict[str, str] | None = None,
         scenario_result_id: str | None = None,
     ) -> ScenarioContext:
         """
@@ -2393,6 +2399,8 @@ class Scenario(ABC):
                 resolved once (see ``_resolve_seed_groups_by_dataset_async``). The flat
                 ``context.seed_groups`` is derived from these so both views share one sample.
             stored_run_plan (ScenarioRunPlan | None): The original plan when resuming.
+            stored_display_group_map (dict[str, str] | None): Recorded display labels for a
+                legacy run without a persisted plan.
             scenario_result_id (str | None): The id of the ``ScenarioResult`` this run writes to.
 
         Returns:
@@ -2419,6 +2427,7 @@ class Scenario(ABC):
             seed_groups=seed_groups,
             seed_groups_by_dataset=seed_groups_by_dataset,
             stored_run_plan=stored_run_plan,
+            stored_display_group_map=stored_display_group_map or {},
             scenario_result_id=scenario_result_id,
         )
 

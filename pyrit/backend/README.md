@@ -404,6 +404,18 @@ their existing manual missing-only Load action, loading-policy choices, Reset, s
 safeguards and metadata refresh. Preset editing remains read-only. General dataset
 browsing is unfiltered. No automatic provider preparation is introduced here.
 
+New ASSERT plans display one group per stored generated category, containing baseline
+and selected technique executions with readable technique labels on the rows. Distinct,
+readable policy labels qualify categories when several policies are selected. Each case
+still executes once per compatible technique, with unchanged execution identities.
+Category-rate metrics continue to use judged relevance, not the generation assignment.
+Saved plans and resumed runs retain their recorded grouping. No-plan legacy ASSERT reads
+use the recorded display map, falling back only to the original atomic name for an absent
+entry; they never infer categories from historical names or current datasets.
+The progress header's `is_assert_policy` confirms persisted registry/module identity for
+category presentation. A tentative metrics request alone does not establish that identity.
+Ordinary scenario presentation is unchanged.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,

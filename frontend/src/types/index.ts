@@ -2138,6 +2138,7 @@ export interface ScenarioProgressHeader {
   scenario_result_id: string
   scenario_name: string
   scenario_registry_name?: string | null
+  is_assert_policy?: boolean
   scenario_version: number
   description?: string | null
   operation_id?: string | null

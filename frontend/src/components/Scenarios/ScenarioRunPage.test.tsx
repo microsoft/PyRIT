@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
+import { useAssertPolicyMetrics } from '@/hooks/useAssertPolicyMetrics'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
 import { scenariosApi } from '@/services/api'
 import type {
@@ -19,7 +20,7 @@ import ScenarioRunPage from './ScenarioRunPage'
 jest.mock('@/hooks/useScenarioRunProgress', () => ({ useScenarioRunProgress: jest.fn() }))
 jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
 jest.mock('@/hooks/useAssertPolicyMetrics', () => ({
-  useAssertPolicyMetrics: () => ({ status: 'loading', metrics: null, error: null, retry: jest.fn() }),
+  useAssertPolicyMetrics: jest.fn(),
 }))
 jest.mock('@/services/api', () => ({ scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
@@ -122,6 +123,7 @@ async function expand(user: ReturnType<typeof userEvent.setup>): Promise<void> {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  jest.mocked(useAssertPolicyMetrics).mockReturnValue({ status: 'loading', metrics: null, error: null, retry: jest.fn() })
   mockUseScenarioQueue.mockReturnValue({
     snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
     loading: false,
@@ -218,6 +220,180 @@ describe('ScenarioRunPage', () => {
     view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
   })
+
+  it('does not apply ASSERT presentation to another scenario named AssertPolicy', () => {
+    state = makeState({
+      run: { ...RUN, scenario_registry_name: 'example.unrelated', scenario_name: 'AssertPolicy' },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+
+    expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/older runs keep their recorded grouping/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('PromptSendingAttack', { exact: true })[0]).toBeVisible()
+  })
+
+  it.each(['loading', 'not_assert'] as const)(
+    'does not use tentative no-registry metrics identity for category presentation (%s)',
+    (status) => {
+      jest.mocked(useAssertPolicyMetrics).mockReturnValue({ status, metrics: null, error: null, retry: jest.fn() })
+      state = makeState({
+        run: { ...RUN, status: 'COMPLETED', scenario_registry_name: null, scenario_name: 'AssertPolicy',
+          is_assert_policy: false },
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(screen.queryByText(/older runs keep their recorded grouping/)).not.toBeInTheDocument()
+      expect(screen.getAllByText('PromptSendingAttack', { exact: true })[0]).toBeVisible()
+      if (status === 'not_assert') expect(screen.queryByTestId('assert-policy-metrics')).not.toBeInTheDocument()
+    },
+  )
+
+  it('uses confirmed canonical legacy identity without requiring a registry or complete plan', () => {
+    state = makeState({
+      run: { ...RUN, scenario_registry_name: null, scenario_name: 'AssertPolicy', is_assert_policy: true },
+      planComplete: false,
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText(/older runs keep their recorded grouping/)).toBeVisible()
+    expect(screen.queryByText('PromptSendingAttack', { exact: true })).not.toBeInTheDocument()
+  })
+
+  it.each(['public_policy', 'ASSERT package / public_policy', 'assert_package'])(
+    'keeps the recorded ASSERT group %s without a hash-list subtitle or invented categories',
+    (displayGroup: string) => {
+      state = makeState({
+        run: { ...RUN, status: 'COMPLETED', scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy', is_assert_policy: true },
+        summary: { ...SUMMARY, display_groups: [{
+          ...SUMMARY.techniques[0], display_group: displayGroup,
+          atomic_attack_names: ['assert_package__case_hash_a', 'assert_package__case_hash_b'],
+        }] },
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(screen.getByText(displayGroup, { exact: true })).toBeVisible()
+      expect(screen.queryByText('assert_package__case_hash_a, assert_package__case_hash_b')).not.toBeInTheDocument()
+      expect(screen.getByText(/older runs keep their recorded grouping/)).toBeVisible()
+      expect(screen.getByText(/Category rates use judged relevance/)).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'ASSERT policy metrics' })).toBeInTheDocument()
+      if (displayGroup === 'assert_package') {
+        expect(screen.queryByText(/public_policy/)).not.toBeInTheDocument()
+      }
+    },
+  )
+
+  it('renders distinct readable category-first headers for qualified names with delimiters, quotes and suffixes', () => {
+    const labels = [
+      '"b / c" / "a" (policy 1)',
+      '"b / c" / "a" (policy 2)',
+      '"c" / "a / b"',
+      '"b / c" / "a (policy 1)"',
+      '"c\\\\ (policy 1)" / "a\\" / \\"b"',
+      '"b\\" / \\"c\\\\ (policy 1)" / "a" (policy 3)',
+    ]
+    state = makeState({
+      run: { ...RUN, scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy', is_assert_policy: true },
+      summary: { ...SUMMARY, display_groups: labels.map((label, index) => ({
+        ...SUMMARY.techniques[0], id: `category-${index}`, display_group: label,
+      })) },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+
+    for (const label of labels) {
+      expect(screen.getByText(label, { exact: true })).toBeVisible()
+      expect(screen.getByRole('button', { name: `Collapse attacks in ${label}` })).toBeVisible()
+    }
+    expect(screen.getAllByRole('button', { name: /^Collapse attacks in / })).toHaveLength(labels.length)
+    expect(screen.queryByText(/^\["category",/)).not.toBeInTheDocument()
+  })
+
+  it.each([false, true])(
+    'shows baseline and every technique in one category with server totals, not visible row counts (hierarchy ready: %s)',
+    async (saved: boolean) => {
+      const definitions = [
+        { id: 'baseline-group', name: 'baseline', label: 'Baseline', kind: 'baseline' as const, technique: null },
+        { id: 'assert-group', name: 'assert_package', label: 'ASSERT package', kind: 'attack' as const, technique: 'assert_package' },
+        { id: 'role-group', name: 'role_play_movie_script', label: 'role play movie script', kind: 'attack' as const, technique: 'role_play_movie_script' },
+      ]
+      const atomicGroups = definitions.map((definition) => ({
+        ...PLAN.atomic_groups[0], id: definition.id, kind: definition.kind, technique_name: definition.technique,
+        atomic_attack_name: `${definition.name}__case_hash`, display_group: 'cross_turn_policy_drift',
+      }))
+      const results = atomicGroups.map((group, index) => ({
+        ...ATTEMPT, attack_result_id: `attempt-${index}`, atomic_group_id: group.id,
+        atomic_attack_name: group.atomic_attack_name,
+      }))
+      const counts = { ...COUNTS, completed: 12, planned: 15, succeeded: 6, success_percentage: 50 }
+      if (saved) {
+        jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValueOnce({
+          scenario_result_id: RUN_ID, scenario_name: 'AssertPolicy', scenario_version: 2, status: 'COMPLETED',
+          groups: atomicGroups.map((group, index) => ({
+            atomic_group_id: group.id, atomic_attack_name: group.atomic_attack_name, display_group: group.display_group,
+            counts: COUNTS,
+            roots: [{
+              ...results[index], objective: 'First objective', result_role: 'target_facing', executed_turns: 1,
+              retries_truncated: false, child_attack_result_ids: [], child_references_truncated: false,
+              children: [], children_truncated: false, child_offset: 0, unresolved_child_attack_result_ids: [],
+              unresolved_child_references_truncated: false, conversations: [], conversations_truncated: false,
+            }],
+          })),
+          overall_counts: counts, truncated: false, has_more: false, next_cursor: null,
+        })
+      }
+      state = makeState({
+        run: { ...RUN, status: 'COMPLETED', scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy', is_assert_policy: true },
+        plan: { ...PLAN, atomic_groups: atomicGroups },
+        summary: { ...SUMMARY, display_groups: [{
+          ...counts, id: 'category', display_group: 'cross_turn_policy_drift',
+          atomic_attack_names: atomicGroups.map((group) => group.atomic_attack_name),
+          atomic_group_ids: atomicGroups.map((group) => group.id),
+        }] },
+        results,
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      const table = await screen.findByRole('table', { name: 'cross_turn_policy_drift attack results' })
+      if (saved) await waitFor(() => expect(screen.queryByText(/Loading result relationships/)).not.toBeInTheDocument())
+      expect(screen.getAllByRole('button', { name: /Collapse attacks in / })).toHaveLength(1)
+      expect(within(table).getAllByRole('row')).toHaveLength(4)
+      for (const definition of definitions) {
+        expect(within(table).getByText(definition.label, { exact: true })).toBeVisible()
+        expect(within(table).getByRole('button', { name: `Open details for ${definition.label}: First objective` })).toBeVisible()
+      }
+      expect(within(table).queryByText(/__case_hash/)).not.toBeInTheDocument()
+      expect(screen.getByText('12/15', { exact: true })).toBeVisible()
+    },
+  )
+
+  it('uses the recorded atomic attack name when the saved plan has no technique label', async () => {
+    const atomicGroup = {
+      ...PLAN.atomic_groups[0],
+      id: 'legacy-group',
+      atomic_attack_name: 'legacy_technique__case_hash',
+      display_group: 'recorded-category',
+      technique_name: null,
+    }
+    state = makeState({
+      run: { ...RUN, scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy', is_assert_policy: true },
+      plan: { ...PLAN, atomic_groups: [atomicGroup] },
+      summary: { ...SUMMARY, display_groups: [{
+        ...COUNTS, id: 'recorded-category', display_group: 'recorded-category',
+        atomic_attack_names: [atomicGroup.atomic_attack_name], atomic_group_ids: [atomicGroup.id],
+      }] },
+      results: [{ ...ATTEMPT, atomic_group_id: atomicGroup.id, atomic_attack_name: atomicGroup.atomic_attack_name }],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+
+    const table = await screen.findByRole('table', { name: 'recorded-category attack results' })
+    expect(within(table).getByText(atomicGroup.atomic_attack_name, { exact: true })).toBeVisible()
+    expect(within(table).queryByText('Technique not recorded')).not.toBeInTheDocument()
+  })
+
+  it('retains the existing technical group subtitle for non-ASSERT runs', () => {
+    state = makeState({ summary: { ...SUMMARY, techniques: [{
+      ...SUMMARY.techniques[0], atomic_attack_names: ['PromptSendingAttack', 'SecondAttack'],
+    }] } })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('PromptSendingAttack, SecondAttack', { exact: true })).toBeVisible()
+    expect(screen.queryByText(/older runs keep their recorded grouping/)).not.toBeInTheDocument()
+  })
+
   it('preserves per-group expansion through polling and completion without collapse text', async () => {
     const user = userEvent.setup()
     const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)

@@ -126,6 +126,7 @@ class ScenarioProgressHeader(BaseModel):
     scenario_result_id: str
     scenario_name: str
     scenario_registry_name: str | None = None
+    is_assert_policy: bool = False
     scenario_version: int
     status: ScenarioRunState
     created_at: datetime

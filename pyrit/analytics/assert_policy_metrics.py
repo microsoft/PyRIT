@@ -225,6 +225,20 @@ class _Row:
         return stances[False], stances[True]
 
 
+def is_assert_policy_run(scenario_result: ScenarioResult) -> bool:
+    """
+    Check the persisted registry or canonical class identity.
+
+    Returns:
+        bool: Whether the stored identity proves an ASSERT run.
+    """
+    plan = load_scenario_run_plan(scenario_result)
+    if plan is not None and plan.scenario_registry_name:
+        return plan.scenario_registry_name == ASSERT_SCENARIO_REGISTRY_NAME
+    identifier = scenario_result.scenario_identifier
+    return identifier.class_name == ASSERT_SCENARIO_CLASS_NAME and identifier.class_module in ASSERT_SCENARIO_MODULES
+
+
 def _require_assert_run(scenario_result: ScenarioResult) -> None:
     """
     Check that ``foundry.assert_policy`` produced the result.
@@ -236,19 +250,14 @@ def _require_assert_run(scenario_result: ScenarioResult) -> None:
     Raises:
         NotAssertPolicyRunError: If another scenario produced the result.
     """
+    if is_assert_policy_run(scenario_result):
+        return
     plan = load_scenario_run_plan(scenario_result)
     registry_name = plan.scenario_registry_name if plan is not None else None
     identifier = scenario_result.scenario_identifier
-    if registry_name:
-        if registry_name == ASSERT_SCENARIO_REGISTRY_NAME:
-            return
-        source = registry_name
-    else:
-        if identifier.class_name == ASSERT_SCENARIO_CLASS_NAME and identifier.class_module in ASSERT_SCENARIO_MODULES:
-            return
-        source = (
-            f"{identifier.class_module}.{identifier.class_name}" if identifier.class_module else identifier.class_name
-        )
+    source = registry_name or (
+        f"{identifier.class_module}.{identifier.class_name}" if identifier.class_module else identifier.class_name
+    )
     raise NotAssertPolicyRunError(
         f"ASSERT metrics need a {ASSERT_SCENARIO_REGISTRY_NAME} result, but scenario result "
         f"{scenario_result.id} came from '{source}'."
