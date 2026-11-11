@@ -56,6 +56,9 @@ LOG_PATH.touch(exist_ok=True)
 
 DATASETS_PATH = pathlib.Path(PYRIT_PATH, "datasets").resolve()
 
+ASSERT_BEHAVIORS_PATH = pathlib.Path(DATASETS_PATH, "assert_behaviors").resolve()
+ASSERT_SUITES_PATH = pathlib.Path(DATASETS_PATH, "assert_suites").resolve()
+
 EXECUTOR_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "executors").resolve()
 EXECUTOR_RED_TEAM_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "red_teaming").resolve()
 EXECUTOR_SIMULATED_TARGET_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "simulated_target").resolve()

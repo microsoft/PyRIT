@@ -37,6 +37,8 @@ import {
 } from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
+import AssertPolicyMetricsPanel from './AssertPolicyMetricsPanel'
+import { isAssertPolicyRun } from './assertPolicyRun'
 import AttackExecutionTable from './AttackExecutionTable'
 import PairedOutcomes from './PairedOutcomes'
 import { ObjectiveDetailsDialog } from './ScenarioRunDialogs'
@@ -410,6 +412,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             <Link to={scenarioConversationRoutePath(scenarioResultId, conversation.conversation_id)}>Open saved conversation</Link>
           </div>)}
         </section>}
+        {run.status === 'COMPLETED' && isAssertPolicyRun(run) && <AssertPolicyMetricsPanel scenarioResultId={scenarioResultId} />}
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
           <div className={styles.sectionHeading}>
             <div className={styles.objectivesHeading}>

@@ -12,21 +12,26 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
+import logging
 import uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import (
+    NotAssertPolicyRunError,
     PairedOutcomeDetailPage,
     PairedOutcomeStatistics,
     PairedOutcomeTransition,
+    compute_assert_policy_metrics_async,
     compute_paired_outcome_statistics,
     get_paired_outcome_details,
 )
 from pyrit.backend.models import (
     ConversationMessagesResponse,
+    DatasetListResponse,
     ListRegisteredScenariosResponse,
     ProblemDetail,
     ScenarioRunListResponse,
@@ -36,8 +41,13 @@ from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
+from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
+    ScenarioRunNotCompletedError,
+    ScenarioRunNotFoundError,
+)
 from pyrit.models import (
+    AssertPolicyMetrics,
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioQueueSnapshot,
@@ -48,9 +58,15 @@ from pyrit.models import (
     ScenarioRunState,
 )
 from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.dataset_compatibility import ScenarioDatasetCompatibility
 from pyrit.models.scenario_readiness import ScenarioReadiness
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+# The problem type for ASSERT metrics requested for another scenario's run.
+NOT_ASSERT_POLICY_RUN_TYPE = "/errors/not-assert-policy-run"
 
 
 @router.get("/runs/{scenario_result_id}/launch-configuration", response_model=RunScenarioRequest)
@@ -142,6 +158,23 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
     )
 
 
+@router.get("/catalog/{scenario_name:path}/datasets", response_model=DatasetListResponse)
+async def list_compatible_scenario_datasets_async(scenario_name: IdentifierStr) -> DatasetListResponse:
+    """
+    List verified scenario-compatible choices without fetching providers or starting a scan.
+
+    Returns:
+        DatasetListResponse: Named datasets satisfying the scenario's data contract.
+    """
+    try:
+        result = await get_scenario_service().list_compatible_datasets_async(scenario_name=scenario_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
+
+
 @router.get(
     "/catalog/{scenario_name:path}",
     response_model=RegisteredScenario,
@@ -208,6 +241,33 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
             detail=f"Scenario '{scenario_name}' not found",
         )
     return estimate
+
+
+@router.post(
+    "/catalog/{scenario_name:path}/datasets/assess",
+    response_model=ScenarioDatasetCompatibility,
+)
+async def assess_scenario_datasets_async(
+    *,
+    scenario_name: IdentifierStr,
+    request: ScenarioRunSizeEstimateRequest,
+    validate_selected: bool = Query(False, description="Validate stored selected contents; never fetch providers"),
+) -> ScenarioDatasetCompatibility:
+    """
+    Assess candidate hints or fully validate selected stored data without starting a scan.
+
+    Returns:
+        ScenarioDatasetCompatibility: Structural hints and optional verified selected coverage.
+    """
+    try:
+        result = await get_scenario_service().assess_datasets_async(
+            scenario_name=scenario_name, request=request, validate_selected=validate_selected
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
 
 
 @router.post(
@@ -664,3 +724,61 @@ async def get_paired_outcomes_async(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
+
+@router.get(
+    "/runs/{scenario_result_id}/assert-metrics",
+    response_model=AssertPolicyMetrics,
+    responses={
+        400: {
+            "model": ProblemDetail,
+            "description": f"Run is not a foundry.assert_policy run (type '{NOT_ASSERT_POLICY_RUN_TYPE}')",
+        },
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run not yet completed"},
+        500: {"model": ProblemDetail, "description": "Saved results could not be read as ASSERT metrics"},
+    },
+)
+async def get_assert_policy_metrics_async(
+    *, request: Request, scenario_result_id: IdentifierStr
+) -> AssertPolicyMetrics | JSONResponse:
+    """
+    Report ASSERT's metrics for a completed foundry.assert_policy run.
+
+    Unfinished runs return 409. Other scenarios return 400 with the problem type
+    ``NOT_ASSERT_POLICY_RUN_TYPE``, so clients can tell them from other bad requests. Saved results
+    that can't be loaded or read as ASSERT metrics are internal failures: they're logged and return a
+    sanitized 500 rather than reaching the global ValueError-to-400 handler.
+
+    Returns:
+        AssertPolicyMetrics | JSONResponse: Per-technique permissibility split, judge-dimension rates, and
+            category rates, or the not-an-ASSERT-run problem.
+    """
+    try:
+        result = await get_scenario_run_service().get_run_results_async(scenario_result_id=scenario_result_id)
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Scenario run '{scenario_result_id}' not found"
+            )
+        return await compute_assert_policy_metrics_async(result)
+    except ScenarioRunNotCompletedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
+    except NotAssertPolicyRunError as exc:
+        problem = ProblemDetail(
+            type=NOT_ASSERT_POLICY_RUN_TYPE,
+            title="Not an ASSERT run",
+            status=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+            instance=request.url.path,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            media_type="application/problem+json",
+            content=problem.model_dump(exclude_none=True),
+        )
+    except ValueError as exc:
+        logger.exception("Could not compute ASSERT metrics for scenario run %s.", scenario_result_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ASSERT metrics could not be computed for this run.",
+        ) from exc

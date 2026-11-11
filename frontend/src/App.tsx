@@ -37,6 +37,14 @@ import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor
 import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
 import DatasetCatalog from './components/Datasets/DatasetCatalog'
 import DatasetSelection from './components/Datasets/DatasetSelection'
+import NewPromptGenerationPage from './components/PromptGeneration/NewPromptGenerationPage'
+import PromptGenerationPage from './components/PromptGeneration/PromptGenerationPage'
+import PromptGenerationsPage from './components/PromptGeneration/PromptGenerationsPage'
+import {
+  NEW_PROMPT_GENERATION_PATH,
+  PROMPT_GENERATION_ROUTE,
+  PROMPT_GENERATIONS_PATH,
+} from './components/PromptGeneration/promptGenerationRoutes'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -1010,6 +1018,19 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   />
                 }
               />
+              <Route path={PROMPT_GENERATIONS_PATH} element={<PromptGenerationsPage />} />
+              <Route
+                path={NEW_PROMPT_GENERATION_PATH}
+                element={
+                  <NewPromptGenerationPage
+                    targets={registry.targets}
+                    targetsLoading={registry.loading}
+                    targetsError={registry.error}
+                    defaultTarget={targetDefaults.adversarialTarget}
+                  />
+                }
+              />
+              <Route path={PROMPT_GENERATION_ROUTE} element={<PromptGenerationPage />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
               <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />

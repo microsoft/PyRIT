@@ -36,10 +36,13 @@ interface HarnessProps {
   onLoad?: jest.Mock
   loading?: boolean
   preparing?: boolean
+  compatibleOnly?: boolean
+  metadataError?: string | null
+  onReload?: jest.Mock
 }
 function Harness({
   options = OPTIONS, defaults = DEFAULTS, datasets = DATASETS, initialRequest = {}, onChange = jest.fn(), onLoad = jest.fn(),
-  loading = false, preparing = false,
+  loading = false, preparing = false, compatibleOnly = false, metadataError = null, onReload = jest.fn(),
 }: HarnessProps) {
   const [request, setRequest] = useState<ScenarioDatasetRequest>(initialRequest)
   const [validation, setValidation] = useState<string | null>(null)
@@ -56,8 +59,9 @@ function Harness({
   }
   return <FluentProvider theme={webLightTheme}><MemoryRouter>
     <ScenarioDatasetTable request={request} defaults={defaults} effective={effective} options={options}
-      datasets={datasets} disabled={false} loading={loading} preparing={preparing} metadataError={null}
-      loadEnabled onLoad={onLoad} onReload={jest.fn()} onValidationChange={setValidation}
+      datasets={datasets} disabled={false} loading={loading} preparing={preparing} metadataError={metadataError}
+      compatibleOnly={compatibleOnly}
+      loadEnabled onLoad={onLoad} onReload={onReload} onValidationChange={setValidation}
       onChange={(next) => { setRequest(next); onChange(next) }} />
     <button disabled={validation !== null}>Launch</button>
   </MemoryRouter></FluentProvider>
@@ -79,6 +83,52 @@ async function addDataset(user: ReturnType<typeof userEvent.setup>, name: string
 }
 
 describe('ScenarioDatasetTable', () => {
+  it('keeps ASSERT choices compatible-only with one metadata load and explicit failure Retry', async () => {
+    const user = userEvent.setup()
+    const reload = jest.fn()
+    const load = jest.fn()
+    const view = render(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }}
+      datasets={[STORED]} onReload={reload} onLoad={load} />)
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(screen.getByRole('option', { name: 'stored (local)', exact: true }))
+    expect(reload).not.toHaveBeenCalled()
+    expect(load).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Reset datasets', exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load datasets', exact: true })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove stored' })).toBeInTheDocument()
+    view.rerender(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }} datasets={[STORED]}
+      onReload={reload} onLoad={load} metadataError="Compatible listing unavailable" />)
+    await user.click(screen.getByRole('button', { name: 'Retry loading compatible datasets' }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves generic default fallback, final-source guard, Reset and metadata refresh', async () => {
+    const user = userEvent.setup()
+    const reload = jest.fn()
+    const load = jest.fn()
+    render(<Harness datasets={[REMOTE]} onReload={reload} onLoad={load} />)
+    expect(screen.queryByRole('button', { name: 'Remove stored' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset datasets', exact: true })).toBeEnabled()
+    expect(screen.getByRole('radiogroup', { name: 'Dataset loading' })).toBeInTheDocument()
+    expect(load).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    expect(reload).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('option', { name: 'remote (unknown)', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Remove stored' }))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    expect(screen.getByRole('option', { name: 'stored (unknown)', exact: true })).toBeInTheDocument()
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('shows a truthful compatible empty state and no choices until the first response', () => {
+    const view = render(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }} datasets={[]} loading />)
+    expect(screen.getByRole('progressbar', { name: 'Loading compatible datasets...' })).toBeInTheDocument()
+    expect(screen.queryByText('No compatible datasets available.')).not.toBeInTheDocument()
+    view.rerender(<Harness compatibleOnly defaults={{ ...DEFAULTS, sources: [] }} datasets={[]} />)
+    expect(screen.getByText('No compatible datasets available.')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+  })
+
   it('shows a compact table with resolved sizes and metadata, without a loading banner for loaded data', () => {
     const onChange = jest.fn()
     render(<Harness onChange={onChange} />)
@@ -269,11 +319,38 @@ describe('ScenarioDatasetTable', () => {
     expect(within(row).queryByText('1 of 8', { exact: true })).not.toBeInTheDocument()
   })
 
-  it('does not expose loading or source selection for an inline-only scenario', () => {
-    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} />)
+  it('keeps an inline-only scenario from choosing named datasets while its limits stay editable', () => {
+    // The backend reports inline seeds as fixed sources and keeps the other overrides.
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, mode: 'fixed' }} />)
     expect(screen.getByText('This scenario has no named datasets.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toBeEnabled()
+  })
+
+  it('lets a scenario without default datasets choose its first dataset', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} onChange={onChange} />)
+
+    expect(screen.getByText('No dataset selected.')).toBeInTheDocument()
+    expect(screen.queryByText('This scenario has no named datasets.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Selected datasets' })).not.toBeInTheDocument()
+    await addDataset(user, 'stored')
+
+    expect(onChange).toHaveBeenLastCalledWith({ sources: [{ name: 'stored' }] })
+    const table = screen.getByRole('table', { name: 'Selected datasets' })
+    expect(within(table).getByText('stored (local)')).toBeInTheDocument()
+    expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove stored' })).not.toBeInTheDocument()
+  })
+
+  it('offers only permitted datasets when choosing the first one for a subset scenario', async () => {
+    const user = userEvent.setup()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, mode: 'subset', allowed_names: ['other'] }} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['other (local)'])
   })
 
   it('does not pretend a global policy can replace protected source-specific loading rules', () => {

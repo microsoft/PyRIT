@@ -45,6 +45,7 @@ from pyrit.models import (
     DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
+    DatasetSelectionMode,
     IndeterminateDatasetSize,
     Parameter,
     RegistryReference,
@@ -68,8 +69,16 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
+    SeedGroupRequirements,
     config_hash,
 )
+from pyrit.models.dataset_compatibility import (
+    DatasetCompatibility,
+    DatasetCompatibilityReason,
+    DatasetCompatibilityStatus,
+    ScenarioDatasetCompatibility,
+)
+from pyrit.models.dataset_limit import ResolvedDatasetLimit
 from pyrit.models.scenario_readiness import (
     SCENARIO_ROLE_REFERENCES_METADATA_KEY,
     ScenarioConfigurationError,
@@ -80,11 +89,23 @@ from pyrit.models.scenario_readiness import (
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
+from pyrit.scenario.core._technique_resolution import (
+    TechniqueResolutionError,
+    resolve_technique_factories_for_techniques,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.dataset_compatibility import (
+    assess_scenario_groups,
+    assess_technique_groups,
+    describe_requirements,
+    validate_scenario_groups,
+)
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
+    prepare_configurations_async,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
@@ -113,6 +134,7 @@ if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.dataset_configuration import _ResolvedAttackGroups
 
 logger = logging.getLogger(__name__)
 
@@ -771,8 +793,20 @@ class Scenario(ABC):
 
         Returns:
             ScenarioRunSizeEstimate: Estimate with dataset defaults and effective settings.
+
+        Raises:
+            DatasetConstraintError: If selected stored data fails the scenario's requirements.
         """
         estimate = await self._get_run_size_estimate_async(target_is_configured=target_is_configured)
+        if self.get_dataset_requirements() != SeedGroupRequirements() and (
+            self._dataset_config.dataset_names or self._dataset_config.source_kind is DatasetSourceKind.INLINE
+        ):
+            assessment = await self.get_dataset_compatibility_async(allow_unloaded=True)
+            if assessment.selection_compatible is False:
+                raise DatasetConstraintError(
+                    " ".join(reason.message for reason in assessment.selection_reasons)
+                    or "The selected datasets do not meet the scenario's requirements."
+                )
         return estimate.model_copy(
             update={
                 "dataset_options": self.get_dataset_options(),
@@ -1116,8 +1150,249 @@ class Scenario(ABC):
 
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
+    def get_dataset_requirements(self) -> SeedGroupRequirements:
+        """
+        Declare evaluation-wide inputs, independently of delivery technique.
+
+        Bump the scenario's definition version when changing its accepted inputs. Declaring a
+        contract the scenario already enforced does not change existing run identities.
+
+        Returns:
+            SeedGroupRequirements: The scenario's input contract.
+        """
+        return SeedGroupRequirements()
+
+    def get_baseline_dataset_requirements(self) -> SeedGroupRequirements:
+        """Return the baseline's input requirements in addition to the scenario contract."""
+        return SeedGroupRequirements()
+
+    def _get_dataset_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+        local = self.params.get("local_technique_factory")
+        return resolve_technique_factories_for_techniques(
+            scenario_techniques=self._scenario_techniques,
+            extra_factories={local.name: local} if local is not None else None,
+        )
+
+    def _validate_dataset_technique_group(
+        self, *, factory: "AttackTechniqueFactory", seed_group: AttackSeedGroup
+    ) -> None:
+        factory.validate_group_adversarial_prompts(seed_group)
+
+    def _get_dataset_target_errors(self, factory: "AttackTechniqueFactory") -> list[str]:
+        if self._objective_target is None:
+            return []
+        return factory.requirements.check_target(target=self._objective_target, attack_class=factory.attack_class)
+
+    async def get_dataset_compatibility_async(self, *, allow_unloaded: bool = False) -> ScenarioDatasetCompatibility:
+        """
+        Validate selected contents without fetching providers, constructing attacks, or calling a model.
+
+        Returns:
+            ScenarioDatasetCompatibility: Verified coverage or an explicit unverified selection.
+        """
+        self._resolve_runtime_configuration(require_objective_target=False)
+        descriptions = describe_requirements(self.get_dataset_requirements())
+        names = self._dataset_config.dataset_names
+        if self._required_data is not None:
+            return ScenarioDatasetCompatibility(
+                requirements=descriptions,
+                selection_reasons=[
+                    DatasetCompatibilityReason(
+                        code="required_ingredients",
+                        message="This scenario assembles its population from required ingredient datasets.",
+                    )
+                ],
+            )
+        if not names and self._dataset_config.source_kind is DatasetSourceKind.MEMORY:
+            return ScenarioDatasetCompatibility(
+                requirements=descriptions,
+                selection_reasons=[DatasetCompatibilityReason(code="no_selection", message="Select a dataset first.")],
+            )
+        if allow_unloaded and names and await self._dataset_config.get_missing_dataset_names_async():
+            return ScenarioDatasetCompatibility(
+                requirements=descriptions,
+                items=[
+                    DatasetCompatibility(
+                        name=name,
+                        selected=True,
+                        status=DatasetCompatibilityStatus.NOT_VERIFIED,
+                        reasons=[
+                            DatasetCompatibilityReason(
+                                code="not_loaded", message="Load and validate the selected datasets first."
+                            )
+                        ],
+                    )
+                    for name in names
+                ],
+            )
+        population = await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=False)
+        self._validate_dataset_assessment_population(population)
+        try:
+            result, _, _ = await asyncio.to_thread(self._assess_dataset_population, population)
+        except TechniqueResolutionError:
+            return ScenarioDatasetCompatibility(
+                requirements=descriptions,
+                selection_reasons=[
+                    DatasetCompatibilityReason(
+                        code="custom_techniques",
+                        message="This scenario's custom delivery is validated during initialization, "
+                        "not by catalog hints.",
+                    )
+                ],
+            )
+        return result
+
+    def _assess_dataset_population(
+        self, population: dict[str, list[AttackSeedGroup]]
+    ) -> tuple[ScenarioDatasetCompatibility, set[int], set[int]]:
+        requirements = self.get_dataset_requirements()
+        items = [
+            assess_scenario_groups(name=name, groups=groups, requirements=requirements)
+            for name, groups in population.items()
+        ]
+        failures = [reason for item in items for reason in item.reasons]
+        # Logical IDs can coincide when metadata differs; coverage belongs to this resolved snapshot's objects.
+        usable_object_ids: set[int] = set()
+        eligible_object_ids: set[int] = set()
+        if not failures:
+            factories = self._get_dataset_technique_factories()
+            for item in items:
+                groups = population[item.name]
+                for name, factory in factories.items():
+                    coverage, usable = assess_technique_groups(
+                        name=name,
+                        groups=groups,
+                        requirements=factory.requirements.seed_group,
+                        seed_technique=factory.seed_technique,
+                        target_errors=self._get_dataset_target_errors(factory),
+                        validate_group=lambda group, factory=factory: self._validate_dataset_technique_group(
+                            factory=factory, seed_group=group
+                        ),
+                    )
+                    item.techniques.append(coverage)
+                    usable_object_ids.update(id(group) for group in usable)
+                    eligible_object_ids.update(id(group) for group in usable)
+                if self._include_baseline:
+                    coverage, usable = assess_technique_groups(
+                        name="baseline",
+                        groups=groups,
+                        requirements=self.get_baseline_dataset_requirements(),
+                        is_baseline=True,
+                    )
+                    item.techniques.append(coverage)
+                    eligible_object_ids.update(id(group) for group in usable)
+                if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
+                    item.reasons.extend(reason for coverage in item.techniques for reason in coverage.reasons)
+                if not any(coverage.usable_count for coverage in item.techniques):
+                    item.reasons.append(
+                        DatasetCompatibilityReason(
+                            code="no_usable_inputs", message="No selected delivery can use this dataset."
+                        )
+                    )
+                if item.reasons:
+                    item.status = DatasetCompatibilityStatus.INCOMPATIBLE
+            failures = (
+                [reason for item in items for reason in item.reasons]
+                if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE
+                else []
+            )
+            if self._scenario_techniques and not usable_object_ids:
+                failures.append(
+                    DatasetCompatibilityReason(
+                        code="no_usable_techniques",
+                        message="No usable selected techniques. A usable baseline alone is not enough; "
+                        "select a suitable technique or generate the inputs the selected technique needs.",
+                    )
+                )
+            elif not eligible_object_ids:
+                failures.append(
+                    DatasetCompatibilityReason(
+                        code="no_usable_inputs", message="No selected technique or baseline has usable inputs."
+                    )
+                )
+        return (
+            ScenarioDatasetCompatibility(
+                requirements=describe_requirements(requirements),
+                items=items,
+                selection_compatible=not failures,
+                selection_reasons=failures,
+            ),
+            usable_object_ids,
+            eligible_object_ids,
+        )
+
+    def _validate_dataset_assessment_population(  # noqa: B027
+        self, population: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        """Check scenario-wide invariants that cannot be inferred from catalog summaries."""
+
+    def _validate_dataset_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        requirements = self.get_dataset_requirements()
+        if requirements != SeedGroupRequirements():
+            validate_scenario_groups(population=population, requirements=requirements)
+
+    def _sample_dataset_population(
+        self,
+        *,
+        population: dict[str, list[AttackSeedGroup]],
+        selection: "_ResolvedAttackGroups",
+    ) -> dict[str, list[AttackSeedGroup]]:
+        if self.get_dataset_requirements() == SeedGroupRequirements():
+            return selection.select(apply_sampling=True)
+        assessment, usable_object_ids, eligible_object_ids = self._assess_dataset_population(population)
+        if not assessment.selection_compatible:
+            raise IncompatibleTechniqueError(" ".join(reason.message for reason in assessment.selection_reasons))
+        if all(id(group) in usable_object_ids for groups in population.values() for group in groups):
+            return selection.select(apply_sampling=True)
+        for name, groups in population.items():
+            excluded = sum(id(group) not in eligible_object_ids for group in groups)
+            if excluded:
+                logger.warning(
+                    "Dataset '%s': excluding %d group(s) that no selected technique or baseline can use "
+                    "before sampling.",
+                    name,
+                    excluded,
+                )
+
+        def select(
+            *, groups: dict[str, list[AttackSeedGroup]], cap: ResolvedDatasetLimit
+        ) -> dict[str, list[AttackSeedGroup]]:
+            return sample_with_coverage(
+                groups_by_dataset=groups,
+                cap=cap,
+                required_keys=[True]
+                if any(id(group) in usable_object_ids for values in groups.values() for group in values)
+                else [],
+                key=lambda _, group: id(group) in usable_object_ids,
+            )
+
+        def sample(
+            *, configuration: DatasetAttackConfiguration, groups: dict[str, list[AttackSeedGroup]]
+        ) -> dict[str, list[AttackSeedGroup]]:
+            groups = {
+                name: [group for group in values if id(group) in eligible_object_ids] for name, values in groups.items()
+            }
+            source_limits = {source.name: configuration.source_limit(source.name) for source in configuration.sources}
+            limited = {
+                name: select(groups={name: values}, cap=source_limits.get(name, "all"))[name]
+                for name, values in groups.items()
+            }
+            return select(groups=limited, cap=configuration.max_total)
+
+        return selection.select(apply_sampling=True, sampler=sample)
+
     def get_dataset_options(self) -> ScenarioDatasetOptions:
-        """Return the scenario's named-dataset capabilities for the current parameters."""
+        """
+        Return the scenario's named-dataset capabilities for the current parameters.
+
+        Named sources can't replace inline seeds, so an inline configuration reports its sources as
+        fixed. Limits and filters keep their declared capabilities.
+
+        Returns:
+            ScenarioDatasetOptions: The permitted dataset overrides.
+        """
+        if self._dataset_config.source_kind is DatasetSourceKind.INLINE:
+            return self.DATASET_OPTIONS.model_copy(update={"mode": DatasetSelectionMode.FIXED, "allowed_names": []})
         return self.DATASET_OPTIONS
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
@@ -1152,13 +1427,28 @@ class Scenario(ABC):
             fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
         """
         if self._required_data is None:
-            await self._dataset_config.prepare_async(fetch=fetch)
+            if self.get_dataset_requirements() == SeedGroupRequirements():
+                await self._dataset_config.prepare_async(fetch=fetch)
+            else:
+                await prepare_configurations_async(
+                    configurations=[self._dataset_config],
+                    fetch=fetch,
+                    validate_assembly=self._validate_prepared_population_async,
+                )
             return
         await self._required_data.prepare_async(
             fetch=fetch,
             population=self._dataset_config,
             validate_assembly=lambda: self._resolve_seed_groups_by_dataset_async(apply_sampling=False),
         )
+
+    async def _validate_prepared_population_async(self) -> None:
+        population = await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=False)
+        self._validate_dataset_population(population)
+        self._validate_dataset_assessment_population(population)
+        assessment, _, _ = await asyncio.to_thread(self._assess_dataset_population, population)
+        if not assessment.selection_compatible:
+            raise IncompatibleTechniqueError(" ".join(reason.message for reason in assessment.selection_reasons))
 
     def _validate_runtime_configuration(self) -> None:
         """
@@ -1561,6 +1851,7 @@ class Scenario(ABC):
                 name: [group for group in groups if group.logical_id in planned_seed_ids]
                 for name, groups in seed_groups_by_dataset.items()
             }
+        self._validate_dataset_population(seed_groups_by_dataset)
         if not is_resume and self._dataset_config.max_total != "all":
             count = sum(len(groups) for groups in seed_groups_by_dataset.values())
             if count > self._dataset_config.max_total:
@@ -1864,6 +2155,20 @@ class Scenario(ABC):
 
         self._atomic_attacks = retained_attacks
 
+    def _get_identity_params(self) -> dict[str, Any]:
+        """
+        Return the scenario's own parameters recorded in its identity.
+
+        The framework common inputs are excluded: they are captured through the dedicated
+        identity fields and are often live, non-JSON-serializable objects. Saved launches
+        restore these parameters on resume.
+
+        Returns:
+            dict[str, Any]: The custom parameters that identify this run.
+        """
+        common_names = self._common_scenario_parameter_names()
+        return {name: value for name, value in self.params.items() if name not in common_names}
+
     def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
         Build the canonical ``ScenarioIdentifier`` for the current run.
@@ -1879,15 +2184,9 @@ class Scenario(ABC):
         # Required data first, so moving ingredients out of dataset_config keeps stored identities.
         required = self._required_data.dataset_names if self._required_data is not None else []
         datasets = [*required, *self._dataset_config.dataset_names]
-        # Persist only the scenario's own custom params. The framework common inputs
-        # (objective_target, techniques, dataset config, ...) are captured through the
-        # dedicated identity fields below and are often live, non-JSON-serializable
-        # objects, so they must not leak into the free-form params dict.
-        common_names = self._common_scenario_parameter_names()
-        custom_params = {name: value for name, value in self.params.items() if name not in common_names}
         return ScenarioIdentifier.of(
             self,
-            params=custom_params,
+            params=self._get_identity_params(),
             version=self._version,
             techniques=techniques,
             datasets=datasets,
@@ -2065,7 +2364,14 @@ class Scenario(ABC):
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset name.
         """
-        return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+        if self.get_dataset_requirements() == SeedGroupRequirements():
+            return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+        selection = await self._dataset_config._resolve_attack_groups_async()
+        population = selection.select(apply_sampling=False)
+        if not apply_sampling:
+            return population
+        self._validate_dataset_population(population)
+        return self._sample_dataset_population(population=population, selection=selection)
 
     def _build_scenario_context(
         self,

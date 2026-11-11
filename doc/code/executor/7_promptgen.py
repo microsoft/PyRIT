@@ -102,6 +102,41 @@ print(f"Stored {len(assert_result.seed_groups)} seed groups.")
 # the [`foundry.assert_policy` scenario](../../scanner/foundry.ipynb).
 
 # %% [markdown]
+# ### Review the policy before generating seed groups
+#
+# `advance_async` runs the same stages and returns an `AssertGenerationCheckpoint`. Stop after the
+# dimensions stage to review the taxonomy, apply edits with `with_reviewed_policy`, then continue.
+# Each group's provenance records the edited stages. Pass `on_checkpoint` to store progress and
+# resume after an interruption. `AssertGenerator.estimate` reports the remaining model calls and an
+# approximate token range without calling a target.
+#
+# The bundled ASSERT behavior library (`list_assert_behavior_presets`) and suites
+# (`list_assert_suite_presets`) provide ready-made behavior descriptions. The GUI runs this flow
+# from **Datasets > Generate dataset**.
+
+# %%
+from pyrit.datasets import get_assert_behavior_preset
+from pyrit.models import AssertGenerationCheckpoint, AssertGenerationStage
+
+print(get_assert_behavior_preset("prompt_injection").summary)
+
+draft = AssertGenerationCheckpoint(config=assert_config)
+print(f"Up to {AssertGenerator.estimate(checkpoint=draft).max_calls} model calls")
+draft = await assert_generator.advance_async(checkpoint=draft, stop_after=AssertGenerationStage.DIMENSIONS)  # type: ignore
+for category in draft.taxonomy.behavior_categories:
+    print(f"{'Permissible' if category.permissible else 'Impermissible'}: {category.name}")
+
+first_category, *other_categories = draft.taxonomy.behavior_categories
+revised_category = first_category.model_copy(update={"definition": f"{first_category.definition} Cite the policy."})
+reviewed = draft.with_reviewed_policy(
+    taxonomy=draft.taxonomy.model_copy(update={"behavior_categories": (revised_category, *other_categories)}),
+    dimensions=draft.dimensions,
+)
+reviewed = await assert_generator.advance_async(checkpoint=reviewed)  # type: ignore
+reviewed_result = assert_generator.build_result(checkpoint=reviewed)
+print(f"{len(reviewed_result.seed_groups)} seed groups from the reviewed policy")
+
+# %% [markdown]
 # ## Anecdoctor Generator
 #
 # Few-shot prompting produces passable attack prompts; knowledge-graph augmentation makes them more coherent and targeted.

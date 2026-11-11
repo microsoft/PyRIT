@@ -16,7 +16,7 @@
         "assert_ai/core/judge_normalization.py",
         "assert_ai/internal_pipeline_prompts/judge_system.md"
       ],
-      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; no XML citation processing or multi-judge aggregation."
+      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; custom judge dimensions thresholded to true/false verdicts; repeated judge samples combined by ASSERT's vote with category re-aggregation, dropping samples whose judgment stays invalid; no XML citation processing."
     },
     {
       "path": "pyrit/datasets/score/true_false_question/assert_policy_system_prompt.yaml",
@@ -70,6 +70,318 @@
         "assert_ai/internal_pipeline_prompts/test_set_scenario_single.md",
         "assert_ai/internal_pipeline_prompts/test_set_generation_guidance.md"
       ]
+    },
+    {
+      "path": "pyrit/models/score/assert_judge.py",
+      "adaptation_date": "2026-11-09",
+      "sources": ["docs/config/schema.md", "assert_ai/library/judges/README.md"],
+      "adaptations": "Typed judge dimension, ordinal scale, preset, and judge configuration models; built-in dimensions are reserved and scaled dimensions add a PyRIT violation_at grade."
+    },
+    {
+      "path": "pyrit/score/assert_judge_presets.py",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/loader.py", "assert_ai/core/judge.py"],
+      "adaptations": "Preset discovery by name or YAML path and ASSERT's dimension merge order; disabled dimensions apply after presets."
+    },
+    {
+      "path": "pyrit/score/assert_dimension_scorer.py",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/core/judge.py", "assert_ai/internal_pipeline_prompts/judge_system.md"],
+      "adaptations": "One native judge call per custom dimension; the grade position is thresholded at violation_at; not-applicable answers are undetermined."
+    },
+    {
+      "path": "pyrit/datasets/score/assert/dimension_system_prompt.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/internal_pipeline_prompts/judge_system.md"],
+      "adaptations": "Single-dimension judge prompt for flags, ordinal grades, and not-applicable answers, with native conversation evidence instead of the XML citation protocol."
+    },
+    {
+      "path": "pyrit/datasets/executors/red_teaming/assert_tester_system.yaml",
+      "adaptation_date": "2026-11-10",
+      "sources": ["assert_ai/internal_pipeline_prompts/inference_tester_system.md"],
+      "adaptations": "ASSERT's tester system prompt; the loop description no longer mentions ASSERT's [Turn N/max] counter, and replies are requested as JSON with a next_message field."
+    },
+    {
+      "path": "pyrit/scenario/scenarios/foundry/assert_policy.py",
+      "adaptation_date": "2026-11-10",
+      "sources": ["assert_ai/stages/inference.py"],
+      "adaptations": "The assert_package technique fills ASSERT's tester prompt with each group's tester instructions and reuses ASSERT's opening request and <target_response> framing in PyRIT's red teaming attack."
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/alignment.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/alignment.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/communication.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/communication.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/grounding.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/grounding.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/instruction-following.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/instruction-following.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/multi-turn.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/multi-turn.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/operational.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/operational.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/policy-adherence.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/policy-adherence.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/robustness.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/robustness.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/safety-core.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/safety-core.yaml"],
+      "adaptations": "Lists the built-in dimensions by reference instead of redefining them."
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/safety-extended.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/safety-extended.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/score/assert/judge_presets/tool-use.yaml",
+      "adaptation_date": "2026-11-09",
+      "sources": ["assert_ai/library/judges/tool-use.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/actionability_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/actionability_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/anthropomorphic_behaviors.yaml",
+      "sources": ["assert_ai/library/behaviors/anthropomorphic_behaviors.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/conflicting_instruction_resolution_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/conflicting_instruction_resolution_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/constraint_propagation_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/constraint_propagation_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/conversation_coherence_breakdown.yaml",
+      "sources": ["assert_ai/library/behaviors/conversation_coherence_breakdown.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/crystal_mountain_vs_snoqualmie.yaml",
+      "sources": ["assert_ai/library/behaviors/crystal_mountain_vs_snoqualmie.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/doxxing.yaml",
+      "sources": ["assert_ai/library/behaviors/doxxing.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/escalation_judgment_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/escalation_judgment_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/explicit_constraint_violation_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/explicit_constraint_violation_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/flawed_action_plan_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/flawed_action_plan_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/goal_drift_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/goal_drift_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/grounding_attribution_errors.yaml",
+      "sources": ["assert_ai/library/behaviors/grounding_attribution_errors.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/harmful_medical_advice.yaml",
+      "sources": ["assert_ai/library/behaviors/harmful_medical_advice.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/hate_speech_harassment.yaml",
+      "sources": ["assert_ai/library/behaviors/hate_speech_harassment.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/identity_verification_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/identity_verification_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/imminent_crisis_management.yaml",
+      "sources": ["assert_ai/library/behaviors/imminent_crisis_management.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/incomplete_answer_synthesis_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/incomplete_answer_synthesis_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/incorrect_tool_selection_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/incorrect_tool_selection_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/ineffective_team_communication_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/ineffective_team_communication_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/insufficient_verification_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/insufficient_verification_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/intent_misinterpretation_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/intent_misinterpretation_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/inter_agent_handoff_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/inter_agent_handoff_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/ios_vs_android.yaml",
+      "sources": ["assert_ai/library/behaviors/ios_vs_android.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/malicious_cyber_activity.yaml",
+      "sources": ["assert_ai/library/behaviors/malicious_cyber_activity.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/observation_neglect_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/observation_neglect_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/out_of_scope_request_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/out_of_scope_request_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/output_internal_consistency_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/output_internal_consistency_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/poor_retrieval_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/poor_retrieval_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/premature_termination_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/premature_termination_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/procedure_adherence_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/procedure_adherence_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/prompt_injection.yaml",
+      "sources": ["assert_ai/library/behaviors/prompt_injection.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/relationship_entanglement.yaml",
+      "sources": ["assert_ai/library/behaviors/relationship_entanglement.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/repeated_action_loop_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/repeated_action_loop_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/response_completeness_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/response_completeness_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/sexual_content.yaml",
+      "sources": ["assert_ai/library/behaviors/sexual_content.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/shimano_vs_sram.yaml",
+      "sources": ["assert_ai/library/behaviors/shimano_vs_sram.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/stale_state_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/stale_state_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/stereotyping.yaml",
+      "sources": ["assert_ai/library/behaviors/stereotyping.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/success_criteria_ambiguity_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/success_criteria_ambiguity_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/suicide_self_harm.yaml",
+      "sources": ["assert_ai/library/behaviors/suicide_self_harm.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/sycophancy.yaml",
+      "sources": ["assert_ai/library/behaviors/sycophancy.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/tabs_vs_spaces.yaml",
+      "sources": ["assert_ai/library/behaviors/tabs_vs_spaces.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/tool_call_error_recovery_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/tool_call_error_recovery_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/tool_call_turn_protocol_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/tool_call_turn_protocol_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/tool_orchestration_errors.yaml",
+      "sources": ["assert_ai/library/behaviors/tool_orchestration_errors.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/tool_output_misinterpretation_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/tool_output_misinterpretation_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/tool_parameter_formatting_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/tool_parameter_formatting_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/unauthorized_action_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/unauthorized_action_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/underused_context_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/underused_context_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/unit_conversion_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/unit_conversion_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/unsupported_conclusion_failures.yaml",
+      "sources": ["assert_ai/library/behaviors/unsupported_conclusion_failures.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_behaviors/violent_content.yaml",
+      "sources": ["assert_ai/library/behaviors/violent_content.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_suites/telecom_customer_service.yaml",
+      "sources": ["assert_ai/library/scenarios/telecom_customer_service.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_suites/travel_planner.yaml",
+      "sources": ["assert_ai/library/scenarios/travel_planner.yaml"]
+    },
+    {
+      "path": "pyrit/datasets/assert_suites/travel_planner_benchmark.yaml",
+      "sources": ["assert_ai/library/scenarios/travel_planner_benchmark.yaml"]
     }
   ]
 }

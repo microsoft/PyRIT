@@ -1,3 +1,5 @@
+import { StrictMode, type ReactNode } from 'react'
+
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { datasetsApi, scenariosApi } from '@/services/api'
@@ -7,11 +9,11 @@ import { useScenarioDatasets } from './useScenarioDatasets'
 
 jest.mock('@/services/api', () => ({
   datasetsApi: { listDatasets: jest.fn() },
-  scenariosApi: { loadDatasets: jest.fn() },
+  scenariosApi: { loadDatasets: jest.fn(), listCompatibleDatasets: jest.fn() },
 }))
 let generation = 'one'
 jest.mock('./useRuntime', () => ({ useRuntime: () => ({ ready: true, generation }) }))
-const list = datasetsApi.listDatasets as jest.Mock
+const list = scenariosApi.listCompatibleDatasets as jest.Mock
 const loadDatasets = scenariosApi.loadDatasets as jest.Mock
 const NAMED: DatasetInfo = {
   name: 'named', selection_key: 'dataset:named:named', loaded: true, provider_available: false, logical_examples: 1, origins: ['local'], seed_pieces: 1, objectives: 1, modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
@@ -22,7 +24,7 @@ describe('useScenarioDatasets', () => {
 
   it('caches metadata for the page, excludes unnamed populations, and explicitly reloads', async () => {
     list.mockResolvedValue({ items: [NAMED, { ...NAMED, name: '(unnamed)', selection_key: 'dataset:unnamed' }] })
-    const view = renderHook(() => useScenarioDatasets())
+    const view = renderHook(() => useScenarioDatasets('test'))
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     view.rerender()
     expect(list).toHaveBeenCalledTimes(1)
@@ -37,7 +39,7 @@ describe('useScenarioDatasets', () => {
     let completeOld: (value: DatasetInfo[]) => void = () => {}
     list.mockReturnValueOnce(new Promise<DatasetInfo[]>((resolve) => { completeOld = resolve }).then((items) => ({ items })))
     list.mockResolvedValueOnce({ items: [{ ...NAMED, name: 'new' }] })
-    const view = renderHook(() => useScenarioDatasets())
+    const view = renderHook(() => useScenarioDatasets('test'))
     generation = 'two'
     view.rerender()
     await waitFor(() => expect(view.result.current.items[0]?.name).toBe('new'))
@@ -50,7 +52,7 @@ describe('useScenarioDatasets', () => {
 
   it('hides loaded metadata immediately when the runtime changes', async () => {
     list.mockResolvedValueOnce({ items: [NAMED] })
-    const view = renderHook(() => useScenarioDatasets())
+    const view = renderHook(() => useScenarioDatasets('test'))
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     list.mockReturnValueOnce(new Promise(() => {}))
     generation = 'two'
@@ -63,7 +65,7 @@ describe('useScenarioDatasets', () => {
   it('loads only on explicit action and refreshes metadata after success', async () => {
     list.mockResolvedValue({ items: [NAMED] })
     loadDatasets.mockResolvedValue({})
-    const view = renderHook(() => useScenarioDatasets())
+    const view = renderHook(() => useScenarioDatasets('test'))
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     expect(loadDatasets).not.toHaveBeenCalled()
     const request = { datasets: { max_total: 4 } }
@@ -76,7 +78,7 @@ describe('useScenarioDatasets', () => {
   it('retains load failures and still refreshes current metadata', async () => {
     list.mockResolvedValue({ items: [NAMED] })
     loadDatasets.mockRejectedValue(new Error('Load failed'))
-    const view = renderHook(() => useScenarioDatasets())
+    const view = renderHook(() => useScenarioDatasets('test'))
     await act(async () => { await view.result.current.loadSelected('test', {}) })
     await waitFor(() => expect(view.result.current.loadError).not.toBeNull())
     expect(view.result.current.preparing).toBe(false)
@@ -87,7 +89,7 @@ describe('useScenarioDatasets', () => {
     list.mockResolvedValue({ items: [NAMED] })
     let finish: () => void = () => {}
     loadDatasets.mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
-    const view = renderHook(() => useScenarioDatasets())
+    const view = renderHook(() => useScenarioDatasets('test'))
     let pending: Promise<void>
     act(() => {
       pending = view.result.current.loadSelected('test', {})
@@ -99,5 +101,21 @@ describe('useScenarioDatasets', () => {
     await act(async () => { finish(); await pending })
     expect(view.result.current.preparing).toBe(false)
     expect(view.result.current.loadError).toBeNull()
+  })
+
+  it('uses one read-only compatible listing in StrictMode and scopes cached choices to scenario', async () => {
+    list.mockResolvedValue({ items: [NAMED] })
+    const view = renderHook(({ name }: { name: string }) => useScenarioDatasets(name), {
+      initialProps: { name: 'first' },
+      wrapper: ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>,
+    })
+    await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledWith('first', expect.any(AbortSignal))
+    expect(datasetsApi.listDatasets).not.toHaveBeenCalled()
+    expect(loadDatasets).not.toHaveBeenCalled()
+    view.rerender({ name: 'second' })
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(list).toHaveBeenLastCalledWith('second', expect.any(AbortSignal))
   })
 })
