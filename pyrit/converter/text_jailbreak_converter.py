@@ -28,7 +28,7 @@ class TextJailbreakConverter(Converter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build identifier with jailbreak template path.
+        Build identifier with the jailbreak template source and a hash of the resolved template value.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.

@@ -97,7 +97,6 @@ KNOWN_GAPS: dict[tuple[str, str], str] = {
     ("CodeChameleonConverter", "encrypt_function"): "custom functions are not identified yet, see #3761",
     ("CodeChameleonConverter", "decrypt_function"): "custom functions are not identified yet, see #3761",
     ("PolicyPuppetryConverter", "prompt_template"): "custom templates are identified by name only, see #3759",
-    ("TextJailbreakConverter", "jailbreak_template"): "inline templates share one identifier, see #3760",
 }
 
 BASELINE_SETTINGS: dict[str, dict[str, Any]] = {
