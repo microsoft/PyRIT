@@ -58,6 +58,7 @@ export function mapScenarioRunEstimate(
       return {
         status: 'unavailable', scope, deferredCount: true,
         label: 'Exact count is calculated when the scan starts.',
+        note: response.note ?? undefined,
       }
     }
     return {
