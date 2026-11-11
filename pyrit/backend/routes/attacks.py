@@ -15,12 +15,11 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import Field
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AddMessageResponse,
     AttackConversationsResponse,
     AttackListResponse,
-    AttackMetadata,
     AttackOptionsResponse,
     AttackSummary,
     ConversationMessagesResponse,
@@ -29,27 +28,22 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
-    SaveConversationRequest,
+    ProblemDetail,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
 )
-from pyrit.backend.models.common import (
-    MAX_IDENTIFIER_LENGTH,
-    MAX_ITEMS,
-    CursorStr,
-    IdentifierStr,
-    LabelFilterStr,
-    ProblemDetail,
-)
+from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
 from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services import get_attack_service
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError, get_chat_scoring_service
 from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
 logger = logging.getLogger(__name__)
@@ -312,6 +306,13 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
     except HistoryReplayError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
+        if "must be provided together" in str(e):
+            # A half provided branching spec is a request body problem, the
+            # same rejection the conversation endpoint answers with 400.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),

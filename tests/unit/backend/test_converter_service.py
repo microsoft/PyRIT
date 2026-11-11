@@ -22,12 +22,12 @@ from pydantic import ValidationError
 
 from pyrit import converter
 from pyrit.backend.main import app
-from pyrit.backend.models.converters import (
+from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
 from pyrit.backend.routes import converters as converter_routes
-from pyrit.backend.services.converter_service import (
+from pyrit.backend.services import (
     ConverterService,
     get_converter_service,
 )
@@ -45,13 +45,13 @@ from pyrit.converter import (
     SuffixAppendConverter,
     TokenSelectionStrategy,
     TranslationConverter,
+    get_converter_modalities,
 )
-from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.registry.components import ConverterRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -278,6 +278,21 @@ async def test_converter_input_errors_return_400_async(
             )
     assert exc.value.status_code == 400
     assert next(iter(params)) in exc.value.detail
+
+
+@pytest.mark.parametrize("converter_type", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
+async def test_speech_converter_region_must_be_a_region_name_async(
+    upload_service: ConverterService, converter_type: str
+) -> None:
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(
+                CreateConverterRequest(
+                    name="speech", type=converter_type, params={"azure_speech_region": "example.com#"}
+                )
+            )
+    assert exc.value.status_code == 400
+    assert "azure_speech_region must be an Azure region name" in exc.value.detail
 
 
 async def test_binary_creation_from_metadata_and_selection_async(upload_service: ConverterService) -> None:
@@ -521,7 +536,7 @@ class TestListConverterTypes:
         assert metadata is not None
         registry_parameters = {parameter.name: parameter for parameter in metadata.parameters}
 
-        assert registry_parameters["font_color"].type_name == "tuple[int, int, int]"
+        assert registry_parameters["font_color"].type_name == "tuple[int, int, int] | None"
         assert not registry_parameters["font_color"].is_external_input
 
     async def test_types_describe_parameters_in_the_form_callers_send(self, upload_service: ConverterService) -> None:
@@ -543,7 +558,7 @@ class TestListConverterTypes:
         }
         for name in ("stopwords", "candidate_words"):
             assert serialized[("SATAMaskingConverter", name)] == {
-                "type_name": "list[str]",
+                "type_name": "list[str] | None",
                 "is_list": True,
                 "choices": None,
                 "default": None,
@@ -555,13 +570,13 @@ class TestListConverterTypes:
             for parameter in metadata.parameters
         }
         assert registry[("AddImageTextConverter", "font_size")] == "int | tuple[int, int]"
-        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str]"
+        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str] | None"
 
     @pytest.mark.parametrize(
         ("converter_type", "parameter_name", "type_name", "required", "is_list"),
         [
             ("SearchReplaceConverter", "replace", "str", True, False),
-            ("DenylistConverter", "denylist", "list[str]", False, True),
+            ("DenylistConverter", "denylist", "list[str] | None", False, True),
         ],
     )
     async def test_types_expose_structured_parameters(
@@ -2155,7 +2170,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = Base64Converter()
         # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
-            from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
+            from pyrit.converter import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
         # Tokenizer protocol — use a representative vocab object
@@ -2163,7 +2178,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
-            from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
+            from pyrit.datasets import TextJailBreak
 
             kwargs[pname] = TextJailBreak(string_template="Test {{ prompt }}")
         # Path — use a temp JPEG file

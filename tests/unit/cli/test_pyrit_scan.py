@@ -281,6 +281,16 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--request-timeout", "30"])
         assert args.request_timeout == 30
 
+    def test_list_with_fractional_request_timeout(self):
+        args = pyrit_scan.parse_args(["list-targets", "--request-timeout", "0.5"])
+        assert args.request_timeout == 0.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_list_rejects_invalid_request_timeout(self, value):
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_scan.parse_args(["list-targets", "--request-timeout", value])
+        assert exc_info.value.code == 2
+
     def test_start_server_with_startup_timeout(self):
         args = pyrit_scan.parse_args(["start-server", "--startup-timeout", "45.5"])
         assert args.startup_timeout == 45.5
@@ -856,6 +866,15 @@ class TestAddScenarioParamsFromApi:
 class TestBuildRunRequest:
     """Tests for _build_run_request."""
 
+    def test_explicit_helper_roles_match_shell_parser(self) -> None:
+        flags = ["--scoring-target", "judge", "--adversarial-target", "generator"]
+        parsed = pyrit_scan.parse_args(["run", "test", "--target", "objective", *flags])
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        shell = parse_run_arguments(args_string="test --target objective " + " ".join(flags))
+        assert request.scoring_target_name == shell["scoring_target"] == "judge"
+        assert request.adversarial_target_name == shell["adversarial_target"] == "generator"
+        assert request.target_name == shell["target"] == "objective"
+
     @pytest.mark.parametrize("value", [None, "default", "all", "7", ""])
     def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
         flags = [] if value is None else ["--max-dataset-size", value]
@@ -1276,13 +1295,14 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--dry-run", "on"])
         assert "invalid value" in capsys.readouterr().err
 
-    def test_list_int_param_coerces_each_value(self):
+    @pytest.mark.parametrize("type_name", ["list[int]", "list[int] | None", "list[int | None] | None"])
+    def test_list_int_param_coerces_each_value(self, type_name: str) -> None:
         from argparse import ArgumentParser
 
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
+            params=[_sp(name="sample_ids", description="...", param_type=type_name, is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
@@ -1976,9 +1996,8 @@ class TestPollStreamsRetryWarnings:
     async def test_poll_prints_retry_warnings_once(self, capsys):
         from datetime import datetime
 
-        from pyrit.models import ScenarioRunState
+        from pyrit.models import RetryEvent, ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
-        from pyrit.models.retry_event import RetryEvent
 
         now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(

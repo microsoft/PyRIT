@@ -17,15 +17,18 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
-    from pyrit.models import Operation, ScenarioResult
+    from pyrit.models import (
+        Operation,
+        ScenarioResult,
+        ScenarioRunListItem,
+    )
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
-        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
-    from pyrit.output.sink import OutputFormat, Sink
+    from pyrit.output import OutputFormat, Sink
 
 try:
     import termcolor
@@ -105,7 +108,7 @@ def _wrap(*, text: str, indent: str, width: int = 78) -> str:
 
 def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
     """
-    Print a formatted list of scenarios.
+    Print scenarios with required parameters distinguished from defaulted ones.
 
     Args:
         items: Scenarios from ``GET /api/scenarios/catalog``.
@@ -147,7 +150,10 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.supported_parameters:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
-                default_str = f" [default: {p.default!r}]" if p.default is not None else ""
+                if p.required:
+                    default_str = " [required]"
+                else:
+                    default_str = f" [default: {p.default!r}]" if p.default is not None else ""
                 type_str = f" ({p.type_name})" if p.type_name else ""
                 choices_str = f" [choices: {', '.join(p.choices)}]" if p.choices else ""
                 print(f"      - {p.name}{type_str}{default_str}{choices_str}: {p.description}")
@@ -162,7 +168,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
 
 def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
     """
-    Print a formatted list of initializers.
+    Print initializers with required parameters distinguished from defaulted ones.
 
     Args:
         items: Initializers from ``GET /api/initializers``.
@@ -185,7 +191,10 @@ def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
         if init.supported_parameters:
             print("    Supported Parameters:")
             for p in init.supported_parameters:
-                default_str = f" [default: {p.default}]" if p.default is not None else ""
+                if p.required:
+                    default_str = " [required]"
+                else:
+                    default_str = f" [default: {p.default}]" if p.default is not None else ""
                 print(f"      - {p.name}{default_str}: {p.description}")
         if init.description:
             print("    Description:")
@@ -430,7 +439,7 @@ async def print_scenario_result_async(
         format: Output format — "pretty" or "json". Defaults to "pretty".
         sink: Output sink. Defaults to None (the helper's default destination).
     """
-    from pyrit.output.helpers import output_scenario_async
+    from pyrit.output import output_scenario_async
 
     await output_scenario_async(result, format=format, sink=sink)
 
@@ -456,7 +465,7 @@ async def _write_json_document_async(document: str, *, sink: Sink | None = None)
         document (str): The serialized JSON document.
         sink (Sink | None): Destination sink. Defaults to StdoutSink.
     """
-    from pyrit.output.sink import StdoutSink
+    from pyrit.output import StdoutSink
 
     await (sink or StdoutSink()).write_async(document)
 

@@ -27,6 +27,17 @@ def test_shell_parsers_omit_unsupplied_arguments() -> None:
     assert parse_list_targets_arguments(args_string="") == {}
 
 
+@pytest.mark.parametrize("annotation", [list[int], list[int] | None, list[int | None] | None])
+def test_shell_nullable_catalog_lists_keep_per_element_coercion(annotation: object) -> None:
+    original = Parameter(name="sample_ids", description="", param_type=annotation)
+    restored = Parameter.model_validate_json(original.model_dump_json())
+    assert parse_run_arguments(args_string="demo --sample-ids 1 2 3", declared_params=[restored]) == {
+        "scenario_name": "demo",
+        "scenario__sample_ids": [1, 2, 3],
+    }
+    assert parse_run_arguments(args_string="demo", declared_params=[restored]) == {"scenario_name": "demo"}
+
+
 @pytest.mark.parametrize(("value", "expected"), [("all", "all"), ("default", "default"), ("7", 7), ('""', "default")])
 def test_shell_explicit_dataset_limit(*, value: str, expected: int | str | None) -> None:
     assert parse_run_arguments(args_string=f"test --max-dataset-size {value}") == {

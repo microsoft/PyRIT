@@ -27,6 +27,7 @@ classifiers = [
 requires-python = ">=3.11, <3.15"
 dependencies = [
     "aiofiles>=24,<26",
+    "aiohttp>=3.13.4",
     "aioodbc>=0.5.0",
     "aiosqlite>=0.21.0",
     "alembic>=1.16.0",
@@ -64,6 +65,7 @@ dependencies = [
     "pypinyin>=0.55.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
     "regex>=2024.11.6",
     "segno>=1.6.6",
@@ -79,6 +81,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
     "wcwidth>=0.2.14",
+    "filelock>=4.2.1",
 ]
 
 [dependency-groups]
@@ -198,6 +201,8 @@ filterwarnings = [
     # Ordinary callers must use async memory; compatibility tests capture the warnings.
     "error:MemoryInterface\\.:DeprecationWarning",
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
+    # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
+    "error:Assigning Score\\.score_value:DeprecationWarning",
 ]
 
 [tool.ty]
@@ -455,6 +460,9 @@ extend-select = [
 [tool.ruff.lint.isort]
 known-first-party = ["pyrit"]
 
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
 [tool.ruff.lint.flake8-type-checking]
 # Pydantic resolves model field annotations at runtime (the models use
 # ``from __future__ import annotations``), so imports used only as field types
@@ -462,6 +470,7 @@ known-first-party = ["pyrit"]
 # subclasses, but not models whose base is an intermediate PyRIT class, so we
 # enumerate those bases here to keep their field imports runtime-evaluated.
 runtime-evaluated-base-classes = [
+    "pyrit.models.StrategyResult",
     "pyrit.models.results.strategy_result.StrategyResult",
 ]
 

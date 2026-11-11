@@ -23,8 +23,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from pyrit.executor.attack import AttackScoringConfig
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core._technique_resolution import (

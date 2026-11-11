@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.converter import Converter, ConverterResult
 from pyrit.exceptions import (
     InvalidJsonException,
@@ -80,14 +80,6 @@ class FuzzerConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        conversation_id = str(uuid.uuid4())
-
-        (
-            await self.converter_target.set_system_prompt_async(
-                system_prompt=self.system_prompt, conversation_id=conversation_id
-            )
-        )
-
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
         prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
@@ -95,8 +87,11 @@ class FuzzerConverter(Converter):
                 MessagePiece(
                     role="user",
                     original_value=formatted_prompt,
-                    converted_value=formatted_prompt,
-                    conversation_id=conversation_id,
+                    # The fuzzer instructions are sent in the user turn; see Converter._prepend_instructions.
+                    converted_value=self._prepend_instructions(
+                        instructions=self.system_prompt, prompt=formatted_prompt
+                    ),
+                    conversation_id=str(uuid.uuid4()),
                     sequence=1,
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
