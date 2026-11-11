@@ -765,7 +765,7 @@ class TargetService:
                 await release_component_async(target_obj)
         try:
             if request.persist:
-                return await self._save_and_register_async(
+                target = await self._save_and_register_async(
                     name=target_registry_name,
                     type_name=request.type,
                     target_cls=target_cls,
@@ -776,14 +776,20 @@ class TargetService:
                     recipes_source=recipes_source,
                     replacing=replacing,
                 )
-            target = self._build_instance_from_object(
-                target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
-            )
-            self._registry.instances.register(target_obj, name=target_registry_name)
-            return target
+            else:
+                target = self._build_instance_from_object(
+                    target_registry_name=target_registry_name,
+                    target_obj=target_obj,
+                    origin=RegistryEntryOrigin.TEMPORARY,
+                )
+                self._registry.instances.register(target_obj, name=target_registry_name)
         except Exception:
             await release_component_async(target_obj)
             raise
+        if replacing is not None and not replacing.running:
+            # An edit of an entry that isn't running only rewrote its file, so nothing holds what was built to check it.
+            await release_component_async(target_obj)
+        return target
 
     async def _save_and_register_async(
         self,

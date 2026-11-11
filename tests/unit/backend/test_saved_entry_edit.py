@@ -17,6 +17,7 @@ from pyrit.backend.models import CreateConverterRequest, CreateScorerRequest
 from pyrit.backend.models.saved_entries import UpdateSavedEntryRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services import ConverterService, get_converter_service, get_target_service
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.saved_entries import (
@@ -507,17 +508,22 @@ async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_only_saves_it(
     instances = TargetRegistry.get_registry_singleton().instances
     details = await _read(tmp_path, TARGETS, "saved_chat")
 
-    edited = await _edit(
-        tmp_path,
-        TARGETS,
-        "saved_chat",
-        version=details.version,
-        recipe={**details.recipe, "params": _SAVED_CHAT["params"]},
-    )
+    release = AsyncMock(wraps=release_component_async)
+    with patch("pyrit.backend.services.target_service.release_component_async", release):
+        edited = await _edit(
+            tmp_path,
+            TARGETS,
+            "saved_chat",
+            version=details.version,
+            recipe={**details.recipe, "params": _SAVED_CHAT["params"]},
+        )
 
     assert edited.running is False
     # The next apply or start restores it into the registries as they are, so the edit must not have registered it.
     assert instances.get("saved_chat") is None
+    # Nothing holds the target the edit built to check the new settings, so it's released.
+    release.assert_awaited_once()
+    assert isinstance(release.await_args.args[0], OpenAIChatTarget)
     assert (await _restore(tmp_path)).failures == []
     assert isinstance(instances.get("saved_chat"), OpenAIChatTarget)
 
