@@ -108,7 +108,7 @@ def _wrap(*, text: str, indent: str, width: int = 78) -> str:
 
 def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
     """
-    Print a formatted list of scenarios.
+    Print scenarios with required parameters distinguished from defaulted ones.
 
     Args:
         items: Scenarios from ``GET /api/scenarios/catalog``.
@@ -150,7 +150,10 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.supported_parameters:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
-                default_str = f" [default: {p.default!r}]" if p.default is not None else ""
+                if p.required:
+                    default_str = " [required]"
+                else:
+                    default_str = f" [default: {p.default!r}]" if p.default is not None else ""
                 type_str = f" ({p.type_name})" if p.type_name else ""
                 choices_str = f" [choices: {', '.join(p.choices)}]" if p.choices else ""
                 print(f"      - {p.name}{type_str}{default_str}{choices_str}: {p.description}")
@@ -165,7 +168,7 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
 
 def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
     """
-    Print a formatted list of initializers.
+    Print initializers with required parameters distinguished from defaulted ones.
 
     Args:
         items: Initializers from ``GET /api/initializers``.
@@ -188,7 +191,10 @@ def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
         if init.supported_parameters:
             print("    Supported Parameters:")
             for p in init.supported_parameters:
-                default_str = f" [default: {p.default}]" if p.default is not None else ""
+                if p.required:
+                    default_str = " [required]"
+                else:
+                    default_str = f" [default: {p.default}]" if p.default is not None else ""
                 print(f"      - {p.name}{default_str}: {p.description}")
         if init.description:
             print("    Description:")
