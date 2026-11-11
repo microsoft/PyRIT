@@ -187,7 +187,10 @@ describe('scenario launch requests', () => {
         default: null, required: false,
       }],
     })
-    const input = makeInput({ scenario, scenarioParamValues: {}, presetScenarioParams: { judge_samples: 1 } })
+    const input = makeInput({
+      scenario, scenarioParamValues: {}, presetScenarioParams: { judge_samples: 1 },
+      datasetEdits: { sources: [{ name: 'returns_policy' }] },
+    })
     expect(scenarioDynamicParameters(scenario)).toEqual([])
     const result = buildRunRequest(input)
     expect(result.ok).toBe(true)
@@ -238,6 +241,7 @@ describe('scenario launch requests', () => {
     })
     const input = makeInput({
       scenario, scenarioParamValues: {}, presetScenarioParams: { trace_source: null, trace_requirement: 'none' },
+      datasetEdits: { sources: [{ name: 'returns_policy' }] },
     })
     expect(scenarioDynamicParameters(scenario)).toEqual([])
     const result = buildRunRequest(input)
