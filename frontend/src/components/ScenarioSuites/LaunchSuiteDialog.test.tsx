@@ -4,6 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { readUserPreferences } from '@/utils/userPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
@@ -16,8 +17,10 @@ jest.mock('@/services/api', () => ({
     launch: jest.fn(),
   },
 }))
+jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 const mockLaunch = scenarioSuitesApi.launch as jest.Mock
+const mockUseRuntime = jest.mocked(useRuntime)
 const mockNavigate = jest.fn()
 
 jest.mock('react-router', () => ({
@@ -126,6 +129,7 @@ function renderDialog({
 beforeEach(() => {
   jest.clearAllMocks()
   window.localStorage.clear()
+  mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
   mockLaunch.mockResolvedValue({ suite_execution_id: 'execution-1' })
 })
 
@@ -165,6 +169,38 @@ describe('LaunchSuiteDialog', () => {
     expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
       target_name: 'objective-target', adversarial_target_name: 'adversarial-target',
     }))
+  })
+
+  it('dismisses the dialog when reinitialization replaces targets under the same names', async () => {
+    const user = userEvent.setup()
+    const rendered = render(dialog({
+      defaultObjectiveTarget: OBJECTIVE_TARGET, defaultAdversarialTarget: ADVERSARIAL_TARGET,
+    }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'adversarial-target')
+    mockUseRuntime.mockReturnValue({ ready: false, state: 'initializing', generation: 'first' })
+    rendered.rerender(dialog({ defaultsReady: false }))
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+
+    const replacement = makeTarget({
+      target_registry_name: 'adversarial-target',
+      identifier: { ...ADVERSARIAL_TARGET.identifier, hash: 'replacement-identity' },
+    })
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+    rendered.rerender(dialog({ targets: [OBJECTIVE_TARGET, replacement] }))
+
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mockLaunch).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+  })
+
+  it('blocks submission while the runtime is unavailable even before defaults refresh', async () => {
+    const user = userEvent.setup()
+    mockUseRuntime.mockReturnValue({ ready: false, state: 'initializing', generation: 'first' })
+    renderDialog()
+    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Launch suite' }))
+    expect(mockLaunch).not.toHaveBeenCalled()
   })
 
   it('preserves changed targets and an explicit server-default choice on late hydration', async () => {

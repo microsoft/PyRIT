@@ -28,7 +28,7 @@ const OPENAI_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The target URL for the OpenAI service.",
   },
@@ -52,7 +52,7 @@ const AZURE_ML_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The endpoint URL for the deployed Azure ML model.",
   },
@@ -419,7 +419,7 @@ async function selectTargetType(value: string): Promise<void> {
   await waitFor(() => {
     restoreDialogAccessibility();
     expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
-      TARGET_DISPLAY_NAMES[value]
+      TARGET_DISPLAY_NAMES[value] ?? value
     );
   });
 }
@@ -1033,6 +1033,53 @@ describe("CreateTargetDialog", () => {
     await waitFor(() => {
       expect(screen.getByText("Please provide an endpoint URL")).toBeInTheDocument();
     });
+  });
+
+  it.each([false, true])("should honor endpoint required metadata (%s)", async (required: boolean) => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{
+        target_type: "LiteLLMChatTarget",
+        parameters: [
+          { name: "endpoint", type_name: "str | None", required, default: null },
+          { name: "model_name", type_name: "str", required: true, default: null },
+        ],
+        supported_auth_modes: ["api_key"],
+      }],
+    });
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "litellm", target_type: "LiteLLMChatTarget",
+    }));
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("LiteLLMChatTarget");
+    await user.type(screen.getByRole("textbox", { name: "Model / Deployment Name", exact: true }), "provider/model");
+    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    const endpoint = screen.getByRole("textbox", { name: "Endpoint URL", exact: true });
+    if (required) {
+      expect(endpoint).toBeRequired();
+      expect(create).toBeDisabled();
+      fireEvent.submit(screen.getByTestId("create-target-form"));
+      expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
+      expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+    } else {
+      expect(endpoint).not.toBeRequired();
+      expect(create).toBeEnabled();
+      await user.click(create);
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "LiteLLMChatTarget", params: { model_name: "provider/model" },
+      });
+    }
+  });
+
+  it("should still require an endpoint when target metadata is unavailable", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await screen.findByText(/Target details could not be loaded/);
+    await selectTargetType("OpenAIChatTarget");
+    expect(screen.getByRole("button", { name: "Create Target", exact: true })).toBeDisabled();
+    fireEvent.submit(screen.getByTestId("create-target-form"));
+    expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
 
   it("should surface string throws verbatim via toApiError", async () => {
