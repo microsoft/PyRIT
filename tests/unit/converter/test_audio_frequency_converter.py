@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from pyrit.converter.audio_frequency_converter import AudioFrequencyConverter
+from pyrit.converter import AudioFrequencyConverter
 
 _TONE_HZ = 440
 _EDGE_SAMPLES = 200

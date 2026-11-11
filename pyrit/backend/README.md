@@ -30,6 +30,23 @@ API keys do not authenticate incoming GUI users.
 
 ## API Endpoints
 
+### Memory text search
+
+Text searches are case-insensitive literal substrings by default. Wildcards require
+an explicit full LIKE pattern: `%` matches any number of characters, `_` matches
+one, and `/` escapes the next character. Brackets, `*` and backslashes are literal.
+Patterns are not automatically wrapped in `%`; a dangling `/` is invalid.
+
+`GET /api/datasets/seeds` accepts `search` for literals or `value_pattern` for
+patterns. `GET /api/operations/{operation_id}/findings` accepts `title` or
+`title_pattern`. `POST /api/analytics/attacks/facets` accepts `search` or `search_pattern`.
+Supplying both companion filters is invalid. An explicit empty pattern matches
+empty text, whereas an empty literal query retains its no-filter behavior.
+Dataset cursors are bound to the pattern and search mode as well as other filters.
+Existing UI search boxes remain literal. Unicode lowercasing is used rather than
+full case folding; SQL Server's locale, accent and character semantics depend on
+its database collation.
+
 ### Health & Status
 - `GET /api/health` - Health check
 - `GET /api/version` - Version information
@@ -37,6 +54,349 @@ API keys do not authenticate incoming GUI users.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
+  apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
+  Detection uses a private target, has a four-minute operation deadline, and
+  returns the updated target. Changes last only for the current backend session.
+  Unsupported reconstruction returns 400, an unknown target 404, a changed or
+  busy target 409, an inconclusive check 502, and an operation timeout 504.
+  Checks send provider requests and can incur charges. Request acceptance does
+  not verify full feature behavior; features without probes keep declared values.
+  Shared target discovery first requires a successful control request with a
+  declared input. A failed control request is inconclusive, not evidence that
+  features are unsupported, and leaves the target unchanged.
+  For round-robin targets, each child is checked on a private copy. The parent
+  reports shared input combinations and feature support, and all possible outputs.
+  Only the selected parent is updated, after every child check succeeds; child
+  configuration and round-robin rotation stay unchanged. The four-minute deadline
+  covers the entire operation. Other composite types remain unsupported.
+
+REST target descriptors expose `capabilities.supports_temperature` and a separate
+`generation_ranges` map, such as `{"temperature": [0, 2]}`, populated from the SDK's
+`target.generation_ranges` snapshot. Bounds are inclusive; missing entries mean
+unknown bounds, not lack of support. Clients must not substitute assumed bounds.
+OpenAI SDK constructors accept `generation_ranges={"temperature": (0, 1)}`;
+omitted entries retain inferred bounds, while descriptors include effective bounds.
+Range declarations remain Python-only constructor inputs, not REST `params`
+overrides; reconstruction preserves declarations from the source target.
+Per-send values use
+[`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
+### Dataset creation, batch mutation, and deletion
+
+`POST /api/datasets` creates a named dataset synchronously from multipart form data.
+Send exactly one `manifest` part containing JSON (a form field or a JSON file), plus
+named file parts referenced by its seeds. For example, `manifest.json`:
+
+```json
+{
+  "name": "my_dataset",
+  "seeds": [
+    {"seed_type": "prompt", "data_type": "text", "value": "Example"},
+    {"seed_type": "prompt", "data_type": "binary_path", "value": "upload:document"}
+  ]
+}
+```
+
+```bash
+curl -X POST http://localhost:8000/api/datasets \
+  -H "PyRIT-Compatibility-ID: $PYRIT_COMPATIBILITY_ID" \
+  -F 'manifest=@manifest.json;type=application/json' \
+  -F 'document=@local-document.bin;type=application/octet-stream'
+```
+
+Include the normal bearer token in Entra mode; this route does not bypass
+authentication or build compatibility. A successful response is `201`:
+
+```json
+{"name":"my_dataset","selection_key":"dataset:named:my_dataset","seed_pieces":2,"logical_examples":2}
+```
+
+Imports use the canonical discriminated seed union: `prompt` (`SeedPrompt`),
+`objective` (`SeedObjective`), and `simulated_conversation`
+(`SeedSimulatedConversation`). Omitted `seed_type` remains `prompt` for existing
+clients. Prompts require an explicit `data_type` and string `value`; objectives
+accept their canonical text-only default and preserve typed `conditions`.
+Simulated conversations accept canonical inline prompt configuration, positive
+`num_turns`, and nonnegative `sequence`; their text `value` is computed by the model,
+not imported as a file or opaque serialized configuration.
+
+Seeds sharing a `prompt_group_id` or `prompt_group_alias` remain one logical
+example with a fresh server group ID. Mixed objective, simulated-conversation,
+and prompt groups use canonical group cardinality, role, and sequence-overlap
+validation. Objective metadata retains canonical `adversarial_prompts`
+associations. For example, an objective and its follow-up prompt can be supplied as:
+
+```json
+{"name":"mixed","seeds":[
+  {"seed_type":"objective","value":"Example objective","prompt_group_alias":"example",
+   "conditions":[{"condition_type":"matches_objective"}]},
+  {"seed_type":"prompt","data_type":"text","value":"Example prompt",
+   "prompt_group_alias":"example","role":"user","sequence":0}
+]}
+```
+
+File-valued prompts (`image_path`, `audio_path`,
+`video_path`, `binary_path`) must use `upload:<part-name>`; server paths, remote
+file fetching, and base64 ingestion are not supported. Part names use 1-128 ASCII
+letters, digits, underscores, or hyphens. Multiple prompts may share one part;
+missing, duplicate, non-file, and unreferenced media parts are rejected. Media
+in any of a simulated conversation's three inline system-prompt fields follows
+the same explicit-type, multipart, ownership, and shared-reference rules. Those
+fields remain canonical `SeedPrompt` objects, not arbitrary configuration files.
+Nested prompt types must be explicit, and deprecated simulation `*_system_prompt_path`
+inputs are rejected before construction. Simulation configuration persists nested
+prompt values, types, parameters, and response schemas using its canonical serializer,
+not nested descriptive metadata. Adversarial association prompts remain text-only
+under their canonical model.
+Media bytes need not decode successfully as their declared modality. Files use
+server-generated storage names and are never executed. Blob uploads are opaque
+attachments; local retrieval uses the existing media route's safe inline allowlist.
+
+Names are exact, nonempty, at most 256 UTF-16 code units, and have no surrounding
+whitespace or control characters. An existing stored dataset or in-progress upload
+with a database-collation-equivalent name returns `409`, never append/replace or
+silent deduplication. SQLite keeps its normal case-sensitive identity; SQL Server
+uses the existing seed-name column collation. Exact deletion remains exact even
+when legacy datasets contain collated aliases. Seed and journal names use Unicode
+storage on SQL Server, including databases with non-UTF-8 collations.
+A provider-only name is allowed; its provider registration remains unchanged.
+Descriptive metadata, response schema, roles, sequence numbers, and grouping are
+preserved. Complete remapped groups must satisfy canonical `SeedGroup` and
+`AttackSeedGroup` rules before any name reservation or media write. Validation
+does not mutate the supplied roles. Seed/group IDs, checksums, timestamps, origin, and ingestion attribution
+are assigned by the server. Attribution uses the authenticated object ID, or
+`dataset-api` in local mode. Original multipart filename and content type are
+recorded as `upload_filename` and `upload_content_type` metadata. Trusted Jinja
+templates are rejected before constructing any seed or nested prompt; literal
+template syntax stays literal. Client paths are never used to load prompt files.
+Create mode remains an import, not a raw stored-record round-trip contract.
+
+#### Updating an existing stored dataset
+
+The same multipart `POST /api/datasets` also accepts explicit `"mode":"update"`.
+The default `"mode":"create"` retains the create-only behavior and `201` response.
+Update mode returns `200` and never implicitly creates or loads a dataset.
+Named populations already stored by the SDK or a provider are eligible; provider
+files/registrations are not modified. The unnamed aggregate cannot be mutated.
+
+First browse `GET /api/datasets/seeds?selection_key=dataset:named:my_dataset&editable=true`
+or the existing `/seeds/{example_id}` detail with `editable=true`. These responses
+include `version` and `editable_seeds`: submit-ready subtype replacements, not raw
+`members` storage records. Logical `example_id`/`prompt_group_id` identifies an
+example; **`editable_seeds[].id` is the record UUID** used for edits/deletions.
+Records, projections, and the version originate from one database snapshot.
+Ordinary listing/detail requests do not compute editing state or scan other
+datasets for content tokens.
+Editable and ordinary lists share the same literal `search` and explicit
+`value_pattern` filters, including filter-bound pagination. Patterns match the
+whole text value, ignoring case: `%` and `_` are wildcards and `/` escapes the
+next character. Literal search uses Unicode casefolding; explicit patterns retain
+Unicode lowercasing. Supply only one search mode; simulation configurations are not searched.
+
+```json
+{
+  "name": "my_dataset",
+  "mode": "update",
+  "expected_version": "<64-character version from editable browsing>",
+  "seeds": [
+    {"data_type": "text", "value": "An addition"},
+    {"id": "<existing record UUID>", "seed_type": "prompt",
+     "data_type": "text", "value": "Replacement text"},
+    {"seed_type": "objective", "value": "New objective", "prompt_group_alias": "new_example",
+     "conditions": [{"condition_type": "matches_objective"}]},
+    {"seed_type": "simulated_conversation", "prompt_group_alias": "new_example",
+     "num_turns": 3, "sequence": 0,
+     "adversarial_chat_system_prompt": {"data_type": "text", "value": "Literal guidance"},
+     "simulated_target_system_prompt": {"data_type": "text", "value": "Literal target guidance"}},
+    {"seed_type": "prompt", "data_type": "text", "value": "After simulation",
+     "prompt_group_alias": "new_example", "sequence": 6, "role": "user"}
+  ],
+  "delete_seed_ids": ["<different existing record UUID>"]
+}
+```
+
+No `id` adds a server-identified seed; an `id` replaces that exact record.
+`delete_seed_ids` defaults to `[]`. Omitted records are **untouched**, never
+implicitly deleted. Deletion-only updates send `"seeds":[]` with nonempty
+`delete_seed_ids`; a true no-op is rejected. Create mode forbids deletions and
+`expected_version`. Unknown/foreign record UUIDs return `404`; duplicate IDs,
+edit/delete overlap, invalid immutable fields, and invalid final groups return
+`422`. All additions, edits, and deletions are applied before validating copied
+complete affected groups. A whole group can disappear; a surviving attack group
+must retain its required objective. Validation never persists normalized roles,
+metadata, or grouping on omitted siblings.
+
+In update mode, a new seed's `prompt_group_id` explicitly attaches to an existing
+group in **this dataset**. A `prompt_group_alias` instead creates a fresh group
+shared by that batch's matching aliases; aliases are not existing-group lookups.
+Do not supply both. Edited records retain their original group (including null),
+type, dataset, record ID, origin, `date_added`, and `added_by`. These immutable
+fields may be omitted; supplied conflicting values are rejected. Checksums and
+simulation `value` are recomputed server-side. Original creation attribution
+remains unchanged; additions use the request's normal ingestion attribution.
+Embedded adversarial prompts are metadata, not stored dataset records: their
+independent IDs, group IDs/aliases, dataset labels, and creation provenance remain
+canonical nested fields on replacement and do not authorize top-level group
+attachment or move the objective's stored group.
+
+Each edit is a **full replacement of client-editable fields**, not a recursive
+patch. Use the editable projection when preserving optional fields:
+
+| Editable fields | Omission/default and null rules |
+|---|---|
+| All subtypes: `name`, `description`, `source` | Omitted or null clears the field. |
+| All subtypes: `authors`, `groups`, `harm_categories`, `metadata` | Omitted uses canonical empty collections; null is accepted. Include prior metadata to preserve it. |
+| Prompt: `value`, `data_type` | Required string and explicit supported type; null is rejected. |
+| Prompt: `role`, `sequence`, `parameters`, `response_json_schema` | Defaults: null, 0, [], null. Null accepted except for sequence. Final group role constraints still apply. |
+| Objective: `value`, `conditions` | Text value required; conditions defaults to [], [] clears, null is rejected. Typed conditions and text-only `metadata.adversarial_prompts` use canonical validation. |
+| Simulation: `num_turns`, `sequence`, `adversarial_chat_system_prompt` | Defaults: 3 and 0; integers must be positive/nonnegative. The adversarial prompt is required and non-null. |
+| Simulation: `simulated_target_system_prompt`, `next_message_system_prompt`, `pyrit_version` | Omitted/null target uses the trusted built-in compliant default; omitted/null next prompt removes it; omitted/null version uses the installed PyRIT version. |
+
+Objectives and simulations default to text-only `data_type`; any explicit type
+must also be text. Inline prompts require explicit types and string values.
+Simulation configuration stores nested behavioral value/type/parameters/response
+schema, not nested descriptive fields, exactly as canonical SDK persistence does.
+No submitted legacy `*_system_prompt_path` or trusted-template flag can trigger
+filesystem loading/rendering, including in historical configuration. Historical
+records that are not safely submit-ready remain inspectable through ordinary
+reads; editing an affected invalid group fails without changing its siblings.
+
+For retained media, leave the projection's `retain:<opaque handle>` in its
+original media slot. The server binds it to the dataset, record UUID, exact
+top-level/nested slot, and expected snapshot. It cannot be moved to another seed
+or slot, used for an addition, or replaced with an arbitrary server path. To
+replace media, use `upload:<part-name>` with a new file part. All four existing
+media types and all three inline simulation prompt slots are supported.
+
+`expected_version` is a deterministic token of the **complete persisted dataset
+state**, including IDs, membership, metadata, conditions, and configuration.
+It excludes signed media URL parameters and display URLs. SDK/provider writes
+through memory participate in the same comparison lock; stale state returns
+`409` before any mutation or media write. This is not a monotonic history
+counter: an equivalent-state ABA is accepted. Fetch another editable snapshot
+after a conflict; never blindly retry an addition with a changed version.
+
+The response includes `added`, `updated`, `deleted`, indexed `seeds` results
+(`index`, record `id`, `operation`), exact `delete_seed_ids`, final population
+counts, `dataset_exists`, `version`, and `cleanup`/`cleanup_location`. An unchanged
+submitted edit still counts as updated. Deleting the final record returns
+`dataset_exists:false`, zero population, and `version:null`; no empty-dataset
+registry or new editable token is created.
+
+Fresh paths are durably journaled before bytes are written. Failed validation,
+stale state, rollback, storage failure, cancellation, and restart recovery preserve
+old rows/media and clean only the new staged assets. After commit, only replaced
+or explicitly deleted API-owned assets without any remaining seed, message, or
+scorer reference are cleaned. Other files from the original upload stay intact;
+external/unowned and shared assets are not removed. **A committed mutation with
+pending cleanup still returns `200`**, not a retry-shaped `503`, with an explicit
+status resource in `Location` and `cleanup_location`. An unavailable cleanup
+status has `pending_media:null` rather than an invented count. That resource
+retries durable cleanup without replaying the batch.
+Native lease-release errors after commit are logged and likewise return the
+committed `200` result with pending cleanup and its status location; they do not
+hide a committed batch behind a retry-shaped failure.
+The same rule applies to creation: it retains `201` and the saved population,
+adding `cleanup`, `cleanup_location`, and `Location` only when native release
+needs follow-up. Normal create responses keep their original fields.
+
+| Environment variable | Default |
+|---|---|
+| `PYRIT_DATASET_MAX_REQUEST_BYTES` | `104857600` (100 MiB, including multipart framing) |
+| `PYRIT_DATASET_MAX_MANIFEST_BYTES` | `10485760` (10 MiB JSON) |
+| `PYRIT_DATASET_MAX_PROMPTS` | `10000` seed records of any supported variant (legacy variable name retained) |
+
+Limits must be positive integers. Actual incoming bytes are bounded even without
+`Content-Length`; exceeding a byte/count limit returns `413`. Unsupported content
+types return `415`; malformed manifests, unsafe template flags, and invalid
+prompt/reference fields return `422`, without echoing prompt content. Media is
+spooled during parsing and streamed to the configured disk/blob results store.
+No seed rows become visible until the complete import commits.
+For updates, the record limit bounds additions + edits + deletions together,
+and complete affected-group work (including deleted and surviving members).
+The manifest byte limit also bounds the copied affected stored state and submitted
+replacements. Exceeding these work budgets returns `413` without partial changes.
+The multipart file budget allows all three simulation prompt-media slots per
+seed record plus an optional file-valued manifest. Every media part must still
+be referenced, and the total request-byte limit applies to all parts together.
+
+Use the existing `GET /api/datasets`, `/api/datasets/seeds`,
+`/api/datasets/seeds/{example_id}`, and media URLs to browse uploaded datasets.
+No export or dataset-detail endpoint is added.
+
+```bash
+curl -X DELETE \
+  'http://localhost:8000/api/datasets?selection_key=dataset%3Anamed%3Amy_dataset' \
+  -H "PyRIT-Compatibility-ID: $PYRIT_COMPATIBILITY_ID"
+```
+
+Deletion permanently removes all stored seeds with the **exact** named dataset,
+including stored SDK/provider seeds, but never unregisters a provider. Missing or
+provider-only populations return `404`; deleting `dataset:unnamed` is rejected.
+External/unowned media is never deleted. API-owned media is removed only if
+unreferenced by remaining seeds, original/converted message values, or loose
+scorer content. Shared media is retained rather than scheduled for later deletion.
+
+Normal cleanup finishes inline with `200`. If storage cleanup fails, seeds are
+still deleted and the response is `202` with `deletion_id`, `pending_media`, and a
+sanitized `error`. Follow `Location` with
+`GET /api/datasets/deletions/{deletion_id}` to read durable status and retry cleanup.
+An upload that cannot finish rollback cleanup returns `503` with the same
+`Location` guidance. Database failure after seed deletion likewise returns `503`
+with its cleanup resource, not a false success.
+
+Ownership and incomplete cleanup survive restarts. Initialization recovers abandoned
+imports and pending deletions after memory/schema setup, before configured initializers
+can write seeds; status requests can also
+retry them. A live upload holds native ownership across its reservation and
+publication transactions: SQLite uses an OS-locked sidecar beside the database
+(temporary storage for in-memory databases), and SQL Server uses a detached,
+session-owned application lock. Recovery skips live owners; process/connection
+loss or explicit shutdown releases ownership. Tiny SQLite sidecars are retained
+like journal records so deleting a lock file cannot split its identity. Do not
+remove them while any runtime uses the database. A status request for an active
+upload returns `409`, not permission to cancel it.
+The lifecycle uses a database-backed lock shared by seed/message/scorer-media
+writers on SQLite and SQL Server. Upload storage writes hold that lock; deletion
+claims media transactionally before removing bytes, and later writes cannot
+attach claimed/deleted assets. Rejected Core/bulk DML is rolled back to a
+savepoint even if its caller catches the error and commits other work. Azure blob
+URLs and relative blob names use the configured adapter's same storage identity.
+Writers may wait during an upload. Direct SQL or
+external filesystem/blob modifications outside PyRIT's memory APIs do not
+participate in this protocol. Deploy the new Alembic migration before starting
+backends configured to require an already-current Azure SQL schema.
+
+### Manual attack creation
+
+`POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
+for example `{"target_registry_name": "my-target", "objective": "Evaluate the response"}`.
+An omitted, null, or empty objective creates a chat without a goal. The objective
+never sets the strategy type, and there is no separate attack display-name field.
+Objective edits use `PATCH /api/attacks/{attack_result_id}` without changing the
+strategy identifier. New attacks copied from conversations or saved through
+`POST /api/attacks/save-conversation` also use `ManualAttack`; their automated
+source results keep their original strategy types.
+New and edited manual objectives are marked as non-placeholder, so even the literal
+`"Manual attack via GUI"` is preserved in summaries. Unmarked historical manual
+placeholders retain their legacy empty-summary behavior.
+
+Until PyRIT 1.4, `name` remains a deprecated input alias for `objective`, with
+the same text validation. When `objective` is omitted or null, `name` supplies
+the goal. If both are non-null they must match exactly, including empty strings;
+conflicts return 422 rather than silently discarding either value.
+
+This fixes new results, not existing malformed identifiers. Older manual results
+may have their initial objective stored as the strategy class name. History,
+attack-type filters/options, and analytics still use those persisted class names.
+Manual editing and scoring remain available because they recognize the
+`pyrit.backend` strategy module, not the malformed class name. Objective edits
+do not repair identifiers. Any historical repair requires a separate, audited
+migration scoped to verified backend-created manual results, creating corrected
+content-addressed identifiers and relinking affected results rather than mutating
+shared identifiers. Do not infer manual status from objective text or GUI labels,
+or reclassify automated results.
 
 ### Saved conversations
 
@@ -49,6 +409,15 @@ Saving from the scanner creates a copy through `POST /api/attacks/save-conversat
 it does not change the source or send to a target.
 
 For on-demand saved-result browsing, use
+`GET /api/attacks/{attack_result_id}/metadata?conversation_id={conversation_id}`
+for initial Chat metadata. It returns `related_conversation_count` (pruned
+references, excluding main) and `selected_conversation_valid`, independently of
+reference paging. An omitted conversation ID selects main. This response omits
+both complete reference arrays, transcript bodies, and result hierarchies; the
+stored SDK result and reference JSON are still materialized server-side.
+`GET /api/attacks/{attack_result_id}` keeps its full legacy summary contract.
+
+Use
 `GET /api/attacks/{attack_result_id}/conversations?limit=50` to page main and pruned
 references in saved-reference order. This reads counts
 and previews, not conversation bodies. The limit is 1-200; follow
@@ -57,7 +426,8 @@ and previews, not conversation bodies. The limit is 1-200; follow
 Load only the selected conversation with
 `GET /api/attacks/{attack_result_id}/messages?conversation_id={conversation_id}&limit=100`.
 Here the limit is 1-500 **message pieces**, not turns or bytes. Results use the
-canonical message, piece, and score views, ordered by sequence, timestamp, and ID.
+canonical message, piece, and score views, ordered by sequence, full timestamp
+(including fractional seconds), and ID.
 A page can split a multimodal turn: `partial_message_sequences` identifies partial
 turns. Append pieces by ID to their turn across pages, and follow
 `pagination.next_cursor`. A page does not infer a final target-response status
@@ -71,6 +441,15 @@ full-transcript behavior.
 Both paged and unpaged reads expose only main and pruned conversations.
 Adversarial and preparation contexts are excluded from lists, reference totals,
 and transcript reads, including hierarchy node expansion.
+
+The saved Scenario Chat viewer consumes these bounded reads with independent
+reference/message continuation controls. It merges stable piece IDs into their
+ordered turns and reconciles page-local partial-sequence markers against the
+accumulated prefix, rather than treating a leading partial marker as a new turn.
+Loaded evidence remains available after a continuation failure. Invalid cursors
+offer a bounded restart. Copy/branch, manual continuation, export and assessment
+stay disabled until the selected transcript is complete; legacy active/manual
+read behavior is unchanged.
 
 ### Scenario result hierarchy
 
@@ -89,7 +468,7 @@ Clicking a result with a main conversation opens the existing chat view and
 preserves scenario-run provenance for its return breadcrumb. Conversationless
 compound results expand their children instead. A separate Details action reuses
 the existing metadata dialog. Hierarchy requests do not load transcript bodies;
-new bounded conversation-evidence rendering remains separate follow-up work.
+the Chat viewer loads saved evidence through the bounded conversation reads above.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
 bounded tree preview grouped by atomic attack group. Roots are saved results with
@@ -175,10 +554,13 @@ enums when registered factories change; it does not create attacks.
 Selections from an earlier enum remain valid in the same scenario and registry
 generation if their factories are unchanged. Earlier aggregate selections retain
 their original members; they do not gain newly registered techniques.
-Responses include `creation_statement`, a Python-style display of the factory's
+Responses include `identifier`, the canonical factory identity shown inline in
+the Registry. It can contain raw prompt and seed values, including nested
+technique seeds. This JSON is not a redacted or hash-only view.
+Responses also include `creation_statement`, a Python-style display of the factory's
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
-or lossless source. Responses do not include identifier or expanded seed JSON.
+or lossless source. The GUI displays identity JSON, not the creation statement.
 
 ### Manual Messages
 
@@ -191,6 +573,11 @@ maps the resulting stored data to the response, including stored target errors.
 All three use the application's `CentralMemory` instance. Both message endpoints use
 the same cached `MessageSendService`; the synchronous facade awaits its execution core
 directly, while the submission endpoint schedules that core and returns a transient handle.
+
+`_pyrit_generation` is server-authored evidence. Saves retain it only from verified,
+unchanged source pieces; edits, new pieces, prepended history, and `send=false`
+appends discard it. This does not strip unrelated metadata or
+[requested generation options](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 All manual-message service instances share one process-local scheduler. It admits up to
 64 operations (active and waiting), with a semaphore allowing up to 4 to execute at once.
@@ -238,6 +625,10 @@ and no stage guarantees that retrying delivery is safe. Stored target errors and
 Terminal states are published only after finalization and ownership release. Progress also
 includes the `request_turn_number` assigned during preparation, so clients can distinguish
 this send's response from a later turn written by another client.
+Each conversation receipt also retains `target_invoked`, set only at the target
+invocation boundary. It remains false during preparation and retains its value
+after interruption. An allocated request turn alone is not evidence of target use,
+and an invocation does not guarantee successful delivery.
 
 The optional `wait_ms` query parameter (0-1000) waits for completion, returning immediately
 if the operation settles. Cancelling this read, disconnecting, or navigating away does not
@@ -275,11 +666,24 @@ Stop these test-owned servers after the run.
 
 ### Request Limits
 
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
+
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
-API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
-cursors, configuration files, and initializer scripts also have length or item limits,
-listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
-pieces, system prompts, and converter preview input) and free-form values (prompt
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
+labels, filters, cursors, configuration files, and initializer scripts also have length or
+item limits, listed in the OpenAPI schema; values over a limit receive **422**. Prompt content
+(message pieces, system prompts, and converter preview input) and free-form values (prompt
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
 
@@ -330,7 +734,9 @@ API callers are trusted operators, so these are intentional exceptions:
   the deployment instead.
 - Some targets use this server's credentials when the caller gives no key: an API key from the
   server's environment, sent even to an endpoint the caller chose, or a token for the server's
-  Azure identity, sent to the Azure endpoint or container the caller chose.
+  Azure identity, sent to the Azure endpoint or container the caller chose. For an
+  OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
+  of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them.
 - Prompt content is not filtered; it is adversarial test data by design.

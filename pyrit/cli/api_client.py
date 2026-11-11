@@ -19,12 +19,15 @@ from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from pyrit.cli._auth import AuthMode, TokenProvider
-    from pyrit.models import Operation, ScenarioResult
+    from pyrit.models import (
+        Operation,
+        ScenarioResult,
+        ScenarioRunListItem,
+    )
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
         RunScenarioRequest,
-        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
@@ -278,7 +281,11 @@ class PyRITApiClient:
         from pyrit.models import Operation
 
         payload = await self._get_json_async(path="/api/operations")
-        return [Operation.model_validate(item) for item in payload["items"]]
+        # The list endpoint returns OperationListItem records, which add ``finding_counts`` to Operation.
+        return [
+            Operation.model_validate({key: value for key, value in item.items() if key != "finding_counts"})
+            for item in payload["items"]
+        ]
 
     async def list_datasets_async(self) -> dict[str, Any]:
         """
@@ -397,7 +404,7 @@ class PyRITApiClient:
         Raises:
             ValueError: If the requested limit is invalid or a paginated response has no cursor.
         """
-        from pyrit.models.catalog import ScenarioRunListItem
+        from pyrit.models import ScenarioRunListItem
 
         if limit < 1:
             raise ValueError("Scenario history limit must be positive.")

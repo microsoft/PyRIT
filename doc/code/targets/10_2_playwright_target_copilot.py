@@ -13,10 +13,6 @@
 #
 # Similar to the more generic `PlaywrightTarget`, `PlaywrightCopilotTarget` uses Playwright for browser automation.
 # It is built specifically for testing Microsoft's Copilots (currently supports M365 and Consumer Copilot).
-#
-# Note: This code will not run in Jupyter! Please run it as a standalone Python script.
-# To convert to a .py, find the corresponding file in the repository, use `jupytext --to py:percent`, or copy the code into a .py file.`
-#
 # %%
 import asyncio
 import pathlib
@@ -37,7 +33,7 @@ from pyrit.models import SeedGroup, SeedPrompt
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import CopilotType, OpenAIChatTarget, PlaywrightCopilotTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
-from pyrit.setup.initialization import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 
@@ -58,8 +54,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 
 
 # %%
-async def connect_to_existing_browser(browser_debug_port, run_function):
-    """Connect to an existing browser session with remote debugging enabled"""
+async def _connect_and_run(browser_debug_port, run_function):
     async with async_playwright() as playwright:
         # Connect to existing browser instance running on debug port
         browser = await playwright.chromium.connect_over_cdp(f"http://localhost:{browser_debug_port}")
@@ -88,17 +83,31 @@ async def connect_to_existing_browser(browser_debug_port, run_function):
         await context.close()
 
 
+async def connect_to_existing_browser(browser_debug_port, run_function):
+    """Connect to an existing browser session with remote debugging enabled"""
+    # Playwright starts a driver subprocess, which the Windows SelectorEventLoop used by some Jupyter
+    # kernels does not support, so run the whole session on a worker thread with a ProactorEventLoop.
+    # https://playwright.dev/python/docs/library#incompatible-with-selectoreventloop-of-asyncio-on-windows
+    if sys.platform == "win32" and isinstance(asyncio.get_running_loop(), asyncio.SelectorEventLoop):
+
+        def run_on_proactor_loop():
+            loop = asyncio.ProactorEventLoop()
+            try:
+                loop.run_until_complete(_connect_and_run(browser_debug_port, run_function))
+            finally:
+                loop.close()
+
+        await asyncio.to_thread(run_on_proactor_loop)
+    else:
+        await _connect_and_run(browser_debug_port, run_function)
+
+
 # %% [markdown]
 # ## Using `PlaywrightCopilotTarget` for Text Interactions
 #
 # Now, we can use the `PlaywrightCopilotTarget` which has built-in Copilot functionality.
 # This target automatically handles text inputs without needing custom interaction functions.
 # %%
-# Set the event loop policy for Windows before any async operations
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-
 # Using PlaywrightCopilotTarget for text interactions
 async def run_text(page: Page) -> None:
     await page.goto("https://copilot.microsoft.com/")
@@ -128,7 +137,7 @@ async def run_text(page: Page) -> None:
     await output_attack_async(result, include_auxiliary_scores=True)
 
 
-asyncio.run(connect_to_existing_browser(browser_debug_port=9222, run_function=run_text))
+await connect_to_existing_browser(browser_debug_port=9222, run_function=run_text)  # type: ignore
 
 # %% [markdown]
 # ## Using PlaywrightCopilotTarget for multimodal interactions
@@ -140,7 +149,7 @@ async def run_multimodal(page: Page) -> None:
     target = PlaywrightCopilotTarget(page=page, copilot_type=CopilotType.M365)
 
     attack = PromptSendingAttack(objective_target=target)
-    image_path = str(pathlib.Path(".") / "doc" / "roakey.png")
+    image_path = str(pathlib.Path(".").resolve().parent.parent / "roakey.png")
 
     objective = "Create an image of this raccoon wearing a hat that looks like a slice of pizza, standing in front of the Eiffel Tower."
 
@@ -162,4 +171,4 @@ async def run_multimodal(page: Page) -> None:
     await output_attack_async(result, include_auxiliary_scores=True)
 
 
-asyncio.run(connect_to_existing_browser(browser_debug_port=9222, run_function=run_multimodal))
+await connect_to_existing_browser(browser_debug_port=9222, run_function=run_multimodal)  # type: ignore

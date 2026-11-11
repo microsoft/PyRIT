@@ -17,8 +17,7 @@ from fastapi.testclient import TestClient
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit import _compatibility
 from pyrit.backend.main import app
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.models import PaginationInfo, ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.memory import MemoryInterface
@@ -31,11 +30,12 @@ from pyrit.models import (
     ScenarioProgressSummary,
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
+    ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunProgress,
     ScenarioRunState,
 )
-from pyrit.models.catalog.scenario import ScenarioRunListItem, ScenarioRunSummary
+from pyrit.models.catalog import ScenarioRunSummary
 from unit.mocks import make_scenario_result
 
 OPERATION_ID = UUID(int=7)
@@ -279,6 +279,16 @@ class TestListScenarioRunsRoute:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["items"] == []
+        mock_service.list_runs_async.assert_called_once_with(
+            scenario_names=None,
+            statuses=None,
+            labels=None,
+            operation_ids=None,
+            reference_id=None,
+            sort_by="created_at",
+            limit=100,
+            cursor=None,
+        )
         assert route_thread[0] != request_thread
 
     def test_list_runs_rejects_unbounded_limit(self, client: TestClient) -> None:
@@ -332,7 +342,7 @@ class TestListScenarioRunsRoute:
                 "?scenario_names=first&scenario_names=second"
                 "&run_statuses=IN_PROGRESS&run_statuses=FAILED"
                 "&label=operator%3Aalice&label=operator%3Abob&label=team%3Asafety"
-                f"&operation_id={OPERATION_ID}&limit=10&cursor=opaque"
+                f"&operation_id={OPERATION_ID}&reference_id={OPERATION_ID}&sort_by=activity&limit=10&cursor=opaque"
             )
 
         assert response.status_code == status.HTTP_200_OK
@@ -341,9 +351,15 @@ class TestListScenarioRunsRoute:
             statuses=[ScenarioRunState.IN_PROGRESS, ScenarioRunState.FAILED],
             labels={"operator": ["alice", "bob"], "team": ["safety"]},
             operation_ids=[OPERATION_ID],
+            reference_id=OPERATION_ID,
+            sort_by="activity",
             limit=10,
             cursor="opaque",
         )
+
+    def test_list_runs_rejects_non_uuid_id(self, client: TestClient) -> None:
+        response = client.get("/api/scenarios/runs?reference_id=free-text")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestScenarioRunQueueRoute:

@@ -11,7 +11,7 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.models.catalog import ScenarioSuite, ScenarioSuiteEntry
+from pyrit.models import ScenarioSuite, ScenarioSuiteEntry
 from pyrit.registry import (
     ScenarioSuiteConflictError,
     ScenarioSuiteNameRegisteredError,
@@ -168,6 +168,18 @@ def test_delete_never_removes_a_registered_suite(registry: ScenarioSuiteRegistry
 
     assert registry.delete_suite(name="weekly") is False
     assert registry.get_suite(name="weekly") is not None
+
+
+def test_delete_with_a_stale_version_conflicts_and_keeps_the_suite(registry: ScenarioSuiteRegistry) -> None:
+    """Test that a delete confirmed against an old read is refused."""
+    created = registry.save_suite(suite=_suite(), expected_version=None)
+    updated = registry.save_suite(suite=_suite(description="winner"), expected_version=created.version)
+
+    with pytest.raises(ScenarioSuiteConflictError, match="could not be deleted"):
+        registry.delete_suite(name="weekly", expected_version=created.version)
+
+    assert registry.delete_suite(name="weekly", expected_version=updated.version) is True
+    assert registry.get_suite(name="weekly") is None
 
 
 def test_delete_shadowed_document_reveals_registered_suite(registry: ScenarioSuiteRegistry) -> None:
