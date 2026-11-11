@@ -53,6 +53,18 @@ class TestPlaywrightCopilotTarget:
         # Create a simple mock for expect_file_chooser - we'll override this in specific tests
         page.expect_file_chooser = MagicMock()
         return page
+
+    @pytest.fixture
+    def mock_unified_page(self):
+        """Create a mock Playwright page object for the unified Copilot interface."""
+        page = AsyncMock(name="MockUnifiedPage")
+        page.url = "https://copilot.cloud.microsoft/chat/test-conversation"
+        page.locator = MagicMock(return_value=AsyncMock())
+        page.eval_on_selector_all = AsyncMock()
+        page.click = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
+        page.query_selector_all = AsyncMock()
+        page.expect_file_chooser = MagicMock()
         return page
 
     @pytest.fixture
@@ -118,6 +130,13 @@ class TestPlaywrightCopilotTarget:
         ):
             PlaywrightCopilotTarget(page=mock_page, copilot_type=CopilotType.M365)
 
+    @pytest.mark.parametrize("copilot_type", [CopilotType.CONSUMER, CopilotType.M365])
+    def test_init_unified_copilot_accepts_both_types(self, mock_unified_page, copilot_type):
+        """Test that the unified Copilot host supports both account types."""
+        target = PlaywrightCopilotTarget(page=mock_unified_page, copilot_type=copilot_type)
+
+        assert target._type == copilot_type
+
     def test_get_selectors_consumer(self, mock_page):
         """Test selector configuration for Consumer Copilot."""
         target = PlaywrightCopilotTarget(page=mock_page, copilot_type=CopilotType.CONSUMER)
@@ -139,6 +158,27 @@ class TestPlaywrightCopilotTarget:
         assert selectors.ai_messages_selector == 'div[data-testid="copilot-message-div"]'
         assert selectors.plus_button_dropdown_selector == 'button[aria-label="Add content"]'
         assert selectors.file_picker_selector == 'span.fui-MenuItem__content:has-text("Upload images and files")'
+
+    @pytest.mark.parametrize("copilot_type", [CopilotType.CONSUMER, CopilotType.M365])
+    def test_get_selectors_unified_copilot(self, mock_unified_page, copilot_type):
+        """Test selector configuration for both account types on the unified Copilot host."""
+        target = PlaywrightCopilotTarget(page=mock_unified_page, copilot_type=copilot_type)
+
+        selectors = target._get_selectors()
+
+        assert selectors.input_selector == (
+            'span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]'
+        )
+        assert selectors.send_button_selector == 'button[aria-label="Send"]'
+        assert selectors.ai_messages_selector == 'div[data-testid="copilot-message-div"]'
+        assert selectors.ai_messages_group_selector == 'div[data-testid="copilot-message-reply-div"]'
+        assert selectors.text_content_selector == "div > p"
+        assert selectors.plus_button_dropdown_selector == (
+            'button[aria-label="Add and manage sources"], '
+            'button[aria-label="Add attachments"], '
+            'button[aria-label="Add content"]'
+        )
+        assert selectors.file_picker_selector == ('span.fui-MenuItem__content:has-text("Upload images and files")')
 
     def test_validate_request_unsupported_type(self, mock_page):
         """Test validation with unsupported data type."""

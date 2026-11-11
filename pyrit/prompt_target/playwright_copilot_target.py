@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, construct_response_from_request
@@ -113,6 +114,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     # URL identifiers
     M365_URL_IDENTIFIER: str = "m365"
+    UNIFIED_COPILOT_HOST: str = "copilot.cloud.microsoft"
 
     # Login requirement message
     LOGIN_REQUIRED_HEADER: str = "Sign in for the full experience"
@@ -148,10 +150,11 @@ class PlaywrightCopilotTarget(PromptTarget):
                 "Please pass a Page object when initializing PlaywrightCopilotTarget."
             )
 
-        if page and self.M365_URL_IDENTIFIER in page.url and copilot_type != CopilotType.M365:
-            raise ValueError("The provided page URL indicates M365 Copilot, but the type is set to consumer.")
-        if page and self.M365_URL_IDENTIFIER not in page.url and copilot_type == CopilotType.M365:
-            raise ValueError("The provided page URL does not indicate M365 Copilot, but the type is set to m365.")
+        if not self._is_unified_copilot_url(page.url):
+            if self.M365_URL_IDENTIFIER in page.url and copilot_type != CopilotType.M365:
+                raise ValueError("The provided page URL indicates M365 Copilot, but the type is set to consumer.")
+            if self.M365_URL_IDENTIFIER not in page.url and copilot_type == CopilotType.M365:
+                raise ValueError("The provided page URL does not indicate M365 Copilot, but the type is set to m365.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -173,17 +176,57 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             CopilotSelectors: The selectors for the Copilot interface.
         """
+        if self._is_unified_copilot_url(self._page.url):
+            return self._get_unified_selectors()
         if self._type == CopilotType.CONSUMER:
-            return CopilotSelectors(
-                input_selector="#userInput",
-                send_button_selector='button[data-testid="submit-button"]',
-                ai_messages_selector='div[data-content="ai-message"]',
-                ai_messages_group_selector=r'[data-content="ai-message"] > div > div.group\/ai-message-item',
-                text_content_selector="p > span",
-                plus_button_dropdown_selector='button[aria-label="Open"]',
-                file_picker_selector='button[aria-label="Add images or files"]',
-            )
-        # M365 Copilot
+            return self._get_legacy_consumer_selectors()
+        return self._get_legacy_m365_selectors()
+
+    def _get_unified_selectors(self) -> CopilotSelectors:
+        """
+        Get selectors for the unified Consumer and M365 Copilot interface.
+
+        Returns:
+            CopilotSelectors: The selectors for the unified Copilot interface.
+        """
+        return CopilotSelectors(
+            input_selector='span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]',
+            send_button_selector='button[aria-label="Send"]',
+            ai_messages_selector='div[data-testid="copilot-message-div"]',
+            ai_messages_group_selector='div[data-testid="copilot-message-reply-div"]',
+            text_content_selector="div > p",
+            plus_button_dropdown_selector=(
+                'button[aria-label="Add and manage sources"], '
+                'button[aria-label="Add attachments"], '
+                'button[aria-label="Add content"]'
+            ),
+            file_picker_selector='span.fui-MenuItem__content:has-text("Upload images and files")',
+        )
+
+    def _get_legacy_consumer_selectors(self) -> CopilotSelectors:
+        """
+        Get selectors for the legacy Consumer Copilot interface.
+
+        Returns:
+            CopilotSelectors: The selectors for the legacy Consumer Copilot interface.
+        """
+        return CopilotSelectors(
+            input_selector="#userInput",
+            send_button_selector='button[data-testid="submit-button"]',
+            ai_messages_selector='div[data-content="ai-message"]',
+            ai_messages_group_selector=r'[data-content="ai-message"] > div > div.group\/ai-message-item',
+            text_content_selector="p > span",
+            plus_button_dropdown_selector='button[aria-label="Open"]',
+            file_picker_selector='button[aria-label="Add images or files"]',
+        )
+
+    def _get_legacy_m365_selectors(self) -> CopilotSelectors:
+        """
+        Get selectors for the legacy M365 Copilot interface.
+
+        Returns:
+            CopilotSelectors: The selectors for the legacy M365 Copilot interface.
+        """
         return CopilotSelectors(
             input_selector='span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]',
             send_button_selector='button[type="submit"]',
@@ -195,6 +238,10 @@ class PlaywrightCopilotTarget(PromptTarget):
             plus_button_dropdown_selector='button[aria-label="Add content"]',
             file_picker_selector='span.fui-MenuItem__content:has-text("Upload images and files")',
         )
+
+    def _is_unified_copilot_url(self, url: str) -> bool:
+        """Return whether the URL uses the unified Copilot host."""
+        return (urlparse(url).hostname or "").lower() == self.UNIFIED_COPILOT_HOST
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
