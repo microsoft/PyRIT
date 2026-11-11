@@ -99,7 +99,6 @@ async function mockNumericControlApis(page: Page): Promise<void> {
       '/api/prompt-generators': { items: [] },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,
-      [`/api/scenarios/catalog/${SCENARIO.scenario_name}/readiness`]: { bindings: [], issues: [] },
     }
     if (path.endsWith('/datasets/load')) {
       const edits: ScenarioDatasetRequest = route.request().postDataJSON()?.datasets ?? {}
