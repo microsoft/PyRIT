@@ -189,6 +189,41 @@ async def test_timestamps_truncate_and_never_round_up_async() -> None:
     assert span.end_time == datetime(2026, 1, 1, 0, 0, 0, 123457, tzinfo=UTC)
 
 
+async def test_an_end_just_before_the_start_is_rejected_before_truncation_async() -> None:
+    # Both times fall in the same microsecond, so only the nanoseconds show the end comes first.
+    document = _document(_otlp_span(start=str(_START), end=str(_START - 1)))
+    client, _ = _client(_serve({_TRACE: document, _OTHER_TRACE: _document(_otlp_span(trace_id=_OTHER_TRACE))}))
+
+    result = await client.get_spans_async(query=_query(_TRACE, _OTHER_TRACE))
+
+    assert [span.trace_id for span in result.spans] == [_OTHER_TRACE]
+    assert "trace_response_invalid" in result.coverage.reasons
+
+
+@pytest.mark.parametrize("timestamp", [str(2**64), "1" + "0" * 30])
+async def test_a_timestamp_beyond_the_otlp_range_is_an_unreadable_trace_async(timestamp: str) -> None:
+    document = _document(_otlp_span(start=timestamp, end="0"))
+    client, _ = _client(_serve({_TRACE: document, _OTHER_TRACE: _document(_otlp_span(trace_id=_OTHER_TRACE))}))
+
+    result = await client.get_spans_async(query=_query(_TRACE, _OTHER_TRACE))
+
+    assert [span.trace_id for span in result.spans] == [_OTHER_TRACE]
+    assert "trace_response_invalid" in result.coverage.reasons
+
+
+async def test_an_unreadable_trace_does_not_log_span_content_async(caplog: pytest.LogCaptureFixture) -> None:
+    # int() repeats a rejected value in its error message, and span fields can hold private data.
+    document = _document(_otlp_span(start="private-tool-argument"))
+    client, _ = _client(_serve({_TRACE: document, _OTHER_TRACE: _document(_otlp_span(trace_id=_OTHER_TRACE))}))
+
+    with caplog.at_level("WARNING"):
+        result = await client.get_spans_async(query=_query(_TRACE, _OTHER_TRACE))
+
+    assert "trace_response_invalid" in result.coverage.reasons
+    assert "could not be read (ValueError)" in caplog.text
+    assert "private-tool-argument" not in caplog.text
+
+
 async def test_remote_coverage_is_never_complete_async() -> None:
     client, _ = _client(_serve({_TRACE: _document(_otlp_span())}))
 

@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 _TRACE_ID_PLACEHOLDER = "{trace_id}"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+# OTLP timestamps are unsigned 64-bit nanoseconds; anything larger is not a timestamp.
+_MAX_NANOS = 2**64 - 1
 _STATUS_CODES = {
     0: TraceSpanStatus.UNSET,
     1: TraceSpanStatus.OK,
@@ -171,7 +173,8 @@ class OtlpJsonTraceClient:
         try:
             trace_spans = _parse_trace_document(response.json(), trace_id=trace_id)
         except (ValueError, TypeError) as error:
-            logger.warning("Trace backend response could not be read (%s).", error)
+            # The error text can echo span fields, such as tool arguments, so only its type is logged.
+            logger.warning("Trace backend response could not be read (%s).", type(error).__name__)
             return "trace_response_invalid"
         spans.update(trace_spans)
         return None
@@ -224,7 +227,11 @@ def _parse_span(raw: Any) -> TraceSpan:
     if not isinstance(raw, dict):
         raise TypeError("A span must be a JSON object.")
     parent = raw.get("parentSpanId") or None
+    start_nanos = _nanos(raw.get("startTimeUnixNano"))
     end_nanos = _nanos(raw.get("endTimeUnixNano", 0))
+    # Compare in nanoseconds: truncating both to microseconds can hide an end just before the start.
+    if end_nanos and end_nanos < start_nanos:
+        raise ValueError("A span ends before it starts.")
     status = raw.get("status") or {}
     if not isinstance(status, dict):
         raise TypeError("A span status must be a JSON object.")
@@ -238,7 +245,7 @@ def _parse_span(raw: Any) -> TraceSpan:
         trace_id=_hex_id(raw.get("traceId"), size=16),
         span_id=_hex_id(raw.get("spanId"), size=8),
         parent_span_id=None if parent is None else _hex_id(parent, size=8),
-        start_time=_timestamp(_nanos(raw.get("startTimeUnixNano"))),
+        start_time=_timestamp(start_nanos),
         end_time=_timestamp(end_nanos) if end_nanos else None,
         attributes=_key_values(attributes),
         status=_STATUS_CODES[code],
@@ -278,6 +285,8 @@ def _nanos(value: Any) -> int:
     nanos = int(value)
     if nanos < 0:
         raise ValueError("A span timestamp must not be negative.")
+    if nanos > _MAX_NANOS:
+        raise ValueError("A span timestamp exceeds the OTLP unsigned 64-bit range.")
     return nanos
 
 
