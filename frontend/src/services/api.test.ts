@@ -38,6 +38,8 @@ import {
   scenarioSuitesApi,
   datasetsApi,
   analyticsApi,
+  promptGenerationsApi,
+  promptGeneratorsApi,
   setMsalInstance,
 } from "./api";
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
@@ -136,6 +138,96 @@ describe("api service", () => {
 
       await expect(authApi.getAccess()).resolves.toEqual(response.data);
       expect(apiClient.get).toHaveBeenCalledWith("/auth/access");
+    });
+  });
+
+  describe("promptGeneratorsApi", () => {
+    it("lists generators and the ASSERT templates with cancellation", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: { items: [] } });
+
+      await expect(promptGeneratorsApi.list(controller.signal)).resolves.toEqual({ items: [] });
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generators", { signal: controller.signal });
+      await promptGeneratorsApi.listAssertBehaviors(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generators/assert/behaviors", { signal: controller.signal });
+      await promptGeneratorsApi.listAssertSuites();
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generators/assert/suites", { signal: undefined });
+    });
+  });
+
+  describe("promptGenerationsApi", () => {
+    const createRequest = {
+      generator: "assert",
+      dataset_name: "returns_policy",
+      request: { behavior_name: "returns" },
+      targets: { generation: "gpt" },
+      pause_for_review: true,
+    };
+
+    it("reads, creates, checks, and deletes generations under encoded IDs", async () => {
+      const detail = { id: "a/b", status: "queued" };
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: detail });
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: detail });
+      (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
+
+      await promptGenerationsApi.list(controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations", { signal: controller.signal });
+      await expect(promptGenerationsApi.get("a/b", controller.signal)).resolves.toEqual(detail);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/a%2Fb", { signal: controller.signal });
+      await promptGenerationsApi.create(createRequest);
+      expect(apiClient.post).toHaveBeenCalledWith("/prompt-generations", createRequest);
+      await promptGenerationsApi.preflight(createRequest, controller.signal);
+      expect(apiClient.post).toHaveBeenCalledWith("/prompt-generations/preflight", createRequest, { signal: controller.signal });
+      await promptGenerationsApi.remove("a/b");
+      expect(apiClient.delete).toHaveBeenCalledWith("/prompt-generations/a%2Fb");
+    });
+
+    it("queues a batch that shares settings", async () => {
+      const batch = {
+        generator: "assert",
+        label: "Suite",
+        items: [{ dataset_name: "suite_returns", request: {} }],
+        targets: {},
+        pause_for_review: false,
+      };
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: { items: [] } });
+
+      await expect(promptGenerationsApi.createBatch(batch)).resolves.toEqual({ items: [] });
+      expect(apiClient.post).toHaveBeenCalledWith("/prompt-generations/batch", batch);
+    });
+
+    it("posts lifecycle actions without a body", async () => {
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: { id: "a/b" } });
+
+      await promptGenerationsApi.continueAfterReview("a/b");
+      await promptGenerationsApi.cancel("a/b");
+      await promptGenerationsApi.retry("a/b");
+
+      expect((apiClient.post as jest.Mock).mock.calls).toEqual([
+        ["/prompt-generations/a%2Fb/continue"],
+        ["/prompt-generations/a%2Fb/cancel"],
+        ["/prompt-generations/a%2Fb/retry"],
+      ]);
+    });
+
+    it("reads and saves reviews, estimates, and dataset sources", async () => {
+      const controller = new AbortController();
+      const review = { generation_id: "a/b", stage: "dimensions", payload: {} };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: {} });
+      (apiClient.put as jest.Mock).mockResolvedValue({ data: review });
+
+      await promptGenerationsApi.getReview("a/b", controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/a%2Fb/review", { signal: controller.signal });
+      await expect(promptGenerationsApi.saveReview("a/b", { taxonomy: {} })).resolves.toEqual(review);
+      expect(apiClient.put).toHaveBeenCalledWith("/prompt-generations/a%2Fb/review", { payload: { taxonomy: {} } });
+      await promptGenerationsApi.getEstimate("a/b");
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/a%2Fb/estimate", { signal: undefined });
+      await promptGenerationsApi.getRequestFromDataset("dataset:named:x&y", controller.signal);
+      expect(apiClient.get).toHaveBeenCalledWith("/prompt-generations/from-dataset", {
+        params: { selection_key: "dataset:named:x&y" },
+        signal: controller.signal,
+      });
     });
   });
 

@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.datasets.assert_library import (
+        get_assert_behavior_preset,
+        get_assert_suite_preset,
+        list_assert_behavior_presets,
+        list_assert_suite_presets,
+    )
     from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
     from pyrit.datasets.seed_datasets.generated.assert_provider import AssertProvider
     from pyrit.datasets.seed_datasets.generated.target_objective_provider import TargetObjectiveProvider
@@ -21,6 +27,10 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertProvider": "pyrit.datasets.seed_datasets.generated.assert_provider",
+    "get_assert_behavior_preset": "pyrit.datasets.assert_library",
+    "get_assert_suite_preset": "pyrit.datasets.assert_library",
+    "list_assert_behavior_presets": "pyrit.datasets.assert_library",
+    "list_assert_suite_presets": "pyrit.datasets.assert_library",
     "TargetObjectiveProvider": "pyrit.datasets.seed_datasets.generated.target_objective_provider",
     "SeedDatasetFilter": "pyrit.datasets.seed_datasets.seed_metadata",
     "SeedDatasetMetadata": "pyrit.datasets.seed_datasets.seed_metadata",

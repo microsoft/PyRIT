@@ -7,6 +7,7 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AssertPolicyMetrics,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -109,6 +110,18 @@ import type {
   AttackAnalyticsResults,
   AttackAnalyticsFacetQuery,
   AttackAnalyticsFacets,
+  AssertBehaviorPresetListResponse,
+  AssertSuitePresetListResponse,
+  PromptGenerationCreateRequest,
+  PromptGenerationDetail,
+  PromptGenerationEstimate,
+  PromptGenerationBatchRequest,
+  PromptGenerationBatchResponse,
+  PromptGenerationListResponse,
+  PromptGenerationPreflightResponse,
+  PromptGenerationRequestFromDataset,
+  PromptGenerationReview,
+  PromptGeneratorListResponse,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -830,6 +843,15 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Loads ASSERT metrics for a completed foundry.assert_policy run. */
+  getAssertPolicyMetrics: async (scenarioResultId: string, signal?: AbortSignal): Promise<AssertPolicyMetrics> => {
+    const response = await apiClient.get<AssertPolicyMetrics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/assert-metrics`,
+      { signal },
+    )
+    return response.data
+  },
+
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })
     return response.data
@@ -1044,6 +1066,93 @@ export const datasetsApi = {
       signal,
     })
     return response.data
+  },
+}
+
+export const promptGeneratorsApi = {
+  list: async (signal?: AbortSignal): Promise<PromptGeneratorListResponse> => {
+    return (await apiClient.get('/prompt-generators', { signal })).data
+  },
+
+  listAssertBehaviors: async (signal?: AbortSignal): Promise<AssertBehaviorPresetListResponse> => {
+    return (await apiClient.get('/prompt-generators/assert/behaviors', { signal })).data
+  },
+
+  listAssertSuites: async (signal?: AbortSignal): Promise<AssertSuitePresetListResponse> => {
+    return (await apiClient.get('/prompt-generators/assert/suites', { signal })).data
+  },
+}
+
+const promptGenerationPath = (generationId: string): string =>
+  `/prompt-generations/${encodeURIComponent(generationId)}`
+
+export const promptGenerationsApi = {
+  /** Lists generations newest first. */
+  list: async (signal?: AbortSignal): Promise<PromptGenerationListResponse> => {
+    return (await apiClient.get('/prompt-generations', { signal })).data
+  },
+
+  get: async (generationId: string, signal?: AbortSignal): Promise<PromptGenerationDetail> => {
+    return (await apiClient.get(promptGenerationPath(generationId), { signal })).data
+  },
+
+  /** Queues a generation. The server returns 409 when the dataset name is taken. */
+  create: async (request: PromptGenerationCreateRequest): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post('/prompt-generations', request)).data
+  },
+
+  /** Queues several generations that share settings; they share a `group_id`. */
+  createBatch: async (request: PromptGenerationBatchRequest): Promise<PromptGenerationBatchResponse> => {
+    return (await apiClient.post('/prompt-generations/batch', request)).data
+  },
+
+  /** Validates a request and estimates its work without calling any target. */
+  preflight: async (
+    request: PromptGenerationCreateRequest,
+    signal?: AbortSignal,
+  ): Promise<PromptGenerationPreflightResponse> => {
+    return (await apiClient.post('/prompt-generations/preflight', request, { signal })).data
+  },
+
+  remove: async (generationId: string): Promise<void> => {
+    await apiClient.delete(promptGenerationPath(generationId))
+  },
+
+  /** Resumes a generation that is paused for review. */
+  continueAfterReview: async (generationId: string): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post(`${promptGenerationPath(generationId)}/continue`)).data
+  },
+
+  cancel: async (generationId: string): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post(`${promptGenerationPath(generationId)}/cancel`)).data
+  },
+
+  /** Resumes a failed, cancelled, or interrupted generation from its last checkpoint. */
+  retry: async (generationId: string): Promise<PromptGenerationDetail> => {
+    return (await apiClient.post(`${promptGenerationPath(generationId)}/retry`)).data
+  },
+
+  getReview: async (generationId: string, signal?: AbortSignal): Promise<PromptGenerationReview> => {
+    return (await apiClient.get(`${promptGenerationPath(generationId)}/review`, { signal })).data
+  },
+
+  saveReview: async (generationId: string, payload: Record<string, unknown>): Promise<PromptGenerationReview> => {
+    return (await apiClient.put(`${promptGenerationPath(generationId)}/review`, { payload })).data
+  },
+
+  getEstimate: async (generationId: string, signal?: AbortSignal): Promise<PromptGenerationEstimate> => {
+    return (await apiClient.get(`${promptGenerationPath(generationId)}/estimate`, { signal })).data
+  },
+
+  /** Reconstructs the request that produced a dataset. The server returns 404 for other datasets. */
+  getRequestFromDataset: async (
+    selectionKey: string,
+    signal?: AbortSignal,
+  ): Promise<PromptGenerationRequestFromDataset> => {
+    return (await apiClient.get('/prompt-generations/from-dataset', {
+      params: { selection_key: selectionKey },
+      signal,
+    })).data
   },
 }
 

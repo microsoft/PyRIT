@@ -28,7 +28,11 @@ from pyrit.models.score.scorable import (
     TraceScorable,
 )
 from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
-from pyrit.models.score.trace import ToolExecution, TraceCoverage
+from pyrit.models.score.trace import (
+    ExecutionStep,
+    ToolExecution,
+    TraceCoverage,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -367,6 +371,72 @@ class ToolEventsObservationPayload(BaseModel):
         return self
 
 
+class ExecutionTraceObservationPayload(BaseModel):
+    """
+    An immutable normalized execution snapshot: model calls, tool calls, agent steps, and their content.
+
+    Content is a bounded prefix with the full value's length and digest. When
+    ``content_retained`` is false, steps keep structure, names, lengths, and digests only.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["execution_trace"] = "execution_trace"
+    schema_version: Literal[1] = 1
+    scope: TraceScorable
+    steps: tuple[ExecutionStep, ...] = ()
+    coverage: TraceCoverage = Field(default_factory=TraceCoverage)
+    content_retained: bool = Field(default=True, strict=True)
+    max_content_chars: int = Field(default=4000, gt=0, strict=True)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _validate_schema_version(cls, value: Any) -> Any:
+        """
+        Require the exact supported schema version, without numeric coercion.
+
+        Returns:
+            Any: The supported schema version.
+
+        Raises:
+            ValueError: If the version is not exactly the supported integer.
+        """
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported execution trace payload schema_version; expected 1.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_steps(self) -> ExecutionTraceObservationPayload:
+        """
+        Keep steps unique, ordered by index, in scope, and within the content policy.
+
+        Returns:
+            ExecutionTraceObservationPayload: The validated snapshot.
+
+        Raises:
+            ValueError: If identities, indexes, scope, completeness, or content are inconsistent.
+        """
+        identities = [(step.trace_id, step.span_id) for step in self.steps]
+        if len(set(identities)) != len(identities):
+            raise ValueError("Execution steps must have unique trace/span identities.")
+        if [step.index for step in self.steps] != list(range(len(self.steps))):
+            raise ValueError("Execution step indexes must match their positions.")
+        if any(step.trace_id not in self.scope.trace_ids for step in self.steps):
+            raise ValueError("Execution steps must belong to the declared trace scope.")
+        if self.coverage.complete and any(step.end_time is None for step in self.steps):
+            raise ValueError("Complete coverage cannot contain unfinished execution steps.")
+        contents = (
+            content
+            for step in self.steps
+            for content in (step.input_content, step.output_content, step.error_content)
+            if content
+        )
+        for content in contents:
+            if len(content.text) > self.max_content_chars or (content.text and not self.content_retained):
+                raise ValueError("Execution step content exceeds the payload's retention policy.")
+        return self
+
+
 class SurfaceObservationPayload(BaseModel):
     """
     An immutable snapshot of the locations a surface scorable names, as they were when read.
@@ -477,6 +547,7 @@ class ProgramExecutionObservationPayload(BaseModel):
 ObservationPayload = Annotated[
     ScorerTargetResponsePayload
     | ToolEventsObservationPayload
+    | ExecutionTraceObservationPayload
     | ConversationObservationPayload
     | SurfaceObservationPayload
     | ProgramExecutionObservationPayload,
@@ -561,6 +632,27 @@ class Observation(BaseModel):
             raise ValueError("Tool acquisition and trace coverage completeness must agree.")
         if self.acquisition is Acquisition.UNAVAILABLE and self.payload.events:
             raise ValueError("Unavailable tool acquisition cannot contain events.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_execution_trace_acquisition(self) -> Observation:
+        """
+        Require acquisition status to agree with the retained execution snapshot.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If acquisition, scope, or coverage are inconsistent.
+        """
+        if not isinstance(self.payload, ExecutionTraceObservationPayload):
+            return self
+        if not isinstance(self.scorable, TraceScorable) or self.scorable != self.payload.scope:
+            raise ValueError("Execution trace observations require a TraceScorable matching their payload scope.")
+        if (self.acquisition is Acquisition.COMPLETE) != self.payload.coverage.complete:
+            raise ValueError("Execution trace acquisition and coverage completeness must agree.")
+        if self.acquisition in (Acquisition.UNAVAILABLE, Acquisition.ERROR) and self.payload.steps:
+            raise ValueError("Unavailable or failed execution trace acquisition cannot contain steps.")
         return self
 
     @model_validator(mode="after")
@@ -654,7 +746,12 @@ class Observation(BaseModel):
         """
         if isinstance(
             self.payload,
-            (ToolEventsObservationPayload, SurfaceObservationPayload, ProgramExecutionObservationPayload),
+            (
+                ToolEventsObservationPayload,
+                ExecutionTraceObservationPayload,
+                SurfaceObservationPayload,
+                ProgramExecutionObservationPayload,
+            ),
         ):
             return
         if isinstance(self.payload, ConversationObservationPayload):

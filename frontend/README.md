@@ -361,6 +361,31 @@ to the Playwright report for both
 viewports. The dedicated CI projects share the existing report merge and failure
 gate; the normal E2E configuration excludes this fixture-only spec.
 
+### Isolated prompt generation browser checks
+
+From `frontend`, run:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:prompt-generation
+```
+
+This builds the current frontend and drives **Datasets > Generate dataset** against
+the real prompt generation routes, `PromptGenerationService`, `AssertGenerator`, and
+`TargetObjectiveGenerator` over disposable SQLite data. A registered offline target
+returns deterministic ASSERT stage and objective JSON, so no provider is called.
+Generation records stay in the fixture's results directory; startup refuses any other
+location. Built-in scenarios need OpenAI settings to describe themselves, so the fixture
+sets placeholder values for an unresolvable `.invalid` endpoint. The journeys cover the
+review pause and taxonomy edit, completion, the objective generator, template prefill, and the
+`foundry.assert_policy` launch link with the dataset preselected.
+`PYRIT_E2E_PROMPT_GENERATION_PORT` overrides the default port, 18614. The offline
+target is also checked against the real generators from the repository root:
+
+```powershell
+uv run --no-sync pytest tests\unit\backend\test_prompt_generation_fixture.py -q
+```
+
 ## Development
 
 ```bash

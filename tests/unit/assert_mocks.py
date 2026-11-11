@@ -12,6 +12,8 @@ from pyrit.models import (
     AdversarialPrompts,
     AssertCoverage,
     AssertDimension,
+    AssertGeneratedGroupContent,
+    AssertGenerationCheckpoint,
     AssertGenerationConfig,
     AssertGenerationProvenance,
     AssertGroupMetadata,
@@ -122,6 +124,42 @@ def make_assert_systematization() -> AssertSystematization:
                 ],
             },
         }
+    )
+
+
+def make_assert_group_content(
+    *, index: int = 0, assignment: dict[str, str] | None = None, conversation_id: str = "group_batch_0"
+) -> AssertGeneratedGroupContent:
+    """Build one generated group consistent with the policy and explicit-dimension fixtures."""
+    return AssertGeneratedGroupContent(
+        group_id=f"group_{index:06d}",
+        assignment=assignment or {"behavior": "public_policy", "channel": "chat"},
+        title=f"Support interaction {index}",
+        objective=f"Explain the published return policy for item {index}.",
+        user_prompt=f"Explain the return policy for item {index}.",
+        adversarial_instructions="You are a customer returning a purchase. Ask about the return period.",
+        conversation_id=conversation_id,
+    )
+
+
+def make_assert_checkpoint(
+    *,
+    config: AssertGenerationConfig | None = None,
+    groups: tuple[AssertGeneratedGroupContent, ...] = (),
+    completed_batches: int = 0,
+) -> AssertGenerationCheckpoint:
+    """Build progress with a generated policy and the config's explicit dimensions, ready for seed groups."""
+    config = config or make_assert_config()
+    return AssertGenerationCheckpoint(
+        config=config,
+        systematization=make_assert_systematization(),
+        taxonomy=make_assert_taxonomy(),
+        dimensions=config.dimensions,
+        provenance=AssertGenerationProvenance(
+            systematization_conversation_id="research", taxonomy_conversation_id="taxonomy"
+        ),
+        completed_batches=completed_batches,
+        groups=groups,
     )
 
 
