@@ -213,6 +213,10 @@ describe('ScenarioRunPage', () => {
     state = makeState({ run: completed })
     view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
+
+    state = makeState({ run: { ...completed, scenario_registry_name: 'custom.scan', scenario_name: 'AssertPolicy' } })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
   })
   it('preserves per-group expansion through polling and completion without collapse text', async () => {
     const user = userEvent.setup()
