@@ -40,7 +40,11 @@ from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AssertBinaryRate,
+    AssertCategoryJudgment,
+    AssertDimensionResult,
+    AssertNodeJudgment,
     AssertPolicyMetrics,
+    AssertSkipReason,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -58,7 +62,7 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
-from pyrit.score import AssertDimensionMetadata, AssertScoringDimension, get_assert_failure_criterion
+from pyrit.score import AssertScoringDimension, get_assert_failure_criterion
 from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.mocks import MockPromptTarget, make_scenario_result
 
@@ -618,7 +622,7 @@ def _dimension_score(policy: Score, *, name: str, value: str | None, marked: boo
             "score_type": "true_false",
             "score_value": value,
             "status": ScoreStatus.COMPLETE if value is not None else ScoreStatus.UNDETERMINED,
-            "score_metadata": {AssertDimensionMetadata.DIMENSION: name} if marked else {},
+            "score_metadata": AssertDimensionResult(dimension=name).to_metadata() if marked else {},
         }
     )
 
@@ -628,10 +632,14 @@ def _score(name: str, *, piece_id: uuid.UUID, scorer_class: str, marked: bool) -
         score_value="true",
         score_type="true_false",
         score_category=[name],
-        score_metadata={AssertDimensionMetadata.DIMENSION: name} if marked else {},
+        score_metadata=AssertDimensionResult(dimension=name).to_metadata() if marked else {},
         message_piece_id=piece_id,
         scorer_class_identifier=ComponentIdentifier(class_name=scorer_class, class_module="tests"),
     )
+
+
+def _node(name: str, *, violated: bool) -> AssertNodeJudgment:
+    return AssertNodeJudgment(node_name=name, violated=violated, confidence="high", reasoning="Relevant.")
 
 
 def _result(objective: Score) -> AttackResult:
@@ -673,18 +681,95 @@ def test_split_reads_policy_violation_when_another_dimension_is_the_objective() 
     piece_id = uuid.uuid4()
     objective = _score("budget_compliance", piece_id=piece_id, scorer_class="Judge", marked=True)
     policy = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=True)
-    policy.score_metadata = {
-        **(policy.score_metadata or {}),
-        "assert_judgment_mode": "category_validated",
-        "assert_node_judgments": json.dumps([{"node_name": "private_disclosure", "violated": True}]),
-    }
+    judgment = AssertCategoryJudgment(
+        node_judgments=(_node("private_disclosure", violated=True),), original_score_value=True
+    )
+    policy.score_metadata = judgment.merge_into(policy.score_metadata)
 
     row = _build_row(technique="single_turn", result=_result(objective), piece_scores=[objective, policy], context=None)
 
     assert row.not_judged_reason is None
     assert row.judgment_mode == "category_validated"
-    assert row.nodes == [{"node_name": "private_disclosure", "violated": True}]
+    assert row.nodes == judgment.node_judgments
     assert set(row.verdicts) == {"budget_compliance", "policy_violation"}
+
+
+def test_typed_judgment_metadata_roundtrips_into_row() -> None:
+    piece_id = uuid.uuid4()
+    judgment = AssertCategoryJudgment(
+        node_judgments=(_node("private_disclosure", violated=True), _node("public_policy", violated=False)),
+        original_score_value=True,
+    )
+    policy = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=True)
+    policy.score_metadata = judgment.merge_into(policy.score_metadata)
+    graded = _score("quality", piece_id=piece_id, scorer_class="Judge", marked=False)
+    graded.score_metadata = AssertDimensionResult(
+        dimension="quality", grade="poor", scale=("good", "poor")
+    ).to_metadata()
+    not_applicable = _dimension_score(policy, name="budget", value=None, marked=False)
+    not_applicable.score_metadata = AssertDimensionResult(
+        dimension="budget", not_applicable=True, scale=(1, 2, 3)
+    ).to_metadata()
+
+    row = _build_row(technique="t", result=_result(policy), piece_scores=[policy, graded, not_applicable], context=None)
+
+    assert row.judgment_mode == "category_validated"
+    assert row.nodes == judgment.node_judgments
+    assert row.verdicts == {"policy_violation": True, "quality": True}
+    assert row.not_applicable == {"budget"}
+    assert row.grades == {
+        "quality": _Grade(value="poor", scale=("good", "poor")),
+        "budget": _Grade(value=None, scale=(1, 2, 3)),
+    }
+
+
+@pytest.mark.parametrize("reason", list(AssertSkipReason))
+def test_typed_skip_reason_excludes_the_conversation(reason: AssertSkipReason) -> None:
+    piece_id = uuid.uuid4()
+    policy = _dimension_score(
+        _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=True),
+        name="policy_violation",
+        value=None,
+    )
+    policy.score_metadata = AssertDimensionResult(dimension="policy_violation", skip_reason=reason).to_metadata()
+
+    row = _build_row(technique="t", result=_result(policy), piece_scores=[policy], context=None)
+
+    assert row.not_judged_reason == reason.value
+
+
+def test_scores_without_judgment_metadata_are_direct_and_ungraded() -> None:
+    piece_id = uuid.uuid4()
+    objective = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=False)
+    undetermined = _dimension_score(objective, name="overrefusal", value=None, marked=False)
+
+    row = _build_row(technique="t", result=_result(objective), piece_scores=[objective, undetermined], context=None)
+
+    assert row.judgment_mode == "direct"
+    assert row.nodes is None
+    assert row.grades == {}
+    assert row.no_verdict == {"overrefusal"}
+    assert row.not_applicable == set()
+
+
+@pytest.mark.parametrize(
+    ("metadata", "match"),
+    [
+        ({"assert_node_judgments": "not json"}, "category judgment"),
+        ({"assert_judgment_mode": "category_validated", "assert_node_judgments": "[]"}, "category judgment"),
+        ({"assert_scoring_skipped": "judge_bored"}, "dimension"),
+        ({"assert_not_applicable": "maybe"}, "dimension"),
+        ({"assert_grade": '"great"', "assert_scale": '["good", "poor"]'}, "dimension"),
+        ({"assert_scale": "{}"}, "dimension"),
+    ],
+)
+def test_malformed_judgment_metadata_raises(metadata: dict[str, str], match: str) -> None:
+    piece_id = uuid.uuid4()
+    policy = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=True)
+    policy.score_metadata = {**(policy.score_metadata or {}), **metadata}
+
+    with pytest.raises(ValueError, match=f"malformed ASSERT {match} metadata"):
+        _build_row(technique="t", result=_result(policy), piece_scores=[policy], context=None)
 
 
 def test_violation_without_violated_category_is_attributed_to_assigned_category() -> None:
@@ -698,19 +783,19 @@ def test_violation_without_violated_category_is_attributed_to_assigned_category(
         not_judged_reason=None,
         context=context,
         judgment_mode="category_validated",
-        nodes=[{"node_name": "public_policy", "violated": False}, {"node_name": "unknown", "violated": True}],
+        nodes=(_node("public_policy", violated=False), _node("unknown", violated=True)),
         verdicts={"policy_violation": True},
     )
-    irrelevant = _Row(
+    nothing_relevant = _Row(
         technique="single_turn",
         not_judged_reason=None,
         context=context,
         judgment_mode="category_validated",
-        nodes=[{"node_name": "private_disclosure", "violated": True, "relevant": False}],
+        nodes=(),
         verdicts={"policy_violation": False},
     )
 
-    single = _aggregate(scenario_result_id="run", rows=[row, irrelevant]).techniques["single_turn"]
+    single = _aggregate(scenario_result_id="run", rows=[row, nothing_relevant]).techniques["single_turn"]
 
     categories = {category.name: category for category in single.categories}
     assert categories["private_disclosure"].attributed_by_fallback == 1

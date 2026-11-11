@@ -14,7 +14,6 @@ ASSERT's analysis: a 90% Wilson score interval and 5 applicable conversations.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import statistics
@@ -30,6 +29,8 @@ from pyrit.analytics.scenario_statistics import (
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AssertBinaryRate,
+    AssertCategoryJudgment,
+    AssertDimensionResult,
     AssertGroupMetadata,
     AssertPolicyMetrics,
     AtomicAttackIdentifier,
@@ -46,7 +47,7 @@ from pyrit.models.results.assert_policy_metrics import (
     AssertNotJudgedCounts,
     AssertTechniqueMetrics,
 )
-from pyrit.score import AssertDimensionMetadata
+from pyrit.score import AssertJudgmentMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -54,7 +55,14 @@ if TYPE_CHECKING:
 
     from pyrit.analytics.scenario_statistics import ScenarioAttempt
     from pyrit.memory import MemoryInterface
-    from pyrit.models import AttackResult, ScenarioResult, ScenarioRunPlanAtomicGroup, Score, SeedGroup
+    from pyrit.models import (
+        AssertNodeJudgment,
+        AttackResult,
+        ScenarioResult,
+        ScenarioRunPlanAtomicGroup,
+        Score,
+        SeedGroup,
+    )
 
 ASSERT_SCENARIO_CLASS_NAME = "AssertPolicy"
 ASSERT_SCENARIO_REGISTRY_NAME = "foundry.assert_policy"
@@ -67,11 +75,6 @@ NO_JUDGED_RESULTS = "no_judged_results"
 # ASSERT's 90% two-sided normal quantile and minimum support.
 _Z_90 = 1.645
 _MIN_SUPPORT = 5
-_SKIP_REASON_KEY = "assert_scoring_skipped"
-_NODE_JUDGMENTS_KEY = "assert_node_judgments"
-_JUDGMENT_MODE_KEY = "assert_judgment_mode"
-_DIRECT_MODE = "direct"
-_SKIP_REASONS = ("target_input_refused", "target_error")
 _QUERY_CHUNK_SIZE = 500
 _UNIT_NAME = re.compile(r"(.+?)__[0-9a-f]{64}(?:__.+)?")
 
@@ -102,6 +105,7 @@ async def compute_assert_policy_metrics_async(
 
     Raises:
         NotAssertPolicyRunError: If the result is not from ``foundry.assert_policy``.
+        ValueError: If a judge score's ASSERT judgment metadata is malformed.
     """
     _require_assert_run(scenario_result)
     effective = _select_effective_results(scenario_result)
@@ -158,7 +162,7 @@ class _Row:
     not_judged_reason: str | None
     context: _GroupContext | None = None
     judgment_mode: str | None = None
-    nodes: list[dict[str, Any]] | None = None
+    nodes: tuple[AssertNodeJudgment, ...] | None = None
     verdicts: dict[str, bool] = field(default_factory=dict)
     not_applicable: set[str] = field(default_factory=set)
     no_verdict: set[str] = field(default_factory=set)
@@ -168,8 +172,8 @@ class _Row:
         """
         Return relevant taxonomy categories and whether each was violated.
 
-        Categories outside the row's taxonomy, explicitly irrelevant categories, and categories
-        without a boolean violation flag are skipped, as in ASSERT.
+        The judge lists only the categories it found relevant. Categories outside the row's taxonomy
+        are skipped, as in ASSERT.
 
         Returns:
             list[tuple[str, bool]]: Category names and violation flags.
@@ -179,13 +183,9 @@ class _Row:
         permissibility = self.context.permissibility
         relevant: list[tuple[str, bool]] = []
         for node in self.nodes:
-            name = node.get("node_name")
-            violated = node.get("violated")
-            if "relevant" in node and node["relevant"] is not True:
-                continue
-            if not isinstance(violated, bool) or not isinstance(name, str) or name.strip() not in permissibility:
-                continue
-            relevant.append((name.strip(), violated))
+            name = node.node_name.strip()
+            if name in permissibility:
+                relevant.append((name, node.violated))
         return relevant
 
     def split(self) -> tuple[bool | None, bool | None] | None:
@@ -432,40 +432,34 @@ def _build_row(
     scores = _dimension_scores(objective=result.automated_score, piece_scores=piece_scores)
     if not scores:
         return _Row(technique=technique, not_judged_reason="not_scored", context=context)
-    skip_reason = next(
-        (
-            reason
-            for score in scores.values()
-            if (reason := (score.score_metadata or {}).get(_SKIP_REASON_KEY)) in _SKIP_REASONS
-        ),
-        None,
-    )
+    results = {name: _dimension_result(score) for name, score in scores.items()}
+    skip_reason = next((result.skip_reason for result in results.values() if result and result.skip_reason), None)
     if skip_reason is not None:
-        return _Row(technique=technique, not_judged_reason=str(skip_reason), context=context)
+        return _Row(technique=technique, not_judged_reason=skip_reason.value, context=context)
     row = _Row(technique=technique, not_judged_reason=None, context=context)
     for name, score in scores.items():
-        _record_dimension(row=row, name=name, score=score)
+        _record_dimension(row=row, name=name, score=score, result=results[name])
     if not row.verdicts and not row.not_applicable:
         return _Row(technique=technique, not_judged_reason="judge_no_verdict", context=context)
     if POLICY_VIOLATION in row.verdicts:
-        policy_metadata = scores[POLICY_VIOLATION].score_metadata or {}
-        mode = policy_metadata.get(_JUDGMENT_MODE_KEY)
-        row.judgment_mode = str(mode) if mode else _DIRECT_MODE
-        row.nodes = _parse_node_judgments(policy_metadata.get(_NODE_JUDGMENTS_KEY))
+        judgment = _category_judgment(scores[POLICY_VIOLATION])
+        row.judgment_mode = (
+            AssertJudgmentMode.CATEGORY_VALIDATED.value if judgment is not None else AssertJudgmentMode.DIRECT.value
+        )
+        row.nodes = judgment.node_judgments if judgment is not None else None
     return row
 
 
-def _record_dimension(*, row: _Row, name: str, score: Score) -> None:
+def _record_dimension(*, row: _Row, name: str, score: Score, result: AssertDimensionResult | None) -> None:
     """
     Record one dimension's verdict, not-applicable answer, and grade on the row.
 
-    A not-applicable answer is an undetermined score marked ``AssertDimensionMetadata.NOT_APPLICABLE``.
-    Other undetermined scores, such as a blocked judge reply, have no verdict.
+    A not-applicable answer is an undetermined score whose ``AssertDimensionResult`` says so. Other
+    undetermined scores, such as a blocked judge reply, have no verdict.
     """
-    metadata = score.score_metadata or {}
-    scale = _parse_scale(metadata.get(AssertDimensionMetadata.SCALE))
+    scale = result.scale if result is not None else None
     if score.status != ScoreStatus.COMPLETE or score.score_value is None:
-        if str(metadata.get(AssertDimensionMetadata.NOT_APPLICABLE, "")).lower() == "true":
+        if result is not None and result.not_applicable:
             row.not_applicable.add(name)
             if scale:
                 row.grades[name] = _Grade(value=None, scale=scale)
@@ -476,45 +470,47 @@ def _record_dimension(*, row: _Row, name: str, score: Score) -> None:
     if score.score_type != "true_false":
         return
     row.verdicts[name] = score.score_value.strip().lower() == "true"
-    grade = _parse_json(metadata.get(AssertDimensionMetadata.GRADE))
-    if scale and isinstance(grade, (int, str)) and not isinstance(grade, bool) and grade in scale:
-        row.grades[name] = _Grade(value=grade, scale=scale)
+    if scale and result is not None and result.grade is not None:
+        row.grades[name] = _Grade(value=result.grade, scale=scale)
 
 
-def _parse_json(raw: object) -> object:
-    if not isinstance(raw, str):
-        return None
+def _dimension_result(score: Score) -> AssertDimensionResult | None:
+    """
+    Read a score's ASSERT dimension data; None for scores that predate it.
+
+    Returns:
+        AssertDimensionResult | None: The recorded dimension data.
+
+    Raises:
+        ValueError: If the score's ASSERT dimension metadata is malformed.
+    """
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return None
+        return AssertDimensionResult.from_metadata(metadata=score.score_metadata)
+    except ValueError as error:
+        raise ValueError(f"Score {score.id} has malformed ASSERT dimension metadata.") from error
 
 
-def _parse_scale(raw: object) -> tuple[int | str, ...] | None:
-    parsed = _parse_json(raw)
-    if not isinstance(parsed, list) or not parsed:
-        return None
-    grades: list[int | str] = [
-        grade for grade in parsed if isinstance(grade, (int, str)) and not isinstance(grade, bool)
-    ]
-    return tuple(grades) if len(grades) == len(parsed) else None
+def _category_judgment(score: Score) -> AssertCategoryJudgment | None:
+    """
+    Read a policy score's per-category judgments; None for a direct judgment.
 
+    Returns:
+        AssertCategoryJudgment | None: The recorded category judgments.
 
-def _parse_node_judgments(raw: object) -> list[dict[str, Any]] | None:
-    if not isinstance(raw, str):
-        return None
+    Raises:
+        ValueError: If the score's ASSERT category judgment metadata is malformed.
+    """
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    return [node for node in parsed if isinstance(node, dict)] if isinstance(parsed, list) else None
+        return AssertCategoryJudgment.from_metadata(metadata=score.score_metadata)
+    except ValueError as error:
+        raise ValueError(f"Score {score.id} has malformed ASSERT category judgment metadata.") from error
 
 
 def _dimension_scores(*, objective: Score | None, piece_scores: Sequence[Score]) -> dict[str, Score]:
     """
     Select the objective score and the newest ASSERT judge score for each other dimension.
 
-    ASSERT judges mark each score with ``AssertDimensionMetadata.DIMENSION``. Results saved before
+    ASSERT judges record each score's dimension with ``AssertDimensionResult``. Results saved before
     the marker existed fall back to scores from the objective score's scorer class. Scores with equal
     timestamps are ordered by ID, so a re-judged dimension resolves the same way on every read.
 
@@ -522,7 +518,7 @@ def _dimension_scores(*, objective: Score | None, piece_scores: Sequence[Score])
         dict[str, Score]: Scores keyed by dimension name.
     """
     objective_name = (_dimension_name(objective) or POLICY_VIOLATION) if objective is not None else None
-    marked = [score for score in piece_scores if (score.score_metadata or {}).get(AssertDimensionMetadata.DIMENSION)]
+    marked = [score for score in piece_scores if (result := _dimension_result(score)) and result.dimension]
     if marked or objective is None:
         candidates = marked
     else:
