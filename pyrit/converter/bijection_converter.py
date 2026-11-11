@@ -472,8 +472,14 @@ class TokenBijectionConverter(BijectionConverter):
         delimiter = re.escape(self._TOKEN_DELIMITER)
         # A doubled delimiter is matched first so it is consumed as one literal hyphen
         # rather than being split between two adjacent code-word runs.
+        # encode() writes a run directly next to any unmapped character, including digits,
+        # "_" and non-ASCII letters ("mp3" -> "<m>-<p>3"). Those are word characters, so a
+        # \b boundary would not match there. Every ASCII letter is mapped, so a run never borders
+        # one, and requiring no ASCII letter on either side still keeps a code word inside a
+        # longer English word from being decoded.
         self._decode_pattern = re.compile(
-            rf"{delimiter}{delimiter}|\b(?:{token_alternation})(?:{delimiter}(?:{token_alternation}))*\b",
+            rf"{delimiter}{delimiter}"
+            rf"|(?<![A-Za-z])(?:{token_alternation})(?:{delimiter}(?:{token_alternation}))*(?![A-Za-z])",
             re.IGNORECASE,
         )
 
