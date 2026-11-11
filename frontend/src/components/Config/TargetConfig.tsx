@@ -12,32 +12,55 @@ import {
 import { AddRegular } from '@fluentui/react-icons'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
+import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
+import { sameTarget } from '@/utils/targetIdentity'
 import CreateTargetDialog from './CreateTargetDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
+  detection: TargetCapabilityDetection
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
   onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
+function mergeDetectedTargets(
+  targets: TargetInstance[],
+  detectedTargets: TargetCapabilityDetection['detectedTargets'],
+  loadedDetectedTargets: TargetCapabilityDetection['detectedTargets'],
+): TargetInstance[] {
+  return targets.map((target) => {
+    const updated = detectedTargets[target.target_registry_name]
+    return updated && updated !== loadedDetectedTargets[target.target_registry_name] && sameTarget(updated, target)
+      ? updated : target
+  })
+}
+
 export default function TargetConfig({
+  detection,
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
   onTargetsLoaded,
 }: TargetConfigProps) {
   const { generation, ready } = useRuntime()
   const styles = useTargetConfigStyles()
-  const [targets, setTargets] = useState<TargetInstance[]>([])
+  const [loaded, setLoaded] = useState<{
+    targets: TargetInstance[]
+    detectedTargets: TargetCapabilityDetection['detectedTargets']
+  }>({ targets: [], detectedTargets: detection.detectedTargets })
+  const targets = mergeDetectedTargets(loaded.targets, detection.detectedTargets, loaded.detectedTargets)
   const [hasShownTargets, setHasShownTargets] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const detecting = detection.running
+  const detectionRef = useRef(detection)
+  useEffect(() => { detectionRef.current = detection }, [detection])
   const pending = useRef(false)
   const [refetchCount, setRefetchCount] = useState(0)
   const restoreFocusTarget = useRestoreFocusTarget()
@@ -55,9 +78,12 @@ export default function TargetConfig({
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const items = await listRegisteredTargets()
+        const detectedBeforeFetch = detectionRef.current.detectedTargets
+        const registered = await listRegisteredTargets()
         if (cancelled) return
-        setTargets(items)
+        const currentDetection = detectionRef.current
+        const items = mergeDetectedTargets(registered, currentDetection.detectedTargets, detectedBeforeFetch)
+        setLoaded({ targets: items, detectedTargets: currentDetection.detectedTargets })
         if (items.length > 0) setHasShownTargets(true)
         setError(null)
         setLoading(false)
@@ -86,7 +112,7 @@ export default function TargetConfig({
   const fetchTargets = useCallback(() => {
     setRefetchCount(c => c + 1)
   }, [])
-  useAutoRefresh(() => { if (!pending.current) fetchTargets() }, ready && !loading)
+  useAutoRefresh(() => { if (!pending.current) fetchTargets() }, ready && !loading && !detecting)
 
   useEffect(() => {
     if (focusRestore) newTargetButton.current?.focus()
@@ -124,6 +150,7 @@ export default function TargetConfig({
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
+            disabled={detecting}
           >
             New Target
           </Button>
@@ -171,10 +198,12 @@ export default function TargetConfig({
 
       {!loading && (hasShownTargets || targets.length > 0) && (
         <TargetTable
+          generation={generation}
           targets={targets}
           defaultAdversarialTarget={defaultAdversarialTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
           onTargetDeleted={handleTargetDeleted}
+          detection={detection}
         />
       )}
 

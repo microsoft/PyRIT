@@ -21,6 +21,8 @@
 # scorers, baseline). This guide is about parameters that scenario authors add
 # on their own classes.
 #
+# Metadata inspection below needs no model configuration. Recorded "fallback default objective scorer" logs are historical; execution now requires explicitly configured scoring and generation roles. The CLI examples deliberately run the target initializer with those role-specific environment settings.
+#
 # ## Declaring a parameter
 #
 # `Parameter` is the unified declaration shared by initializers and scenarios.
@@ -49,7 +51,7 @@
 # scorers):
 
 # %%
-from pyrit.scenario.airt.scam import Scam
+from pyrit.scenario.scenarios.airt import Scam
 from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import TechniqueInitializer
 
