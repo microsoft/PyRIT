@@ -20,6 +20,7 @@
     "test:e2e:scenario-datasets": "npm run build && playwright test --config playwright.scenario-datasets.config.ts",
     "test:e2e:scenario-techniques": "npm run build && playwright test --config playwright.scenario-techniques.config.ts",
     "test:e2e:analytics": "npm run build && playwright test --config playwright.analytics.config.ts",
+    "test:e2e:paired-outcomes": "npm run build && playwright test --config playwright.paired-outcomes.config.ts",
     "test:e2e:seeded": "playwright test --project seeded",
     "test:e2e:live": "E2E_LIVE_MODE=true playwright test --project live",
     "test:e2e:ui": "playwright test --ui",
