@@ -5,7 +5,9 @@
 import asyncio
 import os
 import tempfile
+import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -19,6 +21,29 @@ _EDGE_SAMPLES = 200
 
 def _tone(*, sample_rate: int, frequency: float, num_samples: int, amplitude: float) -> np.ndarray:
     return amplitude * np.sin(2 * np.pi * frequency * np.arange(num_samples) / sample_rate)
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+async def test_frequency_processing_runs_off_event_loop_async(tmp_path: Path) -> None:
+    source = tmp_path / "thread.wav"
+    samples = _tone(sample_rate=8000, frequency=_TONE_HZ, num_samples=4000, amplitude=0.5).astype(np.float32)
+    await asyncio.to_thread(wavfile.write, source, 8000, samples)
+    converter = AudioFrequencyConverter(shift_value=2000)
+    shift_up = converter._shift_up
+    processing_threads: list[int] = []
+    event_loop_thread = threading.get_ident()
+
+    def record_processing_thread(*, samples: np.ndarray, sample_rate: int) -> tuple[int, np.ndarray]:
+        processing_threads.append(threading.get_ident())
+        return shift_up(samples=samples, sample_rate=sample_rate)
+
+    with patch.object(converter, "_shift_up", side_effect=record_processing_thread):
+        result = await converter.convert_async(prompt=str(source))
+
+    assert processing_threads and all(thread != event_loop_thread for thread in processing_threads)
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+    assert rate == 16000
+    assert output.shape == (8000,)
 
 
 @pytest.mark.usefixtures("sqlite_instance")

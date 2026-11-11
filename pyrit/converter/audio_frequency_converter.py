@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import io
 import logging
 from typing import Literal
@@ -92,32 +93,7 @@ class AudioFrequencyConverter(Converter):
             )
             audio_bytes = await audio_serializer.read_data_async()
 
-            # Read the audio file bytes and process the data
-            bytes_io = io.BytesIO(audio_bytes)
-            sample_rate, data = wavfile.read(bytes_io)
-            # 8-bit PCM is unsigned and centred on 128, so shift around that midpoint.
-            midpoint = 128 if data.dtype == np.uint8 else 0
-            output_rate, shifted_data = self._shift_up(
-                samples=data.astype(np.float64) - midpoint, sample_rate=sample_rate
-            )
-
-            # Keep the input sample format so integer audio isn't wrapped. The one-way shift can raise
-            # peaks above the input's, and clipping them would add distortion that lands back in the
-            # audible band, so output that would not fit is scaled down just enough instead.
-            if np.issubdtype(data.dtype, np.integer):
-                info = np.iinfo(data.dtype)
-                shifted_data = _fit_within(samples=shifted_data, upper=info.max - midpoint, lower=info.min - midpoint)
-                output_data = np.clip(shifted_data + midpoint, info.min, info.max)
-            else:
-                output_data = shifted_data + midpoint
-            output_data = output_data.astype(data.dtype)
-
-            # Write to a fresh buffer so a shorter output cannot retain input bytes.
-            output_bytes_io = io.BytesIO()
-            wavfile.write(output_bytes_io, output_rate, output_data)
-
-            # Retrieve the WAV bytes and save them using the serializer
-            converted_bytes = output_bytes_io.getvalue()
+            converted_bytes = await asyncio.to_thread(self._convert_audio, audio_bytes)
             await audio_serializer.save_data_async(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
             logger.info(f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]")
@@ -126,6 +102,25 @@ class AudioFrequencyConverter(Converter):
             logger.error("Failed to convert prompt to audio: %s", str(e))
             raise
         return ConverterResult(output_text=audio_serializer_file, output_type=input_type)
+
+    def _convert_audio(self, audio_bytes: bytes) -> bytes:
+        sample_rate, data = wavfile.read(io.BytesIO(audio_bytes))
+        # 8-bit PCM is unsigned and centred on 128, so shift around that midpoint.
+        midpoint = 128 if data.dtype == np.uint8 else 0
+        output_rate, shifted_data = self._shift_up(samples=data.astype(np.float64) - midpoint, sample_rate=sample_rate)
+
+        # Scale integer peaks uniformly rather than clipping, which would add audible distortion.
+        if np.issubdtype(data.dtype, np.integer):
+            info = np.iinfo(data.dtype)
+            shifted_data = _fit_within(samples=shifted_data, upper=info.max - midpoint, lower=info.min - midpoint)
+            output_data = np.clip(shifted_data + midpoint, info.min, info.max)
+        else:
+            output_data = shifted_data + midpoint
+        output_data = output_data.astype(data.dtype)
+
+        output_bytes_io = io.BytesIO()
+        wavfile.write(output_bytes_io, output_rate, output_data)
+        return output_bytes_io.getvalue()
 
     def _shift_up(self, *, samples: np.ndarray, sample_rate: int) -> tuple[int, np.ndarray]:
         """
