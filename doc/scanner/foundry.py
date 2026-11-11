@@ -147,6 +147,10 @@ await output_scenario_async(scenario_result)
 # - `objective_dimension`: the dimension used as the objective score. Defaults to
 #   `policy_violation`.
 #
+# The GUI launch form always uses the default judges and doesn't show these judge settings. Set them
+# from Python or `pyrit_scan`. In Python you can instead pass your own true/false scorer as
+# `AssertPolicy(objective_scorer=...)`; it's used unchanged, so leave the judge settings at their defaults.
+#
 # There are no request converters by default. Add them per technique as in other scenarios, for
 # example `--techniques assert_package:converter.<registered name>`, or `technique_converters` in Python.
 #
