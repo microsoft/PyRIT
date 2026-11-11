@@ -143,6 +143,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   own model interaction and validation; memory stores the seeds, and scenarios select them.
 - `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
   identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
+- A `SeedObjective` can be decomposed: children name their parent, and the parent's
+  `DecompositionPath`s (`pyrit.models.decomposition`) are ordered chains of its direct children.
+  Memory stores and deduplicates each tree as one unit; executing paths belongs to an attack,
+  not the dataset.
 - `AttackSeedGroup.adversarial_prompts` associates named adversarial-chat `SeedPrompt`
   inputs with the objective. They are not application messages. Attack techniques bind
   them when constructing attacks; memory preserves the association.

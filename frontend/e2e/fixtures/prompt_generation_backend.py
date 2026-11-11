@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pyrit.models import Message
 
 TARGET_NAME = "Offline generation target"
+ROLE_TARGET_NAMES = ("adversarial_chat", "objective_scorer_chat")
 # Built-in scenarios build default OpenAI scorers to describe themselves. The `.invalid`
 # endpoint cannot resolve, so these placeholders let the catalog load without reaching a provider.
 OFFLINE_OPENAI_ENVIRONMENT = {
@@ -140,7 +141,11 @@ def _register_target() -> None:
             if not normalized_conversation:
                 raise ValueError("The offline generation target requires a message.")
 
-    TargetRegistry.get_registry_singleton().instances.register(OfflineGenerationTarget(), name=TARGET_NAME)
+    instances = TargetRegistry.get_registry_singleton().instances
+    instances.register(OfflineGenerationTarget(), name=TARGET_NAME)
+    # Scenario launches require these roles explicitly; offline copies keep runs off the network.
+    for role_name in ROLE_TARGET_NAMES:
+        instances.register(OfflineGenerationTarget(), name=role_name)
 
 
 async def _seed_async(memory: SQLiteMemory) -> None:

@@ -46,6 +46,39 @@ async def test_blob_storage_deletion_closes_client_on_failure_async() -> None:
     client.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize("fails", [False, True])
+async def test_blob_upload_stream_is_inert_exclusive_and_closes_client_async(fails: bool) -> None:
+    from azure.storage.blob.aio import ContainerClient
+
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    client = AsyncMock(spec=ContainerClient)
+    storage._client_async = client
+    if fails:
+        client.upload_blob.side_effect = OSError("upload failed")
+
+    async def chunks_async() -> AsyncIterator[bytes]:
+        yield b"arbitrary"
+        yield b"\x00bytes"
+
+    chunks = chunks_async()
+    try:
+        if fails:
+            with pytest.raises(OSError, match="upload failed"):
+                await storage.write_stream_async(path="nested/file.bin", chunks=chunks)
+        else:
+            await storage.write_stream_async(path="nested/file.bin", chunks=chunks)
+        client.upload_blob.assert_awaited_once()
+        kwargs = client.upload_blob.call_args.kwargs
+        assert kwargs["name"] == "nested/file.bin"
+        assert kwargs["data"] is chunks
+        assert kwargs["overwrite"] is False
+        assert kwargs["content_settings"].content_type == "application/octet-stream"
+        assert kwargs["content_settings"].content_disposition == "attachment"
+        client.close.assert_awaited_once()
+    finally:
+        await chunks.aclose()
+
+
 async def test_disk_storage_io_read_file():
     storage = DiskStorageIO()
     path = "sample.txt"
@@ -734,3 +767,33 @@ async def test_blob_storage_creates_one_client_for_concurrent_first_operations_a
     client.close.assert_not_awaited()
     await storage._release_client_async()
     client.close.assert_awaited_once()
+
+
+async def test_blob_upload_stream_shares_the_client_with_concurrent_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    uploading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_upload_async(**kwargs: object) -> None:
+        uploading.set()
+        await release.wait()
+
+    blob = MagicMock()
+    blob.get_blob_properties = AsyncMock()
+    client = MagicMock()
+    client.close = AsyncMock()
+    client.upload_blob = AsyncMock(side_effect=held_upload_async)
+    client.get_blob_client = Mock(return_value=blob)
+    storage._client_async = client
+
+    async def chunks_async() -> AsyncIterator[bytes]:
+        yield b"data"
+
+    upload = asyncio.create_task(storage.write_stream_async(path="uploads/a.bin", chunks=chunks_async()))
+    await wait_for_event_async(event=uploading, tasks=[upload])
+    assert await storage.path_exists_async("uploads/b.bin")
+    client.close.assert_not_awaited()
+    release.set()
+    await upload
+    client.close.assert_awaited_once()
+    assert storage._client_async is None

@@ -179,6 +179,9 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   expect(estimate.status(), await estimate.text()).toBe(200)
 
   await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
+  // The adversarial role defaults to the fixture's adversarial_chat; an explicit choice must win.
+  await page.getByRole('combobox', { name: 'Adversarial Target', exact: true }).selectOption(TARGET)
+  await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
   await page.getByTestId('launch-scenario-btn').click()
   const starting = page.waitForResponse((response: Response) =>
     apiPath(response) === '/api/scenarios/runs' && response.request().method() === 'POST')
@@ -186,7 +189,10 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   const started = await starting
   expect(started.ok(), await started.text()).toBeTruthy()
   expect(started.request().postDataJSON()).toMatchObject({
-    scenario_name: FOLLOW_UP_SCENARIO, target_name: TARGET, datasets: { sources: [{ name }] },
+    scenario_name: FOLLOW_UP_SCENARIO,
+    target_name: TARGET,
+    adversarial_target_name: TARGET,
+    datasets: { sources: [{ name }] },
   })
 })
 

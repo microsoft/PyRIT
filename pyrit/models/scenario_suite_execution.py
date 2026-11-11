@@ -10,12 +10,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pyrit.models.catalog import (
-    ScenarioRunSummary,
-)
-from pyrit.models.catalog.scenario import (
-    ScenarioLaunchConfiguration,
-)
+from pyrit.models.catalog import ScenarioRunSummary
+from pyrit.models.catalog.scenario import _RequestName, _ScenarioLaunchOptions
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 from pyrit.models.results.scenario_result import ScenarioRunState
 
@@ -41,11 +38,12 @@ class ScenarioSuiteLaunchEntrySnapshot(BaseModel):
     )
 
 
-class LaunchScenarioSuiteRequest(ScenarioLaunchConfiguration):
-    """Launch configuration and optimistic preconditions for one suite execution."""
+class _ScenarioSuiteConfiguration(_ScenarioLaunchOptions):
+    """Shared role configuration and optimistic suite preconditions."""
 
     model_config = ConfigDict(extra="forbid")
 
+    objective_scorer: RegisteredComponentReference | None = None
     expected_version: str | None = Field(
         None,
         max_length=MAX_IDENTIFIER_LENGTH,
@@ -57,6 +55,18 @@ class LaunchScenarioSuiteRequest(ScenarioLaunchConfiguration):
         max_length=MAX_ITEMS,
         description="Reviewed preset snapshots in the suite's declared order",
     )
+
+
+class LaunchScenarioSuiteRequest(_ScenarioSuiteConfiguration):
+    """Launch configuration requiring an explicitly selected objective target."""
+
+    target_name: _RequestName = Field(..., min_length=1, description="Registered objective target name")
+
+
+class ScenarioSuiteReadinessRequest(_ScenarioSuiteConfiguration):
+    """Dependency-free preview of a suite whose roles may not yet be selected."""
+
+    target_name: _RequestName | None = Field(None, min_length=1, description="Optional objective target selection")
 
 
 class ScenarioSuiteExecutionStatus(str, Enum):
