@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+import uuid
 from collections.abc import Sequence
 from functools import partial
 from typing import Any
@@ -9,11 +10,12 @@ from typing import Any
 import pytest
 
 from pyrit.exceptions import InvalidJsonException
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, UnvalidatedScore
 from pyrit.score import (
     CallableResponseHandler,
     CategoryConflictPolicy,
     JsonSchemaResponseHandler,
+    ResponseHandler,
 )
 from pyrit.score.response_handler import (
     NumericRangeResponseHandler,
@@ -391,3 +393,66 @@ def test_wrapper_response_handlers_include_child_handler_identifier() -> None:
     assert range_ident.children["response_handler"] == inner.get_identifier()
     assert range_ident.params["minimum_value"] == 1
     assert range_ident.params["maximum_value"] == 5
+
+
+class _CallableParser:
+    def __call__(self, response: str) -> dict[str, Any]:
+        return {"score_value": response, "rationale": "r"}
+
+
+class _MinimalResponseHandler(ResponseHandler):
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        return UnvalidatedScore(
+            raw_score_value=response_text,
+            score_value_description="",
+            score_category=None,
+            score_rationale="",
+            scorer_class_identifier=scorer_identifier,
+            score_metadata=None,
+            message_piece_id=scored_prompt_id,
+            objective=objective,
+        )
+
+
+def test_callable_response_handler_identifier_handles_callable_instance_and_fallback_args() -> None:
+    instance_handler = CallableResponseHandler(parser=_CallableParser(), parser_fingerprint="v1")
+    assert instance_handler._get_replay_identifier() is None
+    assert instance_handler.get_identifier().params["parser"]["function"].endswith("_CallableParser")
+
+    fallback_handler = CallableResponseHandler(
+        parser=partial(
+            _top_level_parser,
+            non_str_dict={1: "a"},
+            opaque=object(),
+            tags={"b", "a"},
+        ),
+        parser_fingerprint="v1",
+    )
+    assert fallback_handler._get_replay_identifier() is None
+    keywords = fallback_handler.get_identifier().params["parser"]["keywords"]
+    assert keywords["non_str_dict"] == "<builtins.dict>"
+    assert keywords["opaque"] == "<builtins.object>"
+    assert keywords["tags"] == {"set_type": "set", "items": ["a", "b"]}
+
+    frozenset_handler = CallableResponseHandler(
+        parser=partial(_top_level_parser, tags=frozenset({"b", "a"})),
+        parser_fingerprint="v1",
+    )
+    replay_id = frozenset_handler._get_replay_identifier()
+    assert replay_id is not None
+    assert replay_id["parser"]["keywords"]["tags"] == {"set_type": "frozenset", "items": ["a", "b"]}
+
+
+def test_response_handler_default_build_identifier_uses_component_identity() -> None:
+    handler = _MinimalResponseHandler()
+    ident = handler.get_identifier()
+    assert ident.class_name == "_MinimalResponseHandler"
+    assert ident.class_module == __name__
