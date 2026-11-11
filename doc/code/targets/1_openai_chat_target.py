@@ -177,7 +177,7 @@ await output_attack_async(result)
 # %% [markdown]
 # ## OpenAI Configuration
 #
-# All `OpenAITarget`s can communicate to [Azure OpenAI (AOAI)](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference), [OpenAI](https://platform.openai.com/docs/api-reference/introduction), or other compatible endpoints (e.g., Ollama, Groq, HuggingFace).
+# All `OpenAITarget`s can communicate with [Azure OpenAI (AOAI)](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference), [OpenAI](https://platform.openai.com/docs/api-reference/introduction), or any other endpoint that speaks the OpenAI API, including [Anthropic](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk), [Google Gemini](https://ai.google.dev/gemini-api/docs/openai), [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html), Ollama, Groq, HuggingFace, and OpenRouter. See [Populating Secrets](../../getting_started/populating_secrets.md) for ready-to-copy endpoint and environment variable examples for each provider.
 #
 # The `OpenAIChatTarget` is built to be as cross-compatible as we can make it, while still being as flexible as we can make it by exposing functionality via parameters.
 #
