@@ -248,7 +248,7 @@ async def persist_media_value_async(
     Returns:
         A typed result containing the resolved value and persistence metadata.
     """
-    if value.startswith(("http://", "https://")):
+    if value.lower().startswith(("http://", "https://")):
         container_url = results_container_url()
         return MediaPersistenceResult(
             value=validate_blob_media_url(url=value, container_url=container_url) if container_url else value,

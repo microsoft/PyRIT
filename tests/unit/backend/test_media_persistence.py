@@ -47,6 +47,9 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
     [
         ("https://example.test/media.png", MediaOrigin.REMOTE_URL, "https://example.test/media.png", True),
         ("http://example.test/media.png", MediaOrigin.REMOTE_URL, "http://example.test/media.png", True),
+        # RFC 3986 schemes are case-insensitive; the original spelling must be preserved.
+        ("HTTPS://example.test/media.png", MediaOrigin.REMOTE_URL, "HTTPS://example.test/media.png", True),
+        ("Http://example.test/media.png", MediaOrigin.REMOTE_URL, "Http://example.test/media.png", True),
     ],
 )
 async def test_existing_references_are_not_persisted_async(
