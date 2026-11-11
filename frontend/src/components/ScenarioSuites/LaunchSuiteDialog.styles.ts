@@ -5,9 +5,6 @@ export const useLaunchSuiteDialogStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
-    '& > *': {
-      flexShrink: 0,
-    },
   },
   summary: {
     display: 'flex',
