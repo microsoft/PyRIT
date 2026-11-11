@@ -1,4 +1,4 @@
-import type { AttackTargetResolutionStatus, ScenarioReadiness, TargetInfo, TargetInstance, TargetPreferences, TargetReference } from '../types'
+import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance, TargetPreferences, TargetReference } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -48,23 +48,6 @@ export function targetEndpoint(target: TargetInstance): string | null {
 /** The ComponentIdentifier content hash used for duplicate detection. */
 export function targetIdentifierHash(target: TargetInstance): string {
   return target.identifier.hash
-}
-
-export function resolvedRoleLabel(
-  readiness: ScenarioReadiness | undefined,
-  role: string,
-  targets: TargetInstance[],
-  missingLabel: string,
-): string {
-  const bindings = readiness?.bindings.filter((binding) => binding.role === role) ?? []
-  if (bindings.length === 0) return missingLabel
-  const labels = bindings.map((binding) => {
-    const matches = targets.filter((target) => target.identifier.hash === binding.identifier.hash)
-    return matches.length > 0
-      ? matches.map((target) => target.target_registry_name).join(' / ')
-      : binding.identifier.class_name
-  })
-  return `Configured: ${[...new Set(labels)].join(', ')}`
 }
 
 export function targetReference(target: TargetInstance): TargetReference {
