@@ -241,7 +241,7 @@ function isAzureMlEndpoint(endpoint: string): boolean {
 interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: () => void
+  onCreated: (target: TargetInstance) => void
   /** Existing targets, passed from the parent to avoid a redundant API call. */
   existingTargets?: TargetInstance[]
 }
@@ -470,7 +470,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     : undefined
   const isServerCredential = serverCredential !== undefined
   const requestEndpoint = serverCredential?.endpoint ?? endpoint
-  const endpointRequired = hasEndpointField
+  const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   // Without the type's details, still require the model every OpenAI type needs. The suggested name then includes
   // it, which keeps it off names such as `openai_chat` that startup initializers use.
   const modelNameRequired = modelNameParameter
@@ -720,7 +720,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       setError(null)
 
       try {
-        await targetsApi.createTarget({
+        const target = await targetsApi.createTarget({
           name: nameValue,
           type: 'RoundRobinTarget',
           params: {
@@ -730,7 +730,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
           persist,
         })
         resetForm()
-        onCreated()
+        onCreated(target)
       } catch (err) {
         handleCreateError(err, persist)
       } finally {
@@ -790,7 +790,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
       }
 
-      await targetsApi.createTarget({
+      const target = await targetsApi.createTarget({
         name: nameValue,
         type: targetType,
         params,
@@ -801,7 +801,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       })
 
       resetForm()
-      onCreated()
+      onCreated(target)
     } catch (err) {
       handleCreateError(err, persist)
     } finally {
@@ -1105,7 +1105,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameRequired
+                        ? 'Enter the model or deployment name explicitly. To use environment configuration, select an initializer-registered target instead.'
+                        : modelNameParameter?.description || undefined}
                       required={modelNameRequired}
                       validationMessage={fieldErrors.modelName}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}
