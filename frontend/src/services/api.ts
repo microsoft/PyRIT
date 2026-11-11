@@ -7,6 +7,7 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AssertPolicyMetrics,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -826,6 +827,15 @@ export const scenariosApi = {
     const response = await apiClient.get<PairedOutcomeDetailPage>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
       { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads ASSERT metrics for a completed foundry.assert_policy run. */
+  getAssertPolicyMetrics: async (scenarioResultId: string, signal?: AbortSignal): Promise<AssertPolicyMetrics> => {
+    const response = await apiClient.get<AssertPolicyMetrics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/assert-metrics`,
+      { signal },
     )
     return response.data
   },

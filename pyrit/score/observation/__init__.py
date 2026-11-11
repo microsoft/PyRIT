@@ -13,7 +13,9 @@ if TYPE_CHECKING:
     from pyrit.score.observation.execution import NonReplayableObservationError
     from pyrit.score.observation.lifecycle import AttemptObserver, SurfaceLifecycleSource
     from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
+    from pyrit.score.observation.local_trace_capture import LocalTraceCapture
     from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.otel_execution_trace_source import OtelExecutionTraceSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
@@ -26,8 +28,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
     "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
+    "LocalTraceCapture": "pyrit.score.observation.local_trace_capture",
     "NonReplayableObservationError": "pyrit.score.observation.execution",
     "ObservationSource": "pyrit.score.observation.observation_source",
+    "OtelExecutionTraceSource": "pyrit.score.observation.otel_execution_trace_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
     "SurfaceLifecycleSource": "pyrit.score.observation.lifecycle",
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",

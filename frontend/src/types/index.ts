@@ -2618,3 +2618,66 @@ export interface FindingExportRequest {
   /** The dashboard origin that evidence links open. */
   dashboard_origin: string
 }
+
+/** A flagged share of applicable conversations with a 90% Wilson interval; `rate` is null when none apply. */
+export interface AssertBinaryRate {
+  rate: number | null
+  flagged_count: number
+  applicable_count: number
+  not_applicable_count: number
+  ci_lower: number | null
+  ci_upper: number | null
+  /** False below 5 applicable conversations, ASSERT's minimum support. */
+  sufficient_support: boolean
+}
+
+export interface AssertCategoryMetrics {
+  behavior_name: string
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
+  policy_id: string
+  name: string
+  permissible: boolean
+  /** Violated share of conversations that judged this category relevant. */
+  node_violation: AssertBinaryRate
+}
+
+/** Grade counts in declared scale order and the median grade for a graded judge dimension. */
+export interface AssertGradeDistribution {
+  counts: Record<string, number>
+  median: number | string | null
+}
+
+export interface AssertNotJudgedCounts {
+  target_input_refused: number
+  target_error: number
+  judge_no_verdict: number
+  attack_error: number
+  not_scored: number
+}
+
+export interface AssertTechniqueMetrics {
+  technique: string
+  total: number
+  scored_total: number
+  not_judged: AssertNotJudgedCounts
+  unresolved_policy: number
+  rows_without_node_judgments: number
+  policy_violation_on_not_permissible: AssertBinaryRate | null
+  policy_violation_on_permissible: AssertBinaryRate | null
+  /** One violation rate per judge dimension; not-applicable answers stay out of the denominator. */
+  dimensions: Record<string, AssertBinaryRate>
+  /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
+  dimension_no_verdict: Record<string, number>
+  dimension_grades: Record<string, AssertGradeDistribution>
+  categories: AssertCategoryMetrics[]
+}
+
+/** ASSERT's headline metrics for one completed foundry.assert_policy run. */
+export interface AssertPolicyMetrics {
+  scenario_result_id: string
+  judgment_mode: string | null
+  split_unavailable_reason: string | null
+  total: number
+  scored_total: number
+  techniques: Record<string, AssertTechniqueMetrics>
+}

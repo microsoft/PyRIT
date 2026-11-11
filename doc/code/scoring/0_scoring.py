@@ -175,7 +175,8 @@ print(df.to_string(index=False))
 # Media observation capture remains deferred until its evidence can be snapshotted.
 # Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb), and file-system
 # observations in [File-write scoring](6_file_write_scorer.ipynb), and sandboxed program runs in
-# [Program-execution scoring](7_program_execution_scorer.ipynb).
+# [Program-execution scoring](7_program_execution_scorer.ipynb). Execution traces with model calls,
+# tool arguments, and results are covered in [Judging with execution traces](8_trace_evidence_scoring.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation
