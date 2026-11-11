@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import regex
-
+from pyrit.common.text_helper import graphemes
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import PromptDataType
 
@@ -32,6 +31,6 @@ class FlipConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        rev_prompt = "".join(reversed(regex.findall(r"\X", prompt)))
+        rev_prompt = "".join(reversed(graphemes(prompt)))
 
         return ConverterResult(output_text=rev_prompt, output_type="text")
