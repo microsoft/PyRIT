@@ -16,14 +16,14 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.models import JsonResponseConfig, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, Identifiable, JsonResponseConfig, UnvalidatedScore
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
 
-    from pyrit.models import ComponentIdentifier, JsonSchemaDefinition
+    from pyrit.models import JsonSchemaDefinition
 
 
 class CategoryConflictPolicy(Enum):
@@ -37,17 +37,17 @@ class CategoryConflictPolicy(Enum):
 _UNSTABLE_REPLAY_VALUE = object()
 
 
-def _stable_replay_value(value: Any) -> Any:
+def _stable_replay_value(value: Any, *, fallback_to_type_name: bool = False) -> Any:
     """
     Normalize supported handler configuration into a stable JSON value.
 
     Returns:
-        Any: The normalized value or an internal unstable-value sentinel.
+        Any: The normalized value, type name fallback, or an internal unstable-value sentinel.
     """
     if isinstance(value, Enum):
         return {
             "enum_type": f"{type(value).__module__}.{type(value).__qualname__}",
-            "value": _stable_replay_value(value.value),
+            "value": _stable_replay_value(value.value, fallback_to_type_name=fallback_to_type_name),
         }
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -58,23 +58,37 @@ def _stable_replay_value(value: Any) -> Any:
         }
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
+            if fallback_to_type_name:
+                return f"<{type(value).__module__}.{type(value).__qualname__}>"
             return _UNSTABLE_REPLAY_VALUE
-        normalized = {key: _stable_replay_value(item) for key, item in value.items()}
+        normalized = {
+            key: _stable_replay_value(item, fallback_to_type_name=fallback_to_type_name) for key, item in value.items()
+        }
         return _UNSTABLE_REPLAY_VALUE if _UNSTABLE_REPLAY_VALUE in normalized.values() else normalized
     if isinstance(value, (list, tuple)):
-        normalized_items = [_stable_replay_value(item) for item in value]
+        normalized_items = [_stable_replay_value(item, fallback_to_type_name=fallback_to_type_name) for item in value]
         if _UNSTABLE_REPLAY_VALUE in normalized_items:
             return _UNSTABLE_REPLAY_VALUE
         return {"sequence_type": type(value).__name__, "items": normalized_items}
     if isinstance(value, (set, frozenset)):
-        normalized_items = [_stable_replay_value(item) for item in value]
+        normalized_items = [_stable_replay_value(item, fallback_to_type_name=fallback_to_type_name) for item in value]
         if _UNSTABLE_REPLAY_VALUE in normalized_items:
             return _UNSTABLE_REPLAY_VALUE
         return {
             "set_type": type(value).__name__,
             "items": sorted(normalized_items, key=lambda item: json.dumps(item, sort_keys=True)),
         }
+    if fallback_to_type_name:
+        return f"<{type(value).__module__}.{type(value).__qualname__}>"
     return _UNSTABLE_REPLAY_VALUE
+
+
+def _extract_callable_parts(
+    parser: Callable[[str], dict[str, Any]],
+) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
+    if isinstance(parser, partial):
+        return parser.func, parser.args, parser.keywords or {}
+    return parser, (), {}
 
 
 def _callable_replay_identifier(parser: Callable[[str], dict[str, Any]]) -> dict[str, Any] | None:
@@ -84,13 +98,7 @@ def _callable_replay_identifier(parser: Callable[[str], dict[str, Any]]) -> dict
     Returns:
         dict[str, Any] | None: Stable callable configuration, or None when unavailable.
     """
-    parser_args: tuple[Any, ...] = ()
-    parser_keywords: dict[str, Any] = {}
-    function = parser
-    if isinstance(parser, partial):
-        function = parser.func
-        parser_args = parser.args
-        parser_keywords = parser.keywords or {}
+    function, parser_args, parser_keywords = _extract_callable_parts(parser)
     if not inspect.isfunction(function) or function.__name__ == "<lambda>" or "<locals>" in function.__qualname__:
         return None
     normalized_args = _stable_replay_value(parser_args)
@@ -101,6 +109,26 @@ def _callable_replay_identifier(parser: Callable[[str], dict[str, Any]]) -> dict
         "function": f"{function.__module__}.{function.__qualname__}",
         "args": normalized_args,
         "keywords": normalized_keywords,
+    }
+
+
+def _callable_component_identifier(parser: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
+    """
+    Build a JSON-serializable identity description for any parser callable.
+
+    Returns:
+        dict[str, Any]: Deterministic callable descriptor suitable for ``ComponentIdentifier.params``.
+    """
+    function, parser_args, parser_keywords = _extract_callable_parts(parser)
+    if hasattr(function, "__module__") and hasattr(function, "__qualname__"):
+        function_name = f"{function.__module__}.{function.__qualname__}"
+    else:
+        function_type = type(function)
+        function_name = f"{function_type.__module__}.{function_type.__qualname__}"
+    return {
+        "function": function_name,
+        "args": _stable_replay_value(parser_args, fallback_to_type_name=True),
+        "keywords": _stable_replay_value(parser_keywords, fallback_to_type_name=True),
     }
 
 
@@ -185,7 +213,7 @@ def _build_unvalidated_score(
     )
 
 
-class ResponseHandler(abc.ABC):
+class ResponseHandler(Identifiable, abc.ABC):
     """
     Owns the response contract for a scoring target.
 
@@ -195,6 +223,18 @@ class ResponseHandler(abc.ABC):
     LLM round-trip, build the system prompt, or decide how the resulting score branches. Different
     handlers implement different wire formats (e.g. JSON today).
     """
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this response handler.
+
+        Subclasses with parsing configuration should override this method and include all
+        behavior-defining parameters and wrapped handlers.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(self)
 
     @property
     def json_response_config(self) -> JsonResponseConfig:
@@ -339,6 +379,27 @@ class JsonSchemaResponseHandler(ResponseHandler):
         """The JSON-response request: always JSON, carrying the optional configured schema."""
         return JsonResponseConfig(enabled=True, json_schema=self._response_schema)
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this JSON response handler.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(
+            self,
+            params={
+                "score_value_output_key": self._score_value_output_key,
+                "rationale_output_key": self._rationale_output_key,
+                "description_output_key": self._description_output_key,
+                "metadata_output_key": self._metadata_output_key,
+                "category_output_key": self._category_output_key,
+                "response_schema": self._response_schema,
+                "numeric_value": self._numeric_value,
+                "category_conflict_policy": self._category_conflict_policy.value,
+            },
+        )
+
     def _replay_identifier(self) -> dict[str, Any]:
         """Return all configuration that changes JSON parsing."""
         return {
@@ -480,6 +541,18 @@ class TrueFalseResponseHandler(ResponseHandler):
         """
         self._response_handler = response_handler
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity wrapping the inner response handler.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(
+            self,
+            children={"response_handler": self._response_handler.get_identifier()},
+        )
+
     @property
     def json_response_config(self) -> JsonResponseConfig:
         """The wrapped handler's JSON-response request."""
@@ -571,6 +644,22 @@ class NumericRangeResponseHandler(ResponseHandler):
         self._response_handler = response_handler
         self._minimum_value = minimum_value
         self._maximum_value = maximum_value
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity with the accepted numeric range and inner handler.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(
+            self,
+            params={
+                "minimum_value": self._minimum_value,
+                "maximum_value": self._maximum_value,
+            },
+            children={"response_handler": self._response_handler.get_identifier()},
+        )
 
     @property
     def json_response_config(self) -> JsonResponseConfig:
@@ -697,6 +786,26 @@ class CallableResponseHandler(ResponseHandler):
         self._description_output_key = description_output_key
         self._metadata_output_key = metadata_output_key
         self._category_output_key = category_output_key
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this callable response handler.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(
+            self,
+            params={
+                "parser": _callable_component_identifier(self._parser),
+                "parser_fingerprint": self._parser_fingerprint,
+                "score_value_output_key": self._score_value_output_key,
+                "rationale_output_key": self._rationale_output_key,
+                "description_output_key": self._description_output_key,
+                "metadata_output_key": self._metadata_output_key,
+                "category_output_key": self._category_output_key,
+            },
+        )
 
     def _replay_identifier(self) -> dict[str, Any] | None:
         """Return stable callable and output-key configuration when available."""

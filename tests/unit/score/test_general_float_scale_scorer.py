@@ -8,9 +8,10 @@ import pytest
 from pydantic import ValidationError
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, ScorerIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    CallableResponseHandler,
     JsonSchemaResponseHandler,
     NumericRange,
     NumericRubric,
@@ -419,8 +420,15 @@ def test_general_float_scale_scorer_identifier_differs_by_output_keys(key_name: 
     custom_ident = custom_scorer.get_identifier()
 
     assert default_ident.unique_name != custom_ident.unique_name
-    assert custom_ident.params[key_name] == custom_value
-    assert default_ident.params[key_name] != custom_value
+    assert default_ident.hash != custom_ident.hash
+    assert default_ident.eval_hash != custom_ident.eval_hash
+
+    default_wire = default_ident.children["response_handler"].children["response_handler"]
+    custom_wire = custom_ident.children["response_handler"].children["response_handler"]
+    assert isinstance(default_wire, ComponentIdentifier)
+    assert isinstance(custom_wire, ComponentIdentifier)
+    assert custom_wire.params[key_name] == custom_value
+    assert default_wire.params[key_name] != custom_value
 
 
 def test_general_float_scale_scorer_identifier_deterministic() -> None:
@@ -442,14 +450,25 @@ def test_general_float_scale_scorer_identifier_deterministic() -> None:
         rationale_output_key="explanation",
     )
 
-    assert scorer_1.get_identifier().unique_name == scorer_2.get_identifier().unique_name
-    assert scorer_1.get_identifier().params == scorer_2.get_identifier().params
+    ident_1 = scorer_1.get_identifier()
+    ident_2 = scorer_2.get_identifier()
+    assert ident_1.unique_name == ident_2.unique_name
+    assert ident_1.hash == ident_2.hash
+    assert ident_1.eval_hash == ident_2.eval_hash
+    assert ident_1.children == ident_2.children
+    round_tripped = ScorerIdentifier.model_validate_json(ident_1.model_dump_json())
+    assert round_tripped.hash == ident_1.hash
 
 
 def test_general_float_scale_scorer_identifier_reflects_json_schema_response_handler() -> None:
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
+    default_scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+    )
     handler = JsonSchemaResponseHandler(
         score_value_output_key="custom_score_from_handler",
         rationale_output_key="custom_rationale_from_handler",
@@ -462,5 +481,55 @@ def test_general_float_scale_scorer_identifier_reflects_json_schema_response_han
     )
 
     ident = scorer.get_identifier()
-    assert ident.params["score_value_output_key"] == "custom_score_from_handler"
-    assert ident.params["rationale_output_key"] == "custom_rationale_from_handler"
+    assert ident.unique_name != default_scorer.get_identifier().unique_name
+    wire_ident = ident.children["response_handler"].children["response_handler"]
+    assert isinstance(wire_ident, ComponentIdentifier)
+    assert wire_ident == handler.get_identifier()
+    assert wire_ident.params["score_value_output_key"] == "custom_score_from_handler"
+    assert wire_ident.params["rationale_output_key"] == "custom_rationale_from_handler"
+
+
+@pytest.mark.parametrize(
+    ("key_name", "custom_value"),
+    [
+        ("score_value_output_key", "rating"),
+        ("rationale_output_key", "explanation"),
+        ("description_output_key", "desc"),
+        ("metadata_output_key", "meta"),
+        ("category_output_key", "label"),
+    ],
+)
+def test_general_float_scale_scorer_identifier_reflects_callable_response_handler(
+    key_name: str, custom_value: str
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    def parser(_: str) -> dict[str, str]:
+        return {"score_value": "50", "rating": "80", "rationale": "r"}
+
+    default_handler = CallableResponseHandler(parser=parser)
+    custom_handler = CallableResponseHandler(parser=parser, **{key_name: custom_value})
+
+    scorer_1 = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+        response_handler=default_handler,
+    )
+    scorer_2 = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+        response_handler=custom_handler,
+    )
+
+    ident_1 = scorer_1.get_identifier()
+    ident_2 = scorer_2.get_identifier()
+    assert ident_1.hash != ident_2.hash
+    assert ident_1.unique_name != ident_2.unique_name
+    assert ident_1.eval_hash != ident_2.eval_hash
+    wire_ident = ident_2.children["response_handler"].children["response_handler"]
+    assert isinstance(wire_ident, ComponentIdentifier)
+    assert wire_ident == custom_handler.get_identifier()
+    assert wire_ident.params[key_name] == custom_value

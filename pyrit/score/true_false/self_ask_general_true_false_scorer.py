@@ -121,18 +121,6 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
         self._prompt_format_string = prompt_format_string
 
         self._score_category = category
-        if isinstance(response_handler, JsonSchemaResponseHandler):
-            self._score_value_output_key = response_handler._score_value_output_key
-            self._rationale_output_key = response_handler._rationale_output_key
-            self._description_output_key = response_handler._description_output_key
-            self._metadata_output_key = response_handler._metadata_output_key
-            self._category_output_key = response_handler._category_output_key
-        else:
-            self._score_value_output_key = score_value_output_key
-            self._rationale_output_key = rationale_output_key
-            self._description_output_key = description_output_key
-            self._metadata_output_key = metadata_output_key
-            self._category_output_key = category_output_key
 
         wire_format_handler = response_handler or JsonSchemaResponseHandler(
             score_value_output_key=score_value_output_key,
@@ -157,15 +145,11 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
-                "score_value_output_key": self._score_value_output_key,
-                "rationale_output_key": self._rationale_output_key,
-                "description_output_key": self._description_output_key,
-                "metadata_output_key": self._metadata_output_key,
-                "category_output_key": self._category_output_key,
                 "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
+            children={"response_handler": self._response_handler.get_identifier()},
         )
 
     async def _score_piece_with_expectation_async(

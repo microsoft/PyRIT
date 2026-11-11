@@ -3,6 +3,7 @@
 
 import json
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 import pytest
@@ -326,3 +327,67 @@ def test_numeric_range_response_handler_replay_identifier_includes_range() -> No
     assert identifier["minimum_value"] == 1
     assert identifier["maximum_value"] == 10
     assert handler.json_response_config == wrapped.json_response_config
+
+
+def _top_level_parser(response: str, *, key: str = "score_value") -> dict[str, Any]:
+    return {key: response, "rationale": "r"}
+
+
+def test_json_schema_response_handler_identifier_includes_all_behavioral_fields() -> None:
+    default = JsonSchemaResponseHandler().get_identifier()
+    custom = JsonSchemaResponseHandler(
+        score_value_output_key="verdict",
+        rationale_output_key="explanation",
+        description_output_key="desc",
+        metadata_output_key="meta",
+        category_output_key="cat",
+        response_schema={"type": "object"},
+        numeric_value=True,
+        category_conflict_policy=CategoryConflictPolicy.PREFER_RESPONSE,
+    ).get_identifier()
+
+    assert default.hash != custom.hash
+    assert custom.params["score_value_output_key"] == "verdict"
+    assert custom.params["rationale_output_key"] == "explanation"
+    assert custom.params["description_output_key"] == "desc"
+    assert custom.params["metadata_output_key"] == "meta"
+    assert custom.params["category_output_key"] == "cat"
+    assert custom.params["response_schema"] == {"type": "object"}
+    assert custom.params["numeric_value"] is True
+    assert custom.params["category_conflict_policy"] == "prefer_response"
+
+
+def test_callable_response_handler_identifier_includes_output_keys_even_without_replay() -> None:
+    def local_parser(_: str) -> dict[str, Any]:
+        return {"score_value": "true", "verdict": "false", "rationale": "r"}
+
+    first = CallableResponseHandler(parser=local_parser)
+    second = CallableResponseHandler(parser=local_parser, score_value_output_key="verdict")
+
+    # Replay opts out for local callables without parser_fingerprint, yet behavioral identity differs.
+    assert first._get_replay_identifier() is None
+    assert second._get_replay_identifier() is None
+    assert first.get_identifier().hash != second.get_identifier().hash
+    assert second.get_identifier().params["score_value_output_key"] == "verdict"
+
+    partial_a = CallableResponseHandler(
+        parser=partial(_top_level_parser, key="a"),
+        parser_fingerprint="v1",
+    )
+    partial_b = CallableResponseHandler(
+        parser=partial(_top_level_parser, key="b"),
+        parser_fingerprint="v1",
+    )
+    assert partial_a.get_identifier().hash != partial_b.get_identifier().hash
+
+
+def test_wrapper_response_handlers_include_child_handler_identifier() -> None:
+    inner = CallableResponseHandler(parser=_top_level_parser, score_value_output_key="verdict")
+    tf_handler = TrueFalseResponseHandler(response_handler=inner)
+    range_handler = NumericRangeResponseHandler(response_handler=inner, minimum_value=1, maximum_value=5)
+
+    assert tf_handler.get_identifier().children["response_handler"] == inner.get_identifier()
+    range_ident = range_handler.get_identifier()
+    assert range_ident.children["response_handler"] == inner.get_identifier()
+    assert range_ident.params["minimum_value"] == 1
+    assert range_ident.params["maximum_value"] == 5
