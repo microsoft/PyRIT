@@ -132,7 +132,7 @@ export default function ScenarioDatasetTable({
   const validationError = errors[0] ?? null
   useEffect(() => { onValidationChange(validationError) }, [validationError, onValidationChange])
 
-  const policies = datasetPolicies(request, defaults, effective, options).map((source) => source.fetch)
+  const policies = datasetPolicies(request, defaults, effective).map((source) => source.fetch)
   const savedPolicies = [...new Set(policies)].join(', ')
   const picker = <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
     placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}

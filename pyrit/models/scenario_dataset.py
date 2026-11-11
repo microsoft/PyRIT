@@ -116,6 +116,7 @@ class ScenarioDatasetSourceSettings(BaseModel):
     name: str
     max_size: Annotated[int, Field(ge=1, strict=True)] | Literal["all"]
     fetch: DatasetFetchPolicy
+    fetch_inherited: bool | None = Field(None, description="Whether a global fetch override controls this source")
     configured_provider: bool = False
 
 

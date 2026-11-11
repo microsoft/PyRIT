@@ -47,30 +47,29 @@ export function datasetTotalLimit(
     ? request.max_total : defaults.max_total
 }
 
-function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
+export function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
   return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
 }
 
 export function canEditDatasetLoading(effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions): boolean {
   return options.supports_overrides && (options.source_settings !== false
-    || effective.sources.every((source) => source.fetch === effective.fetch))
+    || effective.sources.every((source) => source.fetch_inherited === true))
 }
 
 export function datasetPolicies(
   request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
-  effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions,
+  effective: ScenarioDatasetSettings,
 ): Array<{ name: string; fetch: DatasetFetchPolicy }> {
   const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
-  const canEditSources = options.supports_overrides && options.source_settings !== false
-  const globalDraft = canEditDatasetLoading(effective, options) ? explicitDatasetPolicy(request.fetch) : undefined
   return selected.map((source) => {
     const settings = effective.sources.find((item) => item.name === source.name)
       ?? defaults.sources.find((item) => item.name === source.name)
     return {
       name: source.name,
-      fetch: canEditSources ? explicitDatasetPolicy(source.fetch) ?? settings?.fetch
-        ?? explicitDatasetPolicy(request.fetch) ?? defaults.fetch
-        : globalDraft ?? settings?.fetch ?? defaults.fetch,
+      fetch: explicitDatasetPolicy(request.sources?.find((item) => item.name === source.name)?.fetch)
+        ?? (settings?.fetch_inherited === true
+          ? explicitDatasetPolicy(request.fetch) ?? settings.fetch
+          : settings?.fetch ?? explicitDatasetPolicy(request.fetch) ?? defaults.fetch),
     }
   })
 }

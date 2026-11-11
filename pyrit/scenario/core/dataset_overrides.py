@@ -118,6 +118,7 @@ def project_dataset_settings(
                 name=source.name,
                 max_size=child.source_limit(source.name),
                 fetch=source.fetch or child.fetch,
+                fetch_inherited=source.fetch is None,
                 configured_provider=getattr(source, "provider", None) is not None,
             )
             for child in children

@@ -1,18 +1,18 @@
 import { buildParametersFromForm, type ParameterFormValue } from '@/components/Parameters/parameterForm'
-import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
+import { datasetPolicies, explicitDatasetPolicy, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import type {
   Parameter,
   RegisteredComponentReference,
   RegisteredScenario,
   RunScenarioRequest,
   ScenarioDatasetRequest,
+  ScenarioDatasetOptions,
+  ScenarioDatasetSettings,
   ScenarioRunSizeEstimateRequest,
   TechniqueOverride,
 } from '@/types'
 
 import { isBlankDatasetName } from '@/utils/routeParams'
-
-import { scenarioDatasetDefaults } from './datasetPresentation'
 
 /**
  * Common/opaque parameters the base scenario declares via
@@ -123,6 +123,10 @@ export interface ScenarioLaunchInput {
   datasetError: string | null
   /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
   linkedDatasetError?: string | null
+  datasetDefaults?: ScenarioDatasetSettings
+  datasetOptions?: ScenarioDatasetOptions
+  /** Read-only projection requests preserve input policies; launch and preload normalize them. */
+  normalizeDatasetLoading?: boolean
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
@@ -155,6 +159,9 @@ export function buildEstimateRequest({
   presetScenarioParams = {},
   datasetEdits,
   datasetError,
+  datasetDefaults,
+  datasetOptions,
+  normalizeDatasetLoading = true,
   includeBaseline,
   techniqueOverride,
   techniqueEditError,
@@ -210,18 +217,25 @@ export function buildEstimateRequest({
   }
 
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
-  if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
-  const defaults = scenarioDatasetDefaults(scenario)
-  const options = scenarioDatasetOptions(scenario)
+  if (normalizeDatasetLoading && supportsDatasets && datasetError) return { ok: false, error: datasetError }
+  const defaults = datasetDefaults ?? scenarioDatasetDefaults(scenario)
+  const options = datasetOptions ?? scenarioDatasetOptions(scenario)
   const sources = datasetEdits.sources ?? defaults.sources
-  const protectedPolicies = sources.some((source) => {
-    const inherited = defaults.sources.find((item) => item.name === source.name)?.fetch ?? defaults.fetch
-    return (source.fetch ?? datasetEdits.fetch ?? inherited) !== 'if_missing'
-      && (!options.supports_overrides || options.source_settings === false)
+  const protectedPolicies = datasetPolicies(datasetEdits, defaults, defaults).filter((source) => {
+    const settings = defaults.sources.find((item) => item.name === source.name)
+    const explicit = explicitDatasetPolicy(datasetEdits.sources?.find((item) => item.name === source.name)?.fetch)
+    return source.fetch !== 'if_missing' && (!supportsDatasets || !options.supports_overrides
+      || (options.source_settings === false && (explicit != null || settings?.fetch_inherited !== true)))
   })
-  if (protectedPolicies) return {
+  const unknownPolicy = options.supports_overrides && protectedPolicies.some((source) =>
+    options.source_settings === false
+    && explicitDatasetPolicy(datasetEdits.sources?.find((item) => item.name === source.name)?.fetch) === undefined
+    && defaults.sources.find((item) => item.name === source.name)?.fetch_inherited == null)
+  if (normalizeDatasetLoading && protectedPolicies.length > 0) return {
     ok: false,
-    error: 'This scenario protects source-specific loading policies. Use the SDK/API to preserve them; scans here only load missing data.',
+    error: unknownPolicy
+      ? 'Source loading-policy inheritance is unknown. Reload scenario metadata or use the SDK/API; this form cannot safely override it.'
+      : 'This scenario protects source-specific loading policies. Use the SDK/API to preserve them; scans here only load missing data.',
   }
   const request: ScenarioRunSizeEstimateRequest = {}
   if (scoringTargetName) request.scoring_target_name = scoringTargetName
@@ -239,7 +253,10 @@ export function buildEstimateRequest({
   if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
-  if (supportsDatasets && options.supports_overrides && (
+  if (!normalizeDatasetLoading && supportsDatasets && Object.keys(datasetEdits).length > 0) {
+    request.datasets = datasetEdits
+  }
+  if (normalizeDatasetLoading && supportsDatasets && options.supports_overrides && (
     Object.keys(datasetEdits).length > 0 || defaults.fetch !== 'if_missing'
     || sources.some((source) => source.fetch && source.fetch !== 'if_missing')
   )) {

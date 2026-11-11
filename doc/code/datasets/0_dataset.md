@@ -93,6 +93,10 @@ The scanner uses `if_missing`. Saved `never`/`always` settings are visibly norma
 that scan when overrides are permitted; protected policies are rejected instead. Preset
 editing never prepares data and preserves its SDK-capable loading settings on save. Python
 and ordinary API launches retain `never`, `if_missing`, and explicit `always` refresh.
+Normalization uses parameter-resolved settings, not static catalog source names.
+Source settings report whether a global loading-policy override can control them; unknown
+inheritance is guarded rather than guessed. Confirmation can wait for this read-only
+configuration projection, but never for an exact attack count or provider completion.
 
 ## Generated Datasets
 

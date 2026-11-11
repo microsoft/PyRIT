@@ -231,6 +231,7 @@ class ScenarioRequiredData:
                 name=source.name,
                 max_size="all",
                 fetch=source.fetch or self.fetch,
+                fetch_inherited=source.fetch is None,
                 configured_provider=source.provider is not None,
             )
             for source in self.sources

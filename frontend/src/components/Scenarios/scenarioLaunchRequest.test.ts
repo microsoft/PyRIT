@@ -1,4 +1,4 @@
-import type { Parameter, RegisteredScenario } from '@/types'
+import type { Parameter, RegisteredScenario, ScenarioDatasetSettings } from '@/types'
 
 import {
   buildEstimateRequest,
@@ -54,6 +54,56 @@ function makeInput(overrides: Partial<ScenarioLaunchInput> = {}): ScenarioLaunch
 }
 
 describe('scenario launch requests', () => {
+  it('can resolve new parameter defaults despite a stale dataset-table validation error', () => {
+    const input = makeInput({ datasetError: 'Select a permitted source.' })
+    expect(buildEstimateRequest({ ...input, normalizeDatasetLoading: false }).ok).toBe(true)
+    expect(buildRunRequest(input)).toEqual({ ok: false, error: 'Select a permitted source.' })
+  })
+
+  it.each([true, false, undefined])('distinguishes inherited and protected compound policies (%s)', (inherited) => {
+    const defaults: ScenarioDatasetSettings = {
+      sources: [{ name: 'compound', max_size: 5, fetch: 'never', fetch_inherited: inherited, configured_provider: false }],
+      max_per_dataset: 5, max_total: 'all', fetch: 'never', filters: {},
+    }
+    const input = makeInput({
+      datasetDefaults: defaults,
+      datasetOptions: {
+        mode: 'fixed', allowed_names: [], supports_overrides: true, source_settings: false,
+        per_dataset_limit: true, total_limit: true, filters: true,
+      },
+    })
+    const result = buildRunRequest(input)
+    if (inherited === true) {
+      expect(result.ok && result.request.datasets).toEqual({ fetch: 'if_missing' })
+    } else {
+      expect(result.ok).toBe(false)
+      expect(!result.ok && result.error).toMatch(inherited === false ? /protects source-specific/ : /inheritance is unknown/)
+    }
+  })
+
+  it.each(['if_missing', 'always'] as const)('uses resolved defaults instead of static %s sources', (policy) => {
+    const scenario = makeScenario({
+      dataset_defaults: {
+        sources: [{ name: 'static', max_size: 5, fetch: policy, configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: policy, filters: {},
+      },
+    })
+    const input = makeInput({ scenario })
+    const projection = buildEstimateRequest({ ...input, normalizeDatasetLoading: false })
+    expect(projection.ok && projection.request.datasets).toBeUndefined()
+    const result = buildRunRequest({
+      ...input,
+      datasetDefaults: {
+        sources: [{ name: 'resolved', max_size: 5, fetch: 'never', fetch_inherited: false, configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+      },
+    })
+    expect(result.ok && result.request.datasets).toEqual({
+      fetch: 'if_missing', sources: [{ name: 'resolved', fetch: 'if_missing' }],
+    })
+    expect(input.datasetEdits).toEqual({})
+  })
+
   it('builds the run request from the same input as the estimate, plus run-only settings', () => {
     const input = makeInput({ datasetEdits: { max_total: 3 }, includeBaseline: true })
 

@@ -314,7 +314,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const unattributedAttempts = summary.unattributed_attempts ?? 0
   const unmatched = unattributedAttempts
   if (unmatched > 0) notices.push(`${unmatched} execution${unmatched === 1 ? '' : 's'} could not be matched to the saved plan.`)
-  if (!state.planComplete) notices.push('The saved execution plan is incomplete; some totals cannot be verified.')
+  if (!state.planComplete && !run.dataset_preparation_pending) notices.push('The saved execution plan is incomplete; some totals cannot be verified.')
   const objectiveScorer = summary.objective_scorer
   const displayGroups = hierarchyDisplayGroups(groups, hierarchy.roots.groups)
   const producerCounts = overall.producer_counts
@@ -334,7 +334,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             <div className={styles.titleRow}>
               <Text as="h1" size={700} weight="semibold">{run.scenario_registry_name ?? run.scenario_name}</Text>
               <Badge appearance="tint" color={STATE_COLORS[run.status]} data-testid="run-state-badge">
-                {active && run.dataset_preparation_pending ? 'Preparing datasets'
+                {run.status === 'IN_PROGRESS' && run.dataset_preparation_pending ? 'Preparing datasets'
                   : run.status === 'IN_PROGRESS' ? 'Executing' : run.status.charAt(0) + run.status.slice(1).toLowerCase()}
               </Badge>
             </div>
@@ -366,11 +366,17 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             <div className={styles.badgeList}>{Object.entries(run.labels ?? {}).map(([key, value]) => <Badge key={key} appearance="outline" className={styles.labelBadge}>{key}: {value}</Badge>)}</div>
           </div>
         </section>
-        {(run.status === 'FAILED' || run.error || overall.errors > 0) && <MessageBar
+        {(run.status === 'FAILED' || run.error || overall.errors > 0
+          || (run.status === 'CANCELLED' && run.dataset_preparation_pending)) && <MessageBar
           intent={run.status === 'FAILED' ? 'error' : run.status === 'CANCELLED' && overall.errors === 0 ? 'info' : 'warning'}>
-          <MessageBarBody>{run.dataset_preparation_pending ? 'Dataset preparation did not finish. Rerun to review the sources, then use Retry loading datasets before starting a new scan.'
-            : run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
-            : run.status === 'CANCELLED' ? 'Scan cancelled.'
+          <MessageBarBody>{run.status === 'FAILED'
+            ? run.dataset_preparation_pending
+              ? 'Scan initialization failed before execution. Check the error details and use Rerun to review the configuration.'
+              : 'Scan failed. Resume to continue remaining attacks.'
+            : run.status === 'CANCELLED'
+              ? run.dataset_preparation_pending
+                ? 'Scan cancelled before execution. Shared dataset loading may continue. Use Rerun to review the configuration.'
+                : 'Scan cancelled.'
             : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
             {firstError && <Button appearance="transparent" onClick={(event) => { openDetails(firstError, event.currentTarget) }}>View attack</Button>}
             {run.error && <Accordion collapsible><AccordionItem value="error">

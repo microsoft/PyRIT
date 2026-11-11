@@ -4,10 +4,11 @@
 """Runtime-scoped sharing does not change source policies, storage, or SDK behavior."""
 
 import asyncio
+from contextvars import ContextVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.async_utils import wait_for_completion_async, wait_for_event_async
+from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
@@ -25,6 +26,89 @@ def _provider(name: str) -> MagicMock:
         )
     )
     return provider
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_stale_missing_snapshot_cannot_admit_another_fetch_after_publication() -> None:
+    memory = CentralMemory.get_memory_instance()
+    owner = DatasetPreparation(memory)
+    provider = _provider("publication")
+    fetched, missing_read, allow_store, release_read = (asyncio.Event() for _ in range(4))
+    writer_started = asyncio.Event()
+    stale_reader = ContextVar("stale_reader", default=False)
+    publishing = ContextVar("publishing", default=False)
+    lock = asyncio.Lock()
+    owner._write_locks["publication"] = lock
+    original_names = memory.get_seed_dataset_names_async
+    original_acquire = lock.acquire
+    writer_blocked: bool | None = None
+
+    async def names_async() -> list[str]:
+        snapshot = await original_names()
+        if stale_reader.get():
+            assert snapshot == []
+            missing_read.set()
+            await release_read.wait()
+        return list(snapshot)
+
+    async def acquire_async() -> bool:
+        nonlocal writer_blocked
+        if publishing.get():
+            writer_blocked = lock.locked()
+            writer_started.set()
+        return await original_acquire()
+
+    async def prepare_async(*, first: bool) -> None:
+        with owner.scope():
+            token = stale_reader.set(not first)
+            try:
+                dataset = await owner.fetch_async(
+                    name="publication",
+                    provider=provider,
+                    registered=False,
+                    retry_failed=False,
+                    fetch=provider.fetch_dataset_async,
+                )
+            finally:
+                stale_reader.reset(token)
+            if first:
+                fetched.set()
+                await allow_store.wait()
+            if dataset is not None:
+                token = publishing.set(first)
+                try:
+                    await owner.store_missing_async(name="publication", dataset=dataset)
+                finally:
+                    publishing.reset(token)
+
+    tasks: list[asyncio.Task[None]] = []
+    try:
+        with (
+            patch.object(memory, "get_seed_dataset_names_async", side_effect=names_async),
+            patch.object(lock, "acquire", side_effect=acquire_async),
+        ):
+            first = asyncio.create_task(prepare_async(first=True))
+            tasks.append(first)
+            await wait_for_event_async(event=fetched, tasks=tasks)
+            tasks.append(asyncio.create_task(prepare_async(first=False)))
+            await wait_for_event_async(event=missing_read, tasks=tasks)
+            allow_store.set()
+            await wait_for_event_async(event=writer_started, tasks=tasks)
+            if writer_blocked:
+                assert not first.done()
+            else:
+                # Without admission synchronization, publish before the captured read resumes.
+                await wait_for_completion_async(future=first)
+                assert await original_names() == ["publication"]
+            assert not release_read.is_set()
+            release_read.set()
+            await asyncio.gather(*tasks)
+            provider.fetch_dataset_async.assert_awaited_once()
+    finally:
+        allow_store.set()
+        release_read.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await owner.close_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -73,36 +157,40 @@ async def test_completed_fetch_remains_shared_until_its_held_store_commits() -> 
     config = DatasetAttackConfiguration(sources=[DatasetSource(name="storing", provider=provider)])
     store_entered, second_waiter, release_store = asyncio.Event(), asyncio.Event(), asyncio.Event()
     original_write = memory.add_seed_datasets_to_memory_async
-    original_store = owner.store_missing_async
-    store_calls = 0
+    original_names = memory.get_seed_dataset_names_async
+    overlapping = ContextVar("overlapping", default=False)
 
     async def write_async(*, datasets: list[SeedDataset], added_by: str) -> None:
         store_entered.set()
         await release_store.wait()
         await original_write(datasets=datasets, added_by=added_by)
 
-    async def store_async(*, name: str, dataset: SeedDataset) -> None:
-        nonlocal store_calls
-        store_calls += 1
-        if store_calls == 2:
+    async def names_async() -> list[str]:
+        names = await original_names()
+        if overlapping.get() and not second_waiter.is_set():
+            assert names == []
             second_waiter.set()
-        await original_store(name=name, dataset=dataset)
+        return list(names)
 
-    async def prepare_async() -> None:
-        with owner.scope():
-            await config.with_overrides().prepare_async()
+    async def prepare_async(*, second: bool = False) -> None:
+        token = overlapping.set(second)
+        try:
+            with owner.scope():
+                await config.with_overrides().prepare_async()
+        finally:
+            overlapping.reset(token)
 
     tasks: list[asyncio.Task[None]] = []
     try:
         with (
             patch.object(memory, "add_seed_datasets_to_memory_async", side_effect=write_async),
-            patch.object(owner, "store_missing_async", side_effect=store_async),
+            patch.object(memory, "get_seed_dataset_names_async", side_effect=names_async),
         ):
             tasks.append(asyncio.create_task(prepare_async()))
             await wait_for_event_async(event=store_entered, tasks=tasks)
             assert await memory.get_seed_dataset_names_async() == []
             provider.fetch_dataset_async.assert_awaited_once()
-            tasks.append(asyncio.create_task(prepare_async()))
+            tasks.append(asyncio.create_task(prepare_async(second=True)))
             await wait_for_event_async(event=second_waiter, tasks=tasks)
             provider.fetch_dataset_async.assert_awaited_once()
             assert not release_store.is_set()
@@ -231,6 +319,60 @@ async def test_cancelling_a_waiter_does_not_cancel_provider_and_shutdown_drains_
     finally:
         release.set()
         await asyncio.gather(waiter, *([closing] if closing is not None else []), return_exceptions=True)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_store_failure_surfaces_after_cancellation_and_remains_retryable(
+    *, cancel: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = CentralMemory.get_memory_instance()
+    owner = DatasetPreparation(memory)
+    provider = _provider("write_failure")
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="write_failure", provider=provider)])
+    entered, release = asyncio.Event(), asyncio.Event()
+    failure = RuntimeError("Synthetic store failed")
+    failed_write: asyncio.Task[object] | None = None
+
+    async def write_async(*, datasets: list[SeedDataset], added_by: str) -> None:
+        nonlocal failed_write
+        failed_write = asyncio.current_task()
+        entered.set()
+        await release.wait()
+        raise failure
+
+    async def prepare_async() -> None:
+        with owner.scope():
+            await config.prepare_async()
+
+    waiter: asyncio.Task[None] | None = None
+    try:
+        with patch.object(memory, "add_seed_datasets_to_memory_async", side_effect=write_async):
+            waiter = asyncio.create_task(prepare_async())
+            await wait_for_event_async(event=entered, tasks=[waiter])
+            if cancel:
+                waiter.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await waiter
+            release.set()
+            assert failed_write is not None
+            if not cancel:
+                with pytest.raises(RuntimeError, match="Synthetic store failed") as raised:
+                    await wait_for_completion_async(future=waiter)
+                assert raised.value is failure
+            await asyncio.gather(failed_write, return_exceptions=True)
+        orphan_errors = [record for record in caplog.records if "after its caller was cancelled" in record.message]
+        assert bool(orphan_errors) is cancel
+        if cancel:
+            assert orphan_errors[0].exc_info is not None and orphan_errors[0].exc_info[1] is failure
+        assert await memory.get_seed_dataset_names_async() == []
+        await prepare_async()
+        assert provider.fetch_dataset_async.await_count == 2
+        assert await memory.get_seed_dataset_names_async() == ["write_failure"]
+    finally:
+        release.set()
+        await asyncio.gather(*get_defined_tasks(waiter), return_exceptions=True)
+        await owner.close_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

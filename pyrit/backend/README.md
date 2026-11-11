@@ -101,6 +101,9 @@ Omitting the flag preserves eager API initialization and all fetch-policy capabi
 Uncapped estimates retain their existing `unavailable` status for subclass validation,
 with `count_deferred: true` marking a supported count deferred to preparation. Actual
 estimate failures are not marked deferred; both paths retain their server-provided notes.
+Dataset settings also expose `sources[].fetch_inherited`: `true` means a global fetch
+override controls that source, `false` means a source-local policy, and `null` means unknown.
+Automatic clients normalize parameter-resolved settings and guard unknown policy provenance.
 
 ### Dataset creation, batch mutation, and deletion
 

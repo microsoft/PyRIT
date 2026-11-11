@@ -63,6 +63,23 @@ describe('useScenarioRunEstimate', () => {
   })
   afterEach(() => jest.useRealTimers())
 
+  it('keeps configuration metadata usable across cap-only estimates but not parameter changes', async () => {
+    estimateRun.mockResolvedValueOnce(response(5)).mockReturnValue(new Promise(() => {}))
+    const view = renderHook(({ cap, context }: { cap: number; context: string }) => useScenarioRunEstimate({
+      scenarioName: 'scenario', request: { datasets: { max_total: cap } },
+      requestKey: JSON.stringify([cap, context]), datasetContextKey: context,
+      invalidReason: null, ready: true, paused: false,
+    }), { initialProps: { cap: 5, context: 'first' } })
+    await settle()
+    expect(view.result.current.datasetProjectionContextKey).toBe('first')
+    view.rerender({ cap: 10, context: 'first' })
+    await settle()
+    expect(view.result.current.current).toBeNull()
+    expect(view.result.current.datasetProjectionContextKey).toBe('first')
+    view.rerender({ cap: 10, context: 'changed-parameters' })
+    expect(view.result.current.datasetProjectionContextKey).not.toBe('changed-parameters')
+  })
+
   it('ignores a new request object that keeps the same key', async () => {
     estimateRun.mockResolvedValue(response(5))
     const view = renderHook(

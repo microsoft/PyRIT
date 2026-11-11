@@ -5,38 +5,48 @@
 
 import ast
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import MockPromptTarget
 
-from pyrit.backend.services import ScenarioService
+from pyrit.backend.services import ScenarioRunService, ScenarioService
+from pyrit.backend.services.dataset_preparation_service import close_dataset_preparation_async
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.cli._cli_args import (
     build_dataset_request_fields,
     parse_run_arguments,
 )
 from pyrit.cli.pyrit_scan import _build_run_request, parse_args
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     DatasetFetchPolicy,
     DatasetSelectionMode,
     DatasetSourceInput,
+    Parameter,
+    ScenarioDatasetOptions,
     ScenarioDatasetRequest,
+    ScenarioRunSizeEstimateRequest,
+    ScenarioRunState,
+    SeedDataset,
     SeedObjective,
     SeedPrompt,
 )
 from pyrit.models.catalog import RunScenarioRequest
-from pyrit.registry import ScenarioRegistry
+from pyrit.registry import ScenarioRegistry, TargetRegistry
 from pyrit.scenario import (
     AtomicAttack,
     AttackTechnique,
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetSource,
     Scenario,
     ScenarioTechnique,
 )
+from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.garak import (
     ApiKey,
@@ -105,6 +115,115 @@ class _InlineScenario(_Scenario):
             objective_scorer=SubStringScorer(substring="yes"),
             scenario_result_id=scenario_result_id,
         )
+
+
+
+class _DynamicSourceScenario(_Scenario):
+    def __init__(self, *, scenario_result_id: str | None = None) -> None:
+        super().__init__(scenario_result_id=scenario_result_id)
+        self._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="static", fetch=DatasetFetchPolicy.ALWAYS)],
+            fetch=DatasetFetchPolicy.ALWAYS,
+        )
+
+    @classmethod
+    def additional_parameters(cls) -> list[Parameter]:
+        return [
+            Parameter(name="source_group", description="Select the source defaults.", param_type=str, default="static")
+        ]
+
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        if self.params.get("source_group") != "resolved":
+            return self._default_dataset_config
+        return DatasetAttackConfiguration(sources=[DatasetSource(name="resolved", fetch=DatasetFetchPolicy.NEVER)])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.ALWAYS])
+@pytest.mark.parametrize("fixed", [False, True])
+def test_projection_distinguishes_inherited_compound_fetch_from_equal_fixed_policy(
+    *, policy: DatasetFetchPolicy, fixed: bool
+) -> None:
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name, fetch=policy if fixed else None)], fetch=policy
+            )
+            for name in ("one", "two")
+        ]
+    )
+    settings = project_dataset_settings(config)
+    assert all(source.fetch_inherited is (not fixed) for source in settings.sources)
+    changed = apply_dataset_overrides(
+        config=config,
+        request=ScenarioDatasetRequest(fetch=DatasetFetchPolicy.IF_MISSING),
+        options=ScenarioDatasetOptions(source_settings=False),
+    )
+    expected = policy if fixed else DatasetFetchPolicy.IF_MISSING
+    assert all(source.fetch is expected for source in project_dataset_settings(changed).sources)
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+async def test_parameter_resolved_selection_and_policy_are_shared_by_preload_and_launch() -> None:
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "resolved"
+    provider.fetch_dataset_async = AsyncMock(
+        return_value=SeedDataset(
+            dataset_name="resolved", seeds=[SeedObjective(value="Resolved objective", dataset_name="resolved")]
+        )
+    )
+    with patch.object(ScenarioRegistry, "_discover"):
+        registry = ScenarioRegistry()
+        registry.register_class(_DynamicSourceScenario, name="test.dynamic")
+    await close_dataset_preparation_async()
+    runs = ScenarioRunService()
+    try:
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(TargetRegistry.get_registry_singleton().instances, "get", return_value=MockPromptTarget()),
+            patch.object(
+                SeedDatasetProvider, "get_providers_by_name_async", return_value={"resolved": provider}
+            ) as lookup,
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", return_value=["static", "resolved"]),
+        ):
+            service = ScenarioService()
+            request = ScenarioRunSizeEstimateRequest(scenario_params={"source_group": "resolved"})
+            estimate = await service.estimate_scenario_run_size_async(scenario_name="test.dynamic", request=request)
+            assert estimate is not None
+            assert [source.name for source in estimate.dataset_defaults.sources] == ["resolved"]
+            normalized = ScenarioDatasetRequest(
+                fetch=DatasetFetchPolicy.IF_MISSING,
+                sources=[
+                    DatasetSourceInput(name=source.name, fetch=DatasetFetchPolicy.IF_MISSING)
+                    for source in estimate.dataset_defaults.sources
+                ],
+            )
+            await service.load_datasets_async(
+                scenario_name="test.dynamic",
+                request=request.model_copy(update={"datasets": normalized}),
+                automatic=True,
+            )
+            started = await runs.start_run_async(
+                request=RunScenarioRequest(
+                    scenario_name="test.dynamic",
+                    target_name="offline",
+                    scenario_params=request.scenario_params,
+                    datasets=normalized,
+                    prepare_in_background=True,
+                )
+            )
+            task = runs._active_tasks[started.scenario_result_id].task
+            assert task is not None
+            await wait_for_completion_async(future=task)
+            completed = await runs.get_run_async(scenario_result_id=started.scenario_result_id)
+            assert completed is not None and completed.status is ScenarioRunState.COMPLETED
+            assert completed.datasets_used == ["resolved"]
+            provider.fetch_dataset_async.assert_awaited_once()
+            assert all(call.kwargs["dataset_names"] == ["resolved"] for call in lookup.await_args_list)
+            assert await CentralMemory.get_memory_instance().get_seed_dataset_names_async() == ["resolved"]
+    finally:
+        await runs.shutdown_async()
+        await close_dataset_preparation_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

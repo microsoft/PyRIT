@@ -430,6 +430,52 @@ describe('ScenarioDetail', () => {
     jest.useRealTimers()
   })
 
+  it('preloads and launches the displayed parameter-resolved sources without restoring static defaults', async () => {
+    const user = userEvent.setup()
+    const resolved: ScenarioDatasetSettings = {
+      sources: [{ name: 'resolved', max_size: 5, fetch: 'never', fetch_inherited: false, configured_provider: false }],
+      max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({
+      default_datasets: ['static'],
+      dataset_defaults: {
+        ...resolved, fetch: 'always',
+        sources: [{ ...resolved.sources[0], name: 'static', fetch: 'always' }],
+      },
+      supported_parameters: [{ name: 'source_group', type_name: 'str', required: false, default: 'resolved', choices: null }],
+    }))
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(null), status: 'unavailable', count_deferred: true, dataset_size: { kind: 'all_available' },
+      minimum_attack_count: null, maximum_attack_count: null, components: [],
+      dataset_defaults: resolved, effective_datasets: resolved,
+    })
+    const metadata = {
+      name: 'resolved', selection_key: 'dataset:named:resolved', loaded: false, provider_available: true,
+      logical_examples: null, modalities: [], harm_categories: [], has_unlabeled_harm_categories: false,
+    }
+    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [metadata] })
+    let finish: (value: { settings: ScenarioDatasetSettings; items: typeof metadata[] }) => void = () => {}
+    const pending = new Promise<{ settings: ScenarioDatasetSettings; items: typeof metadata[] }>((resolve) => { finish = resolve })
+    jest.mocked(scenariosApi.loadDatasets).mockReturnValue(pending)
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByText(/Loading selected datasets in the background/)
+    expect(screen.getByRole('row', { name: /resolved \(unknown\)/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /static/ })).not.toBeInTheDocument()
+    expect(mockEstimateRun.mock.calls[0][1].datasets).toBeUndefined()
+    expect(jest.mocked(scenariosApi.loadDatasets).mock.calls[0][1].datasets).toEqual({
+      fetch: 'if_missing', sources: [{ name: 'resolved', fetch: 'if_missing' }],
+    })
+    expect(scenariosApi.loadDatasets).toHaveBeenCalledTimes(1)
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+    await user.click(within(preview).getByRole('button', { name: 'Launch scan' }))
+    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+      fetch: 'if_missing', sources: [{ name: 'resolved', fetch: 'if_missing' }],
+    })
+    jest.mocked(datasetsApi.listDatasets).mockResolvedValue({ items: [{ ...metadata, loaded: true }] })
+    await act(async () => { finish({ settings: resolved, items: [{ ...metadata, loaded: true }] }) })
+  })
+
   it('prefills a rerun without replacing its saved server-default adversarial target', async () => {
     const user = userEvent.setup()
     const preferred = makeAdversarialTarget('preferred-adversarial')
@@ -2316,8 +2362,7 @@ describe('ScenarioDetail', () => {
         target_name: 'target-a',
         techniques: ['default_technique'],
         datasets: {
-          fetch: 'if_missing',
-          sources: [{ name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' }],
+          sources: [{ name: 'ds_a' }, { name: 'ds_b' }],
           max_total: 25,
           filters: {
           harm_categories: ['cyber', 'violence'],
@@ -2460,7 +2505,7 @@ describe('ScenarioDetail', () => {
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
     expect(confirm).toBeEnabled()
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1].datasets?.sources).toEqual([
-      { name: 'ds_a', fetch: 'if_missing' }, { name: 'ds_b', fetch: 'if_missing' },
+      { name: 'ds_a' }, { name: 'ds_b' },
     ]))
     await act(async () => resolveEstimate({
       ...makeEstimate(8), effective_datasets: {
@@ -2482,7 +2527,7 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({
       dataset_defaults: {
-        sources: [{ name: 'harmbench', max_size: 5, fetch: policy, configured_provider: false }],
+        sources: [{ name: 'harmbench', max_size: 5, fetch: policy, fetch_inherited: false, configured_provider: false }],
         max_per_dataset: 5, max_total: 'all', fetch: policy, filters: {},
       },
       dataset_options: {
@@ -2490,7 +2535,7 @@ describe('ScenarioDetail', () => {
         per_dataset_limit: false, total_limit: true, filters: true,
       },
     }))
-    mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
+    mockEstimateRun.mockResolvedValue(makeEstimate(8))
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('protects source-specific loading policies')

@@ -65,6 +65,10 @@ const SUMMARY: ScenarioProgressSummary = {
   })),
   atomic_groups: [{ ...COUNTS, id: 'group', atomic_attack_name: 'PromptSendingAttack', display_group: 'Direct', status: 'RUNNING', technique_details: TECHNIQUE }],
 }
+const PENDING_SUMMARY: ScenarioProgressSummary = {
+  overall: { completed: 0, planned: null, succeeded: 0, success_percentage: null, errors: 0, retries: 0 },
+  objective_scorer: null, techniques: [], seed_groups: [], atomic_groups: [],
+}
 const RUN = {
   scenario_result_id: RUN_ID, scenario_name: 'TestScenario', scenario_registry_name: 'test.scenario',
   scenario_version: 1, status: 'IN_PROGRESS' as const, created_at: '2026-01-01T00:00:00Z',
@@ -136,6 +140,17 @@ beforeEach(() => {
 })
 
 describe('ScenarioRunPage', () => {
+  it.each(['QUEUED', 'IN_PROGRESS'] as const)('shows truthful %s status before the execution plan exists', (status) => {
+    state = makeState({
+      run: { ...RUN, status, dataset_preparation_pending: true, queue_position: status === 'QUEUED' ? 2 : null },
+      summary: PENDING_SUMMARY, plan: null, planComplete: false, results: [],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByTestId('run-state-badge')).toHaveTextContent(status === 'QUEUED' ? 'Queued' : 'Preparing datasets')
+    expect(screen.queryByText(/saved execution plan is incomplete/)).not.toBeInTheDocument()
+    if (status === 'QUEUED') expect(screen.getByText('Queued · Position 2')).toBeInTheDocument()
+  })
+
   it('keeps comparison optional on completed scans and cancels it when collapsed', async () => {
     const user = userEvent.setup()
     state = makeState({
@@ -710,6 +725,42 @@ describe('ScenarioRunPage', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.getByText('Scan cancelled.')).toBeInTheDocument()
     expect(screen.queryByText(/0 attacks ended with an error/)).not.toBeInTheDocument()
+  })
+
+  it.each([null, 'Run was cancelled by user'])(
+    'does not prescribe a nonexistent provider Retry after cancelling initialization (%s)', async (error) => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'CANCELLED', dataset_preparation_pending: true, error },
+      summary: PENDING_SUMMARY, plan: null, planComplete: false, results: [],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText(/Scan cancelled before execution/)).toHaveTextContent('Shared dataset loading may continue.')
+    expect(screen.queryByText(/Retry loading datasets/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rerun' })).toBeEnabled()
+    if (error) {
+      await user.click(screen.getByRole('button', { name: 'Error details' }))
+      expect(screen.getByText(error)).toBeVisible()
+    }
+  })
+
+  it.each([
+    ['ProviderError', 'Synthetic provider failed'],
+    ['DatasetConstraintError', 'Selected technique cannot bind the named prompts'],
+  ])('retains the real %s details when initialization fails before execution', async (errorType, error) => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'FAILED', dataset_preparation_pending: true, error, error_type: errorType },
+      summary: PENDING_SUMMARY, plan: null, planComplete: false, results: [],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText(/Scan initialization failed before execution/)).toBeInTheDocument()
+    expect(screen.queryByText(/Retry loading datasets/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rerun' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Error details' }))
+    expect(screen.getByText(`${errorType}: ${error}`)).toBeVisible()
   })
 
   it.each(['FAILED', 'CANCELLED'] as const)('resumes the original %s run rather than launching a new one', async (status) => {

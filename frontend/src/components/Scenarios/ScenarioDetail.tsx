@@ -587,8 +587,9 @@ function ScenarioLaunchForm({
     techniqueEditor.override,
     linkedDatasetError,
   ])
-  const estimateResult = useMemo(() => buildEstimateRequest(launchInput), [launchInput])
-  const requestResult = useMemo(() => buildRunRequest(launchInput), [launchInput])
+  const estimateResult = useMemo(
+    () => buildEstimateRequest({ ...launchInput, normalizeDatasetLoading: false }), [launchInput],
+  )
   const estimateRequest = useMemo(
     () => estimateResult.ok ? estimateResult.request : null,
     [estimateResult],
@@ -601,10 +602,16 @@ function ScenarioLaunchForm({
   )
   const datasetMetadata = useScenarioDatasets(scenario.scenario_name,
     supportsDatasets || scenarioDatasetDefaults(scenario).sources.length > 0)
+  const datasetContextKey = useMemo(() => estimateRequest === null ? null : JSON.stringify([
+    scenario.scenario_name, runtime.generation,
+    Object.fromEntries(Object.entries(estimateRequest).filter(([key]) =>
+      !['datasets', 'dataset_names', 'max_dataset_size', 'dataset_filters'].includes(key))),
+  ]), [estimateRequest, scenario.scenario_name, runtime.generation])
   const runEstimate = useScenarioRunEstimate({
     scenarioName: scenario.scenario_name,
     request: estimateRequest,
     requestKey: estimateRequestKey,
+    datasetContextKey,
     invalidReason: estimateResult.ok ? null : estimateResult.error,
     ready: runtime.ready,
     paused: staleSelection,
@@ -617,6 +624,19 @@ function ScenarioLaunchForm({
   const effectiveDatasets = datasetProjection?.effective_datasets ?? datasetDefaults
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
+  const datasetConfigurationReady = datasetContextKey !== null
+    && runEstimate.datasetProjectionContextKey === datasetContextKey
+  const resolvedLaunchInput = useMemo(() => ({
+    ...launchInput, datasetDefaults, datasetOptions,
+  }), [launchInput, datasetDefaults, datasetOptions])
+  const preparationRequestResult = useMemo(
+    () => buildEstimateRequest(resolvedLaunchInput), [resolvedLaunchInput],
+  )
+  const requestResult = useMemo(() => buildRunRequest(datasetConfigurationReady
+    ? resolvedLaunchInput : { ...launchInput, normalizeDatasetLoading: false }),
+  [datasetConfigurationReady, resolvedLaunchInput, launchInput])
+  const datasetConfigurationError = !datasetConfigurationReady && runEstimate.current?.status === 'error'
+    ? runEstimate.current.error : null
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
   const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
   const reloadDatasetMetadata = datasetMetadata.reload
@@ -630,12 +650,12 @@ function ScenarioLaunchForm({
   const preparation = useScenarioDatasetPreparation({
     scenarioName: scenario.scenario_name,
     datasetNames: selectedDatasetNames,
-    request: estimateRequest,
+    request: datasetConfigurationReady && preparationRequestResult.ok ? preparationRequestResult.request : null,
     metadata: datasetMetadata.items,
     metadataLoading: datasetMetadata.loading,
     metadataError: datasetMetadata.error,
     metadataRevision: datasetMetadata.revision,
-    enabled: !staleSelection,
+    enabled: !staleSelection && datasetConfigurationReady,
     onPrepared: datasetMetadata.reload,
   })
 
@@ -673,7 +693,7 @@ function ScenarioLaunchForm({
     requestResult,
     submitBlocked: conversationBusy || Boolean(techniqueEditError),
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
-      || staleSelection || unavailableSelection || Boolean(preparation.error),
+      || staleSelection || unavailableSelection || Boolean(preparation.error) || !datasetConfigurationReady,
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
@@ -1028,6 +1048,13 @@ function ScenarioLaunchForm({
                 </Text>
                 <DatasetActions scenarioName={scenario.scenario_name} />
               </div>
+              {!datasetConfigurationReady && <Text role="status" size={200}>
+                {datasetConfigurationError ? 'Dataset configuration could not be resolved.' : 'Checking dataset configuration...'}
+              </Text>}
+              {datasetConfigurationError && <MessageBar intent="error"><MessageBarBody>
+                {datasetConfigurationError}
+                <Button className={styles.touchTarget} onClick={runEstimate.retry}>Retry dataset configuration</Button>
+              </MessageBarBody></MessageBar>}
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
@@ -1155,7 +1182,11 @@ function ScenarioLaunchForm({
             open={previewOpen}
             submitting={submitting}
             confirmDisabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
-              || Boolean(preparation.error)}
+              || Boolean(preparation.error) || !datasetConfigurationReady}
+            datasetConfigurationPending={!datasetConfigurationReady && !datasetConfigurationError}
+            datasetConfigurationError={datasetConfigurationError
+              ?? (datasetConfigurationReady && !preparationRequestResult.ok ? preparationRequestResult.error : null)}
+            onRetryDatasetConfiguration={datasetConfigurationError ? runEstimate.retry : undefined}
             onOpenChange={changePreviewOpen}
             onCancel={dismissPreview}
             onConfirm={() => void confirmLaunch()}

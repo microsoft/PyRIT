@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ class _PreparationScope:
 _current_preparation: ContextVar[tuple[DatasetPreparation, _PreparationScope] | None] = ContextVar(
     "scenario_dataset_preparation", default=None
 )
+logger = logging.getLogger(__name__)
 
 
 class DatasetPreparation:
@@ -98,34 +100,41 @@ class DatasetPreparation:
         """
         if self._stopping:
             raise RuntimeError("Dataset preparation is stopping.")
-        if name in await self.memory.get_seed_dataset_names_async():
-            return None
-        # Registry providers are constructed without arguments within this runtime.
-        # Configured providers are live objects: only the same instance is known equivalent.
-        key = (name, type(provider) if registered else id(provider))
-        work = self._tasks.get(key)
-        if (
-            work is not None
-            and retry_failed
-            and work.task.done()
-            and (work.task.cancelled() or work.task.exception() is not None)
-        ):
-            work = None
-        if work is None:
-            work = _ProviderWork(task=asyncio.create_task(fetch()), provider=provider)
-            self._tasks[key] = work
-            self._fetches.add(work.task)
-            work.task.add_done_callback(partial(self._fetch_done, key=key, work=work))
-        current = _current_preparation.get()
-        if current is not None and current[0] is self:
-            scope = current[1]
-            previous = scope.work.get(key)
-            if previous is not work:
-                scope.work[key] = work
-                if not scope.closed:
-                    if previous is not None:
-                        self._release_work(key=key, work=previous)
-                    work.users += 1
+        # A missing snapshot must not outlive publication and eviction of its shared work.
+        async with self._write_locks.setdefault(name, asyncio.Lock()):
+            if self._stopping:
+                raise RuntimeError("Dataset preparation is stopping.")
+            stored = await self.memory.get_seed_dataset_names_async()
+            if self._stopping:
+                raise RuntimeError("Dataset preparation is stopping.")
+            if name in stored:
+                return None
+            # Registry providers are constructed without arguments within this runtime.
+            # Configured providers are live objects: only the same instance is known equivalent.
+            key = (name, type(provider) if registered else id(provider))
+            work = self._tasks.get(key)
+            if (
+                work is not None
+                and retry_failed
+                and work.task.done()
+                and (work.task.cancelled() or work.task.exception() is not None)
+            ):
+                work = None
+            if work is None:
+                work = _ProviderWork(task=asyncio.create_task(fetch()), provider=provider)
+                self._tasks[key] = work
+                self._fetches.add(work.task)
+                work.task.add_done_callback(partial(self._fetch_done, key=key, work=work))
+            current = _current_preparation.get()
+            if current is not None and current[0] is self:
+                scope = current[1]
+                previous = scope.work.get(key)
+                if previous is not work:
+                    scope.work[key] = work
+                    if not scope.closed:
+                        if previous is not None:
+                            self._release_work(key=key, work=previous)
+                        work.users += 1
         dataset = await asyncio.shield(work.task)
         return None if work.published else dataset
 
@@ -161,15 +170,28 @@ class DatasetPreparation:
             work.users += 1
         task = asyncio.create_task(self._store_missing_async(name=name, dataset=dataset, work=work))
         self._writes.add(task)
-        task.add_done_callback(partial(self._write_done, candidate=candidate))
-        await asyncio.shield(task)
+        waiter = asyncio.shield(task)
+        task.add_done_callback(
+            partial(self._write_done, name=name, candidate=candidate, waiter=waiter, caller=asyncio.current_task())
+        )
+        await waiter
 
     def _write_done(
-        self, task: asyncio.Task[None], *, candidate: tuple[tuple[str, object], _ProviderWork] | None
+        self,
+        task: asyncio.Task[None],
+        *,
+        name: str,
+        candidate: tuple[tuple[str, object], _ProviderWork] | None,
+        waiter: asyncio.Future[None],
+        caller: asyncio.Task[Any] | None,
     ) -> None:
         self._writes.discard(task)
         if not task.cancelled():
-            task.exception()
+            error = task.exception()
+            if error is not None and (waiter.cancelled() or (caller is not None and caller.cancelling())):
+                logger.error(
+                    "Dataset preparation store failed for %s after its caller was cancelled.", name, exc_info=error
+                )
         if candidate is not None:
             self._release_work(key=candidate[0], work=candidate[1])
 

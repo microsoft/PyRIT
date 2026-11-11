@@ -7,6 +7,8 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  MessageBar,
+  MessageBarBody,
   Text,
 } from '@fluentui/react-components'
 
@@ -30,6 +32,9 @@ interface ScenarioRunPreviewDialogProps {
   open: boolean
   submitting: boolean
   confirmDisabled: boolean
+  datasetConfigurationPending?: boolean
+  datasetConfigurationError?: string | null
+  onRetryDatasetConfiguration?: () => void
   onOpenChange: (open: boolean) => void
   onCancel: () => void
   onConfirm: () => void
@@ -54,6 +59,9 @@ export default function ScenarioRunPreviewDialog({
   open,
   submitting,
   confirmDisabled,
+  datasetConfigurationPending = false,
+  datasetConfigurationError = null,
+  onRetryDatasetConfiguration,
   onOpenChange,
   onCancel,
   onConfirm,
@@ -76,6 +84,12 @@ export default function ScenarioRunPreviewDialog({
         <DialogBody>
           <DialogTitle>Run preview</DialogTitle>
           <DialogContent className={styles.dialogContent}>
+            {datasetConfigurationPending && <Text role="status">Checking dataset configuration...</Text>}
+            {datasetConfigurationError && <MessageBar intent="error"><MessageBarBody role="alert">
+              {datasetConfigurationError}
+              {onRetryDatasetConfiguration && <Button className={styles.touchTarget}
+                onClick={onRetryDatasetConfiguration}>Retry dataset configuration</Button>}
+            </MessageBarBody></MessageBar>}
             <dl className={styles.previewList}>
               <div className={styles.previewGroup}>
                 {objectiveTarget !== null && <>

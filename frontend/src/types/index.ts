@@ -1587,6 +1587,7 @@ export interface ScenarioDatasetOptions {
 }
 
 export interface ScenarioDatasetSourceSettings {
+  fetch_inherited?: boolean | null
   name: string
   max_size: number | 'all'
   fetch: DatasetFetchPolicy
