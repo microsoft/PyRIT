@@ -13,7 +13,6 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
-    from pyrit.score.assert_dimension_scorer import AssertDimensionMetadata
     from pyrit.score.assert_judge_presets import (
         list_assert_judge_presets,
         load_assert_judge_preset,
@@ -93,7 +92,6 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
     from pyrit.score.true_false.assert_policy_scorer import (
         AssertJudgmentMode,
-        AssertSampleMetadata,
         AssertScoringDimension,
         build_assert_policy_scorer,
         get_assert_failure_criterion,
@@ -181,9 +179,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
-    "AssertDimensionMetadata": "pyrit.score.assert_dimension_scorer",
     "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
-    "AssertSampleMetadata": "pyrit.score.true_false.assert_policy_scorer",
     "list_assert_judge_presets": "pyrit.score.assert_judge_presets",
     "load_assert_judge_preset": "pyrit.score.assert_judge_presets",
     "load_assert_judge_preset_file": "pyrit.score.assert_judge_presets",

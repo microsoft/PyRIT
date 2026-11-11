@@ -14,23 +14,28 @@ from unit.mocks import MockPromptTarget, store_message_async
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
+    AssertCategoryJudgment,
+    AssertDimensionResult,
     AssertJudgeDimension,
+    AssertSampleVote,
+    AssertSampleVotes,
     AssertTaxonomy,
     ComponentIdentifier,
     ConversationScorable,
     MessagePiece,
     Score,
+    ScorerTargetResponsePayload,
     ScoreStatus,
+    ScoringExpectation,
 )
 from pyrit.score import (
-    AssertDimensionMetadata,
     AssertJudgmentMode,
-    AssertSampleMetadata,
     AssertScoringDimension,
     Scorer,
     TrueFalseScorer,
     build_assert_policy_scorer,
 )
+from pyrit.score.assert_dimension_scorer import _AssertDimensionScorer
 from pyrit.score.true_false.assert_policy_scorer import _assert_vote, _warn_even_samples
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -153,7 +158,9 @@ async def test_not_applicable_answer_is_undetermined_with_metadata_async(
     assert saved.score_type == "true_false"
     assert saved.is_undetermined
     assert saved.score_category == [_RESTORATION.name]
-    assert saved.score_metadata[AssertDimensionMetadata.NOT_APPLICABLE] == "true"
+    assert AssertDimensionResult.from_metadata(metadata=saved.score_metadata) == AssertDimensionResult(
+        not_applicable=True
+    )
 
 
 @pytest.mark.parametrize(
@@ -189,8 +196,9 @@ async def test_graded_dimension_is_a_violation_at_or_past_violation_at_async(
     assert saved.score_type == "true_false"
     assert saved.get_value() is violation
     assert saved.score_category == [dimension.name]
-    assert saved.score_metadata[AssertDimensionMetadata.GRADE] == json.dumps(grade)
-    assert saved.score_metadata[AssertDimensionMetadata.SCALE] == json.dumps(list(dimension.scale.grade_values))
+    assert AssertDimensionResult.from_metadata(metadata=saved.score_metadata) == AssertDimensionResult(
+        grade=grade, scale=dimension.scale.grade_values
+    )
 
 
 @pytest.mark.parametrize(
@@ -263,12 +271,12 @@ async def test_sampled_boolean_uses_majority_with_ties_as_failures_async(
     assert saved.get_value() is expected
     assert saved.score_category == ["budget_overrun"]
     assert saved.score_rationale.endswith(f"Rationale for {expected!r}.")
-    assert saved.score_metadata[AssertSampleMetadata.COUNT] == len(verdicts)
+    sampled = AssertSampleVotes.from_metadata(metadata=saved.score_metadata)
+    assert sampled is not None
+    assert sampled.count == len(verdicts)
     # Samples run concurrently, so the mocked replies can reach them in any order.
-    assert sorted(json.loads(saved.score_metadata[AssertSampleMetadata.VOTES])) == sorted(
-        str(verdict).lower() for verdict in verdicts
-    )
-    assert saved.score_metadata[AssertSampleMetadata.AGREEMENT] == agreement
+    assert sorted(sampled.votes) == sorted(AssertSampleVote(str(verdict).lower()) for verdict in verdicts)
+    assert sampled.agreement == agreement
 
 
 def _sample(value: str | None, *, rationale: str = "Sample rationale.") -> Score:
@@ -289,14 +297,15 @@ def test_vote_excludes_undetermined_samples() -> None:
     assert result.value is False
     assert result.rationale == "Agrees."
     assert result.category == ["budget_overrun"]
-    assert json.loads(str(result.metadata[AssertSampleMetadata.VOTES])) == ["undetermined", "false", "undetermined"]
-    assert result.metadata[AssertSampleMetadata.AGREEMENT] == 1.0
+    assert AssertSampleVotes.from_metadata(metadata=result.metadata) == AssertSampleVotes(
+        votes=(AssertSampleVote.UNDETERMINED, AssertSampleVote.FALSE, AssertSampleVote.UNDETERMINED), agreement=1.0
+    )
     assert result.metadata["metadata"] == "evidence"
 
 
 @pytest.mark.parametrize(
     ("answers", "expected", "not_applicable"),
-    [((None, False, None), False, False), ((None, None, None), None, True)],
+    [((None, False, None), False, False), ((None, True, False), True, False), ((None, None, None), None, True)],
 )
 async def test_sampled_not_applicable_answers_are_excluded_from_the_vote_async(
     sqlite_instance: MemoryInterface,
@@ -311,27 +320,40 @@ async def test_sampled_not_applicable_answers_are_excluded_from_the_vote_async(
 
     (saved,) = await sqlite_instance.get_scores_async(score_ids=[score.id])
     votes = ["not_applicable" if answer is None else str(answer).lower() for answer in answers]
-    assert sorted(json.loads(saved.score_metadata[AssertSampleMetadata.VOTES])) == sorted(votes)
+    sampled = AssertSampleVotes.from_metadata(metadata=saved.score_metadata)
+    assert sampled is not None
+    assert sorted(vote.value for vote in sampled.votes) == sorted(votes)
     assert saved.is_undetermined is (expected is None)
     if expected is not None:
         assert saved.get_value() is expected
-    assert (saved.score_metadata.get(AssertDimensionMetadata.NOT_APPLICABLE) == "true") is not_applicable
+    dimension = AssertDimensionResult.from_metadata(metadata=saved.score_metadata)
+    assert (dimension is not None and dimension.not_applicable) is not_applicable
+
+
+def test_vote_rejects_malformed_judgment_metadata() -> None:
+    broken = _sample("true")
+    broken.score_metadata = {**broken.score_metadata, "assert_not_applicable": "yes"}
+    with pytest.raises(ValueError, match="assert_not_applicable"):
+        _assert_vote([broken, _sample("false")])
 
 
 def test_vote_keeps_not_applicable_only_when_every_sample_is() -> None:
     marked = _sample(None)
-    marked.score_metadata = {**marked.score_metadata, AssertDimensionMetadata.NOT_APPLICABLE: "true"}
+    marked.score_metadata = AssertDimensionResult(not_applicable=True).merge_into(marked.score_metadata)
     result = _assert_vote([marked, _sample(None)])
     assert result.value is None
-    assert json.loads(str(result.metadata[AssertSampleMetadata.VOTES])) == ["not_applicable", "undetermined"]
-    assert AssertDimensionMetadata.NOT_APPLICABLE not in result.metadata
+    votes = AssertSampleVotes.from_metadata(metadata=result.metadata)
+    assert votes is not None
+    assert votes.votes == (AssertSampleVote.NOT_APPLICABLE, AssertSampleVote.UNDETERMINED)
+    assert AssertDimensionResult.from_metadata(metadata=result.metadata) is None
 
 
 def test_vote_is_undetermined_when_every_sample_is() -> None:
     result = _assert_vote([_sample(None), _sample(None)])
     assert result.value is None
-    assert result.metadata[AssertSampleMetadata.COUNT] == 2
-    assert AssertSampleMetadata.AGREEMENT not in result.metadata
+    votes = AssertSampleVotes.from_metadata(metadata=result.metadata)
+    assert votes is not None
+    assert (votes.count, votes.agreement) == (2, None)
 
 
 async def test_sampled_judge_reuse_checks_every_sample_snapshot_async(taxonomy: AssertTaxonomy) -> None:
@@ -364,8 +386,10 @@ async def test_sampled_judge_leaves_out_a_sample_with_an_invalid_judgment_async(
         (score,) = await scorer.score_async(scorable=scorable)
 
     assert score.get_value() is True
-    assert sorted(json.loads(score.score_metadata[AssertSampleMetadata.VOTES])) == ["true", "true", "undetermined"]
-    assert score.score_metadata[AssertSampleMetadata.AGREEMENT] == 1.0
+    sampled = AssertSampleVotes.from_metadata(metadata=score.score_metadata)
+    assert sampled is not None
+    assert sorted(vote.value for vote in sampled.votes) == ["true", "true", "undetermined"]
+    assert sampled.agreement == 1.0
     assert len(score._snapshot_participation) == 2
     assert await scorer.find_matching_scores_async(scores=[score], scorable=scorable) == [score]
 
@@ -373,7 +397,7 @@ async def test_sampled_judge_leaves_out_a_sample_with_an_invalid_judgment_async(
 async def test_sampled_judge_fails_when_every_sample_is_invalid_async(taxonomy: AssertTaxonomy) -> None:
     scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET, samples=2)
 
-    with pytest.raises(InvalidJsonException, match="Invalid ASSERT judgment"):
+    with pytest.raises(InvalidJsonException, match="Invalid JSON response"):
         await _score_async(scorer, *_INVALID_REPLIES)
 
 
@@ -457,10 +481,64 @@ async def test_sampled_policy_violation_reaggregates_categories_async(
 
     (saved,) = await sqlite_instance.get_scores_async(score_ids=[score.id])
     assert saved.get_value() is expected
-    nodes = json.loads(saved.score_metadata["assert_node_judgments"])
-    assert sorted((node["node_name"], node["violated"]) for node in nodes) == voted_nodes
-    if warning is None:
-        assert AssertSampleMetadata.WARNINGS not in saved.score_metadata
-    else:
-        assert json.loads(saved.score_metadata[AssertSampleMetadata.WARNINGS]) == [warning]
-        assert saved.score_metadata[AssertSampleMetadata.VOTED_VALUE] == "true"
+    category = AssertCategoryJudgment.from_metadata(metadata=saved.score_metadata)
+    sampled = AssertSampleVotes.from_metadata(metadata=saved.score_metadata)
+    assert category is not None and sampled is not None
+    assert sorted((node.node_name, node.violated) for node in category.node_judgments) == voted_nodes
+    assert category.warnings == (() if warning is None else (warning,))
+    assert sampled.voted_score_value is (None if warning is None else True)
+
+
+def _dimension_judge(scorer: Scorer) -> Scorer:
+    while not isinstance(scorer, _AssertDimensionScorer):
+        (scorer,) = scorer._get_child_scorers()
+    return scorer
+
+
+@pytest.mark.parametrize(
+    ("dimension", "reply"),
+    [
+        (_CLAIM, _judgment("hedged")),
+        (_QUALITY, _judgment(None, applicable=False)),
+        (_BUDGET, _judgment(True)),
+    ],
+)
+async def test_judgment_observation_replays_the_recorded_dimension_result_async(
+    sqlite_instance: MemoryInterface, taxonomy: AssertTaxonomy, dimension: AssertJudgeDimension, reply: str
+) -> None:
+    scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=dimension)
+    score, transport = await _score_async(scorer, reply)
+
+    observations = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
+    judgment = next(obs for obs in observations if isinstance(obs.payload, ScorerTargetResponsePayload))
+    (replayed,) = await _dimension_judge(scorer).score_observation_async(observation=judgment)
+
+    assert transport.await_count == 1
+    assert replayed.is_undetermined is score.is_undetermined
+    assert AssertDimensionResult.from_metadata(metadata=replayed.score_metadata) == (
+        AssertDimensionResult.from_metadata(metadata=score.score_metadata)
+    )
+
+
+async def test_template_like_text_reaches_the_judge_verbatim_async(taxonomy: AssertTaxonomy) -> None:
+    scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET)
+    conversation_id = str(uuid.uuid4())
+    reply = "Book {{ objective }} now {% raw %}{{ x }}{% endraw %} <b>&amp;</b>"
+    for role, value in (("user", "Plan a trip under $500."), ("assistant", reply)):
+        await store_message_async(
+            MessagePiece(role=role, original_value=value, conversation_id=conversation_id).to_message()
+        )
+    target = scorer.get_chat_target()
+    assert target is not None
+    objective = "Stay under {{ budget }}."
+    with patch.object(
+        target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=_responses(_judgment(False))
+    ) as transport:
+        await scorer.score_async(
+            scorable=ConversationScorable(conversation_id=conversation_id),
+            expectation=ScoringExpectation(objective=objective),
+        )
+
+    request = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert request.startswith(f"objective: {objective}\nresponse: ")
+    assert reply in request

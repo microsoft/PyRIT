@@ -275,6 +275,14 @@ if TYPE_CHECKING:
         AssertJudgeDimension,
         AssertJudgePreset,
     )
+    from pyrit.models.score.assert_judgment import (
+        AssertCategoryJudgment,
+        AssertDimensionResult,
+        AssertNodeJudgment,
+        AssertSampleVote,
+        AssertSampleVotes,
+        AssertSkipReason,
+    )
     from pyrit.models.seeds import (
         AdversarialPrompts,
         AttackSeedGroup,
@@ -355,6 +363,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertGroupMetadata": "pyrit.models.seeds.assert_generation",
     "AssertJudgeDimension": "pyrit.models.score.assert_judge",
     "AssertJudgePreset": "pyrit.models.score.assert_judge",
+    "AssertCategoryJudgment": "pyrit.models.score.assert_judgment",
+    "AssertDimensionResult": "pyrit.models.score.assert_judgment",
+    "AssertNodeJudgment": "pyrit.models.score.assert_judgment",
+    "AssertSampleVote": "pyrit.models.score.assert_judgment",
+    "AssertSampleVotes": "pyrit.models.score.assert_judgment",
+    "AssertSkipReason": "pyrit.models.score.assert_judgment",
     "AssertPatternRole": "pyrit.models.seeds.assert_generation",
     "AssertReplication": "pyrit.models.seeds.assert_generation",
     "AssertSamplingConfig": "pyrit.models.seeds.assert_generation",

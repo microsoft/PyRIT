@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from jsonschema import Draft202012Validator, ValidationError
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.models import SeedPrompt
+from pyrit.exceptions import InvalidJsonException
+from pyrit.models import AssertDimensionResult, SeedPrompt
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
@@ -24,9 +24,6 @@ from pyrit.score.scorer import _SelfContainedJudgeTargetRequirements
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
-    import uuid
-    from collections.abc import Sequence
-
     from pyrit.models import (
         AssertJudgeDimension,
         ComponentIdentifier,
@@ -42,14 +39,6 @@ if TYPE_CHECKING:
     from pyrit.score.observation.execution import _ObservationEvidence
 
 
-class AssertDimensionMetadata:
-    """Score metadata keys written by custom ASSERT judge dimensions."""
-
-    NOT_APPLICABLE: ClassVar[str] = "assert_not_applicable"
-    GRADE: ClassVar[str] = "assert_grade"
-    SCALE: ClassVar[str] = "assert_scale"
-
-
 class _AssertDimensionResponseHandler(JsonSchemaResponseHandler):
     """Validate one dimension's verdict and encode it as its position among the dimension's grades."""
 
@@ -63,60 +52,44 @@ class _AssertDimensionResponseHandler(JsonSchemaResponseHandler):
         """Return the schema and the normalization version."""
         return {**super()._replay_identifier(), "dimension_normalization_version": 1}
 
-    def parse(
-        self,
-        *,
-        response_text: str,
-        scorer_identifier: ComponentIdentifier,
-        scored_prompt_id: str | uuid.UUID,
-        category: Sequence[str] | str | None = None,
-        objective: str | None = None,
-    ) -> UnvalidatedScore:
+    def _convert_response(self, parsed_response: dict[str, Any]) -> dict[str, Any]:
         """
         Validate the verdict, then encode it as its position among the dimension's grades.
 
         A not-applicable answer is recorded in metadata; the scorer turns it into an undetermined score.
 
         Returns:
-            UnvalidatedScore: The encoded verdict.
+            dict[str, Any]: The response, with the grade position as its score value.
 
         Raises:
-            InvalidJsonException: If the JSON, the verdict, or its applicability is invalid.
+            InvalidJsonException: If the verdict or its applicability is invalid.
         """
         name = self._dimension.name
         try:
-            parsed = json.loads(remove_markdown_json(response_text))
-            self._validator.validate(parsed)
-        except (json.JSONDecodeError, ValidationError) as error:
+            self._validator.validate(parsed_response)
+        except ValidationError as error:
             raise InvalidJsonException(message=f"Invalid ASSERT judgment for dimension '{name}': {error}") from error
-        value = parsed["score_value"]
-        if (value is None) == parsed.get("applicable", True):
+        value = parsed_response["score_value"]
+        if (value is None) == parsed_response.get("applicable", True):
             raise InvalidJsonException(
                 message=f"Invalid ASSERT judgment for dimension '{name}': score_value must be null exactly when "
                 "applicable is false."
             )
-        metadata: dict[str, str] = {"metadata": parsed.pop("metadata")}
-        if self._dimension.scale is not None:
-            metadata[AssertDimensionMetadata.SCALE] = json.dumps(list(self._dimension.scale.grade_values))
-        if value is None:
-            metadata[AssertDimensionMetadata.NOT_APPLICABLE] = "true"
-            index = 0
-        else:
-            index = self._dimension.grade_index(value)
-            if index is None:
-                raise InvalidJsonException(
-                    message=f"ASSERT dimension '{name}' returned an undeclared grade: {value!r}."
-                )
-            if self._dimension.scale is not None:
-                metadata[AssertDimensionMetadata.GRADE] = json.dumps(value)
-        parsed.pop("applicable", None)
-        return super().parse(
-            response_text=json.dumps({**parsed, "score_value": index, "metadata": metadata}),
-            scorer_identifier=scorer_identifier,
-            scored_prompt_id=scored_prompt_id,
-            category=category,
-            objective=objective,
+        index = 0 if value is None else self._dimension.grade_index(value)
+        if index is None:
+            raise InvalidJsonException(message=f"ASSERT dimension '{name}' returned an undeclared grade: {value!r}.")
+        scale = self._dimension.scale
+        result = AssertDimensionResult(
+            not_applicable=value is None,
+            grade=value if scale is not None else None,
+            scale=scale.grade_values if scale is not None else None,
         )
+        converted = {key: item for key, item in parsed_response.items() if key != "applicable"}
+        return {
+            **converted,
+            "score_value": index,
+            "metadata": {"metadata": parsed_response["metadata"], **result.to_metadata()},
+        }
 
 
 class _AssertDimensionScorer(MessageFloatScaleScorer):
@@ -128,6 +101,7 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
     """
 
     TEMPLATE_PATH: ClassVar = SCORER_SEED_PROMPT_PATH / "assert" / "dimension_system_prompt.yaml"
+    USER_PROMPT_PATH: ClassVar = SCORER_SEED_PROMPT_PATH / "assert" / "dimension_user_prompt.yaml"
     TARGET_REQUIREMENTS = _SelfContainedJudgeTargetRequirements()
     _DEFAULT_VALIDATOR: ClassVar[ScorerPromptValidator] = ScorerPromptValidator(supported_data_types=["text"])
 
@@ -160,6 +134,7 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
             answer_instructions=_build_answer_instructions(dimension),
             metadata=metadata,
         )
+        self._user_prompt = SeedPrompt.from_yaml_file(self.USER_PROMPT_PATH)
 
     def get_chat_target(self) -> PromptTarget:
         """
@@ -174,7 +149,7 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
         return self._create_identifier(
             params={
                 "system_prompt_template": self._system_prompt,
-                "user_prompt_template": "objective: {objective}\nresponse: {response}",
+                "user_prompt_template": self._user_prompt.value,
                 "dimension": self._dimension.model_dump(mode="json"),
                 "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
@@ -191,7 +166,9 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
                 JudgmentRequest(
                     expectation=expectation,
                     system_prompt=self._system_prompt,
-                    value=f"objective: {objective}\nresponse: {message_piece.converted_value}",
+                    value=self._user_prompt.render_template_value(
+                        objective=objective, response=message_piece.converted_value
+                    ),
                     data_type="text",
                     scored_prompt_id=message_piece.id,
                     scorer_identifier=self.get_identifier(),
@@ -243,7 +220,8 @@ class _AssertDimensionScorer(MessageFloatScaleScorer):
     def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
         position = int(float(unvalidated.raw_score_value)) / (len(self._dimension.grade_values) - 1)
         score = unvalidated.to_score(score_value=str(position), score_type="float_scale")
-        if (score.score_metadata or {}).get(AssertDimensionMetadata.NOT_APPLICABLE) == "true":
+        result = AssertDimensionResult.from_metadata(metadata=score.score_metadata)
+        if result is not None and result.not_applicable:
             score.set_value(None)
         return score
 

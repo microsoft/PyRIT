@@ -23,7 +23,11 @@ from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    AssertCategoryJudgment,
+    AssertDimensionResult,
     AssertGroupMetadata,
+    AssertSampleVotes,
+    AssertSkipReason,
     AssertTaxonomy,
     AttackOutcome,
     BoundedDatasetSize,
@@ -52,7 +56,6 @@ from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
 from pyrit.score import (
     AssertJudgmentMode,
-    AssertSampleMetadata,
     AssertScoringDimension,
     TrueFalseCompositeScorer,
     build_assert_policy_scorer,
@@ -221,6 +224,16 @@ def _judged(scorer: Any) -> Any:
     return scorer._scorer
 
 
+def _dimension(score: Any) -> str | None:
+    result = AssertDimensionResult.from_metadata(metadata=score.score_metadata)
+    return result.dimension if result is not None else None
+
+
+def _is_skipped(score: Any, reason: str) -> bool:
+    expected = AssertDimensionResult(dimension=score.score_category[0], skip_reason=AssertSkipReason(reason))
+    return bool(score.is_undetermined and score.score_metadata == expected.to_metadata())
+
+
 async def _scores_for_async(result: Any) -> list[Any]:
     memory = CentralMemory.get_memory_instance()
     return list(await memory.get_prompt_scores_async(conversation_id=result.conversation_id))
@@ -374,7 +387,9 @@ async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(ha
     assert policy.get_value() is False
     assert overrefusal.get_value() is True
     assert policy.objective == overrefusal.objective == attack_result.objective
-    assert "assert_correction_reason" not in policy.score_metadata
+    category = AssertCategoryJudgment.from_metadata(metadata=policy.score_metadata)
+    assert category is not None and category.correction_reason is None
+    assert {_dimension(score) for score in scores.values()} == set(scores)
 
 
 async def test_baseline_skips_groups_without_a_user_prompt_async(harness: _Harness) -> None:
@@ -445,7 +460,7 @@ async def test_multi_turn_keeps_earlier_target_errors_without_stored_system_prom
     scores = await _scores_for_async(attack_result)
     assert len(scores) == 2
     assert all(score.is_undetermined for score in scores)
-    assert all(score.score_metadata == {"assert_scoring_skipped": reason} for score in scores)
+    assert all(_is_skipped(score, reason) for score in scores)
 
 
 @pytest.mark.parametrize(
@@ -465,7 +480,7 @@ async def test_blocked_or_errored_target_reply_is_not_judged_async(
     scores = await _scores_for_async(attack_result)
     assert {score.score_category[0] for score in scores} == {dimension.value for dimension in AssertScoringDimension}
     assert all(score.is_undetermined for score in scores)
-    assert all(score.score_metadata == {"assert_scoring_skipped": reason} for score in scores)
+    assert all(_is_skipped(score, reason) for score in scores)
 
 
 async def test_ordinary_refusal_is_still_judged_async(harness: _Harness) -> None:
@@ -740,7 +755,7 @@ async def test_judge_wrapper_anchors_scores_on_the_scored_evidence_async(
     assert skipped.is_undetermined
     assert skipped.scorable == conversation
     assert skipped.message_piece_id is None
-    assert skipped.score_metadata == {"assert_scoring_skipped": "target_input_refused"}
+    assert _is_skipped(skipped, "target_input_refused")
     assert len(harness.judge_systems) == 1
 
 
@@ -941,7 +956,8 @@ async def test_graded_dimension_can_be_the_objective_async(harness: _Harness, tm
     assert attack_result.outcome == AttackOutcome.SUCCESS
     scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
     assert scores["quality_failure"].get_value() is True
-    assert scores["quality_failure"].score_metadata["assert_grade"] == "3"
+    graded = AssertDimensionResult.from_metadata(metadata=scores["quality_failure"].score_metadata)
+    assert graded is not None and graded.grade == 3
     assert scores["overrefusal"].get_value() is False
 
 
@@ -972,7 +988,9 @@ async def test_custom_dimensions_are_judged_and_sampled_async(harness: _Harness,
     scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
     assert set(scores) == {"policy_violation", "overrefusal", "budget_overrun", "verification_skip"}
     assert scores["budget_overrun"].get_value() is True
-    assert scores["budget_overrun"].score_metadata[AssertSampleMetadata.COUNT] == 3
+    sampled = AssertSampleVotes.from_metadata(metadata=scores["budget_overrun"].score_metadata)
+    assert sampled is not None and sampled.count == 3
+    assert _dimension(scores["budget_overrun"]) == "budget_overrun"
 
 
 async def test_judge_settings_identity_follows_resolved_dimensions_async(harness: _Harness, tmp_path: Path) -> None:

@@ -222,10 +222,12 @@ baseline_result = next(
 await output_attack_async(baseline_result, include_auxiliary_scores=True)  # type: ignore
 
 # %% [markdown]
-# Results are grouped by technique, with the baseline in its own group. In `category_validated`
-# mode, the `assert_node_judgments` metadata on each policy score keeps the judge's per-category
-# judgments, which ASSERT uses to split its violation rates by permissible and impermissible
-# categories.
+# Results are grouped by technique, with the baseline in its own group. Read the ASSERT data that a
+# score records with the models in `pyrit.models`: `AssertDimensionResult.from_metadata` gives the
+# dimension, why a conversation wasn't judged, and any not-applicable answer or grade. In
+# `category_validated` mode, `AssertCategoryJudgment.from_metadata` gives the judge's per-category
+# judgments on each policy score, which ASSERT uses to split its violation rates by permissible and
+# impermissible categories.
 #
 # As in ASSERT, a conversation with a blocked or errored target reply isn't judged. Its result is
 # undetermined, like a result whose judge or tester reply was blocked. Undetermined results are
@@ -244,11 +246,11 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # options work too:
 #
 # - `allow_not_applicable: true` lets the judge say the conversation didn't exercise the dimension.
-#   That verdict is undetermined, with `assert_not_applicable` metadata, so it doesn't count toward
-#   rates.
+#   That verdict is undetermined and marked not applicable in its `AssertDimensionResult`, so it
+#   doesn't count toward rates.
 # - `scale` asks the judge for one of ordered grades. Add `violation_at`, a PyRIT key that names the
-#   first grade, in declared order, that counts as a violation. The grade is kept in `assert_grade`
-#   metadata.
+#   first grade, in declared order, that counts as a violation. The grade is kept in the score's
+#   `AssertDimensionResult`.
 #
 # This file is adapted from ASSERT's travel-planner budget example and its graded examples:
 #
@@ -304,9 +306,10 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # other dimension is an auxiliary true/false score on the same result, with the dimension name as
 # its category. With `judge_samples` above 1, the samples are combined by majority vote with ties
 # counted as failures, as in ASSERT. Undetermined samples are left out, and so is a sample whose
-# judgment is still invalid after its retries; scoring fails only when every sample does. In `category_validated`
-# mode, the per-category judgments are voted too and `policy_violation` is recomputed from them.
-# The `assert_sample_votes` metadata keeps every sample's verdict. Prefer an odd sample count.
+# judgment is still invalid after its retries; scoring fails only when every sample does. In
+# `category_validated` mode, the per-category judgments are voted too and `policy_violation` is
+# recomputed from them. `AssertSampleVotes.from_metadata` returns every sample's verdict. Prefer an
+# odd sample count.
 #
 # To judge a narrower outcome instead of the built-in policy violation, disable it and make another
 # dimension the objective, for example `"disabled_judge_dimensions": ["policy_violation"]`

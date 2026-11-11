@@ -386,7 +386,7 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 import uuid
 
 from pyrit.memory import CentralMemory
-from pyrit.models import AssertTaxonomy, ConversationScorable
+from pyrit.models import AssertCategoryJudgment, AssertTaxonomy, ConversationScorable
 from pyrit.score import AssertJudgmentMode, AssertScoringDimension, build_assert_policy_scorer
 
 taxonomy = AssertTaxonomy.model_validate(
@@ -458,13 +458,15 @@ for mode in AssertJudgmentMode:
             )[0]
             assert_scores.append(score)
             print(f"[ASSERT/{mode.value}/{dimension.value}] {case}: {score.get_value()}")
-            if "assert_correction_reason" in score.score_metadata:
-                print(f"  Correction: {score.score_metadata['assert_correction_reason']}")
+            judgment = AssertCategoryJudgment.from_metadata(metadata=score.score_metadata)
+            if judgment is not None and judgment.correction_reason:
+                print(f"  Correction: {judgment.correction_reason}")
 
 # %% [markdown]
 # Each score has its dimension category, rationale, judge metadata, and saved observations.
-# Category-mode metadata also contains `assert_node_judgments` as JSON, `assert_original_score_value`,
-# and any `assert_correction_reason` or `assert_judgment_warnings`. The raw response remains retained.
+# In category mode, `AssertCategoryJudgment.from_metadata(metadata=score.score_metadata)` returns the
+# per-category judgments, the judge's original verdict, and any correction or warnings. The raw response
+# remains retained.
 # `get_assert_failure_criterion(dimension)` exposes the shared failure definition for other consumers.
 #
 # Category validation establishes structural consistency, not whether the model selected the right

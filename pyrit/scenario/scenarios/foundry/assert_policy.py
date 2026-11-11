@@ -19,7 +19,9 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
+    AssertDimensionResult,
     AssertGroupMetadata,
+    AssertSkipReason,
     AttackSeedGroup,
     BoundedDatasetSize,
     ComponentIdentifier,
@@ -132,14 +134,17 @@ class _AssertPlaceholderScorer(TrueFalseScorer):
 
 
 class _AssertJudgedScorer(TrueFalseScorer):
-    """Judge a conversation only when ASSERT would; otherwise record why no verdict was reached."""
+    """
+    Judge a conversation only when ASSERT would; otherwise record why no verdict was reached.
 
-    SKIP_REASON_KEY: ClassVar[str] = "assert_scoring_skipped"
-    TARGET_INPUT_REFUSED: ClassVar[str] = "target_input_refused"
-    TARGET_ERROR: ClassVar[str] = "target_error"
-    SKIP_RATIONALES: ClassVar[dict[str, str]] = {
-        TARGET_INPUT_REFUSED: "A target reply was blocked, so ASSERT does not judge this conversation.",
-        TARGET_ERROR: "A target reply was an error, so ASSERT does not judge this conversation.",
+    Every score records its dimension with ``AssertDimensionResult``, including skipped conversations.
+    """
+
+    SKIP_RATIONALES: ClassVar[dict[AssertSkipReason, str]] = {
+        AssertSkipReason.TARGET_INPUT_REFUSED: (
+            "A target reply was blocked, so ASSERT does not judge this conversation."
+        ),
+        AssertSkipReason.TARGET_ERROR: "A target reply was an error, so ASSERT does not judge this conversation.",
     }
 
     def __init__(self, *, scorer: TrueFalseScorer, dimension_name: str) -> None:
@@ -156,7 +161,7 @@ class _AssertJudgedScorer(TrueFalseScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"skipped_target_replies": [self.TARGET_INPUT_REFUSED, self.TARGET_ERROR]},
+            params={"skipped_target_replies": [reason.value for reason in AssertSkipReason]},
             sub_scorers=[self._scorer.get_identifier()],
         )
 
@@ -213,16 +218,24 @@ class _AssertJudgedScorer(TrueFalseScorer):
                 description="ASSERT does not judge this conversation.",
                 objective=expectation.objective if expectation else None,
                 score_category=[self._dimension_name],
-                score_metadata={self.SKIP_REASON_KEY: reason},
+                score_metadata=AssertDimensionResult(dimension=self._dimension_name, skip_reason=reason).to_metadata(),
             )
             return [self._anchor(score=skipped, scorable=scorable, child_scores={})]
         scores = await self._scorer._score_nested_async(
             scorable=scorable, expectation=self._scorer._select_expectation(expectation=expectation)
         )
         return [
-            self._anchor(score=self._create_wrapper_score(score), scorable=scorable, child_scores={0: score})
+            self._anchor(score=self._mark_dimension(score), scorable=scorable, child_scores={0: score})
             for score in scores
         ]
+
+    def _mark_dimension(self, score: Score) -> Score:
+        wrapped = self._create_wrapper_score(score)
+        wrapped.score_category = wrapped.score_category or [self._dimension_name]
+        result = AssertDimensionResult.from_metadata(metadata=wrapped.score_metadata) or AssertDimensionResult()
+        marked = result.model_copy(update={"dimension": self._dimension_name})
+        wrapped.score_metadata = marked.merge_into(wrapped.score_metadata)
+        return wrapped
 
     def _anchor(self, *, score: Score, scorable: Scorable, child_scores: dict[int, Score]) -> Score:
         score.scorable = cast("ScorableUnion", scorable)
@@ -238,14 +251,14 @@ class _AssertJudgedScorer(TrueFalseScorer):
         pieces = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
         return pieces[0].conversation_id if pieces else None
 
-    async def _get_skip_reason_async(self, *, conversation_id: str) -> str | None:
+    async def _get_skip_reason_async(self, *, conversation_id: str) -> AssertSkipReason | None:
         for piece in await self._memory.get_message_pieces_async(conversation_id=conversation_id):
             if piece.api_role != "assistant" or piece.is_simulated:
                 continue
             if piece.is_blocked():
-                return self.TARGET_INPUT_REFUSED
+                return AssertSkipReason.TARGET_INPUT_REFUSED
             if piece.has_error() or piece.converted_value_data_type == "error":
-                return self.TARGET_ERROR
+                return AssertSkipReason.TARGET_ERROR
         return None
 
 
