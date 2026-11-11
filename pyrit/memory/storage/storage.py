@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -16,6 +17,8 @@ import aiofiles
 from pyrit.common import get_mime_type
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterable
+
     from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
@@ -37,6 +40,15 @@ class StorageIO(ABC):
     Abstract interface for storage systems (local disk, Azure Storage Account, etc.).
     """
 
+    def canonical_path(self, path: str) -> str:
+        """
+        Resolve the effective storage identity; non-disk adapters override this.
+
+        Returns:
+            str: The canonical local identity.
+        """
+        return os.path.normcase(str(Path(path).resolve()))
+
     async def delete_file_async(self, path: Path | str) -> None:
         """Delete one caller-owned file; custom storage must implement cleanup explicitly."""
         raise NotImplementedError("This storage backend does not support file cleanup")
@@ -44,6 +56,10 @@ class StorageIO(ABC):
     async def list_files_async(self, directory: Path | str) -> list[str]:
         """List files directly inside a directory; custom storage must implement listing explicitly."""
         raise NotImplementedError("This storage backend does not support listing files")
+
+    async def write_stream_async(self, *, path: Path | str, chunks: AsyncIterable[bytes]) -> None:
+        """Write inert upload bytes without buffering the complete asset."""
+        raise NotImplementedError("This storage backend does not support streaming uploads")
 
     @abstractmethod
     async def read_file_async(self, path: Path | str) -> bytes:
@@ -97,6 +113,12 @@ class DiskStorageIO(StorageIO):
         """
         return await asyncio.to_thread(_list_directory_files, self._convert_to_path(directory))
 
+    async def write_stream_async(self, *, path: Path | str, chunks: AsyncIterable[bytes]) -> None:
+        """Create a generated upload file without overwriting existing bytes."""
+        async with aiofiles.open(path, "xb") as file:
+            async for chunk in chunks:
+                await file.write(chunk)
+
     async def read_file_async(self, path: Path | str) -> bytes:
         """
         Asynchronously reads a file from the local disk.
@@ -137,7 +159,7 @@ class DiskStorageIO(StorageIO):
 
         """
         path = self._convert_to_path(path)
-        return path.exists()
+        return await asyncio.to_thread(path.exists)
 
     async def is_file_async(self, path: Path | str) -> bool:
         """
@@ -162,8 +184,12 @@ class DiskStorageIO(StorageIO):
 
         """
         directory_path = self._convert_to_path(path)
-        if not directory_path.exists():
-            directory_path.mkdir(parents=True, exist_ok=True)
+
+        def create() -> None:
+            if not directory_path.exists():
+                directory_path.mkdir(parents=True, exist_ok=True)
+
+        await asyncio.to_thread(create)
 
     def _convert_to_path(self, path: Path | str) -> Path:
         """
@@ -354,6 +380,15 @@ class AzureBlobStorageIO(StorageIO):
                 return path_parts[1], "/".join(path_parts[2:])
         raise ValueError("Invalid blob URL")
 
+    def canonical_path(self, path: str) -> str:
+        """
+        Resolve URLs and relative names against this adapter's configured container.
+
+        Returns:
+            str: The effective blob identity, without SAS parameters.
+        """
+        return "blob:" + self._resolve_blob_name(path)
+
     def _resolve_blob_name(self, path: Path | str) -> str:
         """
         Resolve a blob name from either a full blob URL or a relative blob path.
@@ -418,6 +453,23 @@ class AzureBlobStorageIO(StorageIO):
         )
         direct = sorted(name for name in names if "/" not in name[len(prefix) :])
         return [f"{container_url}/{quote(name, safe='/')}" for name in direct]
+
+    async def write_stream_async(self, *, path: Path | str, chunks: AsyncIterable[bytes]) -> None:
+        """Stream a generated blob as opaque bytes, never replacing an existing blob."""
+        from azure.storage.blob import ContentSettings
+
+        client = await self._acquire_client_async()
+        try:
+            await client.upload_blob(
+                name=self._resolve_blob_name(path),
+                data=chunks,
+                overwrite=False,
+                content_settings=ContentSettings(
+                    content_type="application/octet-stream", content_disposition="attachment"
+                ),
+            )
+        finally:
+            await self._release_client_async()
 
     async def read_file_async(self, path: Path | str) -> bytes:
         """

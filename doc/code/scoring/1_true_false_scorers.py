@@ -52,6 +52,8 @@ print(f"[output match] {scores[0].get_value()}")
 # searches the candidate text. For literal equality, use
 # `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
 # `Contains` returns false for empty candidate text; `Equals` can match two empty values.
+# `StartsWith` compares a literal prefix using `lower()` for case-insensitive matching, not
+# Unicode regex case equivalence. It strips only candidate edges; the expected prefix is preserved.
 # Blank or invalid regex patterns fail before scoring.
 #
 # By default, `OutputMatchesScorer` matches each supported text piece independently and returns
