@@ -21,7 +21,7 @@ class DenylistConverter(LLMGenericTextConverter):
     Replaces forbidden words or phrases in a prompt with synonyms using an LLM.
 
     An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
-    Matching is Unicode-aware and case-insensitive. The original prompt is sent to the target.
+    Matching is Unicode-aware and case-insensitive without changing the prompt's casing.
     """
 
     @apply_defaults

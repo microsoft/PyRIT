@@ -65,7 +65,7 @@ class TestAudioAchillesHeelInitialization:
     def test_init_with_custom_scorer(self, mock_objective_scorer):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
         assert scenario._objective_scorer == mock_objective_scorer
-        assert scenario._scorer_config.objective_scorer == mock_objective_scorer
+        assert scenario._configured_objective_scorer is mock_objective_scorer
 
     def test_init_creates_default_scorer_when_not_provided(self, mock_objective_scorer):
         with patch.object(AudioAchillesHeel, "_get_default_objective_scorer", return_value=mock_objective_scorer):
