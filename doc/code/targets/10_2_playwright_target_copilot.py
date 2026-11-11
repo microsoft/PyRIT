@@ -110,7 +110,7 @@ async def connect_to_existing_browser(browser_debug_port, run_function):
 # %%
 # Using PlaywrightCopilotTarget for text interactions
 async def run_text(page: Page) -> None:
-    await page.goto("https://copilot.microsoft.com/")
+    await page.goto("https://copilot.microsoft.com/", wait_until="domcontentloaded", timeout=60_000)
     target = PlaywrightCopilotTarget(page=page)
     adversarial_chat_target = OpenAIChatTarget()
     adv_config = AttackAdversarialConfig(
@@ -145,7 +145,7 @@ await connect_to_existing_browser(browser_debug_port=9222, run_function=run_text
 
 # %%
 async def run_multimodal(page: Page) -> None:
-    await page.goto("https://m365.cloud.microsoft/chat/")
+    await page.goto("https://m365.cloud.microsoft/chat/", wait_until="domcontentloaded", timeout=60_000)
     target = PlaywrightCopilotTarget(page=page, copilot_type=CopilotType.M365)
 
     attack = PromptSendingAttack(objective_target=target)
