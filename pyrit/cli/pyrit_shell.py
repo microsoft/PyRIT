@@ -514,6 +514,9 @@ class PyRITShell(cmd.Cmd):
             "scenario_name": scenario_name,
             "target_name": args.get("target") or "",
         }
+        for role in ("scoring", "adversarial"):
+            if args.get(f"{role}_target"):
+                request_kwargs[f"{role}_target_name"] = args[f"{role}_target"]
 
         # Map initializers
         initializers = args.get("initializers")
