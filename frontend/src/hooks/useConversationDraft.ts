@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { toApiError } from '@/services/errors'
-import { buildTemperatureTarget } from '@/services/targetRegistry'
 import type {
   AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, ConversationSaveInput,
   MessageAttachment, NewAttackContext, PieceConversionUpdates, SaveConversationRequest, TargetInstance,
@@ -24,7 +23,6 @@ interface DraftState extends ConversationSaveInput {
   id: string
   baselineMessages: ConversationDraftMessage[]
   baselineTarget: string | undefined
-  temperature: string
   unsavedImport?: boolean
 }
 
@@ -44,7 +42,6 @@ export function useConversationDraft(
     || draft.messages !== draft.baselineMessages
     || draft.objective !== draft.initialObjective
     || targetKey(draft.target) !== draft.baselineTarget
-    || draft.temperature.trim() !== ''
   )
   const validationError = draft ? validateDraft(draft.messages) : null
   const messages = draft?.messages ?? []
@@ -79,7 +76,7 @@ export function useConversationDraft(
     setError(null)
     setDraft({
       ...input, id, messages, baselineMessages: input.baselineMessages ?? messages,
-      baselineTarget: targetKey(input.target), temperature: input.temperature ?? '',
+      baselineTarget: targetKey(input.target),
       unsavedImport: input.unsavedImport,
       sourcePieceIds: input.sourcePieceIds ?? input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
         (piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : [],
@@ -171,7 +168,7 @@ export function useConversationDraft(
     })
   }
   const save = async (
-    destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void,
+    destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse) => void,
     messages: ConversationDraftMessage[] = draft?.messages ?? [],
     reuseUnsentConversation = false,
   ): Promise<boolean> => {
@@ -185,20 +182,13 @@ export function useConversationDraft(
       if (destination === 'new_attack' && newAttackContext && !newAttackContext.ready) {
         throw new Error('Default labels are not ready. Retry after default labels finish loading.')
       }
-      let target = draft.target
-      if (draft.temperature.trim()) {
-        if (destination !== 'new_attack') throw new Error('Choose New attack to change the temperature.')
-        if (!target) throw new Error('Select a target before setting temperature.')
-        target = await buildTemperatureTarget(target, Number(draft.temperature))
-      }
       if (activeId.current !== id) return false
       const response = await workflow.save(
-        { ...draft, target, messages }, destination, reuseUnsentConversation, newAttackContext,
+        { ...draft, messages }, destination, reuseUnsentConversation, newAttackContext,
       )
       if (activeId.current !== id) return false
       saved.current = true
-      if (draft.temperature.trim()) onSaved(response, target)
-      else onSaved(response)
+      onSaved(response)
       return true
     } catch (cause) {
       if (activeId.current === id) setError(toApiError(cause).detail)
@@ -218,11 +208,8 @@ export function useConversationDraft(
     begin, discard, save, changeMessages, changePiece, changeAttachments, addPiece, applyConversions,
     shouldBlock: (): boolean => !saved.current && (dirty || preparing || workflow.saving),
     changeObjective,
-    changeTemperature: (temperature: string): void => {
-      setDraft((current: DraftState | null) => current ? { ...current, temperature } : current)
-    },
     changeTarget: (target: TargetInstance | null): void => {
-      setDraft((current: DraftState | null) => current ? { ...current, target, temperature: '' } : current)
+      setDraft((current: DraftState | null) => current ? { ...current, target } : current)
     },
     insert: (index: number): void => {
       const message = newDraftMessage()

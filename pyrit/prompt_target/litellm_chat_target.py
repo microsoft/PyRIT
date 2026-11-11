@@ -704,4 +704,5 @@ class LiteLLMChatTarget(PromptTarget):
         if isinstance(exc, authentication_error):
             raise PyritException(message=f"Authentication failed: {exc}") from exc
 
-        raise PyritException(message=f"LiteLLM error: {exc}") from exc
+        status_code = getattr(exc, "status_code", None) or 500
+        raise PyritException(status_code=status_code, message=f"LiteLLM error: {exc}") from exc
