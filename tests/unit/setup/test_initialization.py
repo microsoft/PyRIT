@@ -121,6 +121,7 @@ async def test_setup_azure_sql_migrates_only_when_explicit_async(*, explicit_mig
         mock.patch.object(AzureSQLMemory, "_enable_azure_authorization"),
         mock.patch.object(AzureSQLMemory, "_check_schema_migration") as check,
         mock.patch.object(AzureSQLMemory, "_run_schema_migration") as migrate,
+        mock.patch.object(AzureSQLMemory, "recover_dataset_cleanup_async", new_callable=mock.AsyncMock) as recover,
         mock.patch.dict(
             os.environ,
             {
@@ -144,6 +145,7 @@ async def test_setup_azure_sql_migrates_only_when_explicit_async(*, explicit_mig
         else:
             check.assert_called_once()
             migrate.assert_not_called()
+        recover.assert_awaited_once()
 
 
 class TestLoadInitializersFromScripts:

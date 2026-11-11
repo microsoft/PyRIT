@@ -109,15 +109,6 @@ def test_seed_migration_preserves_legacy_reconstruction(
     seed: SeedPrompt | SeedObjective | SeedSimulatedConversation,
 ) -> None:
     entry = SeedEntry(entry=seed)
-    legacy_table = sa.Table(
-        "SeedPromptEntries",
-        sa.MetaData(),
-        *(
-            sa.Column(column.name, column.type, primary_key=column.primary_key, nullable=column.nullable)
-            for column in SeedEntry.__table__.columns
-            if column.name != "is_general_technique"
-        ),
-    )
     values = {
         attribute.columns[0].name: getattr(entry, attribute.key)
         for attribute in sa.inspect(SeedEntry).column_attrs
@@ -128,7 +119,19 @@ def test_seed_migration_preserves_legacy_reconstruction(
         with engine.begin() as connection:
             config = _config_for(connection)
             command.upgrade(config, "c8d3e5f7a901")
-            connection.execute(legacy_table.insert().values(values))
+            columns = {column["name"] for column in sa.inspect(connection).get_columns("SeedPromptEntries")}
+            legacy_table = sa.Table(
+                "SeedPromptEntries",
+                sa.MetaData(),
+                *(
+                    sa.Column(column.name, column.type)
+                    for column in SeedEntry.__table__.columns
+                    if column.name in columns
+                ),
+            )
+            connection.execute(
+                legacy_table.insert().values({key: value for key, value in values.items() if key in columns})
+            )
             command.upgrade(config, "head")
             with Session(bind=connection) as session:
                 stored = session.get(SeedEntry, seed.id)
@@ -164,7 +167,19 @@ def test_seed_backfill_preserves_existing_explicit_flags(*, starting_revision: s
         with engine.begin() as connection:
             config = _config_for(connection)
             command.upgrade(config, starting_revision)
-            connection.execute(sa.insert(SeedEntry).values(**values))
+            columns = {column["name"] for column in sa.inspect(connection).get_columns("SeedPromptEntries")}
+            historical_table = sa.Table(
+                "SeedPromptEntries",
+                sa.MetaData(),
+                *(
+                    sa.Column(column.name, column.type)
+                    for column in SeedEntry.__table__.columns
+                    if column.name in columns
+                ),
+            )
+            connection.execute(
+                historical_table.insert().values({key: value for key, value in values.items() if key in columns})
+            )
             command.upgrade(config, "head")
             command.upgrade(config, "head")
             with Session(bind=connection) as session:

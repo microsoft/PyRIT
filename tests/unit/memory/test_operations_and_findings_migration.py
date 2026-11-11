@@ -96,16 +96,35 @@ def test_migration_downgrades_only_without_operations() -> None:
         engine.dispose()
 
 
-@pytest.mark.parametrize("previous_revision", ["d6de1045cca4", "e7a1b3c5d9f0"])
-def test_general_technique_and_http_fingerprint_migrations_merge(previous_revision: str) -> None:
+@pytest.mark.parametrize("previous_revision", ["d6de1045cca4", "e7a1b3c5d9f0", "91b3d5f7a2c6", "a8f3c1d9e620"])
+def test_general_technique_and_main_migrations_merge(previous_revision: str) -> None:
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
             config = _config_for(connection)
             command.upgrade(config, previous_revision)
+            seed_id = str(uuid4())
+            connection.execute(
+                sa.text(
+                    'INSERT INTO "SeedPromptEntries" (id, value, data_type, date_added, added_by, seed_type) '
+                    "VALUES (:id, 'Retained seed', 'text', :date_added, 'migration-test', 'prompt')"
+                ),
+                {"id": seed_id, "date_added": datetime.now(UTC)},
+            )
+            has_flag = "is_general_technique" in {
+                column["name"] for column in sa.inspect(connection).get_columns("SeedPromptEntries")
+            }
+            if has_flag:
+                connection.execute(sa.text('UPDATE "SeedPromptEntries" SET is_general_technique = 1'))
             command.upgrade(config, "head")
             inspector = sa.inspect(connection)
-            assert "is_general_technique" in {column["name"] for column in inspector.get_columns("SeedPromptEntries")}
+            assert {"is_general_technique", "parent_objective_id", "paths"} <= {
+                column["name"] for column in inspector.get_columns("SeedPromptEntries")
+            }
+            assert connection.execute(
+                sa.text('SELECT id, value, is_general_technique FROM "SeedPromptEntries"')
+            ).one() == (seed_id, "Retained seed", int(has_flag))
+            assert len(connection.execute(sa.text("SELECT version_num FROM pyrit_memory_alembic_version")).all()) == 1
             assert "http_request_fingerprint" in {
                 column["name"] for column in inspector.get_columns("TargetIdentifiers")
             }

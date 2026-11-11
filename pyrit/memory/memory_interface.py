@@ -12,7 +12,7 @@ import threading
 import uuid
 import weakref
 from collections import Counter
-from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -60,6 +60,15 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.memory._seed_decomposition import (
+    DecompositionIdentity,
+    DecompositionUnit,
+    apply_decomposition_identity,
+    assign_decomposition_identity,
+    canonicalize_decomposition,
+    fresh_decomposition_identities,
+    split_decomposition_units,
+)
 from pyrit.memory.analytics_sql import (
     JsonArrayItems,
     JsonArrayJoin,
@@ -72,6 +81,8 @@ from pyrit.memory.analytics_sql import (
 )
 
 if TYPE_CHECKING:
+    from pyrit.memory.dataset_mutation import DatasetEditingSnapshot
+    from pyrit.memory.dataset_upload_lease import DatasetUploadLease
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
@@ -159,10 +170,12 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedOrigin,
     SeedPrompt,
     SeedRecord,
     SeedType,
+    SeedUnion,
     TargetIdentifier,
     config_hash,
     group_conversation_message_pieces_by_sequence,
@@ -656,6 +669,7 @@ class MemoryInterface(abc.ABC):
         self.memory_embedding = embedding_model
         self._operation_session: ContextVar[Session | None] = ContextVar("memory_operation_session", default=None)
         self._async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
+        self._dataset_upload_leases: dict[uuid.UUID, DatasetUploadLease] = {}
         self._initialized = False
         self._initialization_lock = threading.Lock()
         self._init_storage_io()
@@ -694,7 +708,11 @@ class MemoryInterface(abc.ABC):
         """
         if self._uses_legacy_session_override():
             raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
-        return AsyncSession(bind=self._get_async_engine(), sync_session_class=MemorySession)
+        return AsyncSession(
+            bind=self._get_async_engine(),
+            sync_session_class=MemorySession,
+            info={"dataset_storage_io": self.results_storage_io},
+        )
 
     def _uses_legacy_session_override(self) -> bool:
         return (
@@ -1338,11 +1356,18 @@ class MemoryInterface(abc.ABC):
 
     async def dispose_loop_resources_async(self) -> None:
         """Close resources before their owning event loop stops."""
+        await self._release_dataset_uploads_async()
         loop = asyncio.get_running_loop()
         engine = self._async_engines.get(loop)
         if engine is not None:
             await engine.dispose()
             del self._async_engines[loop]
+
+    async def _release_dataset_uploads_async(self) -> None:
+        loop = asyncio.get_running_loop()
+        for upload_id, lease in list(self._dataset_upload_leases.items()):
+            if lease.loop is loop:
+                await self.release_dataset_upload_async(upload_id)
 
     @legacy_sync_override(lambda: MemoryInterface.dispose_engine)
     async def dispose_engine_async(self) -> None:
@@ -4882,6 +4907,9 @@ class MemoryInterface(abc.ABC):
         with closing(self._get_session()) as session:
             try:
                 query = session.query(SeedEntry).filter(and_(*conditions))
+                self._validate_decomposition_deletion(
+                    session=session, seed_ids=select(SeedEntry.id).where(and_(*conditions))
+                )
                 count = query.delete(synchronize_session=False)
                 session.commit()
                 return count
@@ -5038,6 +5066,10 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.prompt_group_id.isnot(None))
                     .distinct()
                 )
+                self._validate_decomposition_deletion(
+                    session=session,
+                    seed_ids=select(SeedEntry.id).where(SeedEntry.prompt_group_id.in_(group_id_subquery)),
+                )
                 count = (
                     session.query(SeedEntry)
                     .filter(SeedEntry.prompt_group_id.in_(group_id_subquery))
@@ -5049,6 +5081,31 @@ class MemoryInterface(abc.ABC):
                 session.rollback()
                 logger.exception(f"Failed to remove seed groups from memory: {e}")
                 raise
+
+    @staticmethod
+    def _validate_decomposition_deletion(*, session: Session, seed_ids: Select[tuple[uuid.UUID]]) -> None:
+        """
+        Reject a delete that selects only one end of a stored parent-child link.
+
+        Args:
+            session (Session): The deletion's transaction.
+            seed_ids (Select): The IDs selected for deletion, including any group expansion.
+
+        Raises:
+            ValueError: If the selection contains only part of a decomposition tree.
+        """
+        deletion = seed_ids.cte()
+        selected = SeedEntry.id.in_(select(deletion.c.id))
+        parent_selected = SeedEntry.parent_objective_id.in_(select(deletion.c.id))
+        boundary = session.query(SeedEntry.id).filter(
+            SeedEntry.parent_objective_id.is_not(None),
+            or_(and_(selected, not_(parent_selected)), and_(not_(selected), parent_selected)),
+        )
+        if boundary.first() is not None:
+            raise ValueError(
+                "Deletion must include the whole decomposition tree; select every objective in the tree "
+                "(for example, by dataset_name). No seeds were deleted."
+            )
 
     def _add_list_conditions(
         self,
@@ -5193,6 +5250,124 @@ class MemoryInterface(abc.ABC):
         """
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
 
+    async def reserve_dataset_upload_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Reserve an exact name and journal owned asset paths before writing bytes.
+
+        Returns:
+            uuid.UUID: The durable upload/cleanup identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths)
+
+    async def reserve_dataset_mutation_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Journal new media for an existing exact-name population before writing bytes.
+
+        Returns:
+            uuid.UUID: Durable operation ID.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths, mutation=True)
+
+    async def get_dataset_editing_snapshot_async(self, dataset_name: str) -> "DatasetEditingSnapshot":
+        """
+        Read records and a complete content token from one participating-writer snapshot.
+
+        Returns:
+            DatasetEditingSnapshot: Inert records and their content token.
+        """
+        from pyrit.memory.dataset_mutation import editing_snapshot_async
+
+        return await editing_snapshot_async(memory=self, dataset_name=dataset_name)
+
+    async def commit_dataset_mutation_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        expected_version: str,
+        delete_ids: Sequence[uuid.UUID],
+        prepare_seeds: Callable[[dict[uuid.UUID, SeedRecord]], list[SeedUnion]],
+        write_media: Callable[[list[SeedUnion]], Awaitable[None]],
+        max_records: int,
+        max_bytes: int,
+    ) -> dict[str, Any]:
+        """
+        Commit exact inserts/replacements/deletions with final-group and state validation.
+
+        Returns:
+            dict[str, Any]: Exact committed counts, IDs, population and version.
+        """
+        from pyrit.memory.dataset_mutation import commit_mutation_async
+
+        return await commit_mutation_async(
+            memory=self,
+            upload_id=upload_id,
+            expected_version=expected_version,
+            delete_ids=delete_ids,
+            prepare_seeds=prepare_seeds,
+            write_media=write_media,
+            max_records=max_records,
+            max_bytes=max_bytes,
+        )
+
+    async def commit_dataset_upload_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        seeds: Sequence[SeedUnion],
+        write_media: Callable[[], Awaitable[None]],
+    ) -> bool:
+        """
+        Atomically publish all storage-ready seeds without deduplication or replacement.
+
+        Returns:
+            bool: Whether native ownership was released after the successful commit.
+        """
+        from pyrit.memory.dataset_lifecycle import commit_upload_async
+
+        return await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)
+
+    async def delete_dataset_async(self, *, dataset_name: str) -> uuid.UUID:
+        """
+        Delete exact-name stored seeds and journal cleanup of API-owned media.
+
+        Returns:
+            uuid.UUID: The durable deletion identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import delete_dataset_async
+
+        return await delete_dataset_async(memory=self, dataset_name=dataset_name)
+
+    async def cleanup_dataset_media_async(
+        self, *, operation_id: uuid.UUID, abandon_upload: bool = False
+    ) -> dict[str, object]:
+        """
+        Retry owned-media cleanup.
+
+        Returns:
+            dict[str, object]: Durable, non-sensitive cleanup status.
+        """
+        from pyrit.memory.dataset_lifecycle import cleanup_dataset_media_async
+
+        return await cleanup_dataset_media_async(memory=self, operation_id=operation_id, abandon_upload=abandon_upload)
+
+    async def release_dataset_upload_async(self, upload_id: uuid.UUID) -> None:
+        """Release this runtime's native upload ownership after publication, failure, or shutdown."""
+        from pyrit.memory.dataset_lifecycle import _finish_storage_write_async
+
+        lease = self._dataset_upload_leases.pop(upload_id, None)
+        if lease is not None:
+            await _finish_storage_write_async(lease.close_async())
+
+    async def recover_dataset_cleanup_async(self) -> None:
+        """Recover abandoned uploads and incomplete deletions after runtime initialization."""
+        from pyrit.memory.dataset_lifecycle import recover_dataset_cleanup_async
+
+        await recover_dataset_cleanup_async(self)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -5210,6 +5385,13 @@ class MemoryInterface(abc.ABC):
         successful insertion; a copy that would otherwise reuse the stored group ID is moved to a
         new group so editing it cannot alter the original group.
 
+        Decomposition trees, including prompts grouped with their objectives, deduplicate as complete
+        units by execution identity, group membership, parent links, and ordered path steps. Descriptive
+        metadata and path labels do not change tree identity: re-importing updates that metadata in
+        place, keeping the original import attribution and timestamps. Caller seed, group, parent,
+        and path IDs are remapped to the stored IDs only after a successful write. Changes to content,
+        behavioral inputs, group sequence, or tree structure store a separate tree.
+
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
             added_by (str): The user who added the seeds.
@@ -5221,8 +5403,252 @@ class MemoryInterface(abc.ABC):
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
-        """Deduplicate and store seeds after their media is prepared."""
-        existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        """
+        Deduplicate and store seeds after their media is prepared.
+
+        Decomposition trees, with the seeds grouped with their objectives, are stored as whole
+        units; every other seed is deduplicated individually or by its complete prompt group.
+        """
+        units, independent = split_decomposition_units(seeds)
+        for unit in units:
+            self._insert_decomposition_unit(unit=unit)
+        if independent:
+            self._insert_independent_seeds(seeds=independent)
+
+    def _insert_decomposition_unit(self, *, unit: DecompositionUnit) -> None:
+        """
+        Store one decomposition tree unless an equivalent tree is already stored.
+
+        An equivalent stored tree has the same execution content, structure, and paths in the same dataset;
+        each caller seed then takes its stored counterpart's identifiers, including group IDs the
+        caller left unset. A new tree whose seed or group IDs are already stored is copied with new
+        identifiers so it cannot alter the stored rows.
+        """
+        canonical, ordered = canonicalize_decomposition(unit=unit, member_key=self._seed_decomposition_member_key)
+        stored = self._find_stored_decomposition(root=unit.root, canonical=canonical)
+        if stored is not None:
+            self._update_decomposition_metadata(seeds=ordered, stored=stored)
+            for target, source in zip(ordered, stored, strict=True):
+                assign_decomposition_identity(target=target, source=source)
+            return
+        if self._decomposition_identifiers_are_stored(seeds=unit.seeds):
+            identity = fresh_decomposition_identities(unit.seeds)
+        else:
+            identity = DecompositionIdentity(seed_ids={}, group_ids={}, path_ids={})
+        copies = apply_decomposition_identity(seeds=unit.seeds, identity=identity)
+        self._insert_entries(entries=[SeedEntry(entry=seed) for seed in copies])
+        for target, source in zip(unit.seeds, copies, strict=True):
+            assign_decomposition_identity(target=target, source=source)
+
+    def _seed_decomposition_member_key(self, seed: Seed[Any]) -> str:
+        """
+        Identify a tree member by execution content and its position in a prompt group.
+
+        Returns:
+            str: Canonical execution identity, excluding descriptive metadata.
+        """
+        return json.dumps(
+            {
+                "execution": self._seed_standalone_key(seed),
+                "value_sha256": seed.value_sha256,
+                "sequence": getattr(seed, "sequence", None),
+                "parameters": getattr(seed, "parameters", None) or [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _update_decomposition_metadata(self, *, seeds: Sequence[Seed[Any]], stored: Sequence[Seed[Any]]) -> None:
+        """
+        Update matched tree metadata atomically, retaining stored identity and import provenance.
+
+        Args:
+            seeds (Sequence[Seed]): Incoming seeds in canonical order.
+            stored (Sequence[Seed]): Matching stored seeds in the same order.
+
+        Raises:
+            StaleDataError: If a matched row disappeared.
+            SQLAlchemyError: If the metadata update fails.
+        """
+        with closing(self._get_session()) as session:
+            try:
+                for seed, source in zip(seeds, stored, strict=True):
+                    copy = seed.model_copy(deep=True)
+                    assign_decomposition_identity(target=copy, source=source)
+                    entry = SeedEntry(entry=copy)
+                    count = (
+                        session.query(SeedEntry)
+                        .filter(SeedEntry.id == source.id)
+                        .update(
+                            {
+                                SeedEntry.name: entry.name,
+                                SeedEntry.description: entry.description,
+                                SeedEntry.harm_categories: entry.harm_categories,
+                                SeedEntry.authors: entry.authors,
+                                SeedEntry.groups: entry.groups,
+                                SeedEntry.source: entry.source,
+                                SeedEntry.prompt_metadata: entry.prompt_metadata,
+                                SeedEntry.paths: entry.paths,
+                            },
+                            synchronize_session=False,
+                        )
+                    )
+                    if count != 1:
+                        raise StaleDataError(f"Stored decomposition member {source.id} disappeared during re-import.")
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to update decomposition metadata: {e}")
+                raise
+
+    def _find_stored_decomposition(self, *, root: SeedObjective, canonical: str) -> list[Seed[Any]] | None:
+        """
+        Find a stored tree equivalent to an incoming one.
+
+        Returns:
+            list[Seed] | None: The stored tree's seeds in canonical order, or None if none matches.
+        """
+        conditions = [
+            SeedEntry.value_sha256 == root.value_sha256,
+            SeedEntry.seed_type == "objective",
+            SeedEntry.parent_objective_id.is_(None),
+        ]
+        if root.dataset_name:
+            conditions.append(SeedEntry.dataset_name == root.dataset_name)
+        for candidate in self._query_entries(
+            SeedEntry, conditions=and_(*conditions), order_by=(SeedEntry.date_added, SeedEntry.id)
+        ):
+            objectives, mates = self._get_decomposition_entries(root_id=candidate.id)
+            if len(objectives) < 2:
+                continue
+            try:
+                stored_unit = DecompositionUnit(
+                    root_id=candidate.id, seeds=tuple(entry.get_seed() for entry in (*objectives, *mates))
+                )
+                stored_canonical, stored_ordered = canonicalize_decomposition(
+                    unit=stored_unit, member_key=self._seed_decomposition_member_key
+                )
+            except ValueError:
+                logger.warning(f"Skipping stored decomposition {candidate.id}: its tree is incomplete or invalid.")
+                continue
+            if stored_canonical == canonical:
+                return stored_ordered
+        return None
+
+    def _get_decomposition_entries(self, *, root_id: uuid.UUID) -> tuple[list[SeedEntry], list[SeedEntry]]:
+        """
+        Read a stored objective, its descendants, and the seeds grouped with any of them.
+
+        Returns:
+            tuple[list[SeedEntry], list[SeedEntry]]: The objectives, parents before children, and the
+                other seeds of their prompt groups.
+        """
+        objectives = list(self._query_entries(SeedEntry, conditions=SeedEntry.id == root_id))
+        seen = {entry.id for entry in objectives}
+        frontier = list(seen)
+        while frontier:
+            children = [
+                entry
+                for entry in self._execute_batched_query(
+                    SeedEntry,
+                    batch_column=SeedEntry.parent_objective_id,
+                    batch_values=frontier,
+                    order_by=(SeedEntry.date_added, SeedEntry.id),
+                )
+                if entry.id not in seen
+            ]
+            seen.update(entry.id for entry in children)
+            objectives.extend(children)
+            frontier = [entry.id for entry in children]
+        group_ids = list({entry.prompt_group_id for entry in objectives if entry.prompt_group_id is not None})
+        mates = (
+            [
+                entry
+                for entry in self._execute_batched_query(
+                    SeedEntry,
+                    batch_column=SeedEntry.prompt_group_id,
+                    batch_values=group_ids,
+                    order_by=(SeedEntry.date_added, SeedEntry.id),
+                )
+                if entry.id not in seen
+            ]
+            if group_ids
+            else []
+        )
+        return objectives, mates
+
+    def _decomposition_identifiers_are_stored(self, *, seeds: Sequence[Seed[Any]]) -> bool:
+        """
+        Whether any seed ID or prompt group ID of a unit is already stored.
+
+        Returns:
+            bool: True if storing the unit as-is would collide with or join stored rows.
+        """
+        seed_ids = [seed.id for seed in seeds if seed.id is not None]
+        group_ids = list({seed.prompt_group_id for seed in seeds if seed.prompt_group_id is not None})
+        return bool(
+            (seed_ids and self._execute_batched_query(SeedEntry, batch_column=SeedEntry.id, batch_values=seed_ids))
+            or (
+                group_ids
+                and self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.prompt_group_id, batch_values=group_ids
+                )
+            )
+        )
+
+    def _exclude_stored_decomposition_seeds(
+        self, *, existing_seeds: list[tuple[str | None, Seed[Any]]]
+    ) -> list[tuple[str | None, Seed[Any]]]:
+        """
+        Drop stored decomposition members, and seeds grouped with them, from deduplication matches.
+
+        Independent seeds never deduplicate against part of a tree.
+
+        Returns:
+            list[tuple[str | None, Seed[Any]]]: The matches that are not part of a stored tree.
+        """
+        if not existing_seeds or not self._query_entries(
+            SeedEntry, conditions=SeedEntry.parent_objective_id.is_not(None), limit=1
+        ):
+            return existing_seeds
+        objectives: dict[uuid.UUID, SeedObjective] = {
+            seed.id: seed for _, seed in existing_seeds if isinstance(seed, SeedObjective) and seed.id is not None
+        }
+        group_ids = list({seed.prompt_group_id for _, seed in existing_seeds if seed.prompt_group_id is not None})
+        if group_ids:
+            for entry in self._execute_batched_query(
+                SeedEntry,
+                batch_column=SeedEntry.prompt_group_id,
+                batch_values=group_ids,
+                other_conditions=[SeedEntry.seed_type == "objective"],
+            ):
+                grouped = entry.get_seed()
+                if isinstance(grouped, SeedObjective):
+                    objectives.setdefault(entry.id, grouped)
+        parent_ids = {
+            entry.parent_objective_id
+            for entry in self._execute_batched_query(
+                SeedEntry, batch_column=SeedEntry.parent_objective_id, batch_values=list(objectives)
+            )
+        }
+        members = [
+            objective
+            for objective_id, objective in objectives.items()
+            if objective.parent_objective_id is not None or objective_id in parent_ids
+        ]
+        member_ids = {member.id for member in members}
+        member_groups = {member.prompt_group_id for member in members if member.prompt_group_id is not None}
+        return [
+            (dataset, seed)
+            for dataset, seed in existing_seeds
+            if seed.id not in member_ids and seed.prompt_group_id not in member_groups
+        ]
+
+    def _insert_independent_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
+        """Deduplicate and store seeds that are not part of a decomposition tree."""
+        existing_seeds = self._exclude_stored_decomposition_seeds(
+            existing_seeds=self._get_existing_seed_keys(seeds=seeds)
+        )
         # Compute each stored seed's full member identity once; retained groups and the
         # complete-group check both use it.
         existing_group_members: list[tuple[uuid.UUID, str | None, str, uuid.UUID | None]] = []
@@ -5893,6 +6319,7 @@ class MemoryInterface(abc.ABC):
             )
 
         SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
+        split_decomposition_units(seeds)
 
     def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
         """
@@ -5906,6 +6333,9 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                self._validate_decomposition_deletion(
+                    session=session, seed_ids=select(SeedEntry.id).where(SeedEntry.dataset_name == dataset_name)
+                )
                 deleted = (
                     session.query(SeedEntry)
                     .filter(SeedEntry.dataset_name == dataset_name)
@@ -10754,6 +11184,27 @@ class MemoryInterface(abc.ABC):
             prompt_group_ids=prompt_group_ids,
         )
 
+    async def get_seed_decomposition_async(self, *, objective_id: uuid.UUID) -> Sequence[SeedObjective]:
+        """
+        Retrieve a stored objective and every objective decomposed beneath it.
+
+        Use ``build_objective_decomposition_tree(result, root_id=objective_id)`` to walk the children
+        and paths; the returned objective keeps its stored parent link even when it is not a root.
+        Prompts grouped with these objectives can be read with ``get_seeds_async(prompt_group_ids=...)``.
+
+        Args:
+            objective_id (uuid.UUID): The objective to start from, at any level of its tree.
+
+        Returns:
+            Sequence[SeedObjective]: The objective and its descendants, parents before children.
+                Empty if no objective has this ID.
+        """
+        return await self._run_database_operation_async(self._execute_get_seed_decomposition, objective_id=objective_id)
+
+    def _execute_get_seed_decomposition(self, *, objective_id: uuid.UUID) -> Sequence[SeedObjective]:
+        objectives, _ = self._get_decomposition_entries(root_id=objective_id)
+        return [seed for seed in (entry.get_seed() for entry in objectives) if isinstance(seed, SeedObjective)]
+
     def remove_seeds_from_memory(
         self,
         *,
@@ -10853,6 +11304,9 @@ class MemoryInterface(abc.ABC):
         filter must be provided to prevent accidental deletion of all seeds. The deletion runs in a single
         transaction, so it works consistently across SQLite and Azure SQL.
 
+        A filter that selects only part of a decomposition tree raises ``ValueError`` before any
+        rows are deleted. Select every objective in the tree, for example by dataset name.
+
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
@@ -10909,7 +11363,7 @@ class MemoryInterface(abc.ABC):
             int: The number of seeds removed.
 
         Raises:
-            ValueError: If no filters are provided.
+            ValueError: If no filters are provided or the selection would delete only part of a decomposition tree.
             SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
         """
         return await self._run_database_operation_async(
@@ -11041,6 +11495,9 @@ class MemoryInterface(abc.ABC):
         to prevent accidental deletion of all seeds. The deletion runs in a single transaction, so it
         works consistently across SQLite and Azure SQL.
 
+        Group expansion must still select every objective of an affected decomposition tree;
+        otherwise ``ValueError`` is raised before any rows are deleted.
+
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
         it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
@@ -11103,7 +11560,7 @@ class MemoryInterface(abc.ABC):
             int: The number of seeds removed across all affected groups.
 
         Raises:
-            ValueError: If no filters are provided.
+            ValueError: If no filters are provided or the expanded groups contain only part of a decomposition tree.
             SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
         """
         return await self._run_database_operation_async(
