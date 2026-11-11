@@ -2564,8 +2564,13 @@ class ScenarioResultEntry(Base):
         attack_results: dict[str, list[AttackResult]] = {}
 
         # Rows from v0.13 and v0.14 kept scenario_init_data, which was always null for built-in
-        # scenarios, and the v1.0 rename carried that null over into scenario_identifier.
-        stored_identifier = self.scenario_identifier or {"class_name": self.scenario_name}
+        # scenarios, and the v1.0 rename carried that null over into scenario_identifier. The
+        # denormalized scenario_version column survives the upgrade, so carry it into the
+        # reconstructed identifier rather than letting the version default to 1.
+        stored_identifier = self.scenario_identifier or {
+            "class_name": self.scenario_name,
+            "version": self.scenario_version,
+        }
         base_identifier = ComponentIdentifier.model_validate({**stored_identifier, "pyrit_version": stored_version})
         scenario_identifier = ScenarioIdentifier.from_component_identifier(
             base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)

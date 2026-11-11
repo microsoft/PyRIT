@@ -3089,24 +3089,33 @@ def test_scored_expectation_downgrade_recovers_objective_and_drops_conditions():
             engine.dispose()
 
 
-async def test_scenario_result_from_v0_14_loads_after_upgrade_async() -> None:
+async def test_scenario_results_from_v0_13_and_v0_14_load_after_upgrade_async() -> None:
     """v0.13 and v0.14 stored scenario_init_data as JSON null, and the rename carried it into scenario_identifier."""
+    insert_scenario_row = text(
+        'INSERT INTO "ScenarioResultEntries" '
+        "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
+        "objective_target_identifier, scenario_init_data, scenario_run_state, attack_results_json, "
+        "number_tries, completion_time, timestamp) "
+        "VALUES (:id, :name, '', :version, :pyrit_version, '{}', 'null', 'COMPLETED', '{}', 1, "
+        "'2026-05-18', '2026-05-18')"
+    )
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = os.path.join(temp_dir, "legacy-scenario.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
             with engine.begin() as connection:
+                # ab8f2c1a9d07 is the pre-alembic baseline, i.e. the schema a v0.13 database has.
+                command.upgrade(_config_for(connection), "ab8f2c1a9d07")
+                connection.execute(
+                    insert_scenario_row,
+                    {"id": str(uuid.uuid4()), "name": "EncodingScenario", "version": 2, "pyrit_version": "0.13.0"},
+                )
+            with engine.begin() as connection:
+                # c3d5e7f9a1b2 is the last revision where scenario_init_data still exists (v0.14 era).
                 command.upgrade(_config_for(connection), "c3d5e7f9a1b2")
                 connection.execute(
-                    text(
-                        'INSERT INTO "ScenarioResultEntries" '
-                        "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
-                        "objective_target_identifier, scenario_init_data, scenario_run_state, attack_results_json, "
-                        "number_tries, completion_time, timestamp) "
-                        "VALUES (:id, 'FoundryScenario', '', 1, '0.14.0', '{}', 'null', 'COMPLETED', '{}', 1, "
-                        "'2026-05-18', '2026-05-18')"
-                    ),
-                    {"id": str(uuid.uuid4())},
+                    insert_scenario_row,
+                    {"id": str(uuid.uuid4()), "name": "FoundryScenario", "version": 1, "pyrit_version": "0.14.0"},
                 )
         finally:
             engine.dispose()
@@ -3120,4 +3129,15 @@ async def test_scenario_result_from_v0_14_loads_after_upgrade_async() -> None:
             finally:
                 await memory.dispose_engine_async()
 
-    assert [result.scenario_name for result in results] == ["FoundryScenario"]
+    results_by_name = {result.scenario_name: result for result in results}
+    assert set(results_by_name) == {"EncodingScenario", "FoundryScenario"}
+
+    v13_result = results_by_name["EncodingScenario"]
+    assert v13_result.pyrit_version == "0.13.0"
+    assert v13_result.scenario_version == 2
+    assert v13_result.attack_results == {}
+
+    v14_result = results_by_name["FoundryScenario"]
+    assert v14_result.pyrit_version == "0.14.0"
+    assert v14_result.scenario_version == 1
+    assert v14_result.attack_results == {}
