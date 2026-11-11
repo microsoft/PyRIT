@@ -198,9 +198,9 @@ class RegistryRecipeRestorer:
             summary = f"Couldn't restore {subject} ({failure.reason.value}): {failure.message}"
             cause = causes.get((failure.kind, failure.name))
             if cause is None:
-                logger.error(summary)
+                logger.error(redact_urls(summary))
             else:
-                logger.error(f"{summary}\n{redact_urls(''.join(traceback.format_exception(cause))).rstrip()}")
+                logger.error(redact_urls(f"{summary}\n{''.join(traceback.format_exception(cause)).rstrip()}"))
 
     def _plan_all(
         self,
