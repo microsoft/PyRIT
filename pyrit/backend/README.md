@@ -501,6 +501,15 @@ count, and a clipping flag. These use the same metadata model as the generic att
 Use the saved-conversation APIs above for reference continuation and all transcript
 bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
 
+`GET /api/scenarios/runs/{scenario_result_id}/assert-metrics` returns the SDK's
+`AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
+return 400 with problem type `/errors/not-assert-policy-run`, runs that haven't
+completed return 409, and saved results that can't be read as ASSERT metrics return
+500. A saved registry name identifies the run; older runs without one must come from
+the `AssertPolicy` class in PyRIT's Foundry scenario module. The run page shows these
+metrics for completed ASSERT runs and hides the panel when the route identifies
+another scenario.
+
 An entirely rootless saved graph, such as a closed cycle, returns a bounded
 `diagnostics.rootless_result_ids` sample with its total count and clipping flag.
 It does not invent lineage or promote a cycle member to a true root. The sampled
@@ -561,6 +570,46 @@ Responses also include `creation_statement`, a Python-style display of the facto
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
 or lossless source. The GUI displays identity JSON, not the creation statement.
+
+### Prompt Generations
+
+Prompt generations run PyRIT's prompt generators as background jobs and store each
+result as a new named seed dataset. `GET /api/prompt-generators` describes each
+generator's stages, target roles, and the scenario that runs its datasets. v1
+registers `assert` (`AssertGenerator`, with a reviewable dimensions stage) and
+`target_objective` (`TargetObjectiveGenerator`).
+
+| Endpoint | Result |
+| --- | --- |
+| `POST /api/prompt-generations/preflight` | Validation errors, dataset-name availability, and a call/token estimate; no target is called |
+| `POST /api/prompt-generations` | 201 with a queued generation; 409 if the dataset name is taken |
+| `POST /api/prompt-generations/batch` | 201 with several queued generations that share a generator, targets, settings, and a `group_id`, such as an ASSERT suite |
+| `GET /api/prompt-generations` | Generations newest first |
+| `GET`, `DELETE /api/prompt-generations/{id}` | Read or delete a record; deleting keeps the dataset |
+| `POST /api/prompt-generations/{id}/continue\|retry\|cancel` | Finish a review, resume from the last checkpoint, or cancel |
+| `GET`, `PUT /api/prompt-generations/{id}/review` | Read or save output awaiting review |
+| `GET /api/prompt-generations/{id}/estimate` | Remaining calls from the checkpoint; ASSERT is exact once the taxonomy exists |
+| `GET /api/prompt-generations/from-dataset?selection_key=` | The request recorded in a generated dataset, to edit and regenerate under a new name |
+| `GET /api/prompt-generators/assert/behaviors\|suites` | The bundled ASSERT behavior and suite library |
+
+Generators own model calls, stages, validation, and resumable checkpoints; dataset
+providers package results. `PromptGenerationService` owns admission, one running
+generation at a time by default, persistence of every checkpoint, review pauses,
+cancellation, and dataset-name reservation. Each record is a JSON document at
+`<memory results_path>/prompt_generations/<id>.json`, next to media output.
+
+A single backend instance owns generation records. It reads them once into an
+in-process cache and every write updates both; local files are replaced atomically.
+Several backends sharing one results storage, such as one blob container, aren't
+supported for generations: record writes, cancellation, and dataset-name reservations
+aren't coordinated across processes, so two backends could accept the same dataset
+name or cancel each other's work. `pause_for_review` is rejected for generators
+without a reviewable stage. On first use after a
+restart, records that were active become `interrupted`, and retry resumes from the
+last stored checkpoint. Shutdown interrupts running generations but lets a dataset
+save finish. A dataset is saved once, under a name that didn't exist when the
+generation started; retrying a generation whose dataset was already saved completes
+without saving it again.
 
 ### Manual Messages
 

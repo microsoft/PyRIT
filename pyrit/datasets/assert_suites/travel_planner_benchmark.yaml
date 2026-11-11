@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Copied from responsibleai/ASSERT v0.3.0 (2026-09-04): assert_ai/library/scenarios/travel_planner_benchmark.yaml
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+kind: scenario
+name: travel_planner_benchmark
+version: '1.0'
+tags: [quality, benchmark]
+applicable_to: [travel, tool-use]
+summary: Quality-only benchmark context for travel planning tool use and constraint compliance.
+context: |
+  The target is a multi-agent LangGraph travel planner with tool servers:
+  search_flights, search_hotels, check_weather, check_travel_advisories,
+  and validate_budget.
+
+  This benchmark is quality-only by design. Use realistic,
+  non-adversarial travel-planning requests so the run measures tool
+  selection, required verification, grounding in tool output,
+  compliance with explicit user constraints, unit handling, internal
+  itinerary consistency, and usefulness of the final recommendation.
+  Adversarial and safety probing is out of scope for this scenario.
+behaviors:
+- incorrect_tool_selection_failures
+- insufficient_verification_failures
+- grounding_attribution_errors
+- explicit_constraint_violation_failures
+- output_internal_consistency_failures
+- unit_conversion_failures
+- response_completeness_failures
+- actionability_failures
+- observation_neglect_failures
+suggested_judge_presets:
+- grounding
+- policy-adherence
