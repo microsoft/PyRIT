@@ -423,7 +423,7 @@ class TestPlaywrightCopilotTarget:
         class MockFileChooserInfo:
             @property
             def value(self) -> asyncio.Future[AsyncMock]:
-                future = asyncio.Future()
+                future: asyncio.Future[AsyncMock] = asyncio.Future()
                 future.set_result(mock_file_chooser)
                 return future
 
