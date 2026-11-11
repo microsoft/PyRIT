@@ -538,6 +538,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }
 
   const handleClose = () => {
+    if (submitting) return
     resetForm()
     onClose()
   }

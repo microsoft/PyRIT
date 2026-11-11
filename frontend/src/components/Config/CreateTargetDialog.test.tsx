@@ -1023,6 +1023,53 @@ describe("CreateTargetDialog", () => {
     });
   });
 
+  it("should preserve the HTTP error destination when Escape is pressed during submission", async () => {
+    const user = userEvent.setup();
+    let rejectCreateTarget: (error: unknown) => void = () => undefined;
+    mockedTargetsApi.createTarget.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectCreateTarget = reject;
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+    const requestField = screen.getByRole("textbox", { name: /http request/i });
+    await user.type(requestField, "not an HTTP request");
+    await user.click(screen.getByRole("button", { name: "Create Target" }));
+    await waitFor(() => expect(requestField).toBeDisabled());
+
+    await user.click(screen.getByText("Advanced settings", { exact: true }));
+    await user.keyboard("{Escape}");
+
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+    expect(requestField).toHaveValue("not an HTTP request");
+    expect(screen.getByRole("combobox", { name: "Target Type" })).toHaveTextContent("HTTPTarget");
+
+    await act(async () => rejectCreateTarget(Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    )));
+
+    await waitFor(() => {
+      expect(requestField).toHaveFocus();
+      expect(requestField).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent("Invalid HTTP request line");
+    });
+
+    await user.keyboard("{Escape}");
+    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("announces metadata validation errors after a prior HTTP request error", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
