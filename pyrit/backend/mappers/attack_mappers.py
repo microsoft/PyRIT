@@ -199,8 +199,8 @@ def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     """
     if not value or data_type not in MEDIA_PATH_DATA_TYPES:
         return None
-    # Already a URL or data URI — pass through
-    if value.startswith(("http://", "https://", "data:")):
+    # Already a URL or data URI — pass through (schemes are case-insensitive)
+    if value.lower().startswith(("http://", "https://", "data:")):
         return value
     # Local file path — construct a media endpoint URL
     if Path(value).is_file():
