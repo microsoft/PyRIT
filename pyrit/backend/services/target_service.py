@@ -14,9 +14,11 @@ Targets can be:
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
@@ -29,9 +31,9 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
-from pyrit.backend.services.component_lifecycle import release_component_async
+from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
-from pyrit.models import ComponentType, Parameter, TargetIdentifier
+from pyrit.models import ComponentType, Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
@@ -41,7 +43,17 @@ from pyrit.models.catalog import (
     TargetInstance,
 )
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
+from pyrit.prompt_target import (
+    GitHubCopilotTarget,
+    PromptTarget,
+    RoundRobinTarget,
+    discover_target_capabilities_async,
+)
+from pyrit.prompt_target.common.discover_target_capabilities import (
+    DEFAULT_TEST_ASSETS,
+    CapabilityDiscoveryError,
+)
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.registry import TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
@@ -101,9 +113,130 @@ class TargetService:
     validation remains owned by the target classes.
     """
 
+    DETECTION_TIMEOUT_SECONDS: float = 240.0
+
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
+        self._detecting: set[str] = set()
+        self._detecting_sources: set[int] = set()
+        self._legacy_binding_capabilities: WeakKeyDictionary[PromptTarget, TargetCapabilities] = WeakKeyDictionary()
+
+    def saved_capabilities(self, *, target: PromptTarget, metadata: dict[str, Any]) -> TargetCapabilities:
+        """
+        Resolve a manual chat's snapshot, or its source's pre-detection session fallback.
+
+        Returns:
+            TargetCapabilities: Saved capabilities without changing the registered target.
+        """
+        binding = TargetBinding.from_metadata(metadata)
+        if binding is not None and binding.capabilities is not None:
+            return binding.capabilities
+        saved = metadata.get("target_capabilities")
+        if saved is not None:
+            return TargetCapabilities.model_validate(saved)
+        return self._legacy_binding_capabilities.get(target, target.capabilities)
+
+    @contextmanager
+    def capabilities_scope(
+        self, *, target: PromptTarget | None, metadata: dict[str, Any]
+    ) -> Generator[None, None, None]:
+        """
+        Preserve a manual chat's configuration on its original, caller-owned target.
+
+        Yields:
+            None: A task-local scope; the live target is neither mutated nor released.
+        """
+        if target is None:
+            yield
+            return
+        capabilities = self.saved_capabilities(target=target, metadata=metadata)
+        with target.capabilities_scope(capabilities):
+            yield
+
+    async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
+        """
+        Probe private targets and apply a completed result to the selected source.
+
+        Round-robin detection probes each child independently and combines their
+        results. Only the selected parent is updated; live children are not changed.
+
+        Returns:
+            TargetInstance: The updated live target.
+
+        Raises:
+            LookupError: The target is not registered.
+            FileExistsError: Discovery is already running or the source changed.
+            ValueError: The target cannot be probed safely.
+            TimeoutError: Discovery exceeded its operation deadline.
+        """
+        target = self.get_target_object(target_registry_name=target_registry_name)
+        if target is None:
+            raise LookupError("Target not found")
+        if target.get_identifier().hash != expected_hash:
+            raise FileExistsError("The target changed. Refresh the target registry.")
+        if getattr(target, "inner_targets", None) and not isinstance(target, RoundRobinTarget):
+            raise ValueError("Capability detection is not supported for this composite target type.")
+        sources = target.inner_targets if isinstance(target, RoundRobinTarget) else [target]
+        snapshots = [(source, source.configuration) for source in [target, *sources]]
+        source_ids = {id(source) for source, _ in snapshots}
+        if target_registry_name in self._detecting or source_ids & self._detecting_sources:
+            raise FileExistsError("Capability detection is already running for this target or one of its children.")
+        self._detecting.add(target_registry_name)
+        self._detecting_sources.update(source_ids)
+        try:
+            async with asyncio.timeout(self.DETECTION_TIMEOUT_SECONDS):
+                results: list[TargetCapabilities] = []
+                for index, source in enumerate(sources):
+                    try:
+                        results.append(await self._probe_capabilities_async(source))
+                    except (CapabilityDiscoveryError, ValueError) as exc:
+                        if isinstance(target, RoundRobinTarget):
+                            error_type = (
+                                CapabilityDiscoveryError if isinstance(exc, CapabilityDiscoveryError) else ValueError
+                            )
+                            raise error_type(f"Child {index + 1} ({type(source).__name__}): {exc}") from exc
+                        raise
+                capabilities = (
+                    target.aggregate_capabilities(child_capabilities=results)
+                    if isinstance(target, RoundRobinTarget)
+                    else results[0]
+                )
+                if (
+                    self.get_target_object(target_registry_name=target_registry_name) is not target
+                    or any(source.configuration is not configuration for source, configuration in snapshots)
+                    or target.get_identifier().hash != expected_hash
+                    or (isinstance(target, RoundRobinTarget) and target.inner_targets != sources)
+                ):
+                    raise FileExistsError(
+                        "The target changed during capability detection. Refresh the target registry."
+                    )
+                self._legacy_binding_capabilities.setdefault(target, target.capabilities)
+                target.apply_capabilities(capabilities=capabilities)
+                return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target)
+        finally:
+            self._detecting.discard(target_registry_name)
+            self._detecting_sources.difference_update(source_ids)
+
+    async def _probe_capabilities_async(self, target: PromptTarget) -> TargetCapabilities:
+        """
+        Check one private target and release its resources.
+
+        Returns:
+            TargetCapabilities: Completed capability results.
+        """
+        probe = await construct_component_async(self._registry.recreate_instance, source=target, params={})
+        try:
+            probe.apply_capabilities(capabilities=target.capabilities)
+            modalities: set[frozenset[PromptDataType]] = {frozenset({"text"})}
+            for modality in DEFAULT_TEST_ASSETS:
+                modalities.update({frozenset({modality}), frozenset({"text", modality})})
+            modalities.update(TOOL_CALL_INPUT_MODALITIES)
+            return await discover_target_capabilities_async(
+                target=probe, test_modalities=modalities, raise_on_error=True
+            )
+        finally:
+            await release_component_async(probe)
 
     def _build_instance_from_object(
         self, *, target_registry_name: str, target_obj: Any, origin: RegistryEntryOrigin | None = None
@@ -193,6 +326,20 @@ class TargetService:
             The PromptTarget object if found, None otherwise.
         """
         return self._registry.instances.get(target_registry_name)
+
+    def get_target_object_by_identifier_hash(self, identifier_hash: str) -> PromptTarget | None:
+        """
+        Resolve a legacy saved target only when its registry identity is unambiguous.
+
+        Returns:
+            PromptTarget | None: The sole matching registry entry, or None when missing or ambiguous.
+        """
+        matches = [
+            entry.instance
+            for entry in self._registry.instances.get_all_instances()
+            if entry.instance.get_identifier().hash == identifier_hash
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _get_supported_auth_modes(auth_modes: tuple[str, ...]) -> list[AuthMode]:
@@ -343,19 +490,27 @@ class TargetService:
             external_input=True,
             allowed_path_params=type(source).caller_path_parameters,
         )
-        if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
-            await release_component_async(target)
-            raise ValueError("The saved target configuration cannot be reconstructed")
+        if spec.effective_hash:
+            legacy_capabilities = self._legacy_binding_capabilities.get(source)
+            if legacy_capabilities is not None:
+                target.apply_capabilities(capabilities=legacy_capabilities)
+            if target.get_identifier().hash != spec.effective_hash:
+                await release_component_async(target)
+                raise ValueError("The saved target configuration cannot be reconstructed")
         return target
 
     async def resolve_binding_async(self, binding: TargetBinding) -> PromptTarget:
         """
-        Rebuild an attack-owned configuration from its current source.
+        Rebuild an attack-owned target without changing its saved capabilities.
 
         Returns:
             PromptTarget: The caller-owned target.
         """
-        return await self.build_from_source_async(binding.to_spec())
+        source = self._registry.resolve_source(name=binding.source_name, identifier_hash=binding.source_hash)
+        capabilities = binding.capabilities or self._legacy_binding_capabilities.get(source, source.capabilities)
+        target = await self.build_from_source_async(binding.to_spec())
+        target.apply_capabilities(capabilities=capabilities)
+        return target
 
     def _has_required_params(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> bool:
         """
@@ -545,6 +700,18 @@ class TargetService:
                 **self._registry.get_reconstruction_parameters(source),
                 **request.source.params,
             }
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+        if metadata is not None:
+            missing: list[str] = []
+            for parameter in self._project_target_parameters(target_type=request.type, parameters=metadata.parameters):
+                value = permission_params.get(parameter.name)
+                if parameter.required and (value is None or isinstance(value, str) and not value.strip()):
+                    missing.append(parameter.name)
+            if missing:
+                raise ValueError(
+                    f"Target type '{request.type}' requires explicit connection fields: {', '.join(missing)}. "
+                    "Supply these fields explicitly, or select an environment-initialized registered target."
+                )
         await self._enforce_code_execution_permission_async(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
@@ -587,6 +754,7 @@ class TargetService:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
                     capabilities=target_obj.capabilities,
+                    generation_ranges=target_obj.generation_ranges,
                 )
             finally:
                 await release_component_async(target_obj)

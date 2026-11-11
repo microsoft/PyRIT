@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
 from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
+from pyrit.models.target.request_generation_config import GenerationRange
 from pyrit.models.target.target_capabilities import TargetCapabilities
 
 
@@ -45,9 +46,6 @@ class TargetInstance(BaseModel):
     """
 
     target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
-    reconstructable: bool = False
-    reconstruction_error: str | None = None
-    supports_temperature_override: bool = False
     identifier: TargetIdentifier = Field(
         ...,
         description=(
@@ -57,6 +55,10 @@ class TargetInstance(BaseModel):
         ),
     )
     capabilities: TargetCapabilities = Field(..., description="Structured snapshot of target capabilities")
+    generation_ranges: dict[str, GenerationRange] = Field(
+        default_factory=dict,
+        description="Inclusive runtime bounds keyed by generation option name; missing entries mean unknown bounds",
+    )
     supports_history_replay: bool = Field(
         False,
         description="Effective history replay support, including configured adapters and provider restoration",

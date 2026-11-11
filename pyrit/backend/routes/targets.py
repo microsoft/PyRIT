@@ -19,6 +19,7 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.targets import (
+    DetectTargetCapabilitiesRequest,
     TargetTypeResponse,
     UnregisteredTarget,
 )
@@ -29,11 +30,50 @@ from pyrit.backend.services.target_service import (
     SavedTargetStorageError,
 )
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
 # Problem type for a target that can't be saved as asked but can still be created without saving it.
 NOT_SAVEABLE_PROBLEM_TYPE = "/errors/not-saveable"
+
+
+@router.post(
+    "/{target_registry_name}/detect-capabilities",
+    response_model=TargetInstance,
+    responses={
+        400: {"model": ProblemDetail, "description": "Target cannot be probed safely"},
+        404: {"model": ProblemDetail, "description": "Target not found"},
+        409: {"model": ProblemDetail, "description": "Target changed or detection is already running"},
+        502: {"model": ProblemDetail, "description": "Capability detection was inconclusive"},
+        504: {"model": ProblemDetail, "description": "Capability detection timed out"},
+    },
+)
+async def detect_capabilities_async(
+    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest
+) -> TargetInstance:
+    """
+    Run live checks and automatically update a registered target.
+
+    Returns:
+        TargetInstance: The updated live target.
+    """
+    try:
+        return await get_target_service().detect_capabilities_async(
+            target_registry_name=target_registry_name, expected_hash=body.expected_hash
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except CapabilityDiscoveryError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504, detail="Capability detection timed out; capabilities were not changed."
+        ) from exc
 
 
 def _target_upload_directory(request: Request) -> str | None:
