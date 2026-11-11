@@ -5941,9 +5941,19 @@ class MemoryInterface(abc.ABC):
                 seeds.c.dataset_name,
                 func.count().label("seed_count"),
                 func.sum(case((seeds.c.seed_type == "objective", 1), else_=0)).label("objective_count"),
-                func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role == "user"), 1), else_=0)).label(
-                    "user_prompt_count"
-                ),
+                # Unset roles can hydrate as user or inherit their sequence's role; keep them unverified.
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                seeds.c.seed_type == "prompt",
+                                or_(seeds.c.role == "user", seeds.c.role.is_(None)),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("user_prompt_count"),
                 func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role != "user"), 1), else_=0)).label(
                     "non_user_prompt_count"
                 ),

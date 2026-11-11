@@ -6,12 +6,22 @@
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select, update
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Dialect, Engine
 
-from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.memory import SeedEntry, SQLiteMemory
+from pyrit.models import (
+    AssertGroupMetadata,
+    AttackSeedGroup,
+    SeedGroupRequirements,
+    SeedMetadataRequirement,
+    SeedObjective,
+    SeedPrompt,
+)
+from pyrit.models.dataset_compatibility import DatasetCompatibilityStatus
+from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, assess_scenario_groups
+from unit.assert_mocks import make_assert_config, make_assert_result
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -72,6 +82,86 @@ async def test_group_profiles_do_not_combine_facts_from_different_groups_async(s
     profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(metadata_keys=["policy"])
     assert len(profiles) == 2
     assert not any(profile.metadata_keys and profile.has_user_prompt for profile in profiles)
+
+
+@pytest.mark.parametrize(
+    ("roles", "valid_user"),
+    [
+        ((None,), True),
+        ((None, None), True),
+        ((None, "user"), True),
+        ((None, "assistant"), False),
+        (("assistant",), False),
+        (("system",), False),
+    ],
+)
+async def test_legacy_prompt_roles_keep_candidate_assessment_conservative_async(
+    *, sqlite_instance: SQLiteMemory, roles: tuple[str | None, ...], valid_user: bool
+) -> None:
+    metadata = (
+        make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False))
+        .seed_groups[0]
+        .objective.metadata
+    )
+    group = AttackSeedGroup(
+        seeds=[
+            SeedObjective(value="Stored policy case.", dataset_name="legacy", metadata=metadata),
+            *(
+                SeedPrompt(value=f"Stored prompt piece {index}.", dataset_name="legacy", role="user", sequence=0)
+                for index in range(len(roles))
+            ),
+        ]
+    )
+    await sqlite_instance.add_seeds_to_memory_async(seeds=group.seeds, added_by="test")
+    async with await sqlite_instance.get_session_async() as session:
+        for prompt, role in zip(group.prompts, roles, strict=True):
+            await session.execute(update(SeedEntry).where(SeedEntry.id == prompt.id).values(role=role))
+        await session.commit()
+        stored_roles = (
+            await session.scalars(
+                select(SeedEntry.role).where(SeedEntry.dataset_name == "legacy", SeedEntry.seed_type == "prompt")
+            )
+        ).all()
+    assert stored_roles.count(None) == roles.count(None)
+
+    requirements = SeedGroupRequirements(
+        required_user_prompt=True,
+        metadata=(
+            SeedMetadataRequirement(
+                name="assert_generation",
+                key=AssertGroupMetadata.METADATA_KEY,
+                description="ASSERT policy metadata",
+                validator=AssertGroupMetadata.from_metadata,
+            ),
+        ),
+    )
+    profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(
+        metadata_keys=[AssertGroupMetadata.METADATA_KEY]
+    )
+    candidate = assess_candidate_profiles(name="legacy", profiles=profiles, requirements=requirements)
+    expected_hint = (
+        DatasetCompatibilityStatus.NOT_VERIFIED
+        if None in roles or "user" in roles
+        else DatasetCompatibilityStatus.INCOMPATIBLE
+    )
+    assert candidate.status is expected_hint
+    assert candidate.status is not DatasetCompatibilityStatus.COMPATIBLE
+
+    (restored,) = await sqlite_instance.get_seed_groups_async(dataset_name="legacy")
+    hydrated = AttackSeedGroup(seeds=restored.seeds)
+    assessment = assess_scenario_groups(name="legacy", groups=[hydrated], requirements=requirements)
+    assert (assessment.status is DatasetCompatibilityStatus.COMPATIBLE) is valid_user
+    assert all(
+        prompt.role == ("user" if valid_user else next(role for role in roles if role is not None))
+        for prompt in hydrated.prompts
+    )
+    if "assistant" in roles or "system" in roles:
+        static_users = SeedGroupRequirements(user_prompts_only=True)
+        assert (
+            assess_candidate_profiles(name="legacy", profiles=profiles, requirements=static_users).status
+            is DatasetCompatibilityStatus.INCOMPATIBLE
+        )
+        assert static_users.check(seed_group=hydrated)
 
 
 @pytest.mark.parametrize("value", [None, False, 0, "reference", "x" * 5001, {}, []])
