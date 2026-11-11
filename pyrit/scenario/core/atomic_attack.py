@@ -26,6 +26,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
     AttackSeedGroup,
+    ObjectiveTargetEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
     config_hash,
 )
@@ -138,6 +139,16 @@ class AtomicAttack:
             for group in seed_groups
         }
         self._adversarial_chat = adversarial_chat
+        # The executor only uses this chat to generate simulated conversations, so it is part of
+        # this attack's identity only then. The objective-target projection is the standard
+        # behavioral projection for any target: operational settings such as endpoints and rate
+        # limits do not change the hash.
+        self._simulated_conversation_adversarial_chat_eval_hash = (
+            ObjectiveTargetEvaluationIdentifier(adversarial_chat.get_identifier()).eval_hash
+            if adversarial_chat is not None
+            and any(prepared.seed_group.has_simulated_conversation for prepared in self._prepared_seed_groups.values())
+            else None
+        )
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
@@ -225,13 +236,39 @@ class AtomicAttack:
         noise is stripped per the standard atomic-attack eval rules. The
         result is stable across resume runs and across different seed groups,
         which is what makes it usable as the resume disambiguator alongside
-        ``atomic_attack_name``.
+        ``atomic_attack_name``. The adversarial chat that generates simulated
+        conversations is included through
+        ``simulated_conversation_adversarial_chat_eval_hash``.
         """
-        composite = AtomicAttackIdentifier.build(
+        return AtomicAttackEvaluationIdentifier(self._build_identifier(seed_group=None)).eval_hash
+
+    @property
+    def simulated_conversation_adversarial_chat_eval_hash(self) -> str | None:
+        """
+        Behavioral eval hash of the adversarial chat that generates simulated conversations.
+
+        ``None`` unless a prepared execution group has a simulated conversation and an
+        adversarial chat was supplied. An adversarial chat configured on the attack strategy itself is part
+        of the strategy's identifier instead.
+        """
+        return self._simulated_conversation_adversarial_chat_eval_hash
+
+    def _build_identifier(self, *, seed_group: AttackSeedGroup | None) -> AtomicAttackIdentifier:
+        """
+        Build this attack's composite identifier for a source seed group.
+
+        Args:
+            seed_group (AttackSeedGroup | None): The source seed group, or ``None`` for
+                the seed-independent technique identity.
+
+        Returns:
+            AtomicAttackIdentifier: The composite identifier.
+        """
+        return AtomicAttackIdentifier.build(
             technique_identifier=self._attack_technique.get_identifier(),
-            seed_group=None,
+            seed_group=seed_group,
+            simulated_conversation_adversarial_chat_eval_hash=self._simulated_conversation_adversarial_chat_eval_hash,
         )
-        return AtomicAttackEvaluationIdentifier(composite).eval_hash
 
     @property
     def logical_group_id(self) -> str:
@@ -393,7 +430,6 @@ class AtomicAttack:
 
         try:
             technique = self._attack_technique
-            technique_identifier = technique.get_identifier()
             technique_eval_hash = self.technique_eval_hash
             execution_seed_groups = [
                 self._prepared_seed_groups[group.logical_id].seed_group.model_copy(deep=True)
@@ -402,10 +438,7 @@ class AtomicAttack:
             result_identifiers: list[AtomicAttackIdentifier] = []
             result_metadata: list[dict[str, Any]] = []
             for source_group in self._seed_groups:
-                identifier = AtomicAttackIdentifier.build(
-                    technique_identifier=technique_identifier,
-                    seed_group=source_group,
-                )
+                identifier = self._build_identifier(seed_group=source_group)
                 result_identifiers.append(
                     AtomicAttackIdentifier.from_component_identifier(identifier.with_eval_hash(technique_eval_hash))
                 )
