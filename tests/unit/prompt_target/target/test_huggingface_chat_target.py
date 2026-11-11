@@ -20,6 +20,7 @@ from unit.async_utils import (
     wait_for_event_async,
 )
 
+from pyrit.exceptions import EmptyResponseException
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -1072,3 +1073,159 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+async def test_truncation_flagged_with_finish_reason_length():
+    """Verify responses that hit max_new_tokens without an EOS token have finish_reason='length' and log a warning."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
+    await target.load_model_and_tokenizer_async()
+
+    target.tokenizer.eos_token_id = 2
+    target.model.generate.return_value = [[1, 2, 101, 102, 103]]
+    target.tokenizer.decode.return_value = "Partial cut-off"
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test",
+        converted_value="test",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    with patch("pyrit.prompt_target.hugging_face.hugging_face_chat_target.warn_truncated_response") as mock_warn:
+        response = await target.send_prompt_async(message=message)
+
+    assert len(response) == 1
+    piece = response[0].message_pieces[0]
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.converted_value == "Partial cut-off"
+    mock_warn.assert_called_once_with(signal="finish_reason='length'", limit_parameter="max_new_tokens")
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+async def test_natural_stop_flagged_with_finish_reason_stop():
+    """Verify responses that stop before max_new_tokens or on EOS token have finish_reason='stop'."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=20)
+    await target.load_model_and_tokenizer_async()
+
+    target.tokenizer.eos_token_id = 2
+    target.model.generate.return_value = [[1, 2, 101, 102, 103]]
+    target.tokenizer.decode.return_value = "Complete answer"
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test",
+        converted_value="test",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    with patch("pyrit.prompt_target.hugging_face.hugging_face_chat_target.warn_truncated_response") as mock_warn:
+        response = await target.send_prompt_async(message=message)
+
+    assert len(response) == 1
+    piece = response[0].message_pieces[0]
+    assert piece.prompt_metadata["finish_reason"] == "stop"
+    assert piece.converted_value == "Complete answer"
+    mock_warn.assert_not_called()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+async def test_eos_at_max_tokens_is_stop():
+    """Verify that if the last token is EOS exactly at max_new_tokens, finish_reason is 'stop'."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
+    await target.load_model_and_tokenizer_async()
+
+    target.tokenizer.eos_token_id = 103
+    target.model.generate.return_value = [[1, 2, 101, 102, 103]]
+    target.tokenizer.decode.return_value = "Complete answer"
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test",
+        converted_value="test",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    with patch("pyrit.prompt_target.hugging_face.hugging_face_chat_target.warn_truncated_response") as mock_warn:
+        response = await target.send_prompt_async(message=message)
+
+    piece = response[0].message_pieces[0]
+    assert piece.prompt_metadata["finish_reason"] == "stop"
+    mock_warn.assert_not_called()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+async def test_empty_truncated_response_does_not_raise():
+    """Verify empty response cut off at token limit does not raise EmptyResponseException."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
+    await target.load_model_and_tokenizer_async()
+
+    target.tokenizer.eos_token_id = 2
+    target.model.generate.return_value = [[1, 2, 101, 102, 103]]
+    target.tokenizer.decode.return_value = ""
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test",
+        converted_value="test",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    with patch("pyrit.prompt_target.hugging_face.hugging_face_chat_target.warn_truncated_response") as mock_warn:
+        response = await target.send_prompt_async(message=message)
+
+    assert len(response) == 1
+    piece = response[0].message_pieces[0]
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.converted_value == ""
+    mock_warn.assert_called_once()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+async def test_empty_non_truncated_response_raises():
+    """Verify empty response not cut off at token limit raises EmptyResponseException."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=20)
+    await target.load_model_and_tokenizer_async()
+
+    target.tokenizer.eos_token_id = 2
+    target.model.generate.return_value = [[1, 2, 101, 102, 103]]
+    target.tokenizer.decode.return_value = ""
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value="test",
+        converted_value="test",
+        converted_value_data_type="text",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    with pytest.raises(EmptyResponseException):
+        await target.send_prompt_async(message=message)
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+def test_get_eos_token_ids_collection():
+    """Verify _get_eos_token_ids extracts EOS token IDs from tokenizer and generation config."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    mock_tokenizer = MagicMock()
+    mock_tokenizer.eos_token_id = [2, 10]
+    target.tokenizer = mock_tokenizer
+
+    mock_model = MagicMock()
+    mock_gen_config = MagicMock()
+    mock_gen_config.eos_token_id = 20
+    mock_model.generation_config = mock_gen_config
+    target.model = mock_model
+
+    eos_ids = target._get_eos_token_ids()
+    assert eos_ids == {2, 10, 20}

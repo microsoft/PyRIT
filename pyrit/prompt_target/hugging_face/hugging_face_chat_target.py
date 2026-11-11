@@ -15,7 +15,11 @@ from pyrit.models import ComponentIdentifier, Message, construct_response_from_r
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.common.utils import (
+    limit_requests_per_minute,
+    set_response_metadata,
+    warn_truncated_response,
+)
 
 if TYPE_CHECKING:
     from transformers import BatchEncoding
@@ -388,12 +392,18 @@ class HuggingFaceChatTarget(PromptTarget):
 
             generated_tokens = generated_ids[0][input_length:]
 
+            finish_reason = self._determine_finish_reason(generated_tokens=generated_tokens)
+            is_truncated = finish_reason == "length"
+
+            if is_truncated:
+                warn_truncated_response(signal="finish_reason='length'", limit_parameter="max_new_tokens")
+
             assistant_response = cast(
                 "str",
                 self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
             ).strip()
 
-            if not assistant_response:
+            if not assistant_response and not is_truncated:
                 raise EmptyResponseException
 
             logger.info(f"Assistant's response: {assistant_response}")
@@ -410,6 +420,7 @@ class HuggingFaceChatTarget(PromptTarget):
                     "effective_generation_config": json.dumps(effective_config, default=str),
                 },
             )
+            set_response_metadata(pieces=response.message_pieces, finish_reason=finish_reason)
             return [response]
 
         except Exception as e:
@@ -562,6 +573,69 @@ class HuggingFaceChatTarget(PromptTarget):
         if self._random_seed is not None:
             effective["random_seed"] = self._random_seed
         return effective
+
+    def _get_eos_token_ids(self) -> set[int]:
+        """
+        Collect known end-of-sequence token IDs from the tokenizer and model configuration.
+
+        Returns:
+            set[int]: Set of integer EOS token IDs.
+        """
+        eos_ids: set[int] = set()
+        if hasattr(self, "tokenizer") and self.tokenizer is not None:
+            tokenizer_eos = getattr(self.tokenizer, "eos_token_id", None)
+            if isinstance(tokenizer_eos, int):
+                eos_ids.add(tokenizer_eos)
+            elif isinstance(tokenizer_eos, (list, tuple, set)):
+                eos_ids.update(int(t) for t in tokenizer_eos if isinstance(t, (int, str)) and str(t).isdigit())
+        if hasattr(self, "model") and self.model is not None:
+            gen_config = getattr(self.model, "generation_config", None)
+            if gen_config is not None:
+                config_eos = getattr(gen_config, "eos_token_id", None)
+                if isinstance(config_eos, int):
+                    eos_ids.add(config_eos)
+                elif isinstance(config_eos, (list, tuple, set)):
+                    eos_ids.update(int(t) for t in config_eos if isinstance(t, (int, str)) and str(t).isdigit())
+        return eos_ids
+
+    def _determine_finish_reason(self, *, generated_tokens: Any) -> str:
+        """
+        Determine whether generation completed naturally or was truncated by max_new_tokens.
+
+        A response is considered truncated ("length") when the number of newly generated
+        tokens reaches or exceeds ``max_new_tokens`` and the last generated token is not
+        an end-of-sequence (EOS) token. Otherwise, the response completed naturally ("stop").
+
+        Args:
+            generated_tokens: Sequence or tensor of newly generated token IDs.
+
+        Returns:
+            str: "length" if truncated at max_new_tokens without reaching an EOS token,
+                otherwise "stop".
+        """
+        try:
+            num_tokens = len(generated_tokens)
+        except (TypeError, AttributeError):
+            num_tokens = 0
+
+        if num_tokens < self.max_new_tokens:
+            return "stop"
+
+        if num_tokens == 0:
+            return "stop"
+
+        eos_token_ids = self._get_eos_token_ids()
+
+        try:
+            last_token = generated_tokens[-1]
+            last_token_id = int(last_token.item()) if hasattr(last_token, "item") else int(last_token)
+        except (ValueError, TypeError, IndexError):
+            last_token_id = None
+
+        if last_token_id is not None and last_token_id in eos_token_ids:
+            return "stop"
+
+        return "length"
 
     def _warn_if_sampling_params_without_do_sample(self) -> None:
         """
