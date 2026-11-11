@@ -182,6 +182,33 @@ def test_find_objective_metrics_by_eval_hash_found(tmp_path):
     assert result.accuracy == 0.88
 
 
+def test_find_objective_metrics_reads_entries_recorded_before_the_baseline_fields(tmp_path):
+    identifier = _make_identifier()
+    entry = identifier.model_dump()
+    entry["eval_hash"] = "hash_abc"
+    metrics = _metrics_to_registry_dict(_make_objective_metrics(accuracy=0.88))
+    metrics.pop("baseline_accuracy", None)
+    metrics.pop("baseline_f1_score", None)
+    entry["metrics"] = metrics
+    path = tmp_path / "objective_achieved_metrics.jsonl"
+    _write_jsonl(path, [entry])
+
+    result = find_objective_metrics_by_eval_hash(eval_hash="hash_abc", file_path=path)
+    assert result is not None
+    assert result.baseline_accuracy is None
+    assert result.baseline_f1_score is None
+
+
+def test_objective_metrics_baselines_round_trip_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(_make_objective_metrics(baseline_accuracy=0.52, baseline_f1_score=0.65).to_json())
+
+    loaded = ObjectiveScorerMetrics.from_json_file(path)
+
+    assert loaded.baseline_accuracy == 0.52
+    assert loaded.baseline_f1_score == 0.65
+
+
 def test_find_objective_metrics_by_eval_hash_not_found(tmp_path):
     path = tmp_path / "objective_achieved_metrics.jsonl"
     _write_jsonl(path, [])
