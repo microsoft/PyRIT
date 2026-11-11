@@ -20,7 +20,7 @@ from pyrit.models.catalog import ScorerInstance
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
-from pyrit.score import Scorer
+from pyrit.score import Scorer, TrueFalseScorer
 
 
 class ScorerService:
@@ -109,6 +109,9 @@ class ScorerService:
                         if parameter.is_allowed_external_input()
                     ],
                     is_llm_based=metadata.is_llm_based,
+                    supports_objective_scoring=issubclass(
+                        self._registry.get_class(metadata.class_name), TrueFalseScorer
+                    ),
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()

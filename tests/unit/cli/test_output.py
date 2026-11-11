@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import _output
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models import (
     AttackOutcome,
     Parameter,
@@ -319,6 +320,44 @@ def test_print_initializer_list_shows_falsy_defaults(capsys):
     assert "[default: 0]" in captured.out
     label_line = next(line for line in captured.out.splitlines() if "label" in line)
     assert "[default:" not in label_line
+
+
+@pytest.mark.parametrize("catalog_type", ["scenario", "initializer"])
+@pytest.mark.parametrize("round_trip", [False, True])
+def test_print_catalog_required_parameters_and_falsy_defaults(
+    *, capsys: pytest.CaptureFixture[str], catalog_type: str, round_trip: bool
+) -> None:
+    parameters = [
+        Parameter(name="count", description="Required count.", param_type=int, default=REQUIRED_VALUE),
+        Parameter(name="tags", description="Required tags.", param_type=list[str], default=REQUIRED_VALUE),
+        Parameter(name="verbose", description="Chatty output.", param_type=bool, default=False),
+        Parameter(name="retries", description="Retry count.", param_type=int, default=0),
+        Parameter(name="label", description="Optional label.", param_type=str, default=None),
+    ]
+    if catalog_type == "scenario":
+        scenario = _make_scenario(supported_parameters=parameters)
+        if round_trip:
+            scenario = RegisteredScenario.model_validate_json(scenario.model_dump_json())
+        _output.print_scenario_list(items=[scenario])
+    else:
+        initializer = _make_initializer(supported_parameters=parameters)
+        if round_trip:
+            initializer = RegisteredInitializer.model_validate_json(initializer.model_dump_json())
+        _output.print_initializer_list(items=[initializer])
+
+    output = capsys.readouterr().out
+    for name in ("count", "tags"):
+        line = next(line for line in output.splitlines() if f"- {name}" in line)
+        assert "[required]" in line
+        assert "[default:" not in line
+    assert "REQUIRED_VALUE" not in output
+    for name, value in (("verbose", False), ("retries", 0)):
+        line = next(line for line in output.splitlines() if f"- {name}" in line)
+        default = repr(str(value)) if round_trip and catalog_type == "scenario" else str(value)
+        assert f"[default: {default}]" in line
+    label_line = next(line for line in output.splitlines() if "- label" in line)
+    assert "[default:" not in label_line
+    assert "[required]" not in label_line
 
 
 # ---------------------------------------------------------------------------
