@@ -36,13 +36,13 @@ from pyrit.models import (
     SeedMetadataRequirement,
     SeedPrompt,
 )
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     DatasetConstraintError,
-    get_default_scorer_target,
     resolve_technique_factories,
     resolve_technique_factories_for_techniques,
 )
@@ -358,7 +358,7 @@ class AssertPolicy(Scenario):
             adversarial_chat (PromptTarget | None): The adversarial chat for techniques that use one and
                 don't set their own. Defaults to the registered adversarial target.
             judge_target (PromptTarget | None): The ASSERT judge. Defaults to the registered scorer
-                target, resolved when the selected groups are read.
+                target. The explicit ``scoring_target`` run parameter takes precedence.
             trace_source (ObservationSource[TraceScorable] | None): Execution evidence for the
                 judges, such as ``LocalTraceCapture.source()``. A registered source can instead be
                 named with the ``trace_source`` parameter. Defaults to None.
@@ -378,6 +378,32 @@ class AssertPolicy(Scenario):
             scenario_result_id=scenario_result_id,
             uses_default_adversarial_target=adversarial_chat is None,
         )
+
+    def get_readiness(self) -> ScenarioReadiness:
+        """
+        Resolve ASSERT's judge role before its dataset-specific scorers are constructed.
+
+        Returns:
+            ScenarioReadiness: Execution-role bindings and any missing judge target.
+        """
+        readiness = super().get_readiness()
+        try:
+            target = self._resolve_scoring_target(chat_target=self._judge_target)
+        except ValueError as error:
+            readiness.issues.append(
+                ScenarioConfigurationIssue(
+                    role="scoring_target",
+                    component=self.name,
+                    reason=str(error),
+                    remediation="Select a scoring target, or register objective_scorer_chat for ASSERT's judges.",
+                )
+            )
+        else:
+            readiness.bindings = [binding for binding in readiness.bindings if binding.role != "scoring_target"]
+            readiness.bindings.append(
+                ScenarioRoleBinding(role="scoring_target", component=self.name, identifier=target.get_identifier())
+            )
+        return readiness
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -778,7 +804,7 @@ class AssertPolicy(Scenario):
             ValueError: If a group lacks ASSERT metadata, or stores a system prompt while
                 ``target_system_prompt`` is set.
         """
-        judge_target = self._judge_target or get_default_scorer_target()
+        judge_target = self._resolve_scoring_target(chat_target=self._judge_target)
         mode = AssertJudgmentMode(self.params["judgment_mode"])
         trace_evidence = self._resolve_trace_evidence()
         self._judges_by_policy = {}

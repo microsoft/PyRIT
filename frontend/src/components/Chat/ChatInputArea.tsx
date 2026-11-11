@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, 
 import { Button, Caption1, MessageBar, MessageBarBody, MessageBarActions, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
-import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, RequestGenerationDraft, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
 import { useAttachmentUploads } from '@/hooks/useAttachmentUploads'
 
@@ -11,6 +11,7 @@ import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
+import GenerationSettings from './GenerationSettings'
 import { attachmentsFromFiles, PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 const DISABLED_WARNING_HOVER_DELAY_MS = 700
@@ -110,6 +111,8 @@ export interface ChatInputAreaHandle {
 }
 
 interface ChatInputAreaProps {
+  generationDraft?: RequestGenerationDraft
+  onGenerationDraftChange?: (value: RequestGenerationDraft) => void
   undoLastSend?: UndoLastSendAction
   repeatDisabledReason?: string
   onSend: (
@@ -163,7 +166,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
   onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange,
-  repeatDisabledReason, undoLastSend,
+  repeatDisabledReason, undoLastSend, generationDraft = {}, onGenerationDraftChange,
   initialText = '', initialAttachments = [], initialTextMetadata,
 }, ref) {
   const styles = usePromptEditorStyles()
@@ -346,6 +349,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 <Button className={styles.sendButton} appearance="primary" icon={<SendRegular />}
                   onClick={() => { void handleSend() }} disabledFocusable={!canSend} aria-label="Send message" data-testid="send-message-btn" />
               </Tooltip>
+              {onGenerationDraftChange && <GenerationSettings value={generationDraft}
+                onChange={onGenerationDraftChange} target={activeTarget} disabled={disabled} />}
               {convertedValue != null && <Tooltip content="Clear conversion" relationship="label">
                 <Button appearance="subtle" className={styles.clearConversionButton} icon={<DismissRegular />}
                   onClick={onClearConversion} data-testid="clear-conversion-btn" />

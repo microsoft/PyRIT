@@ -324,5 +324,9 @@ capture.close()
 # pyrit_scan foundry.assert_policy --target travel_agent --trace-source travel_agent_traces
 # ```
 #
+# The scenario also needs its adversarial and scoring targets: the registered `adversarial_chat` and
+# `objective_scorer_chat`, for example from the `target` initializer, or the targets you name with
+# `--adversarial-target` and `--scoring-target`.
+#
 # The target also appears in the GUI's list of targets. The initializer runs the agent's code in the
 # PyRIT process, so only use agent code that you trust.

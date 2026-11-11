@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from frontend.e2e.fixtures.prompt_generation_backend import TARGET_NAME, _register_target
+from frontend.e2e.fixtures.prompt_generation_backend import ROLE_TARGET_NAMES, TARGET_NAME, _register_target
 from pyrit.executor.promptgen import AssertGenerator, TargetObjectiveGenerator
 from pyrit.models import AssertDimension, AssertGenerationConfig
 from pyrit.prompt_target import PromptTarget
@@ -42,3 +42,11 @@ async def test_offline_target_generates_objectives_async(offline_target: PromptT
         instructions="Ask for private order details.", count=3
     )
     assert result.objectives == ["Offline objective 1", "Offline objective 2", "Offline objective 3"]
+
+
+def test_offline_targets_fill_the_scenario_roles(patch_central_database: MagicMock) -> None:
+    registry = TargetRegistry()
+    with patch.object(TargetRegistry, "get_registry_singleton", return_value=registry):
+        _register_target()
+    for name in (TARGET_NAME, *ROLE_TARGET_NAMES):
+        assert registry.instances.get(name) is not None

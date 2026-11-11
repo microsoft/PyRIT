@@ -52,6 +52,7 @@ from pyrit.scenario import (
     DatasetSource,
     IncompatibleTechniqueError,
 )
+from pyrit.scenario.core.scenario_target_defaults import TargetRoleConfigurationError
 from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
@@ -823,7 +824,7 @@ async def test_resume_rejects_changed_judge_or_run_settings_async(
     first, args = build(original)
     await harness.initialize_async(first, **args)
     resumed, changed_args = build(changed, scenario_result_id=first._scenario_result_id)
-    with pytest.raises(ValueError, match="matching configuration"):
+    with pytest.raises(ValueError, match="matching configuration|saved scenario dependencies changed"):
         await harness.initialize_async(resumed, **changed_args)
 
 
@@ -1176,6 +1177,32 @@ async def test_default_assert_package_runs_prompt_cases_without_a_comparison_bas
     assert sum(len(items) for items in result.attack_results.values()) == 1
 
 
+async def test_explicit_scoring_target_is_used_by_every_assert_judge_async(harness: _Harness) -> None:
+    await _store_async(name="prompt_cases", result=_result(include_adversarial_prompt=False, group_count=1))
+    selected = MockPromptTarget()
+    selected.set_model_name(model_name="selected-assert-judge")
+    scenario = await harness.initialize_async(
+        harness.scenario(), scoring_target=selected, include_baseline=False, **_datasets("prompt_cases")
+    )
+    assert all(
+        scorer.get_chat_target() is selected for judges in scenario._judges_by_policy.values() for scorer in judges.all
+    )
+    bindings = [binding for binding in scenario.get_readiness().bindings if binding.role == "scoring_target"]
+    assert len(bindings) == 1
+    assert bindings[0].identifier.hash == selected.get_identifier().hash
+
+
+def test_assert_readiness_reports_the_missing_judge_role_before_reading_data(harness: _Harness) -> None:
+    scenario = AssertPolicy(adversarial_chat=harness.adversarial)
+    scenario.set_params_from_args(args={"objective_target": harness.objective})
+    with patch(
+        "pyrit.scenario.core.scenario.get_default_scorer_target",
+        side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
+    ):
+        readiness = scenario.get_readiness()
+    assert [issue.role for issue in readiness.issues] == ["scoring_target"]
+
+
 @pytest.mark.parametrize("policy", ["skip", "raise"])
 @pytest.mark.parametrize("description", [None, "   "])
 async def test_malformed_conversation_case_never_falls_back_to_prompt_sending_async(
@@ -1214,7 +1241,7 @@ async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness
         attack.atomic_attack_name for attack in package._atomic_attacks
     ]
     changed = harness.scenario(scenario_result_id=package._scenario_result_id)
-    with pytest.raises(ValueError, match="matching configuration"):
+    with pytest.raises(ValueError, match="does not match the current configuration"):
         await harness.initialize_async(changed, scenario_techniques=[_technique("red_teaming")], **args)
 
 

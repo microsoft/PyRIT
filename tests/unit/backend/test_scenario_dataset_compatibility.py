@@ -11,9 +11,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.datasets import DatasetListResponse
-from pyrit.backend.services import ScenarioRunService, ScenarioService
-from pyrit.backend.services.dataset_service import get_dataset_service
+from pyrit.backend.models import DatasetListResponse
+from pyrit.backend.services import ScenarioRunService, ScenarioService, get_dataset_service
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
@@ -89,6 +88,7 @@ def _request(*names: str) -> ScenarioRunSizeEstimateRequest:
     return ScenarioRunSizeEstimateRequest(
         techniques=["red_teaming"],
         target_name="offline",
+        scoring_target_name="offline",
         adversarial_target_name="offline",
         datasets=ScenarioDatasetRequest(sources=[DatasetSourceInput(name=name) for name in names]) if names else None,
     )

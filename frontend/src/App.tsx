@@ -53,6 +53,7 @@ import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
+import { useTargetCapabilityDetection } from './hooks/useTargetCapabilityDetection'
 import { useOperationSelection } from './hooks/useOperationSelection'
 import { useScenarioLaunchSeed } from './hooks/useScenarioLaunchSeed'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
@@ -70,6 +71,7 @@ import type {
 } from './types'
 import {
   resolveTargetReference,
+  sameTarget,
   targetReference,
   targetEndpoint,
   targetIdentifierHash,
@@ -262,6 +264,15 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     if (target) registry.rememberTarget(target)
     targetDefaults.setDefault(role, target)
   }
+  const capabilityDetection = useTargetCapabilityDetection({
+    generation,
+    onTargetDetected: (updated, previous) => {
+      registry.rememberTarget(updated)
+      if (sameTarget(targetDefaults.adversarialTarget, previous)) {
+        targetDefaults.setDefault('adversarial', updated.capabilities?.supports_multi_turn ? updated : null)
+      }
+    },
+  })
 
   // The URL is the source of truth for which attack/conversation is open.
   const conversationMatch = matchPath(
@@ -964,6 +975,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   path="targets"
                   element={
                     <TargetConfig
+                      detection={capabilityDetection}
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
                       onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
                       onTargetsLoaded={registry.synchronizeTargets}

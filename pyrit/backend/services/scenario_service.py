@@ -12,8 +12,8 @@ from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
 
-from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
-from pyrit.backend.models.datasets import DatasetListResponse, ScenarioDatasetLoadResponse
+from pyrit.backend.models import DatasetListResponse, ListRegisteredScenariosResponse, PaginationInfo
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.memory import CentralMemory
@@ -285,6 +285,7 @@ class ScenarioService:
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 include_baseline=request.include_baseline,
             )
             constructor_kwargs = resolver.resolve_constructor_kwargs(
@@ -414,6 +415,7 @@ class ScenarioService:
             technique_override=request.technique_override,
             datasets=request.dataset_request,
             objective_target=resolver.resolve_target(target_name=request.target_name) if request.target_name else None,
+            scoring_target_name=request.scoring_target_name,
             include_baseline=request.include_baseline,
         )
         constructor = resolver.resolve_constructor_kwargs(
@@ -738,6 +740,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
