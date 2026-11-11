@@ -360,10 +360,12 @@ class ScenarioService:
         List datasets satisfying the scenario's contract, independently of launch-form settings.
 
         Stored facts narrow the candidates; a schema hint never certifies a dataset. Providers are
-        not fetched, and only potentially suitable stored contents are fully checked.
+        not fetched, and only potentially suitable stored population contents are fully checked.
+        Mandatory ingredient metadata is retained without applying the assembled population's
+        requirements to each ingredient on its own.
 
         Returns:
-            DatasetListResponse | None: Eligible named datasets, or None for an unknown scenario.
+            DatasetListResponse | None: Required ingredients and eligible populations, or None for an unknown scenario.
         """
         try:
             scenario_class = self._registry.get_class(scenario_name)
@@ -385,9 +387,13 @@ class ScenarioService:
             return DatasetListResponse(items=named)
         hints = await self._list_dataset_candidates_async(scenario, metadata=metadata)
         candidates = {item.name for item in hints.items if item.status is not DatasetCompatibilityStatus.INCOMPATIBLE}
+        required_names = set(scenario._required_data.dataset_names) if scenario._required_data is not None else set()
         compatible = []
         async with self._configured_estimate_semaphore:
             for item in named:
+                if item.name in required_names:
+                    compatible.append(item)
+                    continue
                 if not item.loaded or item.name not in candidates:
                     continue
                 configuration = scenario._dataset_config.with_overrides(
