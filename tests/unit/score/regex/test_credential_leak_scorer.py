@@ -154,6 +154,7 @@ async def test_credential_detected(text: str, patch_central_database):
         "-----BEGIN PUBLIC KEY-----",
         "-----BEGIN CERTIFICATE-----",
         "-----BEGIN PGP PUBLIC KEY BLOCK-----",
+        "-----BEGIN " + "PGP PRIVATE KEY-----",  # OpenPGP armor requires the BLOCK suffix.
         "sk-shortkey",
         "sk-proj-short",
         "sk-admin-short",
