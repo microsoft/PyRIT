@@ -68,6 +68,19 @@ class TestPlaywrightCopilotTarget:
         return page
 
     @pytest.fixture
+    def mock_m365_cloud_page(self):
+        """Create a mock M365 page that serves the unified Copilot interface."""
+        page = AsyncMock(name="MockM365CloudPage")
+        page.url = "https://m365.cloud.microsoft/chat/"
+        page.locator = MagicMock(return_value=AsyncMock())
+        page.eval_on_selector_all = AsyncMock()
+        page.click = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
+        page.query_selector_all = AsyncMock()
+        page.expect_file_chooser = MagicMock()
+        return page
+
+    @pytest.fixture
     def text_request_piece(self):
         """Create a sample text request piece."""
         return MessagePiece(
@@ -149,15 +162,39 @@ class TestPlaywrightCopilotTarget:
         assert selectors.file_picker_selector == 'button[aria-label="Add images or files"]'
 
     def test_get_selectors_m365(self, mock_m365_page):
-        """Test selector configuration for M365 Copilot."""
+        """Test selector configuration supports legacy and unified M365 Copilot."""
         target = PlaywrightCopilotTarget(page=mock_m365_page, copilot_type=CopilotType.M365)
         selectors = target._get_selectors()
 
         assert selectors.input_selector == 'span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]'
-        assert selectors.send_button_selector == 'button[type="submit"]'
-        assert selectors.ai_messages_selector == 'div[data-testid="copilot-message-div"]'
-        assert selectors.plus_button_dropdown_selector == 'button[aria-label="Add content"]'
+        assert selectors.send_button_selector == 'button[aria-label="Send"], button[type="submit"]'
+        assert selectors.ai_messages_selector == (
+            'div[data-testid="copilot-message-div"], div[role="article"][aria-labelledby^="copilot-message-"]'
+        )
+        assert selectors.ai_messages_group_selector == (
+            'div[data-testid="copilot-message-reply-div"], '
+            'div[role="article"][aria-labelledby^="copilot-message-"] > div[id^="copilot-message-"], '
+            'div[data-testid="copilot-message-div"] > div > div > div > div > div > div > div > div > div > div'
+        )
+        assert selectors.text_content_selector == "p"
+        assert selectors.plus_button_dropdown_selector == (
+            'button[data-testid="PlusMenuButton"], '
+            'button[aria-label="Add and manage sources"], '
+            'button[aria-label="Add attachments"], '
+            'button[aria-label="Add content"]'
+        )
         assert selectors.file_picker_selector == 'span.fui-MenuItem__content:has-text("Upload images and files")'
+
+    def test_get_selectors_m365_cloud_unified_markup(self, mock_m365_cloud_page):
+        """Test that the M365 hostname can use unified Copilot controls."""
+        target = PlaywrightCopilotTarget(page=mock_m365_cloud_page, copilot_type=CopilotType.M365)
+
+        selectors = target._get_selectors()
+
+        assert 'button[aria-label="Send"]' in selectors.send_button_selector
+        assert 'div[role="article"][aria-labelledby^="copilot-message-"]' in selectors.ai_messages_selector
+        assert 'button[data-testid="PlusMenuButton"]' in selectors.plus_button_dropdown_selector
+        assert 'button[aria-label="Add and manage sources"]' in selectors.plus_button_dropdown_selector
 
     @pytest.mark.parametrize("copilot_type", [CopilotType.CONSUMER, CopilotType.M365])
     def test_get_selectors_unified_copilot(self, mock_unified_page, copilot_type):
@@ -179,6 +216,7 @@ class TestPlaywrightCopilotTarget:
         )
         assert selectors.text_content_selector == "p"
         assert selectors.plus_button_dropdown_selector == (
+            'button[data-testid="PlusMenuButton"], '
             'button[aria-label="Add and manage sources"], '
             'button[aria-label="Add attachments"], '
             'button[aria-label="Add content"]'

@@ -180,7 +180,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             return self._get_unified_selectors()
         if self._type == CopilotType.CONSUMER:
             return self._get_legacy_consumer_selectors()
-        return self._get_legacy_m365_selectors()
+        return self._get_m365_selectors()
 
     def _get_unified_selectors(self) -> CopilotSelectors:
         """
@@ -201,6 +201,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             ),
             text_content_selector="p",
             plus_button_dropdown_selector=(
+                'button[data-testid="PlusMenuButton"], '
                 'button[aria-label="Add and manage sources"], '
                 'button[aria-label="Add attachments"], '
                 'button[aria-label="Add content"]'
@@ -225,23 +226,25 @@ class PlaywrightCopilotTarget(PromptTarget):
             file_picker_selector='button[aria-label="Add images or files"]',
         )
 
-    def _get_legacy_m365_selectors(self) -> CopilotSelectors:
+    def _get_m365_selectors(self) -> CopilotSelectors:
         """
-        Get selectors for the legacy M365 Copilot interface.
+        Get selectors for legacy and unified M365 Copilot interfaces.
 
         Returns:
-            CopilotSelectors: The selectors for the legacy M365 Copilot interface.
+            CopilotSelectors: The selectors for M365 Copilot interfaces.
         """
+        unified_selectors = self._get_unified_selectors()
         return CopilotSelectors(
-            input_selector='span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]',
-            send_button_selector='button[type="submit"]',
-            ai_messages_selector='div[data-testid="copilot-message-div"]',
+            input_selector=unified_selectors.input_selector,
+            send_button_selector=f'{unified_selectors.send_button_selector}, button[type="submit"]',
+            ai_messages_selector=unified_selectors.ai_messages_selector,
             ai_messages_group_selector=(
+                f"{unified_selectors.ai_messages_group_selector}, "
                 'div[data-testid="copilot-message-div"] > div > div > div > div > div > div > div > div > div > div'
             ),
-            text_content_selector="div > p",
-            plus_button_dropdown_selector='button[aria-label="Add content"]',
-            file_picker_selector='span.fui-MenuItem__content:has-text("Upload images and files")',
+            text_content_selector=unified_selectors.text_content_selector,
+            plus_button_dropdown_selector=unified_selectors.plus_button_dropdown_selector,
+            file_picker_selector=unified_selectors.file_picker_selector,
         )
 
     def _is_unified_copilot_url(self, url: str) -> bool:
