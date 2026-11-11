@@ -35,8 +35,7 @@ def _include_object(
     return True
 
 
-# Alembic's callback protocol requires positional as well as keyword arguments.
-def _record_applied_revision(
+def _record_applied_revision(  # pyrit-keyword-only-exempt Alembic on_version_apply Callable contract
     ctx: MigrationContext, step: MigrationInfo, heads: Collection[object], run_args: Mapping[str, object]
 ) -> None:
     if step.is_upgrade and step.is_migration:
