@@ -4,6 +4,7 @@
 """Bounded stored facts and portable dataset compatibility queries."""
 
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, select, update
@@ -18,6 +19,7 @@ from pyrit.models import (
     SeedMetadataRequirement,
     SeedObjective,
     SeedPrompt,
+    group_seeds_into_attack_groups,
 )
 from pyrit.models.dataset_compatibility import DatasetCompatibilityStatus
 from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, assess_scenario_groups
@@ -82,6 +84,58 @@ async def test_group_profiles_do_not_combine_facts_from_different_groups_async(s
     profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(metadata_keys=["policy"])
     assert len(profiles) == 2
     assert not any(profile.metadata_keys and profile.has_user_prompt for profile in profiles)
+
+
+@pytest.mark.parametrize("with_prompt", [False, True])
+async def test_group_profiles_separate_standalone_seed_and_explicit_group_namespaces_async(
+    *, sqlite_instance: SQLiteMemory, with_prompt: bool
+) -> None:
+    metadata = make_assert_result(config=make_assert_config(group_count=1)).seed_groups[0].objective.metadata
+    shared_id = uuid4()
+    standalone = SeedObjective(id=shared_id, value="Standalone case.", dataset_name="collision", metadata=metadata)
+    explicit = AttackSeedGroup(
+        seeds=[
+            SeedObjective(
+                value="Grouped case.", dataset_name="collision", prompt_group_id=shared_id, metadata=metadata
+            ),
+            *(
+                [SeedPrompt(value="Grouped request.", dataset_name="collision", prompt_group_id=shared_id, role="user")]
+                if with_prompt
+                else []
+            ),
+        ]
+    )
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[standalone, *explicit.seeds], added_by="test")
+    stored = await sqlite_instance.get_seeds_async(dataset_name="collision")
+    assert next(seed for seed in stored if seed.id == shared_id).prompt_group_id is None
+    assert any(seed.prompt_group_id == shared_id for seed in stored)
+    with patch.object(
+        sqlite_instance, "get_seeds_async", side_effect=AssertionError("Profiles must not hydrate seeds.")
+    ):
+        profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(
+            metadata_keys=[AssertGroupMetadata.METADATA_KEY]
+        )
+    assert sum(profile.group_count for profile in profiles) == 2
+    assert all(profile.single_objective for profile in profiles)
+    assert len(profiles) == (2 if with_prompt else 1)
+    requirements = SeedGroupRequirements(
+        metadata=(
+            SeedMetadataRequirement(
+                name="assert_generation",
+                key=AssertGroupMetadata.METADATA_KEY,
+                description="ASSERT policy metadata",
+                validator=AssertGroupMetadata.from_metadata,
+            ),
+        )
+    )
+    candidate = assess_candidate_profiles(name="collision", profiles=profiles, requirements=requirements)
+    assert candidate.status is DatasetCompatibilityStatus.NOT_VERIFIED
+    hydrated = group_seeds_into_attack_groups(stored)
+    assert len(hydrated) == 2
+    assert (
+        assess_scenario_groups(name="collision", groups=hydrated, requirements=requirements).status
+        is DatasetCompatibilityStatus.COMPATIBLE
+    )
 
 
 @pytest.mark.parametrize(

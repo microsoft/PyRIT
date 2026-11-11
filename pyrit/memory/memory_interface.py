@@ -5926,6 +5926,8 @@ class MemoryInterface(abc.ABC):
             select(
                 SeedEntry.dataset_name,
                 func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id).label("group_id"),
+                # Standalone seed IDs and explicit group IDs occupy different grouping namespaces.
+                case((SeedEntry.prompt_group_id.is_(None), 1), else_=0).label("ungrouped"),
                 SeedEntry.seed_type,
                 SeedEntry.role,
                 case((and_(objective, key_present(AdversarialPrompts.METADATA_KEY)), 1), else_=0).label(
@@ -5963,7 +5965,7 @@ class MemoryInterface(abc.ABC):
                 func.max(seeds.c.has_adversarial_prompts).label("has_adversarial_prompts"),
                 *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
             )
-            .group_by(seeds.c.dataset_name, seeds.c.group_id)
+            .group_by(seeds.c.dataset_name, seeds.c.ungrouped, seeds.c.group_id)
             .subquery()
         )
         columns = [
