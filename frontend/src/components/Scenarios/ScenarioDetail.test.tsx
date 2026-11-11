@@ -1172,6 +1172,38 @@ describe('ScenarioDetail', () => {
     })
   })
 
+  it('keeps preview actions keyboard accessible without changing the selected techniques or baseline', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const baseline = await screen.findByRole('checkbox', { name: 'baseline', exact: true })
+    await user.click(baseline)
+    const launch = screen.getByRole('button', { name: 'Launch scan', exact: true })
+    await user.click(launch)
+    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+    const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
+    const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
+    await waitFor(() => expect(cancel).toHaveFocus())
+    await user.tab()
+    await waitFor(() => expect(confirmLaunch).toHaveFocus())
+    await user.tab({ shift: true })
+    await waitFor(() => expect(cancel).toHaveFocus())
+    await user.keyboard(' ')
+    expect(await screen.findByRole('checkbox', { name: 'default_technique', exact: true })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
+    await waitFor(() => expect(launch).toHaveFocus())
+    await user.keyboard('{Enter}')
+    const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
+    await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
+    await user.tab()
+    await waitFor(() => {
+      expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    })
+    await user.keyboard(' ')
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+      techniques: ['default_technique'], include_baseline: false,
+    })))
+  })
+
   it('restores focus to Launch scan button when preview dialog is dismissed via Escape', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')
