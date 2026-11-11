@@ -145,6 +145,7 @@ async def create_converter(
     },
 )
 async def get_converter(  # pyrit-async-suffix-exempt
+    *,
     converter_id: IdentifierStr,
     user_oid: Annotated[str | None, Depends(current_user_oid)],
 ) -> ConverterInstance:
