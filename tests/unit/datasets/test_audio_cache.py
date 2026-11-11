@@ -27,7 +27,7 @@ def _make_mock_serializer(*, exists: bool = False) -> MagicMock:
     return mock_serializer
 
 
-async def test_returns_cached_path_when_file_exists_and_skips_write() -> None:
+async def test_returns_cached_path_when_file_exists_and_skips_write_async() -> None:
     mock_serializer = _make_mock_serializer(exists=True)
 
     with patch(_FACTORY_PATH, return_value=mock_serializer):
@@ -39,7 +39,7 @@ async def test_returns_cached_path_when_file_exists_and_skips_write() -> None:
     mock_serializer.save_data_async.assert_not_called()
 
 
-async def test_writes_bytes_on_cache_miss() -> None:
+async def test_writes_bytes_on_cache_miss_async() -> None:
     mock_serializer = _make_mock_serializer(exists=False)
 
     with patch(_FACTORY_PATH, return_value=mock_serializer):
@@ -53,7 +53,7 @@ async def test_writes_bytes_on_cache_miss() -> None:
     ("filename", "expected_extension"),
     [("clip.wav", "wav"), ("clip.mp3", "mp3"), ("clip", None)],
 )
-async def test_passes_filename_extension_to_serializer_factory(
+async def test_passes_filename_extension_to_serializer_factory_async(
     *, filename: str, expected_extension: str | None
 ) -> None:
     mock_serializer = _make_mock_serializer(exists=True)
@@ -68,7 +68,7 @@ async def test_passes_filename_extension_to_serializer_factory(
     )
 
 
-async def test_raises_runtime_error_when_memory_not_configured() -> None:
+async def test_raises_runtime_error_when_memory_not_configured_async() -> None:
     mock_serializer = MagicMock()
     mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = None
@@ -82,7 +82,7 @@ async def test_raises_runtime_error_when_memory_not_configured() -> None:
     mock_serializer.save_data_async.assert_not_called()
 
 
-async def test_path_exists_failure_is_logged_and_treated_as_cache_miss(caplog: pytest.LogCaptureFixture) -> None:
+async def test_path_exists_failure_is_logged_and_treated_as_cache_miss_async(caplog: pytest.LogCaptureFixture) -> None:
     mock_serializer = _make_mock_serializer(exists=False)
     mock_serializer._memory.results_storage_io.path_exists_async = AsyncMock(
         side_effect=Exception("storage IO unavailable")

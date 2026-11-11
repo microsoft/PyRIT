@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
 
@@ -38,7 +39,7 @@ class _FakeSplit:
         return [row[column] for row in self._rows]
 
 
-def _fake_load_dataset(name_to_rows: dict[str, list[dict[str, Any]]]):
+def _fake_load_dataset(name_to_rows: dict[str, list[dict[str, Any]]]) -> Callable[[str, str], dict[str, _FakeSplit]]:
     def _load(path: str, name: str) -> dict[str, _FakeSplit]:
         return {"test": _FakeSplit(rows=name_to_rows[name])}
 
