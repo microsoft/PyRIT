@@ -203,8 +203,8 @@ def _parse_trace_document(document: Any, *, trace_id: str) -> dict[tuple[str, st
         raise ValueError("The trace document has no resourceSpans.")
     spans: dict[tuple[str, str], TraceSpan] = {}
     for resource in resource_spans:
-        for scope in _list(resource, "scopeSpans"):
-            for raw in _list(scope, "spans"):
+        for scope in _list(resource, key="scopeSpans"):
+            for raw in _list(scope, key="spans"):
                 span = _parse_span(raw)
                 if span.trace_id != trace_id:
                     raise ValueError("The trace document contains a span of another trace.")
@@ -214,7 +214,7 @@ def _parse_trace_document(document: Any, *, trace_id: str) -> dict[tuple[str, st
     return spans
 
 
-def _list(container: Any, key: str) -> list[Any]:
+def _list(container: Any, *, key: str) -> list[Any]:
     if not isinstance(container, dict):
         raise TypeError(f"Expected a JSON object holding {key}.")
     value = container.get(key, [])
@@ -340,9 +340,9 @@ def _any_value(value: Any) -> JsonValue:
     if kind == "bytesValue" and isinstance(item, str):
         return list(base64.b64decode(item, validate=True))
     if kind == "arrayValue":
-        return [_any_value(entry) for entry in _list(item, "values")]
+        return [_any_value(entry) for entry in _list(item, key="values")]
     if kind == "kvlistValue":
-        return dict(_key_values(_list(item, "values")))
+        return dict(_key_values(_list(item, key="values")))
     raise ValueError(f"Unsupported OTLP attribute value type: {kind}.")
 
 
