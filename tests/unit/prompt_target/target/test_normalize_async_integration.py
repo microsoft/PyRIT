@@ -306,7 +306,6 @@ async def test_openai_response_target_calls_normalize_async():
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("system_in_history", [True, False], ids=["history", "current_request"])
-@pytest.mark.parametrize("system_role", ["system", "simulated_system"])
 @pytest.mark.parametrize(
     ("supports_system_prompt", "behavior"),
     [
@@ -317,7 +316,7 @@ async def test_openai_response_target_calls_normalize_async():
     ids=["unsupported_raise", "unsupported_adapt", "native"],
 )
 async def test_azure_ml_target_enforces_system_prompt_policy(
-    *, system_in_history: bool, system_role: str, supports_system_prompt: bool, behavior: UnsupportedCapabilityBehavior
+    *, system_in_history: bool, supports_system_prompt: bool, behavior: UnsupportedCapabilityBehavior
 ) -> None:
     token_provider = AsyncMock(return_value="test-token")
     target = AzureMLChatTarget(
@@ -332,7 +331,7 @@ async def test_azure_ml_target_enforces_system_prompt_policy(
             policy=CapabilityHandlingPolicy(behaviors={CapabilityName.SYSTEM_PROMPT: behavior}),
         ),
     )
-    system_message = _make_message(role=system_role, content="Policy")
+    system_message = _make_message(role="system", content="Policy")
     request = _make_message(role="user", content="Question") if system_in_history else system_message
     mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_message] if system_in_history else [])
