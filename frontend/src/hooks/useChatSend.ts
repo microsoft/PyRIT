@@ -16,7 +16,6 @@ import { toApiError } from '@/services/errors'
 import type {
   AddMessageResponse,
   AttackSummary,
-  AttackTargetResolutionStatus,
   BackendMessage,
   ChatConverterController,
   ChatSendOutcome,
@@ -32,6 +31,7 @@ import type {
   MultiSendOptions,
   PieceConversion,
   RegisteredComponentReference,
+  RequestGenerationDraft,
   ScorerInstance,
   TargetInstance,
   TargetReference,
@@ -57,7 +57,7 @@ import type { ConversationMessages } from '@/hooks/useConversationMessages'
 import { generateClientId } from '@/utils/clientId'
 import { backendMessagesToFrontend, buildMessagePieces } from '@/utils/messageMapper'
 import { conversationPieceSignature } from '@/utils/promptRestore'
-import { buildTemperatureTarget } from '@/services/targetRegistry'
+import { parseGenerationConfig, withRequestGenerationConfig } from '@/utils/requestGeneration'
 import { targetReference } from '@/utils/targetIdentity'
 
 /** Synchronous send locks and transcript snapshots. Reads must not wait for a render. */
@@ -221,7 +221,6 @@ export interface ChatSendLaunchState {
 /** Settings a first send uses to create its attack. */
 export interface ChatSendNewAttack {
   objective: string
-  temperature: string
   systemPrompt: string
   supportsSystemPrompt: boolean
   labels?: Record<string, string>
@@ -262,8 +261,9 @@ export interface ChatSendReadiness {
 /** What the submission targets and how a first send creates its attack. */
 export interface ChatSendRequest {
   activeTarget: TargetInstance | null
-  targetResolutionStatus: AttackTargetResolutionStatus
   newAttack: ChatSendNewAttack
+  /** Runtime generation options for the next send (any attack), validated against the target at submission. */
+  generationDraft: RequestGenerationDraft
   /** The loaded attack's scorer, recorded with the send for preference observation. */
   chatScorer: RegisteredComponentReference | null
   availableScorers: ScorerInstance[]
@@ -307,6 +307,8 @@ export interface ChatSendCallbacks {
   ) => void
   /** Keeps the composer when a first send's created conversation becomes the route. */
   onCreatedDestination: (attackResultId: string, conversationId: string) => void
+  /** A first send created this attack; routing to it is not navigation, so the generation draft is kept. */
+  onAttackCreated: (attackResultId: string) => void
   onAttackChange?: (attack: AttackSummary) => void
 }
 
@@ -346,7 +348,7 @@ export function useChatSend({
     getViewedAttackId, setViewedAttackId, getNavigationRevision,
   } = route
   const { runtimeReady, runtimeGeneration, defaultsReady, scorerSelectionReady, isSendBlocked, getLaunchState } = readiness
-  const { activeTarget, targetResolutionStatus, newAttack, chatScorer, availableScorers } = request
+  const { activeTarget, newAttack, generationDraft, chatScorer, availableScorers } = request
   const { converters, getDraftRevision, getTextMetadata, clearSentDraft, restoreSendDraft, clearPreservedDraft } = composer
   const {
     messages, setMessages, loadedConversationId, invalidateConversationLoads, claimConversationRead,
@@ -355,7 +357,7 @@ export function useChatSend({
   } = loader
   const {
     observeChatSend, showConversationScoring, showScoringNotice, setEditorNotice, revealRepeatConversations,
-    refreshPanel, onConversationCreated, onCreatedDestination, onAttackChange,
+    refreshPanel, onConversationCreated, onCreatedDestination, onAttackCreated, onAttackChange,
   } = callbacks
   const { state, dispatch, locksRef } = tracking
   const latestSendRef = useRef<string | null>(null)
@@ -707,6 +709,7 @@ export function useChatSend({
     const pipelines = count > 1 ? { ...converters.pipelines } : undefined
     const { draftScorer, defaultChatScorer, objective: pendingObjective } = newAttack
     const operation: PendingSend = {
+      generationDraft: { ...generationDraft },
       submissionId: generateClientId(),
       controller: new AbortController(),
       draftRevision: getDraftRevision(),
@@ -780,17 +783,18 @@ export function useChatSend({
     setMessages(prev => [...prev, loadingMessage])
 
     try {
+      const generationConfig = parseGenerationConfig(operation.generationDraft, activeTarget)
       // Build message pieces from text + attachments — always use original text
       const pieceIds = buildDraftPieceIds(originalValue, attachments, conversions)
       const originalPieces = await buildMessagePieces(originalValue, attachments, operation.textMetadata)
       if (textConversion && !originalValue.trim()) {
         originalPieces.unshift({ data_type: 'text', original_value: originalValue })
       }
-      const pieces = applyConvertedValues(
+      const pieces = withRequestGenerationConfig(applyConvertedValues(
         originalPieces,
         pieceIds,
         conversions,
-      )
+      ), generationConfig)
       const requestConfigurations = count > 1 && converterMode === 'per_branch' ? buildRequestConverterConfigurations(
         buildConverterInputs(originalValue, attachments), pieceIds, pipelines ?? {}, conversions,
       ) : []
@@ -802,11 +806,7 @@ export function useChatSend({
       let currentActiveConversationId = activeConversationId
       if (!currentAttackResultId) {
         checkSendPreparation(operation, true)
-        let selectedTarget = activeTarget
-        if (newAttack.temperature.trim()) {
-          selectedTarget = await buildTemperatureTarget(activeTarget, Number(newAttack.temperature))
-          if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
-        }
+        const selectedTarget = activeTarget
         checkSendPreparation(operation, true)
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
@@ -825,6 +825,7 @@ export function useChatSend({
         operation.chatScorerChoice = createRequest.chat_scorer
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         currentAttackResultId = createResponse.attack_result_id
+        onAttackCreated(createResponse.attack_result_id)
         currentConversationId = createResponse.conversation_id
         currentActiveConversationId = currentConversationId
         // Mark new ID in synchronous ref *before* triggering the state
@@ -877,11 +878,6 @@ export function useChatSend({
           request_converter_mode: converterMode,
         } : {}),
         ...(requestConfigurations.length ? { request_converter_configurations: requestConfigurations } : {}),
-      }
-      if (targetResolutionStatus === 'unbound' && newAttack.temperature.trim()) {
-        const selectedTarget = await buildTemperatureTarget(activeTarget, Number(newAttack.temperature))
-        if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
-        addMessageRequest.target_binding = selectedTarget.binding
       }
       checkSendPreparation(operation, false)
       submissionAttempted = true

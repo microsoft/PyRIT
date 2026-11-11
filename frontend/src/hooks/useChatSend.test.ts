@@ -6,6 +6,7 @@ import { deferred } from '@/test-utils/deferred'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type {
   AttackSummary, ChatConverterController, ConversationMessagesResponse, Message, MessageSendStatus, PieceConversion,
+  RequestGenerationDraft, TargetCapabilities, TargetInstance,
 } from '@/types'
 import { PENDING_SEND_CONVERSATION_ID } from '@/utils/chatSendState'
 
@@ -24,6 +25,11 @@ jest.mock('@/services/api', () => ({
 
 const api = attacksApi as jest.Mocked<typeof attacksApi>
 const target = makeTarget({ target_registry_name: 'chat_target', target_type: 'OpenAIChatTarget' })
+const temperatureTarget = makeTarget({
+  target_registry_name: 'chat_target', target_type: 'OpenAIChatTarget',
+  capabilities: { supports_temperature: true } as TargetCapabilities,
+  generation_ranges: { temperature: [0, 2] },
+})
 const attack = {
   attack_result_id: 'attack', conversation_id: 'a', attack_type: 'ManualAttack', objective: '', converters: [],
   message_count: 2, related_conversation_ids: [], labels: {}, created_at: '', updated_at: '',
@@ -53,6 +59,8 @@ interface HarnessOptions {
   conversationId?: string | null
   activeConversationId?: string | null
   converters?: ChatConverterController
+  activeTarget?: TargetInstance
+  generationDraft?: RequestGenerationDraft
 }
 
 function renderSend(initial: HarnessOptions = {}) {
@@ -62,12 +70,15 @@ function renderSend(initial: HarnessOptions = {}) {
     conversationId: 'a' as string | null,
     activeConversationId: 'a' as string | null,
     converters: convertersWith(),
+    activeTarget: target,
+    generationDraft: {} as RequestGenerationDraft,
     ...initial,
   }
   viewed.conversationId = options.activeConversationId ?? options.conversationId
   const callbacks = {
     onConversationCreated: jest.fn(),
     onCreatedDestination: jest.fn(),
+    onAttackCreated: jest.fn(),
     markConversationLoaded: jest.fn(),
     clearSentDraft: jest.fn(),
     restoreSendDraft: jest.fn(),
@@ -107,12 +118,12 @@ function renderSend(initial: HarnessOptions = {}) {
         getLaunchState: () => ({ generation: 'g1', ready: true, defaultsReady: true, scorerSelectionReady: true }),
       },
       request: {
-        activeTarget: target,
-        targetResolutionStatus: 'resolved',
+        activeTarget: merged.activeTarget,
         newAttack: {
-          objective: 'Objective', temperature: '', systemPrompt: '', supportsSystemPrompt: false,
+          objective: 'Objective', systemPrompt: '', supportsSystemPrompt: false,
           labels: { operator: 'me' }, operationId: null, draftScorer: undefined, defaultChatScorer: undefined,
         },
+        generationDraft: merged.generationDraft,
         chatScorer: null,
         availableScorers: [],
       },
@@ -145,6 +156,7 @@ function renderSend(initial: HarnessOptions = {}) {
         refreshPanel: callbacks.refreshPanel,
         onConversationCreated: callbacks.onConversationCreated,
         onCreatedDestination: callbacks.onCreatedDestination,
+        onAttackCreated: callbacks.onAttackCreated,
       },
     }
     const send = useChatSend(sendOptions)
@@ -284,6 +296,54 @@ describe('useChatSend', () => {
     expect(result.current.messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'first prompt' }),
       expect.objectContaining({ role: 'assistant', isLoading: true }),
+    ])
+  })
+
+  it('sends the next-send generation options with a first send and keeps them across the created route', async () => {
+    api.createAttack.mockResolvedValue({ attack_result_id: 'created-attack', conversation_id: 'created' } as never)
+    api.submitMessageSend.mockReturnValue(new Promise(() => {}))
+    const { result, callbacks } = renderSend({
+      attackResultId: null, conversationId: null, activeConversationId: null,
+      activeTarget: temperatureTarget, generationDraft: { temperature: '0.7' },
+    })
+
+    await act(async () => { void result.current.send.send('first prompt', undefined, []) })
+
+    // Runtime generation is request metadata (#3506), not a rebuilt target binding.
+    const createRequest = api.createAttack.mock.calls[0][0]
+    expect(createRequest).not.toHaveProperty('target_binding')
+    const [, request] = api.submitMessageSend.mock.calls[0]
+    expect(request).not.toHaveProperty('target_binding')
+    expect(request.pieces[0].prompt_metadata).toEqual({ request_generation_config: { temperature: 0.7 } })
+    // Routing to the attack this send created is not navigation, so ChatWindow keeps the draft.
+    expect(callbacks.onAttackCreated).toHaveBeenCalledWith('created-attack')
+  })
+
+  it('applies the generation draft captured at send time to a send in an existing attack', async () => {
+    api.submitMessageSend.mockReturnValue(new Promise(() => {}))
+    const { result, rerender } = renderSend({ activeTarget: temperatureTarget, generationDraft: { temperature: '0' } })
+
+    await act(async () => { void result.current.send.send('hello', undefined, []) })
+    rerender({ generationDraft: { temperature: '1.5' } })
+
+    const [attackId, request] = api.submitMessageSend.mock.calls[0]
+    expect(attackId).toBe('attack')
+    expect(request.pieces[0].prompt_metadata).toEqual({ request_generation_config: { temperature: 0 } })
+  })
+
+  it('fails the send before submission when a generation option is out of range for the target', async () => {
+    const { result } = renderSend({ activeTarget: temperatureTarget, generationDraft: { temperature: '3' } })
+
+    let outcome: unknown
+    await act(async () => { outcome = await result.current.send.send('hello', undefined, []) })
+
+    expect(outcome).toEqual({ status: 'retryable_failure', clearDraft: false })
+    expect(api.submitMessageSend).not.toHaveBeenCalled()
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'hello' }),
+      expect.objectContaining({
+        role: 'assistant', error: expect.objectContaining({ description: 'Temperature must be a finite number between 0 and 2.' }),
+      }),
     ])
   })
 

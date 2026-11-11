@@ -11,6 +11,7 @@ import type {
   MessageSendStatus,
   PieceConversion,
   RegisteredComponentReference,
+  RequestGenerationDraft,
   TargetReference,
 } from '@/types'
 import { backendMessageToOriginalDraft } from '@/utils/messageMapper'
@@ -39,6 +40,7 @@ export interface RecoverableSendDraft {
 
 /** One submitted send. Its identity is the lock owner for `conversationId`; fields mutate as the send advances. */
 export interface PendingSend {
+  readonly generationDraft: RequestGenerationDraft
   readonly submissionId: string
   readonly controller: AbortController
   readonly draftRevision: number | undefined
