@@ -7,6 +7,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -67,6 +68,7 @@ class PlaywrightCopilotTarget(PromptTarget):
     POLL_INTERVAL_MS: int = 2000
     RETRY_ATTEMPTS: int = 5
     RETRY_DELAY_MS: int = 500
+    ATTACHMENT_READY_TIMEOUT_MS: int = 60_000
 
     # Wait time constants for image loading
     MIN_IMAGE_WAIT_SECONDS: int = 3
@@ -115,6 +117,7 @@ class PlaywrightCopilotTarget(PromptTarget):
     # URL identifiers
     M365_URL_IDENTIFIER: str = "m365"
     UNIFIED_COPILOT_HOST: str = "copilot.cloud.microsoft"
+    UNIFIED_M365_HOST: str = "m365.cloud.microsoft"
 
     # Login requirement message
     LOGIN_REQUIRED_HEADER: str = "Sign in for the full experience"
@@ -884,6 +887,35 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         # Check for login requirement in Consumer Copilot
         await self._check_login_requirement_async()
+
+        if self._is_unified_attachment_host():
+            await self._wait_for_attachment_ready_async(image_path)
+
+    def _is_unified_attachment_host(self) -> bool:
+        """Return whether the current host uses unified attachment staging."""
+        hostname = (urlparse(self._page.url).hostname or "").lower()
+        return hostname in {self.UNIFIED_COPILOT_HOST, self.UNIFIED_M365_HOST}
+
+    async def _wait_for_attachment_ready_async(self, image_path: str) -> None:
+        """
+        Wait until the uploaded image is visibly staged and removable.
+
+        Args:
+            image_path (str): The uploaded image path.
+
+        Raises:
+            ValueError: If the image path does not include a filename.
+        """
+        filename = Path(image_path).name
+        if not filename:
+            raise ValueError(f"Image path must include a filename: {image_path}")
+
+        remove_button = self._page.get_by_role(
+            "button",
+            name=f"Remove attachment {filename}",
+            exact=True,
+        )
+        await remove_button.wait_for(state="visible", timeout=self.ATTACHMENT_READY_TIMEOUT_MS)
 
     async def _click_dropdown_button_async(self, selector: str) -> None:
         """

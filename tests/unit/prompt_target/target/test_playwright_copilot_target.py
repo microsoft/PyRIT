@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.models import (
     Message,
@@ -405,6 +407,74 @@ class TestPlaywrightCopilotTarget:
         file_picker_locator.wait_for.assert_awaited_once_with(state="visible", timeout=5000)
         file_picker_locator.click.assert_awaited_once()
         mock_file_chooser.set_files.assert_awaited_once_with("/path/to/image.jpg")
+
+    async def test_multimodal_send_waits_for_unified_attachment_readiness(
+        self, mock_m365_cloud_page, multimodal_request
+    ):
+        """Test that unified M365 waits for attachment staging before sending."""
+        target = PlaywrightCopilotTarget(page=mock_m365_cloud_page, copilot_type=CopilotType.M365)
+        file_picker_locator = AsyncMock()
+        attachment_ready_locator = AsyncMock()
+        mock_m365_cloud_page.locator.return_value = file_picker_locator
+        mock_m365_cloud_page.get_by_role = MagicMock(return_value=attachment_ready_locator)
+
+        mock_file_chooser = AsyncMock()
+
+        class MockFileChooserInfo:
+            @property
+            def value(self) -> asyncio.Future[AsyncMock]:
+                future = asyncio.Future()
+                future.set_result(mock_file_chooser)
+                return future
+
+        class MockFileChooserContextManager:
+            async def __aenter__(self) -> MockFileChooserInfo:
+                return MockFileChooserInfo()
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        mock_m365_cloud_page.expect_file_chooser = MagicMock(return_value=MockFileChooserContextManager())
+        readiness_wait_started = asyncio.Event()
+        release_readiness = asyncio.Event()
+
+        async def wait_for_readiness_async(*, state: str, timeout: int) -> None:
+            assert state == "visible"
+            assert timeout == target.ATTACHMENT_READY_TIMEOUT_MS
+            readiness_wait_started.set()
+            await release_readiness.wait()
+
+        async def send_response_async(selectors: CopilotSelectors) -> str:
+            await mock_m365_cloud_page.click(selectors.send_button_selector)
+            return "AI response"
+
+        attachment_ready_locator.wait_for.side_effect = wait_for_readiness_async
+
+        with (
+            patch.object(target, "_clear_text_input_async"),
+            patch.object(target, "_send_text_async"),
+            patch.object(target, "_click_dropdown_button_async"),
+            patch.object(target, "_check_login_requirement_async"),
+            patch.object(target, "_wait_for_response_async", side_effect=send_response_async) as mock_wait_for_response,
+        ):
+            interaction_task = asyncio.create_task(target._interact_with_copilot_async(multimodal_request))
+            try:
+                await asyncio.wait_for(readiness_wait_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                mock_m365_cloud_page.click.assert_not_awaited()
+            finally:
+                release_readiness.set()
+            result = await asyncio.wait_for(interaction_task, timeout=TEST_WATCHDOG_SECONDS)
+
+        assert result == "AI response"
+        mock_file_chooser.set_files.assert_awaited_once_with("/path/to/image.jpg")
+        mock_m365_cloud_page.get_by_role.assert_called_once_with(
+            "button",
+            name="Remove attachment image.jpg",
+            exact=True,
+        )
+        attachment_ready_locator.wait_for.assert_awaited_once_with(state="visible", timeout=60_000)
+        mock_wait_for_response.assert_awaited_once()
+        mock_m365_cloud_page.click.assert_awaited_once_with(target._get_selectors().send_button_selector)
 
     async def test_wait_for_response_async_success(self, mock_page):
         """Test successful response waiting."""
