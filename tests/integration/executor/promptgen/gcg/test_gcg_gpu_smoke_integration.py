@@ -20,6 +20,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from scipy.stats import spearmanr
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 transformers = pytest.importorskip("transformers", reason="transformers not installed")
@@ -56,6 +57,9 @@ def tokenizer() -> Any:
 
 @pytest.fixture(scope="module")
 def model() -> Any:
+    # Must not be resolved before the full run: a model loaded in this process hangs
+    # the run's worker subprocesses, so the full-run test defers this fixture until
+    # after execute_async returns. Keep that test first; do not reorder this file.
     loaded = transformers.AutoModelForCausalLM.from_pretrained(_CHECKPOINT, torch_dtype=torch.float16)
     return loaded.to("cuda").eval().requires_grad_(False)
 
@@ -97,6 +101,7 @@ async def test_gcg_lowers_target_loss_on_real_checkpoint(
     assert recomputed == pytest.approx(result.final_loss, abs=0.02)
 
 
+@pytest.mark.timeout(900)
 def test_gradient_predicts_loss_change(model: Any, tokenizer: Any) -> None:
     prompt = GCGAttackPrompt(goal=_GOAL, target=_TARGET, tokenizer=tokenizer, control_init=_CONTROL_INIT)
     grad = prompt.grad(model)[:, : tokenizer.vocab_size].float()
@@ -118,7 +123,8 @@ def test_gradient_predicts_loss_change(model: Any, tokenizer: Any) -> None:
     current = ids[prompt._control_slice][positions]
     predicted = grad[positions, tokens] - grad[positions, current]
 
-    # Spearman rank correlation between the first-order prediction and the loss after the swap.
-    ranks = torch.stack([predicted.argsort().argsort(), actual.argsort().argsort()]).float()
-    correlation = torch.corrcoef(ranks)[0, 1].item()
+    # Tie-aware Spearman rank correlation between the first-order prediction and the
+    # loss after the swap. A constant vector (e.g. an all-zeros gradient) yields nan,
+    # which fails the assertion.
+    correlation = float(spearmanr(predicted.cpu().numpy(), actual.cpu().numpy()).statistic)
     assert correlation > 0.1
