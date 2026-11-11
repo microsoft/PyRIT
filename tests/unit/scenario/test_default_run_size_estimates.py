@@ -11,8 +11,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_progress_read_model import ScenarioProgressReadModel
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackSeedGroup,
@@ -28,6 +27,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import AttackTechnique
 from pyrit.scenario.core import (
     AtomicAttack,
     CompoundDatasetAttackConfiguration,
@@ -36,25 +36,27 @@ from pyrit.scenario.core import (
     Scenario,
     ScenarioTechnique,
 )
-from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
-from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
-from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
-from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite, FoundryTechnique, RedTeamAgent
-from pyrit.scenario.scenarios.garak.api_key import ApiKey, ApiKeyDatasetConfiguration
-from pyrit.scenario.scenarios.garak.encoding import Encoding
-from pyrit.scenario.scenarios.garak.exploitation import Exploitation
-from pyrit.scenario.scenarios.garak.figstep import FigStep
-from pyrit.scenario.scenarios.garak.latent_injection import LatentInjection, LatentInjectionDatasetConfiguration
-from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination, PackageHallucinationTechnique
-from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectDatasetConfiguration
-from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
+from pyrit.scenario.scenarios.adaptive import TextAdaptive
+from pyrit.scenario.scenarios.airt import Jailbreak, Psychosocial
+from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
+from pyrit.scenario.scenarios.foundry import FoundryComposite, FoundryTechnique, RedTeamAgent
+from pyrit.scenario.scenarios.garak import (
+    ApiKey,
+    Encoding,
+    Exploitation,
+    FigStep,
+    LatentInjection,
+    LatentInjectionDatasetConfiguration,
+    PackageHallucination,
+    PackageHallucinationTechnique,
+    PromptInject,
+    PromptInjectDatasetConfiguration,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
+    WebInjection,
+    WebInjectionTechnique,
 )
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -172,7 +174,7 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
             LatentInjection,
             {},
             {"dataset_config": LatentInjectionDatasetConfiguration(dataset_names=["wrong"])},
-            "requires exactly",
+            "required data",
         ),
         (LatentInjection, {}, {"families": []}, "non-empty selection"),
         (LatentInjection, {}, {"families": ["latent_jailbreak"]}, "explicit harm_scorer"),
@@ -222,31 +224,6 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize(
-    "configuration_class",
-    [ApiKeyDatasetConfiguration, PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
-)
-def test_ingredient_configurations_require_uncapped_sources(
-    configuration_class: type[DatasetAttackConfiguration],
-) -> None:
-    scenario_class = {
-        ApiKeyDatasetConfiguration: ApiKey,
-        PromptInjectDatasetConfiguration: PromptInject,
-        LatentInjectionDatasetConfiguration: LatentInjection,
-    }[configuration_class]
-    config = configuration_class(sources=[DatasetSource(name=name) for name in scenario_class.required_datasets()])
-    assert config.max_per_dataset == "all"
-    for limit in (None, "default", "all"):
-        config.with_overrides(max_per_dataset=limit).validate_configuration()
-    with pytest.raises(ValueError, match="ingredient sources must be uncapped"):
-        config.with_overrides(max_per_dataset=2).validate_configuration()
-    with pytest.raises(ValueError, match="ingredient sources must be uncapped"):
-        config.with_overrides(
-            sources=[DatasetSource(name=name, max_size=2) for name in config.dataset_names]
-        ).validate_configuration()
-
-
-@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("cap", [3, 12, "all"])
 async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_previews_async(cap: int | str) -> None:
     scenario = PromptInject()
@@ -269,7 +246,7 @@ async def test_compound_configuration_checks_children_before_a_bounded_preview_a
     config = CompoundDatasetAttackConfiguration(
         configurations=[
             DatasetAttackConfiguration(dataset_names=["missing"]),
-            PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=1),
+            PromptInjectDatasetConfiguration(max_total=1),
         ],
         max_dataset_size=10,
     )

@@ -28,13 +28,13 @@ from unit.mocks import (
     openai_response_json_dict,
 )
 
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     RateLimitException,
 )
 from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     JsonResponseConfig,

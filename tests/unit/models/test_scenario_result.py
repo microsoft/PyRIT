@@ -8,13 +8,14 @@ import pytest
 from unit.mocks import make_scenario_result
 
 from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    RetryEvent,
     ScenarioResult,
 )
-from pyrit.models.results.attack_result import AttackOutcome, AttackResult
-from pyrit.models.retry_event import RetryEvent
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):

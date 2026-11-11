@@ -6,12 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from pyrit.backend.models.attacks import CreateAttackRequest
+from pyrit.backend.models import CreateAttackRequest
 from pyrit.backend.routes.attacks import create_attack
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.history_replay import HistoryReplayError, validate_history_replay
-from pyrit.models import Message, MessagePiece
-from pyrit.models.target.target_capabilities import TargetCapabilities
+from pyrit.models import Message, MessagePiece, TargetCapabilities
 from pyrit.prompt_target import PromptTarget, TargetConfiguration
 from unit.mocks import MockPromptTarget
 
