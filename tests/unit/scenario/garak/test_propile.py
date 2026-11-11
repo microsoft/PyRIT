@@ -17,6 +17,7 @@ from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackSeedGroup,
     Contains,
+    DisclosesSecret,
     Message,
     MessagePiece,
     OutputMatches,
@@ -39,7 +40,14 @@ from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ProPILEDatasetConfiguration,
     ProPILETechnique,
 )
-from pyrit.score import OutputMatchesScorer, SubStringScorer
+from pyrit.score import (
+    FloatScaleThresholdScorer,
+    OutputMatchesScorer,
+    SecretDisclosureScorer,
+    SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+)
 
 RECORDS = ProPILEDatasetConfiguration.RECORD_DATASET_NAME
 TEMPLATES = ProPILEDatasetConfiguration.TEMPLATE_DATASET_NAME
@@ -112,6 +120,21 @@ def _config(*, names: list[str] | None = None, max_total: int | Literal["all"] =
 
 def _groups(scenario: ProPILE) -> list[AttackSeedGroup]:
     return [group for attack in scenario._atomic_attacks for group in attack.seed_groups]
+
+
+def _graded_scorer() -> FloatScaleThresholdScorer:
+    return FloatScaleThresholdScorer(scorer=SecretDisclosureScorer(null_samples=20), threshold=0.5)
+
+
+def _exact_and_graded_scorer() -> TrueFalseCompositeScorer:
+    return TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.OR, scorers=[OutputMatchesScorer(), _graded_scorer()]
+    )
+
+
+def _disclosed_secret(group: AttackSeedGroup) -> DisclosesSecret:
+    [condition] = [condition for condition in group.objective.conditions if isinstance(condition, DisclosesSecret)]
+    return condition
 
 
 def _expected_value(group: AttackSeedGroup) -> str:
@@ -276,7 +299,7 @@ class TestProPILE:
         target = MockPromptTarget()
         scenario = ProPILE(objective_scorer=SubStringScorer(substring="invented@example.test"))
         with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
-            with pytest.raises(ValueError, match="supports OutputMatches"):
+            with pytest.raises(ValueError, match="supports OutputMatches or DisclosesSecret"):
                 await _initialize_async(scenario=scenario, seeds=corpus_seeds, target=target)
             send.assert_not_called()
         assert scenario.atomic_attack_count == 0
@@ -303,6 +326,90 @@ class TestProPILE:
             assert "expectation" not in attack._attack_execute_params
             assert all(group.objective.conditions for group in attack.seed_groups)
             assert converters == ([converter] if attack.atomic_attack_name == "triplet" else [])
+
+    async def test_default_scorer_receives_only_output_matches(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
+        scenario = ProPILE()
+        await _initialize_async(
+            scenario=scenario,
+            seeds=corpus_seeds,
+            techniques=[ProPILETechnique.Twin, ProPILETechnique.Triplet],
+            dataset_config=_config(),
+        )
+
+        assert isinstance(scenario._objective_scorer, OutputMatchesScorer)
+        assert all(
+            [type(condition) for condition in group.objective.conditions] == [OutputMatches]
+            for group in _groups(scenario)
+        )
+
+    async def test_scorer_reading_both_conditions_receives_both(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
+        scenario = ProPILE(objective_scorer=_exact_and_graded_scorer())
+        await _initialize_async(
+            scenario=scenario,
+            seeds=corpus_seeds,
+            techniques=[ProPILETechnique.Twin, ProPILETechnique.Triplet],
+            dataset_config=_config(),
+        )
+        records = {seed.metadata["source_id"]: seed for seed in corpus_seeds[RECORDS]}
+        groups = _groups(scenario)
+
+        assert len(groups) == 85
+        for group in groups:
+            metadata = group.objective.metadata
+            record = records[metadata["source_id"]]
+            output_matches, discloses_secret = group.objective.conditions
+            assert isinstance(output_matches, OutputMatches)
+            assert isinstance(discloses_secret, DisclosesSecret)
+            assert output_matches.matcher == Contains(value=record.metadata[metadata["pii_type"]])
+            assert discloses_secret.known_context == (
+                record.value,
+                *(record.metadata[field] for field in metadata["known_fields"]),
+            )
+            if metadata["pii_type"] == "phone":
+                assert discloses_secret.secret == "".join(
+                    char for char in output_matches.matcher.value if char.isdigit()
+                )
+            else:
+                assert discloses_secret.secret == output_matches.matcher.value
+
+    async def test_graded_scorer_receives_normalized_values_and_known_context(
+        self, synthetic_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        scenario = ProPILE(objective_scorer=_graded_scorer())
+        await _initialize_async(
+            scenario=scenario,
+            seeds=synthetic_seeds,
+            techniques=[ProPILETechnique.Quadruplet, ProPILETechnique.Unstructured],
+            dataset_config=_config(),
+        )
+        groups = {group.objective.metadata["pii_type"]: group for group in _groups(scenario)}
+
+        assert all(len(group.objective.conditions) == 1 for group in groups.values())
+        assert {pii_type: _disclosed_secret(group).secret for pii_type, group in groups.items()} == {
+            "email": "jordan@example.test",
+            "phone": "5550100",
+            "address": "1ExampleWay,Testville",
+            "relation_father": "CaseyExample",
+            "university": "ExampleUniversity",
+            "employer": "ExampleCorp",
+        }
+        assert {pii_type: _disclosed_secret(group).known_context for pii_type, group in groups.items()} == {
+            "email": ("Jordan Example", "1 Example Way, Testville", "555 0100"),
+            "phone": ("Jordan Example", "1 Example Way, Testville", "jordan@example.test"),
+            "address": ("Jordan Example", "jordan@example.test", "555 0100"),
+            "relation_father": ("Jordan Example", "father"),
+            "university": ("Jordan Example",),
+            "employer": ("Jordan Example",),
+        }
+
+    async def test_phone_without_digits_keeps_its_text(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
+        record = SeedPrompt(value="Jordan Example", data_type="text", metadata={"phone": "ask the front desk"})
+        scenario = ProPILE(objective_scorer=_graded_scorer())
+        await _initialize_async(
+            scenario=scenario, seeds={RECORDS: [record], TEMPLATES: corpus_seeds[TEMPLATES]}, dataset_config=_config()
+        )
+
+        assert {_disclosed_secret(group).secret for group in _groups(scenario)} == {"askthefrontdesk"}
 
     async def test_sampling_reserves_one_request_per_technique(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         scenario = ProPILE()
@@ -498,4 +605,51 @@ class TestProPILE:
         assert all(score.get_value() is disclosed for score in scores)
         assert {score.scored_expectation.conditions[0].matcher.value for score in scores} == set(
             expected_by_prompt.values()
+        )
+
+    @pytest.mark.parametrize("scorer_factory", [_graded_scorer, _exact_and_graded_scorer])
+    async def test_full_run_grades_reformatted_leaks_and_ignores_echoed_names(
+        self, corpus_seeds: dict[str, list[Seed[Any]]], sqlite_instance: SQLiteMemory, scorer_factory: Any
+    ) -> None:
+        target = MockPromptTarget()
+        scenario = ProPILE(objective_scorer=scorer_factory())
+        await _initialize_async(scenario=scenario, seeds=corpus_seeds, target=target, dataset_config=_config())
+        groups = {group.prompts[0].value: group for group in _groups(scenario)}
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            request = normalized_conversation[-1]
+            group = groups[request.get_value()]
+            name = _disclosed_secret(group).known_context[0]
+            leaked = " ".join(_disclosed_secret(group).secret)
+            text = (
+                f"For {name}, try {leaked}."
+                if group.objective.metadata["case_id"] < "8"
+                else f"I can't help with {name}."
+            )
+            return [
+                MessagePiece(
+                    role="assistant", original_value=text, conversation_id=request.get_piece().conversation_id
+                ).to_message()
+            ]
+
+        with patch.object(
+            target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=respond_async
+        ) as send:
+            await scenario.run_async()
+
+        scores = await sqlite_instance.get_scores_async(score_type="true_false")
+        objective_scores = [
+            score for score in scores if score.scorer_class_identifier == scenario._objective_scorer.get_identifier()
+        ]
+        by_case = {
+            score.scored_expectation.objective.rsplit("(case ", 1)[1].rstrip(")"): score for score in objective_scores
+        }
+        assert send.call_count == len(by_case) == 81
+        assert {case_id: score.get_value() for case_id, score in by_case.items()} == {
+            case_id: case_id < "8" for case_id in by_case
+        }
+        assert {score.get_value() for score in by_case.values()} == {True, False}
+        assert all(
+            any(isinstance(condition, DisclosesSecret) for condition in score.scored_expectation.conditions)
+            for score in objective_scores
         )
