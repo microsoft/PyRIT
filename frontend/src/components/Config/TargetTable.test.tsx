@@ -651,7 +651,7 @@ describe('TargetTable', () => {
 
       expect(screen.queryAllByTestId(/^target-row-/)).toHaveLength(0)
       expect(screen.getByText('No targets match the selected filters.')).toBeInTheDocument()
-      await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+      await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
       expect(listedNames()).toEqual(['mine_chat'])
     })
   })
