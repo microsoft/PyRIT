@@ -18,15 +18,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import AttackSeedGroup, Parameter, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import BaselineAttackPolicy, Scenario, get_default_adversarial_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource, DatasetSourceKind
-from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
     TechniqueRequirements,
@@ -222,14 +220,10 @@ class AggregationLeakage(Scenario):
                 technique. Defaults to the registered adversarial target.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
         self._adversarial_chat = adversarial_chat
 
         super().__init__(
             version=self.VERSION,
-            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=AggregationLeakageTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in _DATASETS],
@@ -238,6 +232,14 @@ class AggregationLeakage(Scenario):
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
+        )
+
+    @property
+    def uses_default_adversarial_target(self) -> bool:
+        """Whether the selected technique needs the shared adversarial target."""
+        techniques = self._scenario_techniques or [self._default_technique]
+        return self._adversarial_chat is None and any(
+            technique.value == AggregationLeakageTechnique.RedTeaming.value for technique in techniques
         )
 
     def _build_technique(
@@ -278,7 +280,7 @@ class AggregationLeakage(Scenario):
         )
         return factory.create(
             objective_target=objective_target,
-            attack_scoring_config=self._scorer_config,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer)),
             extra_request_converters=ConverterConfiguration.from_converters(converters=converters)
             if converters
             else None,
@@ -315,6 +317,7 @@ class AggregationLeakage(Scenario):
         include_context = cast("bool", self.params.get("include_context", True))
         if not include_context:
             await self._validate_external_context_async(context)
+        scorer = cast("TrueFalseScorer", self._objective_scorer)
         techniques = sorted({technique.value for technique in context.scenario_techniques})
 
         atomic_attacks: list[AtomicAttack] = []
@@ -362,7 +365,7 @@ class AggregationLeakage(Scenario):
                         ),
                         seed_groups=compatible,
                         adversarial_chat=adversarial_chat,
-                        objective_scorer=self._scorer_config.objective_scorer,
+                        objective_scorer=scorer,
                         memory_labels=context.memory_labels,
                         **execution_params,
                     )
