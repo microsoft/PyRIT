@@ -56,6 +56,26 @@ def _is_write_only_response(responses: object) -> bool:
     return isinstance(responses, list) and len(responses) == 0
 
 
+class _TargetInvocationContext:
+    """Track dispatch without changing caller-independent history selection."""
+
+    def __init__(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+        self.target_invocation_count = 0
+
+    def begin_send(self) -> None:
+        pass
+
+    def select_history(self, *, messages: list[Message]) -> list[Message]:
+        return messages
+
+    def mark_target_invoked(self) -> None:
+        self.target_invocation_count += 1
+
+    def finish_send(self, *, succeeded: bool) -> None:
+        pass
+
+
 class PromptNormalizer:
     """
     Handles normalization and processing of prompts before they are sent to targets.
@@ -165,18 +185,19 @@ class PromptNormalizer:
         await self._calc_hash_async(request=request)
 
         responses = None
-        target_invocation_count_before_send = send_context.target_invocation_count if send_context else 0
+        target_send_context = send_context if send_context is not None else _TargetInvocationContext(conversation_id)
+        target_invocation_count_before_send = target_send_context.target_invocation_count
         try:
             responses = await target.send_prompt_async(
                 message=request,
                 normalizer_overrides=normalizer_overrides,
-                send_context=send_context,
+                send_context=target_send_context,
             )
             (await self.memory.add_message_to_memory_async(request=request))
         except asyncio.CancelledError:
             # Cancelled while the target may have been handling the request: keep the request as the
             # record of the attempt, but no response, since none was received. Then propagate.
-            if not (send_context and send_context.target_invocation_count == target_invocation_count_before_send):
+            if target_send_context.target_invocation_count > target_invocation_count_before_send:
                 await self._persist_cancelled_request_async(request=request)
             raise
         except EmptyResponseException as ex:
@@ -270,8 +291,14 @@ class PromptNormalizer:
         Args:
             request (Message): The converted request that was sent.
         """
+        write = asyncio.create_task(self.memory.add_message_to_memory_async(request=request))
         try:
-            await self.memory.add_message_to_memory_async(request=request)
+            while not write.done():
+                try:
+                    await asyncio.shield(write)
+                except asyncio.CancelledError:
+                    continue
+            write.result()
         except Exception:
             cid = request.message_pieces[0].conversation_id if request.message_pieces else None
             logger.warning("Could not persist the request of a cancelled send in conversation %s.", cid, exc_info=True)
