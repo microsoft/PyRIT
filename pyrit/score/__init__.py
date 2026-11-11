@@ -118,6 +118,7 @@ if TYPE_CHECKING:
     )
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
+    from pyrit.score.true_false.physics_consistency_scorer import PhysicsConsistencyScorer
     from pyrit.score.true_false.program_execution_scorer import ProgramExecutionScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
@@ -187,6 +188,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
     "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
     "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
+    "PhysicsConsistencyScorer": "pyrit.score.true_false.physics_consistency_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
