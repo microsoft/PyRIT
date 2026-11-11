@@ -544,7 +544,7 @@ describe('CreateConverterDialog', () => {
     await selectConverterType('NullableConverter')
     await user.type(screen.getByRole('textbox', { name: 'offset *' }), '7')
     await user.click(screen.getByRole('switch', { name: 'enabled False' }))
-    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await user.click(screen.getByRole('button', { name: 'Save Converter' }))
     await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'NullableConverter', params: { offset: 7, enabled: true } }),
     ))
