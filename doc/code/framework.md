@@ -112,6 +112,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Use the seed type that matches the data: `SeedObjective`, `SeedPrompt`, `SeedSimulatedConversation`, or a group such as `SeedGroup` or `AttackSeedGroup`.
 - Attach an objective's expected result as typed conditions (`SeedObjective.conditions`). Execution passes them to scorers as a `ScoringExpectation`.
 - For generated datasets, the generation strategy owns model calls and validation; the provider turns its results into typed seeds.
+- Decompose a multi-step objective into child `SeedObjective`s with ordered `DecompositionPath`s (objective decomposition). The dataset defines the tree; executing its paths belongs to an attack.
 - **Does not own**: choosing which seeds a run uses (scenarios and attack techniques) or rendering prompts at send time (converters and normalizers).
 
 **Framework Plans**:
@@ -119,6 +120,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Manage datasets at scale and load them more intelligently. Expect some redesign here.
 - Finish moving components from file paths and providers to seeds passed in or read from memory.
 - Express expected results as objective conditions in every executor, including benchmarks, instead of adding new seed types.
+- Execute objective decomposition paths in attacks (likely compound attacks), and reuse the same parent/child model for findings.
 
 **Contributing (difficulty easy)**: Add seed dataset providers, prompts, and jailbreak templates for what you're testing.
 
