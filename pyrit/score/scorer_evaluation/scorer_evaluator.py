@@ -779,6 +779,17 @@ class HarmScorerEvaluator(ScorerEvaluator):
                 reliability_data=all_model_scores, level_of_measurement="ordinal"
             )
 
+        # Human-vs-scorer agreement on the same pair that MAE compares: the gold
+        # label and the per-response median model score. Unlike the combined
+        # alpha, this has exactly two rows, so repeating the scorer trials does
+        # not turn agreement with itself into extra raters.
+        krippendorff_alpha_gold_model = None
+        if num_responses > 0:
+            krippendorff_alpha_gold_model = krippendorff_alpha(
+                reliability_data=np.vstack((gold_scores, median_model_scores)),
+                level_of_measurement="ordinal",
+            )
+
         # A scorer that ignored the response would do best by always returning the median gold score.
         baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
 
@@ -795,6 +806,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             ),
             krippendorff_alpha_humans=krippendorff_alpha_humans,
             krippendorff_alpha_model=krippendorff_alpha_model,
+            krippendorff_alpha_gold_model=krippendorff_alpha_gold_model,
             contested_threshold=contested_threshold,
             num_unanimous_responses=num_unanimous_responses,
             num_contested_responses=num_contested_responses,

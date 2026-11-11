@@ -500,6 +500,31 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     assert metrics.krippendorff_alpha_combined == 1.0
     assert metrics.krippendorff_alpha_humans == 1.0
     assert metrics.krippendorff_alpha_model == 1.0
+    assert metrics.krippendorff_alpha_gold_model == 1.0
+
+
+def test_compute_harm_metrics_gold_model_alpha_ignores_num_scorer_trials(mock_harm_scorer):
+    """A scorer that ignores the response must not appear more reliable just because it was run more times."""
+    rng = np.random.default_rng(0)
+    levels = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    num_responses = 80
+    human_scores = levels[rng.integers(0, len(levels), num_responses)][None, :]
+    scorer_output = levels[rng.integers(0, len(levels), num_responses)]
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+
+    gold_model_alphas = []
+    for trials in (1, 3, 5, 10):
+        metrics = evaluator._compute_metrics(
+            all_human_scores=human_scores,
+            all_model_scores=np.tile(scorer_output, (trials, 1)),
+            num_scorer_trials=trials,
+        )
+        gold_model_alphas.append(metrics.krippendorff_alpha_gold_model)
+        assert metrics.mean_absolute_error == pytest.approx(0.381, abs=1e-3)
+
+    # The gold-vs-model alpha is two rows (gold, median model), so it is invariant.
+    assert gold_model_alphas == pytest.approx([gold_model_alphas[0]] * len(gold_model_alphas))
+    assert metrics.krippendorff_alpha_combined > gold_model_alphas[0]
 
 
 def test_compute_harm_metrics_reports_constant_guess_baseline(mock_harm_scorer):
