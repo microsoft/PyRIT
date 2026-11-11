@@ -497,4 +497,32 @@ describe('FindingDialog', () => {
       expect(save).toBeEnabled()
     }
   })
+
+  it('keeps an error on a deployment field keyed attack_result_id off the Evidence attack ID', async () => {
+    const user = userEvent.setup()
+    const fields: FindingFields = {
+      ...DEFAULT_FINDING_FIELDS_FIXTURE,
+      fields: DEFAULT_FINDING_FIELDS_FIXTURE.fields.map(field => (field.key === 'description'
+        ? { ...field, key: 'attack_result_id', label: 'Attack notes' } : field)),
+    }
+    const message = 'String should have at most 100000 characters'
+    const onSave = jest.fn().mockRejectedValue(Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [{ field: 'body.field_values.attack_result_id', message, code: 'string_too_long' }],
+        },
+      },
+    }))
+    renderDialog({
+      fields, evidenceField: true, onSave, initialValues: { title: 'Assessment', severity: 'low', field_values: {} },
+    })
+    await user.click(saveButton())
+
+    expect(await screen.findByText(`field_values.attack_result_id: ${message}`)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).not.toHaveAttribute('aria-invalid', 'true')
+    expect(saveButton()).toBeEnabled()
+  })
 })

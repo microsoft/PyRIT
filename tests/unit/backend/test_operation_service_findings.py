@@ -67,14 +67,6 @@ async def test_update_keeps_an_omitted_retired_value(
     assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == finding.field_values
 
 
-async def test_update_keeps_a_blank_retired_value(
-    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding
-) -> None:
-    finding = retired_value_finding_async
-    await _update_async(finding=finding, field_values={"steps": "1. Open", "description": " "})
-    assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == finding.field_values
-
-
 async def test_update_removes_a_listed_retired_value(
     sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding
 ) -> None:
@@ -86,32 +78,12 @@ async def test_update_removes_a_listed_retired_value(
     assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == {"steps": "1. Open"}
 
 
-@pytest.mark.parametrize("key", ["steps", "nonexistent"])
-async def test_update_rejects_removing_a_value_that_is_not_retired(
-    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding, key: str
-) -> None:
-    finding = retired_value_finding_async
-    with pytest.raises(FindingValuesError, match=re.escape(f"{key!r} is not a retired value of this finding.")):
-        await _update_async(finding=finding, field_values={"steps": "1. Open"}, remove_retired_keys=[key])
-    assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == finding.field_values
-
-
-async def test_update_rejects_sending_and_removing_a_value(
+async def test_update_rejects_an_invalid_edit_without_saving(
     sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding
 ) -> None:
     finding = retired_value_finding_async
     with pytest.raises(FindingValuesError, match=re.escape("'description' can't be both sent and removed.")):
         await _update_async(finding=finding, field_values=finding.field_values, remove_retired_keys=["description"])
-    assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == finding.field_values
-
-
-async def test_update_rejects_changing_a_retired_value(
-    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding
-) -> None:
-    finding = retired_value_finding_async
-    message = "Finding field 'description' is no longer configured, so its saved value can't change."
-    with pytest.raises(FindingValuesError, match=re.escape(message)):
-        await _update_async(finding=finding, field_values={"steps": "1. Open", "description": "New text"})
     assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == finding.field_values
 
 

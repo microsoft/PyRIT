@@ -5,7 +5,7 @@ import {
   Field, Input, MessageBar, MessageBarBody, Text,
 } from '@fluentui/react-components'
 
-import { toApiError } from '@/services/errors'
+import { type FieldError, toApiError } from '@/services/errors'
 import type { FindingCreate, FindingField, FindingFields } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { firstMissingRequired, type RetiredValue, SEVERITY_KEY, splitRetiredValues } from '@/utils/findingFields'
@@ -140,9 +140,11 @@ export default function FindingDialog({
       await onSave(finding, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
       const apiError = toApiError(cause)
-      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
-        .map(item => item.message)
-      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
+      // Match the whole path: a deployment's own field can also be keyed attack_result_id under field_values.
+      const isEvidenceError = (item: FieldError): boolean =>
+        evidenceField && item.field.replace(/^body\./, '') === 'attack_result_id'
+      const evidenceMessages = apiError.fieldErrors.filter(isEvidenceError).map(item => item.message)
+      const otherMessages = apiError.fieldErrors.filter(item => !isEvidenceError(item))
         .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
       setAttackResultIdError(evidenceMessages.join(' '))
       if (evidenceMessages.length === 0 || otherMessages.length > 0) {

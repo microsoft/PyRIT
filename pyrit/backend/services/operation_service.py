@@ -26,8 +26,6 @@ from pyrit.models import (
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingFields,
-    FindingValuesError,
     Operation,
     OperationCreate,
 )
@@ -463,44 +461,15 @@ class OperationService:
         """
         await self.get_async(operation_id)
         stored = await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
-        fields = get_active_finding_fields()
-        values = self._merge_retired_values(fields=fields, stored=stored, request=request)
-        fields.check_values(
-            severity=request.severity,
-            field_values=values,
-            previous_severity=stored.severity,
-            previous_values=stored.field_values,
+        replacement = get_active_finding_fields().apply_edit(
+            stored=stored, edit=request, remove_retired_keys=request.remove_retired_keys
         )
-        replacement = FindingCreate(title=request.title, severity=request.severity, field_values=values)
         try:
             return await CentralMemory.get_memory_instance().update_finding_async(
                 operation_id=operation_id, finding_id=finding_id, request=replacement
             )
         except LookupError as exc:
             raise FindingNotFoundError(str(exc)) from exc
-
-    @staticmethod
-    def _merge_retired_values(
-        *, fields: FindingFields, stored: Finding, request: FindingUpdateRequest
-    ) -> dict[str, str]:
-        """
-        Add the stored values of fields that are no longer configured to the sent values.
-
-        Returns:
-            dict[str, str]: The sent values, plus each retired value not listed in ``remove_retired_keys``.
-
-        Raises:
-            FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the finding
-                or that is also sent.
-        """
-        retired = dict(fields.describe_values(severity=stored.severity, field_values=stored.field_values).retired)
-        for key in request.remove_retired_keys:
-            if key not in retired:
-                raise FindingValuesError(f"{key!r} is not a retired value of this finding.")
-            if key in request.field_values:
-                raise FindingValuesError(f"{key!r} can't be both sent and removed.")
-        kept = {key: value for key, value in retired.items() if key not in request.remove_retired_keys}
-        return {**kept, **request.field_values}
 
     async def delete_finding_async(self, *, operation_id: UUID, finding_id: UUID) -> None:
         """

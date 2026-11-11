@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from pyrit.models import (
     DEFAULT_FINDING_FIELDS,
+    FindingCreate,
     FindingField,
     FindingFields,
     FindingValuesError,
@@ -444,3 +445,45 @@ def test_check_values_required_cascade_skips_a_level_with_no_options() -> None:
     with pytest.raises(FindingValuesError) as error:
         REQUIRED_AREAS.check_values(severity="high", field_values={"area": "chat"})
     assert str(error.value) == "Feature is required."
+
+
+STORED = FindingCreate(title="Leak", severity="sev1", field_values={**VALID, "description": "Old text"})
+
+
+@pytest.mark.parametrize("values", [VALID, {**VALID, "description": " "}])
+def test_apply_edit_keeps_a_retired_value_the_edit_leaves_out_or_blank(values: dict[str, str]) -> None:
+    edit = FindingCreate(title="Edited", severity="sev1", field_values=values)
+    assert CONTOSO.apply_edit(stored=STORED, edit=edit) == FindingCreate(
+        title="Edited", severity="sev1", field_values={**VALID, "description": "Old text"}
+    )
+
+
+def test_apply_edit_removes_a_listed_retired_value() -> None:
+    edit = FindingCreate(title="Leak", severity="sev1", field_values=VALID)
+    assert CONTOSO.apply_edit(stored=STORED, edit=edit, remove_retired_keys=["description"]).field_values == VALID
+
+
+@pytest.mark.parametrize(
+    ("values", "remove_retired_keys", "message"),
+    [
+        pytest.param(VALID, ["steps"], "'steps' is not a retired value of this finding.", id="current key"),
+        pytest.param(VALID, ["nonexistent"], "'nonexistent' is not a retired value of this finding.", id="unknown key"),
+        pytest.param(
+            {**VALID, "description": "Old text"},
+            ["description"],
+            "'description' can't be both sent and removed.",
+            id="sent and removed",
+        ),
+        pytest.param(
+            {**VALID, "description": "New text"},
+            [],
+            "Finding field 'description' is no longer configured, so its saved value can't change.",
+            id="changed retired value",
+        ),
+    ],
+)
+def test_apply_edit_rejects(values: dict[str, str], remove_retired_keys: list[str], message: str) -> None:
+    edit = FindingCreate(title="Leak", severity="sev1", field_values=values)
+    with pytest.raises(FindingValuesError) as error:
+        CONTOSO.apply_edit(stored=STORED, edit=edit, remove_retired_keys=remove_retired_keys)
+    assert str(error.value) == message

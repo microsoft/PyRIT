@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from enum import StrEnum
 from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from pyrit.models.finding import FindingCreate
 from pyrit.models.harm_category import HarmCategory
 
 
@@ -355,6 +356,43 @@ class FindingFields(BaseModel):
             rows=[row for row in rows if row.key != "severity"],
             retired=[(key, value) for key, value in field_values.items() if key not in known],
         )
+
+    def apply_edit(
+        self, *, stored: FindingCreate, edit: FindingCreate, remove_retired_keys: Collection[str] = ()
+    ) -> FindingCreate:
+        """
+        Build the finding that an edit saves, checked against these fields.
+
+        A current field left out of the edit is cleared. Stored values of fields that are no longer configured
+        are kept unchanged, unless their keys are listed in ``remove_retired_keys``.
+
+        Args:
+            stored (FindingCreate): The finding as saved.
+            edit (FindingCreate): The edited title, severity and current field values.
+            remove_retired_keys (Collection[str]): Keys of the stored retired values to delete. Defaults to none.
+
+        Returns:
+            FindingCreate: The finding to save.
+
+        Raises:
+            FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the stored
+                finding or that the edit also sends, or the edited values do not fit these fields.
+        """
+        retired = dict(self.describe_values(severity=stored.severity, field_values=stored.field_values).retired)
+        for key in remove_retired_keys:
+            if key not in retired:
+                raise FindingValuesError(f"{key!r} is not a retired value of this finding.")
+            if key in edit.field_values:
+                raise FindingValuesError(f"{key!r} can't be both sent and removed.")
+        kept = {key: value for key, value in retired.items() if key not in remove_retired_keys}
+        values = {**kept, **edit.field_values}
+        self.check_values(
+            severity=edit.severity,
+            field_values=values,
+            previous_severity=stored.severity,
+            previous_values=stored.field_values,
+        )
+        return FindingCreate(title=edit.title, severity=edit.severity, field_values=values)
 
     def _check_known_keys(self, *, field_values: dict[str, str], previous_values: dict[str, str]) -> None:
         """
