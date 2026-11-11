@@ -16,6 +16,7 @@ class ScorerTypeEntry(BaseModel):
     scorer_type: str = Field(..., description="Scorer class name")
     parameters: list[Parameter] = Field(default_factory=list, description="Constructor parameters from ScorerRegistry")
     is_llm_based: bool = Field(False, description="Whether this scorer references a target")
+    supports_objective_scoring: bool = Field(False, description="Whether this class implements true/false scoring")
     description: str | None = Field(None, description="Short description from the scorer class docstring")
 
 

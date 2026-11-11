@@ -39,7 +39,7 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
     isChatDraftDirty(draft)
     || draft.target !== undefined
     || Boolean(draft.objective?.trim())
-    || draft.temperature !== undefined
+    || draft.generationDraft !== undefined
     || 'chatScorer' in draft
     || Object.values(draft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
     || Boolean(draft.conversation)
