@@ -313,10 +313,6 @@ async function mockScenarioAPIs(
     });
   });
 
-  await page.route(new RegExp(`/api/scenarios/catalog/${SCENARIO_NAME.replace(".", "\\.")}/readiness$`), async (route) => {
-    await route.fulfill({ json: { bindings: [], issues: [] } });
-  });
-
   await page.route(new RegExp(`/api/scenarios/catalog/${SCENARIO_NAME.replace(".", "\\.")}/estimate$`), async (route) => {
     const request = route.request().postDataJSON() as Record<string, unknown>;
     estimateRequests.push(request);
