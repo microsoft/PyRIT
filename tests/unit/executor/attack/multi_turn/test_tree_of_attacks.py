@@ -3337,14 +3337,18 @@ class TestModalityRouterIntegration:
             ]
         )
 
-    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components):
-        """Objective accepting {text, image_path} gets prev image attached on turn N."""
+    @pytest.mark.parametrize("supports_multi_turn", [True, False])
+    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components, supports_multi_turn):
+        """Objective accepting {text, image_path} gets prev image attached on turn N, also when it is single-turn."""
         # Override the router to point at an image-capable objective.
         node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
             {frozenset({"text"}), frozenset({"text", "image_path"})}
         )
         node_components["objective_target"].configuration.capabilities.output_modalities = frozenset(
             {frozenset({"image_path"})}
+        )
+        node_components["objective_target"].configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         node_components["modality_router"] = _ModalityFeedbackRouter(
             adversarial_chat=node_components["adversarial_chat"],

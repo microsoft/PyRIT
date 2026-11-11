@@ -686,6 +686,8 @@ class _TreeOfAttacksNode:
         Side Effects:
             - Sets self.last_response to the target's response text
         """
+        # Check the turn before a single-turn target gets a fresh conversation, which is always empty.
+        turn_index = 0 if (await self._is_first_turn_async()) else 1
         self._rotate_unseeded_single_turn_conversation()
 
         # Build the request message via the modality router so prior media (if any)
@@ -693,7 +695,7 @@ class _TreeOfAttacksNode:
         message = self._modality_router.build_objective_input_message(
             text=prompt,
             last_response=self.last_response,
-            turn_index=0 if (await self._is_first_turn_async()) else 1,
+            turn_index=turn_index,
         )
 
         # Send prompt with configured converters
