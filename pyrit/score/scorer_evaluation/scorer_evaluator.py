@@ -785,8 +785,11 @@ class HarmScorerEvaluator(ScorerEvaluator):
         # not turn agreement with itself into extra raters.
         krippendorff_alpha_gold_model = None
         if num_responses > 0:
+            # Reuse the noise-normalized diff: floating-point medians such as
+            # 0.30000000000000004 must not look like disagreement with 0.3.
+            aligned_model_scores = gold_scores + diff
             krippendorff_alpha_gold_model = krippendorff_alpha(
-                reliability_data=np.vstack((gold_scores, median_model_scores)),
+                reliability_data=np.vstack((gold_scores, aligned_model_scores)),
                 level_of_measurement="ordinal",
             )
 

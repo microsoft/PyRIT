@@ -527,6 +527,20 @@ def test_compute_harm_metrics_gold_model_alpha_ignores_num_scorer_trials(mock_ha
     assert metrics.krippendorff_alpha_combined > gold_model_alphas[0]
 
 
+def test_compute_harm_metrics_gold_model_alpha_ignores_float_noise(mock_harm_scorer):
+    """The median of 0.2 and 0.4 is 0.30000000000000004; that must still match gold 0.3."""
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.3, 0.3, 0.3, 0.3]])
+    all_model_scores = np.array([[0.2, 0.2, 0.2, 0.2], [0.4, 0.4, 0.4, 0.4]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores,
+        all_model_scores=all_model_scores,
+        num_scorer_trials=2,
+    )
+    assert metrics.mean_absolute_error == 0.0
+    assert metrics.krippendorff_alpha_gold_model == 1.0
+
+
 def test_compute_harm_metrics_reports_constant_guess_baseline(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     # Gold scores 0, 0.25, 0.5, 1.0: median 0.375, so a constant guess is off by
