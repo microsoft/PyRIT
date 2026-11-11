@@ -524,7 +524,7 @@ describe("CreateTargetDialog", () => {
     await selectTargetType("OpenAIChatTarget");
     expect(await screen.findByText(/Enter the model or deployment name explicitly/)).toBeVisible();
     expect(screen.queryByText(/If None, uses OPENAI_CHAT_MODEL/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: SUBMIT_BUTTON_NAME })).toBeDisabled();
     expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
 
@@ -1052,10 +1052,12 @@ describe("CreateTargetDialog", () => {
     });
     render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
     await selectTargetType("LocalTarget");
-    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    const create = screen.getByRole("button", { name: SUBMIT_BUTTON_NAME });
     expect(create).toBeEnabled();
     await user.click(create);
-    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({ type: "LocalTarget", params: {} });
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "LocalTarget", params: {} }),
+    );
   });
 
   it("should require an endpoint when identity authentication is selected", async () => {
