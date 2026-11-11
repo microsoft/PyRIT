@@ -24,11 +24,14 @@ import {
   catalogQueryFromSearchParams,
   catalogQueryIsDefault,
   catalogQueryToSearchParams,
+  datasetModalities,
+  datasetsForView,
   DATASET_SORT_LABELS,
   DATASET_SORTS,
   DEFAULT_DATASET_CATALOG_QUERY,
   filterDatasets,
   isDatasetSort,
+  normalizeDatasetModality,
   type DatasetCatalogQuery,
 } from './datasetQuery'
 
@@ -46,7 +49,7 @@ function uniqueLabels(values: readonly string[]): FilterOption[] {
 
 function modalityOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
   const values: string[] = []
-  for (const dataset of datasets) values.push(...(dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []))
+  for (const dataset of datasets) values.push(...datasetModalities(dataset))
   return uniqueLabels(values)
 }
 
@@ -56,7 +59,7 @@ function harmOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
   return uniqueLabels(values)
 }
 
-/** Loaded-dataset catalog. Search, facets, and sort stay in the URL. */
+/** Stored datasets and available providers share URL-backed views and filters. */
 export default function DatasetCatalog() {
   const styles = useDatasetCatalogStyles()
   const titleId = useId()
@@ -67,11 +70,14 @@ export default function DatasetCatalog() {
     [catalogSearch],
   )
   const { datasets, loading, error } = useLoadedDatasets(true)
+  const view = query.view ?? 'memory'
+  const viewDatasets = useMemo(() => datasetsForView(datasets, view), [datasets, view])
 
   const filtered = useMemo(() => filterDatasets(datasets, query), [datasets, query])
-  const modalities = useMemo(() => modalityOptions(datasets), [datasets])
-  const harms = useMemo(() => harmOptions(datasets), [datasets])
-  const filtersActive = !catalogQueryIsDefault(query)
+  const modalities = useMemo(() => modalityOptions(viewDatasets), [viewDatasets])
+  const harms = useMemo(() => harmOptions(viewDatasets), [viewDatasets])
+  const selectedModalities = [...new Set(query.modalities.map(normalizeDatasetModality))]
+  const filtersActive = !catalogQueryIsDefault({ ...query, view: 'memory' })
 
   const updateQuery = (next: DatasetCatalogQuery): void => {
     setSearchParams(catalogQueryToSearchParams(next), { replace: true })
@@ -97,8 +103,9 @@ export default function DatasetCatalog() {
 
       <div className={styles.filters}>
         <Select
+          className={styles.filterControl}
           aria-label="Dataset view"
-          value={query.view ?? 'memory'}
+          value={view}
           onChange={(_, data) => updateQuery({
             ...query,
             view: data.value === 'available' ? 'available' : data.value === 'all' ? 'all' : 'memory',
@@ -122,7 +129,7 @@ export default function DatasetCatalog() {
           placeholder="All modalities"
           summaryPrefix="Modalities"
           options={modalities}
-          selectedOptions={[...query.modalities]}
+          selectedOptions={selectedModalities}
           onSelect={(selected) => updateQuery({ ...query, modalities: selected })}
           testId="dataset-modality-filter"
         />
@@ -155,7 +162,11 @@ export default function DatasetCatalog() {
           ))}
         </Select>
         {filtersActive && (
-          <Button className={styles.touchTarget} appearance="subtle" onClick={() => updateQuery(DEFAULT_DATASET_CATALOG_QUERY)}>
+          <Button
+            className={styles.touchTarget}
+            appearance="subtle"
+            onClick={() => updateQuery({ ...DEFAULT_DATASET_CATALOG_QUERY, view })}
+          >
             Clear filters
           </Button>
         )}
@@ -167,27 +178,32 @@ export default function DatasetCatalog() {
           <Spinner label="Loading datasets..." />
         </div>
       ) : error && datasets.length === 0 ? null
-      : datasets.length === 0 ? (
+      : viewDatasets.length === 0 ? (
         <div className={styles.centeredState}>
-          <Text size={400}>No datasets in memory</Text>
-          <Text size={200}>
-            Datasets show up here after they are loaded into memory. This view does not download them.
+          <Text size={400}>
+            {view === 'memory' ? 'No datasets in memory'
+              : view === 'available' ? 'No built-in providers available' : 'No datasets available'}
           </Text>
-          <Link
+          <Text size={200}>
+            {view === 'available'
+              ? 'This backend has no discoverable built-in dataset providers.'
+              : 'Datasets show up here after they are loaded into memory. This view does not download them.'}
+          </Text>
+          {view !== 'available' && <Link
             className={styles.guideLink}
             href="https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/"
             target="_blank"
             rel="noopener noreferrer"
           >
             Learn how to load datasets into memory
-          </Link>
+          </Link>}
         </div>
       ) : (
         <>
           <Text className={styles.resultCount} role="status" aria-live="polite">{statusLabel}</Text>
           {filtered.length === 0 ? (
             <div className={styles.centeredState}>
-              <Text size={200}>Clear the search or filters to see every loaded dataset.</Text>
+              <Text size={200}>Clear the search or filters to see datasets in this view.</Text>
             </div>
           ) : (
             <ul className={styles.grid} aria-label="Datasets">

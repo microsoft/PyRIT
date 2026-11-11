@@ -6,10 +6,12 @@ import importlib
 import inspect
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from dataclasses import fields as dc_fields
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
+from pydantic import TypeAdapter
 from tqdm import tqdm
 
 from pyrit.datasets.seed_datasets.seed_metadata import (
@@ -41,6 +43,7 @@ class SeedDatasetProvider(ABC):
     """
 
     _registry: dict[str, type["SeedDatasetProvider"]] = {}
+    _METADATA_ADAPTER: ClassVar[TypeAdapter[SeedDatasetMetadata]] = TypeAdapter(SeedDatasetMetadata)
     load_time: SeedDatasetLoadTime = SeedDatasetLoadTime.UNINITIALIZED
     description: str | None = None
     license_url: ClassVar[str | None] = None
@@ -153,26 +156,31 @@ class SeedDatasetProvider(ABC):
         unavailable_reason = None
         try:
             parsed_metadata = await self._parse_metadata_async()
-            metadata = parsed_metadata if isinstance(parsed_metadata, SeedDatasetMetadata) else None
-        except Exception:
+            if parsed_metadata is not None:
+                # Validate field values, not just the unvalidated dataclass instance.
+                validated_metadata = self._METADATA_ADAPTER.validate_python(asdict(parsed_metadata))
+                SeedDatasetMetadata._validate_singular_fields(metadata=validated_metadata)
+                metadata = validated_metadata
+        except Exception as exc:
             unavailable_reason = "Provider metadata is unavailable."
-            logger.warning("Could not describe metadata for %s", type(self).__name__)
+            logger.warning("Could not describe metadata for %s (%s)", type(self).__name__, type(exc).__name__)
         source = getattr(self, "source", None)
         if not source and (hub_name := getattr(self, "HF_DATASET_NAME", None)):
             source = f"https://huggingface.co/datasets/{hub_name}"
         urls = []
         for value in (source, self.license_url, self.access_url):
-            # Expose only public links, never credentials or query parameters from configuration.
+            # Links must not expose credentials in user info, queries, or fragments.
             try:
                 parsed = urlsplit(value) if isinstance(value, str) else None
                 urls.append(
                     value
                     if parsed
-                    and parsed.scheme in {"https", "http"}
-                    and parsed.netloc
+                    and parsed.scheme == "https"
+                    and parsed.hostname
                     and not parsed.username
                     and not parsed.password
                     and not parsed.query
+                    and not parsed.fragment
                     else None
                 )
             except ValueError:
@@ -204,8 +212,10 @@ class SeedDatasetProvider(ABC):
                 descriptor = await provider.describe_async()
                 if descriptor.name:
                     descriptors.setdefault(descriptor.name, descriptor)
-            except Exception:
-                logger.warning("Default configuration unavailable for %s", provider_class.__name__)
+            except Exception as exc:
+                logger.warning(
+                    "Default configuration unavailable for %s (%s)", provider_class.__name__, type(exc).__name__
+                )
         return descriptors
 
     @classmethod

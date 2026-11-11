@@ -8,6 +8,7 @@ export const useDatasetCardStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
     minWidth: 0,
+    overflowWrap: 'anywhere',
     height: '100%',
     padding: tokens.spacingHorizontalL,
     border: `1px solid ${tokens.colorNeutralStroke2}`,

@@ -142,6 +142,30 @@ const NAMED_UNNAMED = makeDataset({
   has_unlabeled_harm_categories: false,
 })
 
+const AVAILABLE = makeDataset({
+  name: 'vision-provider',
+  selection_key: 'dataset:named:vision-provider',
+  loaded: false,
+  provider_available: true,
+  logical_examples: null,
+  seed_pieces: null,
+  objectives: null,
+  modalities: [],
+  harm_categories: [],
+  provider: {
+    description: 'Default multimodal dataset',
+    source_url: 'https://example.com/dataset',
+    license_url: null,
+    access_url: null,
+    required_environment_variables: [],
+    modalities: ['image', 'text'],
+    harm_categories: [],
+    size: ['medium'],
+    load_time: [],
+    unavailable_reason: null,
+  },
+})
+
 describe('DatasetCatalog', () => {
   beforeEach(() => {
     mockGet = jest.spyOn(apiClient, 'get')
@@ -226,8 +250,8 @@ describe('DatasetCatalog', () => {
     expect(within(literal).getByText('None')).toBeInTheDocument()
   })
 
-  it('shows an empty state when memory has no datasets', async () => {
-    mockCatalog([])
+  it.each([false, true])('shows empty-memory guidance with unloaded providers present: %s', async (includeProviders: boolean) => {
+    mockCatalog(includeProviders ? [AVAILABLE] : [])
     render(<Harness initialPath="/datasets" />)
 
     expect(await screen.findByText('No datasets in memory')).toBeInTheDocument()
@@ -238,6 +262,49 @@ describe('DatasetCatalog', () => {
     expect(guide).toHaveAttribute('rel', 'noopener noreferrer')
     expect(screen.queryByRole('link', { name: /harmbench|gated/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /load|download/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('No datasets match these filters')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument()
+  })
+
+  it('distinguishes an empty available view from empty memory', async () => {
+    mockCatalog([UNNAMED])
+    render(<Harness initialPath="/datasets?view=available" />)
+    expect(await screen.findByText('No built-in providers available')).toBeInTheDocument()
+    expect(screen.queryByText('No datasets in memory')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Learn how to load datasets into memory' })).not.toBeInTheDocument()
+  })
+
+  it('shows an empty combined view when neither stored data nor providers exist', async () => {
+    mockCatalog([])
+    render(<Harness initialPath="/datasets?view=all" />)
+    expect(await screen.findByText('No datasets available')).toBeInTheDocument()
+    expect(screen.queryByText('No datasets match these filters')).not.toBeInTheDocument()
+  })
+
+  it('clears filters without leaving the selected provider view', async () => {
+    const user = userEvent.setup()
+    mockCatalog([AVAILABLE])
+    render(<Harness initialPath="/datasets?view=available&q=missing" />)
+    expect(await screen.findByText('No datasets match "missing"')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(await screen.findByRole('link', { name: AVAILABLE.name })).toBeInTheDocument()
+    expect(currentUrl().searchParams.get('view')).toBe('available')
+    expect(currentUrl().searchParams.has('q')).toBe(false)
+  })
+
+  it.each(['available', 'all'])('keeps normalized modality filters after loading in the %s view', async (view: string) => {
+    const user = userEvent.setup()
+    mockCatalog([AVAILABLE])
+    render(<Harness initialPath={`/datasets?view=${view}&modality=image_path`} />)
+    expect(await screen.findByRole('link', { name: AVAILABLE.name })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Modalities' })).toHaveValue('Modalities: image')
+    mockCatalog([{ ...AVAILABLE, loaded: true, modalities: ['image_path', 'text'], logical_examples: 2 }])
+    await advanceAutoRefresh()
+    expect(await screen.findByRole('link', { name: AVAILABLE.name })).toBeInTheDocument()
+    expect(currentUrl().searchParams.get('modality')).toBe('image_path')
+    await user.click(screen.getByRole('combobox', { name: 'Modalities' }))
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'image', exact: true })).toBeChecked()
+    expect(screen.queryByRole('menuitemcheckbox', { name: 'image_path', exact: true })).not.toBeInTheDocument()
   })
 
   it('shows the error text and recovers on the next automatic catalog check', async () => {
@@ -356,8 +423,8 @@ describe('DatasetCatalog', () => {
     expect(currentUrl().searchParams.get('sort')).toBe('logical_examples_desc')
 
     await user.click(screen.getByTestId('dataset-modality-filter'))
-    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'audio_path' }))
-    expect(currentUrl().searchParams.get('modality')).toBe('audio_path')
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'audio' }))
+    expect(currentUrl().searchParams.get('modality')).toBe('audio')
     expect(screen.getByRole('link', { name: '__unnamed__' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'harmbench' })).not.toBeInTheDocument()
 

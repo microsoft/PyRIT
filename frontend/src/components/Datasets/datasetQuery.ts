@@ -1,4 +1,5 @@
 import type { DatasetInfo } from '@/types'
+import { dataTypeToAttachmentKind } from '@/utils/media'
 
 const SEARCH_PARAM = 'q'
 const MODALITY_PARAM = 'modality'
@@ -80,6 +81,26 @@ export function catalogQueryIsDefault(query: DatasetCatalogQuery): boolean {
     && query.sort === DEFAULT_DATASET_SORT
 }
 
+export function datasetsForView(
+  datasets: readonly DatasetInfo[],
+  view: DatasetCatalogQuery['view'] = 'memory',
+): DatasetInfo[] {
+  return datasets.filter((dataset: DatasetInfo) =>
+    view === 'all' || (view === 'available' ? dataset.provider_available : dataset.loaded),
+  )
+}
+
+/** Storage-specific URL filters remain aliases of their declared content modality. */
+export function normalizeDatasetModality(modality: string): string {
+  const kind = dataTypeToAttachmentKind(modality)
+  return kind !== 'file' && modality === `${kind}_path` ? kind : modality
+}
+
+export function datasetModalities(dataset: DatasetInfo): string[] {
+  const values = dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []
+  return [...new Set(values.map(normalizeDatasetModality))]
+}
+
 function matchesSearch(name: string, search: string): boolean {
   const query = search.trim().toLowerCase()
   if (!query) return true
@@ -88,8 +109,8 @@ function matchesSearch(name: string, search: string): boolean {
 
 function matchesModalities(dataset: DatasetInfo, modalities: readonly string[]): boolean {
   if (modalities.length === 0) return true
-  const values = dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []
-  return modalities.some((modality) => values.includes(modality))
+  const values = datasetModalities(dataset)
+  return modalities.some((modality: string) => values.includes(normalizeDatasetModality(modality)))
 }
 
 function matchesHarm(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
@@ -132,9 +153,7 @@ export function filterDatasets(
   query: DatasetCatalogQuery,
 ): DatasetInfo[] {
   const matched: DatasetInfo[] = []
-  for (const dataset of datasets) {
-    if ((query.view ?? 'memory') === 'memory' && !dataset.loaded) continue
-    if (query.view === 'available' && !dataset.provider_available) continue
+  for (const dataset of datasetsForView(datasets, query.view)) {
     if (!matchesSearch(dataset.name, query.search)) continue
     if (!matchesModalities(dataset, query.modalities)) continue
     if (!matchesHarm(dataset, query)) continue

@@ -45,6 +45,8 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             self._dataset_name: str = name if isinstance(name, str) and name else file_path.stem
             description = dataset.get("description")
             self.description = description if isinstance(description, str) else None
+            source = dataset.get("source")
+            self.source = source if isinstance(source, str) else None
         except Exception as e:
             logger.warning(f"Could not pre-load dataset from {file_path}: {e}")
             self._dataset_name = file_path.stem

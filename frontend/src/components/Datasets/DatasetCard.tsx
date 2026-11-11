@@ -90,7 +90,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
             ['Access', dataset.provider.access_url],
           ] as const).map(([label, url]) => <div key={label}>
             <dt>{label}</dt>
-            <dd>{url && /^https?:\/\//.test(url)
+            <dd>{url && /^https:\/\//.test(url)
               ? <a href={url} target="_blank" rel="noopener noreferrer">{label}</a>
               : UNKNOWN_LABEL}</dd>
           </div>)}

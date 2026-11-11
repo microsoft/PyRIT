@@ -5,12 +5,16 @@
 Tests for backend dataset service.
 """
 
+import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.backend.services import DatasetService, get_dataset_service
-from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetMetadata
+from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetMetadata, SeedDatasetProvider
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote import _HarmBenchDataset
 from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDatasetSummary
 
@@ -35,6 +39,52 @@ def dataset_service(mock_memory):
 @pytest.mark.usefixtures("patch_central_database")
 class TestListDatasets:
     """Tests for DatasetService.list_datasets_async."""
+
+    @pytest.mark.parametrize("loaded_only", [False, True])
+    async def test_malformed_provider_metadata_preserves_stored_browsing_async(
+        self, dataset_service: DatasetService, mock_memory: MagicMock, tmp_path: Path, loaded_only: bool
+    ) -> None:
+        path = tmp_path / "fixture.yaml"
+        await asyncio.to_thread(path.write_text, "dataset_name: fixture\nmodalities: [null]\n", encoding="utf-8")
+
+        class FixtureProvider(_LocalDatasetLoader):
+            should_register = False
+
+            def __init__(self) -> None:
+                super().__init__(file_path=path)
+
+        mock_memory.get_seed_dataset_summaries_async.return_value = [
+            SeedDatasetSummary(
+                dataset_name="fixture",
+                logical_examples=2,
+                seed_pieces=3,
+                objectives=1,
+                modalities=("text",),
+                harm_categories=("violence",),
+                has_unlabeled_harm_categories=False,
+                origins=("local",),
+            )
+        ]
+        with patch.object(
+            SeedDatasetProvider,
+            "get_all_providers",
+            return_value={"fixture": FixtureProvider, "harmbench": _HarmBenchDataset},
+        ):
+            result = await dataset_service.list_datasets_async(loaded_only=loaded_only)
+
+        assert {item.name for item in result.items} == ({"fixture"} if loaded_only else {"fixture", "harmbench"})
+        stored = next(item for item in result.items if item.name == "fixture")
+        assert stored.loaded and stored.provider_available
+        assert stored.logical_examples == 2
+        assert stored.seed_pieces == 3
+        assert stored.objectives == 1
+        assert stored.modalities == ["text"]
+        assert stored.harm_categories == ["violence"]
+        assert stored.origins == ["local"]
+        assert stored.provider is not None
+        assert stored.provider.modalities == []
+        assert stored.provider.unavailable_reason == "Provider metadata is unavailable."
+        assert result.model_dump(mode="json")["items"]
 
     async def test_provider_estimates_are_separate_from_stored_counts(self, dataset_service, mock_memory):
         descriptor = SeedDatasetDescriptor(
