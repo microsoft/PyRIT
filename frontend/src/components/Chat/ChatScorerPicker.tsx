@@ -17,6 +17,7 @@ interface ChatScorerPickerProps {
   error?: string | null
   inherited?: boolean
   usage?: 'chat' | 'scenario'
+  defaultLabel?: string
 }
 
 function scorerOptionLabel(scorer: ScorerInstance): string {
@@ -25,6 +26,7 @@ function scorerOptionLabel(scorer: ScorerInstance): string {
 
 export default function ChatScorerPicker({
   value, scorers, onChange, onUseLastUsed, label = 'Chat scorer', disabled, loading, error, inherited = false, usage = 'chat',
+  defaultLabel,
 }: ChatScorerPickerProps) {
   const styles = useChatScorerPickerStyles()
   const selectedScorer = findRegisteredScorer(value ?? null, scorers, inherited)
@@ -47,7 +49,7 @@ export default function ChatScorerPicker({
           if (scorer) onChange({ registry_name: scorer.scorer_registry_name, identifier_hash: scorer.identifier.hash })
         }}>
         {onUseLastUsed && <option value="last-used">Use last used</option>}
-        <option value="">{usage === 'scenario' ? 'Use scenario default' : 'Off'}</option>
+        <option value="">{usage === 'scenario' ? defaultLabel ?? 'Use scenario default' : 'Off'}</option>
         {selected === 'unavailable' && value && <option value="unavailable" hidden disabled>
           {selectedScorer ? scorerOptionLabel(selectedScorer) : `Unavailable: ${value.registry_name}`}
         </option>}

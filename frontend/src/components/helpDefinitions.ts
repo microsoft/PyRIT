@@ -1,6 +1,6 @@
 export const HELP_DEFINITIONS = {
   objectiveTarget: 'The model or endpoint you are testing. It receives prompts and returns responses.',
-  adversarialTarget: 'The model used for adversarial chat: writing attack prompts. The objective target receives the prompts being tested.',
+  adversarialTarget: 'The explicitly selected or configured model for prompt generation and simulated conversations. Only selected techniques that generate prompts require it. The model under test is never silently reused.',
   technique: 'A named attack setup that combines an attack algorithm with prompts, converters, and settings.',
   requestConverters: 'Transform prompts before they are sent to the target. Converters run in the order shown.',
   responseConverters: 'Transform target responses before scoring. Converters run in the order shown.',

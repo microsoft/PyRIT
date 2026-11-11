@@ -1155,7 +1155,7 @@ async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness
         attack.atomic_attack_name for attack in package._atomic_attacks
     ]
     changed = harness.scenario(scenario_result_id=package._scenario_result_id)
-    with pytest.raises(ValueError, match="matching configuration"):
+    with pytest.raises(ValueError, match="does not match the current configuration"):
         await harness.initialize_async(changed, scenario_techniques=[_technique("red_teaming")], **args)
 
 

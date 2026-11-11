@@ -270,10 +270,11 @@ test('configures, saves, refreshes, estimates without a target, and launches the
   await assertNoPreparation(request)
 
   const launch = page.getByRole('button', { name: 'Launch scan', exact: true })
-  await expect(launch).toBeEnabled()
-  await launch.focus()
-  await launch.press('Enter')
-  await expect(page.getByRole('alert').filter({ hasText: 'Select a target.' })).toHaveText('Select a target.')
+  await expect(page.getByTestId('scenario-target-select')).toHaveValue('')
+  await expect(launch).toBeDisabled()
+  const issues = page.getByRole('alert', { name: 'Scan configuration issues' })
+  await expect(issues).toContainText('objective_target is required; no target selected.')
+  await expect(issues).toContainText('Create and select the target to scan.')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   const rejected = await request.post('/api/scenarios/runs', {
     headers: compatibilityHeaders(), data: { ...response.request().postDataJSON(), scenario_name: SCENARIO },
