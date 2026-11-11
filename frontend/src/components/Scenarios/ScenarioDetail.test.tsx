@@ -317,6 +317,31 @@ describe('ScenarioDetail', () => {
     expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
   })
 
+  it('uses default ASSERT scoring without a scorer picker or judge settings', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'foundry.assert_policy',
+      supports_objective_scorer: true,
+      supported_parameters: [
+        { name: 'max_turns', description: 'Turns.', type_name: 'int', choices: null, default: 6, required: false },
+        { name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: 1, required: false },
+      ],
+    }))
+    renderDetail('/scanner/launch/foundry.assert_policy', { scorers: [{
+      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
+    }] })
+    expect(await screen.findByRole('spinbutton', { name: /max_turns/i })).toBeInTheDocument()
+    expect(screen.queryByRole('spinbutton', { name: /judge_samples/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+    const dialog = await openRunPreview(user)
+    expect(within(dialog).queryByText('Objective scorer')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('objective_scorer')
+    expect(mockStartRun.mock.calls[0][0].scenario_params).not.toHaveProperty('judge_samples')
+  })
+
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')

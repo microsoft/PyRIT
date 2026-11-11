@@ -57,6 +57,7 @@ from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_
 from pyrit.score import (
     AssertJudgmentMode,
     AssertScoringDimension,
+    SubStringScorer,
     TrueFalseCompositeScorer,
     build_assert_policy_scorer,
     get_assert_failure_criterion,
@@ -243,6 +244,7 @@ def test_registry_name_and_argument_free_construction() -> None:
     assert ScenarioRegistry.get_registry_singleton().get_class("foundry.assert_policy") is AssertPolicy
     scenario = AssertPolicy()
     assert scenario._objective_scorer_identifier.class_name == "_AssertPlaceholderScorer"
+    assert ScenarioRegistry.supports_objective_scorer(AssertPolicy)
     technique_class = _build_assert_policy_technique()
     assert scenario._technique_class is technique_class
     assert [technique.value for technique in technique_class.expand({technique_class.default()})] == ["assert_package"]
@@ -1247,3 +1249,68 @@ async def test_only_techniques_with_a_tester_get_the_adversarial_chat_async(harn
 
     chats = {attack.display_group: attack._adversarial_chat for attack in scenario._atomic_attacks}
     assert chats == {"prompt_sending": None, "red_teaming": harness.adversarial}
+
+
+async def test_supplied_objective_scorer_runs_unchanged_without_default_judges_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scorer = SubStringScorer(substring=_SAFE_REPLY)
+    scenario = AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial)
+    result = await harness.run_async(scenario, **_prompt_case(), **_datasets("assert_a"))
+
+    (unit,) = scenario._atomic_attacks
+    config = unit.attack_technique.attack.get_attack_scoring_config()
+    assert config.objective_scorer is scorer
+    assert not config.auxiliary_scorers
+    assert scenario._objective_scorer is scorer
+    assert harness.judge_systems == []
+    (attack_result,) = next(iter(result.attack_results.values()))
+    assert attack_result.outcome is AttackOutcome.SUCCESS
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        {"judge_samples": 3},
+        {"judge_presets": ["safety-extended"]},
+        {"judgment_mode": "direct"},
+        {"target_system_prompt": "Owned instructions."},
+    ],
+)
+async def test_supplied_scorer_rejects_non_default_legacy_judge_settings_async(
+    harness: _Harness, legacy: dict[str, Any]
+) -> None:
+    scenario = AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), adversarial_chat=harness.adversarial)
+    with pytest.raises(ValueError, match="omit non-default ASSERT judge settings"):
+        await harness.initialize_async(scenario, **legacy)
+
+
+def test_supplied_scorer_rejects_a_judge_target(harness: _Harness) -> None:
+    with pytest.raises(ValueError, match="owns its judge target"):
+        AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), judge_target=harness.judge)
+
+
+async def test_supplied_scorer_identity_is_preserved_when_resuming_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scorer = SubStringScorer(substring=_SAFE_REPLY)
+    args = {**_prompt_case(), **_datasets("assert_a")}
+    scenario = await harness.initialize_async(
+        AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial), **args
+    )
+    restored = await harness.initialize_async(
+        AssertPolicy(
+            objective_scorer=scorer,
+            adversarial_chat=harness.adversarial,
+            scenario_result_id=scenario._scenario_result_id,
+        ),
+        **args,
+    )
+    assert [unit.atomic_attack_name for unit in restored._atomic_attacks] == [
+        unit.atomic_attack_name for unit in scenario._atomic_attacks
+    ]
+    changed = AssertPolicy(
+        objective_scorer=SubStringScorer(substring="different"),
+        adversarial_chat=harness.adversarial,
+        scenario_result_id=scenario._scenario_result_id,
+    )
+    with pytest.raises(ValueError, match="does not match the current configuration|matching configuration"):
+        await harness.initialize_async(changed, **args)
