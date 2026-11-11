@@ -192,9 +192,14 @@ class PlaywrightCopilotTarget(PromptTarget):
         return CopilotSelectors(
             input_selector='span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]',
             send_button_selector='button[aria-label="Send"]',
-            ai_messages_selector='div[data-testid="copilot-message-div"]',
-            ai_messages_group_selector='div[data-testid="copilot-message-reply-div"]',
-            text_content_selector="div > p",
+            ai_messages_selector=(
+                'div[data-testid="copilot-message-div"], div[role="article"][aria-labelledby^="copilot-message-"]'
+            ),
+            ai_messages_group_selector=(
+                'div[data-testid="copilot-message-reply-div"], '
+                'div[role="article"][aria-labelledby^="copilot-message-"] > div[id^="copilot-message-"]'
+            ),
+            text_content_selector="p",
             plus_button_dropdown_selector=(
                 'button[aria-label="Add and manage sources"], '
                 'button[aria-label="Add attachments"], '

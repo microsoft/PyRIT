@@ -170,15 +170,38 @@ class TestPlaywrightCopilotTarget:
             'span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]'
         )
         assert selectors.send_button_selector == 'button[aria-label="Send"]'
-        assert selectors.ai_messages_selector == 'div[data-testid="copilot-message-div"]'
-        assert selectors.ai_messages_group_selector == 'div[data-testid="copilot-message-reply-div"]'
-        assert selectors.text_content_selector == "div > p"
+        assert selectors.ai_messages_selector == (
+            'div[data-testid="copilot-message-div"], div[role="article"][aria-labelledby^="copilot-message-"]'
+        )
+        assert selectors.ai_messages_group_selector == (
+            'div[data-testid="copilot-message-reply-div"], '
+            'div[role="article"][aria-labelledby^="copilot-message-"] > div[id^="copilot-message-"]'
+        )
+        assert selectors.text_content_selector == "p"
         assert selectors.plus_button_dropdown_selector == (
             'button[aria-label="Add and manage sources"], '
             'button[aria-label="Add attachments"], '
             'button[aria-label="Add content"]'
         )
         assert selectors.file_picker_selector == ('span.fui-MenuItem__content:has-text("Upload images and files")')
+
+    async def test_wait_for_response_unified_article_variant(self, mock_unified_page):
+        """Test response detection when the unified UI omits data-testid attributes."""
+        target = PlaywrightCopilotTarget(page=mock_unified_page, copilot_type=CopilotType.CONSUMER)
+        selectors = target._get_selectors()
+        mock_unified_page.eval_on_selector_all.side_effect = [0, 1]
+        mock_unified_page.query_selector_all.return_value = []
+
+        with patch.object(target, "_extract_multimodal_content_async", return_value="Cowork response") as mock_extract:
+            result = await target._wait_for_response_async(selectors)
+
+        assert result == "Cowork response"
+        assert mock_unified_page.eval_on_selector_all.call_args_list == [
+            call(selectors.ai_messages_selector, "elements => elements.length"),
+            call(selectors.ai_messages_selector, "elements => elements.length"),
+        ]
+        mock_unified_page.query_selector_all.assert_awaited_once_with(selectors.ai_messages_group_selector)
+        mock_extract.assert_awaited_once_with(selectors, 0)
 
     def test_validate_request_unsupported_type(self, mock_page):
         """Test validation with unsupported data type."""
