@@ -107,6 +107,7 @@ for (const width of [1280, 390]) {
     await page.getByTestId('confirm-launch-scenario-btn').click()
     await expect(form.getByRole('alert')).toContainText('adversarial_chat')
     await expect(page.getByTestId('launch-scenario-btn')).toBeEnabled()
+    await form.getByRole('alert').scrollIntoViewIfNeeded()
     await capture(page, `scan-error-${width}`)
     expect((await (await request.get('/api/scenarios/runs')).json()).items).toEqual(before.items)
     expect(await targetSnapshot(request)).toEqual(initialTargets)
