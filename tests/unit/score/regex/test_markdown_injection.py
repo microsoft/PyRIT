@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import random
 import re
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,7 @@ import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.score import MarkdownInjectionScorer
-from pyrit.score.true_false.regex.markdown_injection import _find_images
+from pyrit.score.true_false.regex.markdown_injection import _find_images, _has_shortcut_pair
 
 
 @pytest.mark.parametrize(
@@ -319,6 +320,58 @@ async def test_md_image_default_patterns_keep_regex_verdict(text: str, expected:
     score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is bool(expected)
     assert [name for name, pattern in patterns.items() if re.search(pattern, text)] == expected
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Every image or definition line made the default shortcut regex scan the rest of the reply.
+        "![a] " * 60_000,
+        "![a]\n" * 60_000,
+        "[a]: x\n" * 100_000,
+    ],
+    ids=["shortcut-images", "shortcut-image-lines", "definition-lines"],
+)
+async def test_md_injection_scales_on_shortcut_candidates(text: str, patch_central_database):
+    scorer = MarkdownInjectionScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+_SHORTCUT_PATTERN = MarkdownInjectionScorer._DEFAULT_PATTERNS["Markdown Image (shortcut reference)"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("![a]\n[a]: x", True),
+        ("[A]: x\n![a]", True),
+        ("[a]: x ![a]", True),
+        ("![![a]\n[a]: x", True),
+        ("![a\nB]\n[A\nb]: x", True),
+        # The backreference compares lowercase characters: U+0130 lowercases to "i", but long s stays long s.
+        ("![\u0130]\n[i]: x", True),
+        ("![\u017f]\n[s]: x", False),
+        ("![a]\n    [a]: x", False),
+        ("![a]\n[a]:\nx", False),
+        ("![a][b]\n[a]: x", False),
+        ("![a](\n[a]: x", False),
+        ("[a]: ![a]", False),
+        ("![]\n[]: x", False),
+    ],
+)
+def test_md_shortcut_check_keeps_regex_verdict(text: str, expected: bool):
+    assert bool(re.search(_SHORTCUT_PATTERN, text)) is expected
+    assert _has_shortcut_pair(text) is expected
+
+
+def test_md_shortcut_check_matches_regex_on_random_text():
+    rng = random.Random(0)
+    pieces = ["![", "[", "]", "]:", "(", " ", "    ", "\t", "\n", "a", "A", "x", "![a]", "[a]: x", "[A]:"]
+    for _ in range(20_000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 12)))
+        assert _has_shortcut_pair(text) is bool(re.search(_SHORTCUT_PATTERN, text)), text
 
 
 async def test_md_injection_adds_to_memory():

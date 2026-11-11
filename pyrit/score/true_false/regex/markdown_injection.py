@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
@@ -169,10 +169,84 @@ def _has_on_one_line(text: str, opener: str, middle: str, closer: str) -> bool:
     return False
 
 
-# Linear-time checks with the same verdict as the default inline and reference image patterns.
+_DEFINITION_START = re.compile(r"^ {0,3}\[", re.MULTILINE)
+_DEFINITION_VALUE = re.compile(r"[ \t]*+\S")
+
+
+def _has_shortcut_pair(text: str) -> bool:
+    """
+    Check whether ``text`` holds an image ``![label]`` and a ``[label]: value`` line that the default
+    shortcut-reference image pattern pairs.
+
+    The pattern accepts the definition line anywhere after the image, or the image anywhere after the
+    definition's value, and compares the labels with a case-insensitive backreference. The regex engine
+    tries every image and every definition against the rest of the text, which takes quadratic time on
+    a long run of ``![`` or ``[`` lines. A label runs to the first ``]`` after its bracket, so each image
+    and each definition line has exactly one label. Labels are read once, backwards from their ``]``,
+    into a trie of lowercased characters (the key the backreference compares), so equal labels share a
+    node and one pass over the definitions decides.
+
+    Returns:
+        bool: True if the default shortcut-reference image pattern would match ``text``.
+    """
+    closers = [closer.start() for closer in re.finditer(r"\]", text)]
+
+    def label_end(start: int) -> int:
+        index = bisect_left(closers, start)
+        return closers[index] if index < len(closers) and closers[index] > start else -1
+
+    # (label start, label end, image start) for each image not followed by "[" or "(".
+    images = []
+    for image in re.finditer(r"!\[", text):
+        end = label_end(image.end())
+        if end >= 0 and text[end + 1 : end + 2] not in ("[", "("):
+            images.append((image.end(), end, image.start()))
+    if not images:
+        return False
+    # (label start, label end, line start, value start) for each "[label]:" line with a value on that line.
+    definitions = []
+    values: dict[int, int] = {}
+    for line in _DEFINITION_START.finditer(text):
+        end = label_end(line.end())
+        if end >= 0 and text.startswith(":", end + 1):
+            if end not in values:
+                value = _DEFINITION_VALUE.match(text, end + 2)
+                values[end] = value.end() - 1 if value else -1
+            if values[end] >= 0:
+                definitions.append((line.end(), end, line.start(), values[end]))
+
+    # Labels that end at the same "]" are suffixes of one another, so one walk per "]" reads them all.
+    label_starts: set[int] = set()
+    first_start: dict[int, int] = {}
+    for start, end, *_ in (*images, *definitions):
+        label_starts.add(start)
+        first_start[end] = min(start, first_start.get(end, start))
+    trie: dict[tuple[int, str], int] = {}
+    node_of: dict[int, int] = {}
+    for end, first in first_start.items():
+        node = 0
+        for position in range(end - 1, first - 1, -1):
+            node = trie.setdefault((node, text[position].lower()[0]), len(trie) + 1)
+            if position in label_starts:
+                node_of[position] = node
+
+    first_image_end: dict[int, int] = {}
+    last_image_start: dict[int, int] = {}
+    for start, end, image_start in images:
+        first_image_end.setdefault(node_of[start], end + 1)
+        last_image_start[node_of[start]] = image_start
+    for start, _, line_start, value_start in definitions:
+        node = node_of[start]
+        if node in first_image_end and (line_start >= first_image_end[node] or last_image_start[node] > value_start):
+            return True
+    return False
+
+
+# Linear-time checks with the same verdict as the default image patterns.
 _IMAGE_PATTERN_CHECKS = {
     _INLINE: lambda text: _has_on_one_line(text, "![", "](", ")"),
     _REFERENCE: lambda text: _has_on_one_line(text, "![", "][", "]"),
+    _SHORTCUT: _has_shortcut_pair,
 }
 
 
