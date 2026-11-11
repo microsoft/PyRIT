@@ -198,9 +198,11 @@ def _is_raw_base64(value: str) -> bool:
 
 
 def _data_uri_parts(value: str) -> tuple[str | None, str]:
-    """Return the optional MIME type and payload from a data URI."""
+    """Return the optional MIME type and payload from a data URI, whatever the scheme's case."""
     header, _, payload = value.partition(",")
-    media_type = header.removeprefix("data:").split(";", 1)[0] or None
+    if header.lower().startswith("data:"):
+        header = header[len("data:") :]
+    media_type = header.split(";", 1)[0] or None
     return media_type, payload
 
 
@@ -280,7 +282,7 @@ async def persist_media_value_async(
     data_uri_mime_type: str | None = None
     payload = value
     origin = MediaOrigin.STAGED_UPLOAD if staged_upload else MediaOrigin.RAW_BASE64
-    if value.startswith("data:"):
+    if value.lower().startswith("data:"):
         data_uri_mime_type, payload = _data_uri_parts(value)
         origin = MediaOrigin.DATA_URI
     else:
