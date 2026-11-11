@@ -575,6 +575,52 @@ class TestRestoreFailures:
         assert len([record for record in caplog.records if "target 'pool' (" in record.getMessage()]) == 1
         assert "SECRET" not in caplog.text
 
+    async def test_logs_every_problem_with_a_file_that_is_not_valid_in_full(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        many_keys = [f"unknown_{index:03d}_{'x' * 40}" for index in range(100)]
+        twins = ["p" * 70 + "_alpha", "p" * 70 + "_beta"]
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "many_keys", {**_IDENTITY_TARGET, **dict.fromkeys(many_keys, True)})
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "twins", {**_IDENTITY_TARGET, **dict.fromkeys(twins, True)})
+
+        with caplog.at_level("ERROR", logger="pyrit.registry.registry_recipe_restore"):
+            report = await _restore(tmp_path)
+
+        messages = {failure.name: failure.message for failure in report.failures}
+        assert len(messages["many_keys"]) == MAX_FAILURE_MESSAGE_LENGTH
+        for name, keys in (("many_keys", many_keys), ("twins", twins)):
+            (record,) = [record for record in caplog.records if f"target '{name}' (" in record.getMessage()]
+            lines = record.getMessage().splitlines()
+            assert all(f"  {key}: Extra inputs are not permitted" in lines for key in keys)
+
+    async def test_logs_the_problems_of_a_file_escaped_and_without_stored_values_or_url_credentials(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url_key = "https://user:pw-token@acct.blob.core.windows.net/c/x.json?sv=2024&sig=sas-token#frag-token"
+        long_url_key = f"https://user:{'longpw' * 20}@host/path?sig=sas-token"
+        document = {
+            **_IDENTITY_TARGET,
+            "schema_version": "STORED-VALUE",
+            url_key: True,
+            long_url_key: True,
+            "\n\x1b[31mFAKE": True,
+        }
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "unsafe", document)
+
+        with caplog.at_level("ERROR", logger="pyrit.registry.registry_recipe_restore"):
+            report = await _restore(tmp_path)
+
+        (record,) = [record for record in caplog.records if "target 'unsafe' (" in record.getMessage()]
+        lines = record.getMessage().splitlines()
+        assert "  schema_version: Input should be a valid integer" in lines
+        assert "  https://acct.blob.core.windows.net/c/x.json: Extra inputs are not permitted" in lines
+        assert "  https://host/path: Extra inputs are not permitted" in lines
+        assert "  \\n\\x1b[31mFAKE: Extra inputs are not permitted" in lines
+        assert all(line.isprintable() for line in lines)
+        for hidden in ("STORED-VALUE", "pw-token", "longpw", "sig=", "sas-token", "frag-token"):
+            assert hidden not in caplog.text
+            assert hidden not in report.model_dump_json()
+
     async def test_reports_a_reference_name_that_is_not_valid_text_as_invalid(self, tmp_path: Path) -> None:
         _save_text(
             tmp_path,
