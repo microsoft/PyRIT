@@ -47,6 +47,7 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
     Score,
+    TargetCapabilities,
 )
 from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
 from pyrit.models.results.attack_result import ManualContinuation, ScoringFailure, normalize_legacy_attack_attribution
@@ -62,6 +63,8 @@ class TargetInfo(BaseModel):
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
     binding: TargetBinding | None = None
+    capabilities: TargetCapabilities | None = None
+    supports_history_replay: bool | None = None
 
 
 class ScoreView(Score):
@@ -319,6 +322,11 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         if not target_id:
             return None
         target_registry_name = self.metadata.get("target_registry_name")
+        binding = TargetBinding.from_metadata(self.metadata)
+        saved = self.metadata.get("target_capabilities")
+        capabilities = TargetCapabilities.model_validate(saved) if saved is not None else None
+        if binding is not None:
+            capabilities = binding.capabilities
         return TargetInfo(
             target_type=target_id.class_name,
             target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
@@ -326,7 +334,9 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
-            binding=TargetBinding.from_metadata(self.metadata),
+            binding=binding,
+            capabilities=capabilities,
+            supports_history_replay=self.metadata.get("target_supports_history_replay"),
         )
 
     @computed_field  # type: ignore[prop-decorator]

@@ -207,6 +207,29 @@ describe('toApiError', () => {
     expect(result.detail).toBe('Field "name" is required.')
     expect(result.type).toBe('validation_error')
   })
+
+  it('preserves per-field validation errors from the RFC 7807 body', () => {
+    const err = makeAxiosError({
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [
+          { field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' },
+          { field: 'body.title', message: 42 },
+          'not-an-object',
+        ],
+      },
+    })
+
+    expect(toApiError(err).fieldErrors).toEqual([
+      { field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' },
+    ])
+  })
+
+  it('leaves fieldErrors empty when the body has no errors array', () => {
+    const err = makeAxiosError({ status: 500, data: { detail: 'boom' } })
+    expect(toApiError(err).fieldErrors).toEqual([])
+  })
 })
 
 describe('decodeBlobErrorAsync', () => {
