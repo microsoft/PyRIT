@@ -65,7 +65,6 @@ jest.mock('@/services/api', () => ({
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
-    readiness: jest.fn().mockResolvedValue({ bindings: [], issues: [] }),
     listCatalog: jest.fn(),
     listRuns: jest.fn(),
     getScenario: jest.fn(),
