@@ -436,6 +436,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
               {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executionCount.toLocaleString()} ${producerCounts ? '' : 'loaded '}execution${executionCount === 1 ? '' : 's'}`}
             </Text>
           </div>
+          {isAssertPolicyRun(run) && <Text className={styles.sectionHint}>
+            New runs group cases by their generated category; older runs keep their recorded grouping.
+            Category rates use judged relevance.
+          </Text>}
           <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
             {atomicGroupsExpanded && (
               <ScenarioResultHierarchy hierarchy={hierarchy} runStatus={run.status}>
@@ -465,9 +469,9 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                             />
                             <span className={styles.displayGroupIdentity}>
                               <Text size={400} weight="semibold">{group.display_group}</Text>
-                              <Text size={200} className={styles.sectionHint}>
+                              {!isAssertPolicyRun(run) && <Text size={200} className={styles.sectionHint}>
                                 {group.atomic_attack_names.join(', ')}
-                              </Text>
+                              </Text>}
                             </span>
                             <span className={styles.displayGroupMetrics}>
                               <DisplayGroupMetric

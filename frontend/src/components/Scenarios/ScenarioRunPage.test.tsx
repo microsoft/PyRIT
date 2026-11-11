@@ -214,6 +214,38 @@ describe('ScenarioRunPage', () => {
     view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
   })
+
+  it.each(['ASSERT package / public_policy', 'assert_package'])(
+    'keeps the recorded ASSERT group %s without a hash-list subtitle or invented categories',
+    (displayGroup: string) => {
+      state = makeState({
+        run: { ...RUN, status: 'COMPLETED', scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy' },
+        summary: { ...SUMMARY, display_groups: [{
+          ...SUMMARY.techniques[0], display_group: displayGroup,
+          atomic_attack_names: ['assert_package__case_hash_a', 'assert_package__case_hash_b'],
+        }] },
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(screen.getByText(displayGroup, { exact: true })).toBeVisible()
+      expect(screen.queryByText('assert_package__case_hash_a, assert_package__case_hash_b')).not.toBeInTheDocument()
+      expect(screen.getByText(/older runs keep their recorded grouping/)).toBeVisible()
+      expect(screen.getByText(/Category rates use judged relevance/)).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'ASSERT policy metrics' })).toBeInTheDocument()
+      if (displayGroup === 'assert_package') {
+        expect(screen.queryByText(/public_policy/)).not.toBeInTheDocument()
+      }
+    },
+  )
+
+  it('retains the existing technical group subtitle for non-ASSERT runs', () => {
+    state = makeState({ summary: { ...SUMMARY, techniques: [{
+      ...SUMMARY.techniques[0], atomic_attack_names: ['PromptSendingAttack', 'SecondAttack'],
+    }] } })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('PromptSendingAttack, SecondAttack', { exact: true })).toBeVisible()
+    expect(screen.queryByText(/older runs keep their recorded grouping/)).not.toBeInTheDocument()
+  })
+
   it('preserves per-group expansion through polling and completion without collapse text', async () => {
     const user = userEvent.setup()
     const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
