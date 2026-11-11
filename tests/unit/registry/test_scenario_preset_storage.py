@@ -358,7 +358,7 @@ def test_conditional_delete_checks_the_version_under_the_document_lock(tmp_path:
 
     try:
         with patch.object(ScenarioPresetStorage, "LOCK_TIMEOUT_SECONDS", 0.1):
-            with pytest.raises(TimeoutError, match="nightly.json.lock"):
+            with pytest.raises(DocumentStorageUnavailableError, match="nightly.json.lock"):
                 storage.delete_preset("nightly", expected_version=saved.version)
     finally:
         _release_exclusive_lock(descriptor)
@@ -573,6 +573,7 @@ def test_blob_conditional_delete_of_a_missing_document_reports_absence() -> None
     client = MagicMock()
     client.__enter__.return_value = client
     client.download_blob.side_effect = ResourceNotFoundError("missing")
+    client.download_blob.side_effect.error_code = "BlobNotFound"
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
@@ -588,10 +589,12 @@ def test_blob_conditional_delete_that_loses_to_another_delete_reports_absence(re
 
     document = json.dumps({"scenario_name": "foundry.red_team_agent"}).encode("utf-8")
     client = _blob_client_holding(document)
+    missing = ResourceNotFoundError("missing")
+    missing.error_code = "BlobNotFound"
     if removed_during == "delete":
-        client.delete_blob.side_effect = ResourceNotFoundError("missing")
+        client.delete_blob.side_effect = missing
     else:
-        client.download_blob.side_effect = [client.download_blob.return_value, ResourceNotFoundError("missing")]
+        client.download_blob.side_effect = [client.download_blob.return_value, missing]
         client.delete_blob.side_effect = ResourceModifiedError("changed")
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 

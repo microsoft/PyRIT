@@ -691,7 +691,12 @@ def test_delete_of_a_changed_suite_is_a_conflict(client: TestClient, service: Ma
 
 @pytest.mark.parametrize(
     "error",
-    [AzureError("key=secret"), TimeoutError("Timed out waiting to write 'secret.lock'")],
+    [
+        DocumentStorageUnavailableError(label="Scenario suite", source="https://secret.test/c", reason="AzureError"),
+        DocumentStorageUnavailableError(
+            label="Scenario suite", source="/srv/secret", reason="Timed out waiting to write '.secret.lock'"
+        ),
+    ],
 )
 def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock, error: Exception) -> None:
     """Test that blob failures and local lock timeouts during delete map to a sanitized 503."""
