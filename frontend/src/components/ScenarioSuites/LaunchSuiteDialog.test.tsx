@@ -14,14 +14,7 @@ import LaunchSuiteDialog from './LaunchSuiteDialog'
 jest.mock('@/services/api', () => ({
   scenarioSuitesApi: {
     launch: jest.fn(),
-    readiness: jest.fn(),
   },
-}))
-jest.mock('@/hooks/useRuntime', () => ({
-  useRuntime: () => ({ ready: true, state: 'ready', generation: 'first' }),
-}))
-jest.mock('@/hooks/useScorerRegistry', () => ({
-  useScorerRegistry: () => ({ scorers: [], loading: false, error: null }),
 }))
 
 const mockLaunch = scenarioSuitesApi.launch as jest.Mock
@@ -134,57 +127,19 @@ beforeEach(() => {
   jest.clearAllMocks()
   window.localStorage.clear()
   mockLaunch.mockResolvedValue({ suite_execution_id: 'execution-1' })
-  jest.mocked(scenarioSuitesApi.readiness).mockResolvedValue({ issues: [], bindings: [{
-    role: 'adversarial_target', component: 'first_preset',
-    identifier: { class_name: 'ConfiguredGenerator', hash: 'generator' },
-  }] })
 })
 
 describe('LaunchSuiteDialog', () => {
-  it('retains the scoring correction picker when only an objective-scorer error remains', async () => {
-    const user = userEvent.setup()
-    jest.mocked(scenarioSuitesApi.readiness).mockImplementation(async (_name, request) =>
-      request.scoring_target_name ? { bindings: [], issues: [{
-        role: 'objective_scorer', component: 'Entry 1', reason: 'Unsupported judge.', remediation: 'Replace the target.',
-      }] } : { issues: [], bindings: [{
-        role: 'scoring_target', component: 'Entry 1', identifier: { class_name: 'Judge', hash: 'judge' },
-      }] })
+  it('keeps the original suite controls without inline component creation or readiness fields', () => {
     renderDialog()
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Scoring Target' }), 'adversarial-target')
-    await screen.findByText(/Unsupported judge/)
-    expect(screen.getByRole('combobox', { name: 'Scoring Target' })).toHaveValue('adversarial-target')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Scoring Target' }), 'objective-target')
-    await waitFor(() => expect(jest.mocked(scenarioSuitesApi.readiness).mock.calls.at(-1)?.[1].scoring_target_name).toBe('objective-target'))
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Scoring Target' }), '')
-    await waitFor(() => expect(jest.mocked(scenarioSuitesApi.readiness).mock.calls.at(-1)?.[1]).not.toHaveProperty('scoring_target_name'))
-    expect(mockLaunch).not.toHaveBeenCalled()
-  })
-
-  it('groups repeated remediation once per field while preserving affected entry names', async () => {
-    jest.mocked(scenarioSuitesApi.readiness).mockResolvedValue({ bindings: [], issues:
-      ['Entry 1 (first)', 'Entry 2 (second)'].map((component) => ({
-        role: 'adversarial_target', component, reason: 'No configured generator.', remediation: 'Create a target.',
-      })),
-    })
-    renderDialog()
-    const summary = await screen.findByLabelText('Suite configuration issues')
-    expect(summary).toHaveTextContent('Entry 1 (first), Entry 2 (second)')
-    expect(summary).not.toHaveTextContent('No configured generator.')
-    expect(screen.getAllByText(/No configured generator/)).toHaveLength(1)
-    expect(screen.getAllByText(/Create a target\./)).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Launch suite' })).toBeDisabled()
-  })
-
-  it('blocks the whole suite when a later child has missing roles', async () => {
-    jest.mocked(scenarioSuitesApi.readiness).mockResolvedValue({ bindings: [], issues: [{
-      role: 'scoring_target', component: 'Entry 2 (second_preset)', reason: 'No configured scoring target.',
-      remediation: 'Create a scoring target.',
-    }] })
-    renderDialog()
-    expect(await screen.findByLabelText('Suite configuration issues')).toHaveTextContent('Entry 2 (second_preset)')
-    expect(screen.getByRole('button', { name: 'Create scoring target', exact: true })).toBeVisible()
-    expect(screen.getByTestId('confirm-launch-suite')).toBeDisabled()
-    expect(mockLaunch).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('combobox')).toHaveLength(2)
+    expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
+    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Use server default' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Create/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Suite configuration issues')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('confirm-launch-suite')).toBeEnabled()
   })
 
   function dialog(options: RenderOptions) {
