@@ -21,10 +21,10 @@ from pyrit.backend.main import app
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
 from pyrit.backend.services import (
+    DatasetService,
     ScenarioService,
     get_scenario_service,
 )
-from pyrit.backend.services.dataset_service import DatasetService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
     _metadata_to_registered_scenario,
