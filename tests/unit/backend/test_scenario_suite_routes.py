@@ -663,6 +663,51 @@ def test_delete_requires_confirmation_from_storage(client: TestClient, service: 
     assert client.delete(f"/api/scenario-suites/{SUITE_NAME}").status_code == 404
 
 
+def test_delete_forwards_the_version_that_was_read(client: TestClient, service: MagicMock) -> None:
+    """Test that an optional version query reaches the service."""
+    service.delete_suite_async = AsyncMock(return_value=True)
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 204
+    service.delete_suite_async.assert_awaited_once_with(name=SUITE_NAME, expected_version="suite-v1")
+
+
+def test_delete_of_a_changed_suite_is_a_conflict(client: TestClient, service: MagicMock) -> None:
+    """Test that a stale delete maps to 409 rather than the generic invalid-input 400."""
+    service.delete_suite_async = AsyncMock(
+        side_effect=ScenarioSuiteConflictError(
+            name=SUITE_NAME, expected_version="suite-v1", actual_version="suite-v2", action="deleted"
+        )
+    )
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        f"Scenario suite '{SUITE_NAME}' changed since it was read; re-read it and retry"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        DocumentStorageUnavailableError(label="Scenario suite", source="https://secret.test/c", reason="AzureError"),
+        DocumentStorageUnavailableError(
+            label="Scenario suite", source="/srv/secret", reason="Timed out waiting to write '.secret.lock'"
+        ),
+    ],
+)
+def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock, error: Exception) -> None:
+    """Test that blob failures and local lock timeouts during delete map to a sanitized 503."""
+    service.delete_suite_async = AsyncMock(side_effect=error)
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 503
+    assert "secret" not in response.text
+
+
 def test_delete_requires_admin(anonymous_client: TestClient, service: MagicMock) -> None:
     """Test delete authorization."""
     response = anonymous_client.delete(f"/api/scenario-suites/{SUITE_NAME}")
