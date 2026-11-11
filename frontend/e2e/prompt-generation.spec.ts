@@ -6,6 +6,7 @@ import type {
   PromptGenerationPreflightResponse,
   PromptGenerationReview,
   ScenarioDatasetCompatibility,
+  ScenarioRunSummary,
 } from '../src/types'
 import { formatRange } from '../src/components/PromptGeneration/promptGenerationPresentation'
 
@@ -109,7 +110,7 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await page.getByRole('textbox', { name: /^Dimension 1 name/ }).fill('channel')
   await page.getByRole('textbox', { name: /^Dimension 1 description/ }).fill('Where the customer writes from.')
   // foundry.assert_policy's default technique needs the tester instructions this adds to each group.
-  await page.getByRole('checkbox', { name: /^Include an adversarial prompt/ }).check()
+  await page.getByRole('checkbox', { name: /^Include tester instructions/ }).check()
   await page.getByRole('combobox', { name: /^Generation target/ }).selectOption(TARGET)
   await page.getByRole('checkbox', { name: /^Pause for review after/ }).check()
   const preflight = nextPreflight(page, (body: PromptGenerationCreateRequest) => body.dataset_name === name
@@ -215,6 +216,20 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   expect(started.request().postDataJSON()).toMatchObject({
     scenario_name: FOLLOW_UP_SCENARIO, target_name: TARGET, datasets: { sources: [{ name }] },
   })
+  const run: ScenarioRunSummary = await started.json()
+  const compatibilityId = started.request().headers()['pyrit-compatibility-id']
+  if (!compatibilityId) throw new Error('The scanner launch did not send its compatibility identity.')
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/scenarios/runs/${encodeURIComponent(run.scenario_result_id)}`, {
+      headers: { 'PyRIT-Compatibility-ID': compatibilityId },
+    })
+    expect(response.status(), await response.text()).toBe(200)
+    const current: ScenarioRunSummary = await response.json()
+    if (current.status === 'FAILED' || current.status === 'CANCELLED') {
+      throw new Error(`Offline scenario ended with ${current.status}: ${current.error}`)
+    }
+    return current.status
+  }, { timeout: JOB_TIMEOUT_MS }).toBe('COMPLETED')
 })
 
 test('generates an objective dataset that appears in the catalog', async ({ page }: JourneyContext, testInfo: TestInfo): Promise<void> => {

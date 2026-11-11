@@ -84,6 +84,22 @@ async function addDataset(user: ReturnType<typeof userEvent.setup>, name: string
 }
 
 describe('ScenarioDatasetTable', () => {
+  it('keeps dataset option names stable while announcing compatibility as a description', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness onChange={onChange} compatibility={{
+      requirements: [], selection_compatible: null, selection_reasons: [],
+      items: [{
+        name: 'other', selected: false, status: 'not_verified', group_count: 8, techniques: [], reasons: [],
+      }],
+    }} />)
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    const option = screen.getByRole('option', { name: 'other (local)', exact: true })
+    expect(option).toHaveAttribute('aria-description', 'Not verified - load and validate')
+    await user.click(option)
+    expect(onChange.mock.calls.at(-1)?.[0].sources).toEqual([{ name: 'stored' }, { name: 'other' }])
+  })
+
   it('keeps an incompatible selection visible and explains independent technique coverage', () => {
     render(<Harness compatibility={{
       requirements: [{ name: 'policy', description: 'policy taxonomy' }],

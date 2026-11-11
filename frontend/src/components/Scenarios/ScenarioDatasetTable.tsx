@@ -279,13 +279,15 @@ export default function ScenarioDatasetTable({
           {candidates.map((name) => {
             const label = datasetNameWithOrigin(name, datasets.find((dataset) => dataset.name === name))
             const assessment = assessed.get(name)
-            return <Option key={name} value={name} text={label} disabled={assessment?.status === 'incompatible'}>
+            const description = assessment
+              ? assessment.status === 'compatible' ? 'Validated' : assessment.status === 'incompatible'
+                ? assessment.reasons.map((reason) => reason.message).join(' ') : 'Not verified - load and validate'
+              : undefined
+            return <Option key={name} value={name} text={label} aria-label={label} aria-description={description}
+              disabled={assessment?.status === 'incompatible'}>
               <div className={styles.compatibility}>
                 <Text>{label}</Text>
-                {assessment && <Text size={200}>
-                  {assessment.status === 'compatible' ? 'Validated' : assessment.status === 'incompatible'
-                    ? assessment.reasons.map((reason) => reason.message).join(' ') : 'Not verified - load and validate'}
-                </Text>}
+                {description && <Text size={200}>{description}</Text>}
               </div>
             </Option>
           })}

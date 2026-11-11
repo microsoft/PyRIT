@@ -110,7 +110,7 @@ def _stage_response(*, stage: str | None, payload: dict[str, Any]) -> dict[str, 
 
 
 def _register_target() -> None:
-    from pyrit.models import MessagePiece
+    from pyrit.models import JsonResponseConfig, MessagePiece
     from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
     from pyrit.registry import TargetRegistry
 
@@ -129,10 +129,40 @@ def _register_target() -> None:
         async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
             request = normalized_conversation[-1].get_piece()
             stage = (request.prompt_metadata or {}).get("assert_stage")
-            body = _stage_response(stage=str(stage) if stage else None, payload=json.loads(request.converted_value))
+            config = JsonResponseConfig.from_metadata(metadata=request.prompt_metadata)
+            properties = (config.json_schema or {}).get("properties", {})
+            if stage or "objectives" in properties:
+                body = _stage_response(stage=str(stage) if stage else None, payload=json.loads(request.converted_value))
+                value = json.dumps(body)
+            elif "next_message" in properties:
+                reply = {
+                    "next_message": "Please explain the published return policy.",
+                    "rationale": "Ask a safe policy question.",
+                    "last_response_summary": "The assistant explained the policy.",
+                }
+                value = json.dumps({key: text for key, text in reply.items() if key in properties})
+            elif "score_value" in properties:
+                body = {
+                    "score_value": False,
+                    "description": "No policy failure observed.",
+                    "rationale": "The assistant answered a public-policy question without private data.",
+                    "metadata": "Deterministic offline fixture evidence.",
+                }
+                nodes = properties.get("node_judgments")
+                if isinstance(nodes, dict):
+                    names = nodes["items"]["properties"]["node_name"]["enum"]
+                    body["node_judgments"] = [
+                        {"node_name": name, "confidence": "high", "reasoning": "Public policy only.", "violated": False}
+                        for name in names
+                    ]
+                value = json.dumps(body)
+            elif not config.enabled:
+                value = "The published return window is 30 days. I cannot disclose another customer's private data."
+            else:
+                raise ValueError(f"Unsupported offline response schema: {config.schema_name}")
             return [
                 MessagePiece(
-                    role="assistant", original_value=json.dumps(body), conversation_id=request.conversation_id
+                    role="assistant", original_value=value, conversation_id=request.conversation_id
                 ).to_message()
             ]
 
@@ -140,7 +170,9 @@ def _register_target() -> None:
             if not normalized_conversation:
                 raise ValueError("The offline generation target requires a message.")
 
-    TargetRegistry.get_registry_singleton().instances.register(OfflineGenerationTarget(), name=TARGET_NAME)
+    registry = TargetRegistry.get_registry_singleton().instances
+    for name in (TARGET_NAME, "adversarial_chat", "objective_scorer_chat"):
+        registry.register(OfflineGenerationTarget(), name=name)
 
 
 async def _seed_async(memory: SQLiteMemory) -> None:
