@@ -151,7 +151,8 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
       group.id,
       group.kind === 'baseline' ? 'Baseline'
         : group.technique_name === 'assert_package' ? 'ASSERT package'
-          : group.technique_name?.replace(/_/g, ' ') ?? 'Technique not recorded',
+          : group.technique_name === 'assert_package_spanish' ? 'ASSERT package (Spanish)'
+            : group.technique_name?.replace(/_/g, ' ') ?? 'Technique not recorded',
     ]) ?? [])
   }, [state.plan, state.run])
   const progressAtomicGroups = useMemo(

@@ -433,6 +433,13 @@ Category-rate metrics continue to use judged relevance, not the generation assig
 Saved plans and resumed runs retain their recorded grouping; completed history is not rewritten.
 Technical atomic names remain available in result details, not the ASSERT group header.
 
+Select `assert_package_spanish` to translate target-bound user requests with the existing
+`TranslationConverter`, including later turns of native ASSERT conversation cases. It uses
+an explicit `adversarial_chat` or the configured adversarial target role; no translation
+provider is created implicitly. Stored system/policy instructions, tester controls, judges,
+and the comparison baseline are not translated. `assert_package` remains unconverted and
+the default. In the GUI the Spanish variant is a separate technique checkbox.
+
 Assessments are read-only snapshots, not launch authorization. SDK estimates for
 scenarios with data requirements validate their selected stored data, and launch/resume
 revalidates contents using the established dataset identities and saved run plan.

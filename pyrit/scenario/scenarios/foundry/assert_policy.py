@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
+from pyrit.converter import TranslationConverter
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AssertDimensionResult,
@@ -43,6 +44,7 @@ from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     DatasetConstraintError,
+    get_default_adversarial_target,
     resolve_technique_factories,
     resolve_technique_factories_for_techniques,
 )
@@ -94,9 +96,11 @@ logger = logging.getLogger(__name__)
 
 
 _ASSERT_PACKAGE = "assert_package"
+_ASSERT_PACKAGE_SPANISH = "assert_package_spanish"
+_ASSERT_PACKAGES = (_ASSERT_PACKAGE, _ASSERT_PACKAGE_SPANISH)
 
 
-def _build_assert_package_factory() -> AttackTechniqueFactory:
+def _build_assert_package_factory(name: str = _ASSERT_PACKAGE) -> AttackTechniqueFactory:
     """
     Build the scenario-local ``assert_package`` technique: red teaming with ASSERT's own tester.
 
@@ -106,11 +110,17 @@ def _build_assert_package_factory() -> AttackTechniqueFactory:
         AttackTechniqueFactory: The technique factory.
     """
     return AttackTechniqueFactory(
-        name=_ASSERT_PACKAGE,
+        name=name,
         attack_class=RedTeamingAttack,
         description=(
             "Run ASSERT cases: send stored prompt cases directly, or use ASSERT's tester system prompt "
             "with a conversation case's stored tester instructions."
+            + (
+                " Translate target-bound user requests to Spanish using the configured adversarial chat; "
+                "leave comparison baseline and policy instructions unchanged."
+                if name == _ASSERT_PACKAGE_SPANISH
+                else ""
+            )
         ),
         technique_tags=["multi_turn"],
         supports_additional_request_converters=True,
@@ -129,7 +139,7 @@ def _build_assert_policy_technique() -> type[ScenarioTechnique]:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
-    factories[_ASSERT_PACKAGE] = _build_assert_package_factory()
+    factories.update({name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES})
     return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="AssertPolicyTechnique",
         factories=list(factories.values()),
@@ -315,6 +325,8 @@ class AssertPolicy(Scenario):
 
     SDK callers can supply a configured objective scorer instead of these defaults. Legacy judge
     settings and optional retained execution traces remain available through the SDK.
+    ``assert_package_spanish`` translates target-bound user requests with the configured adversarial
+    chat, including later conversation turns. It leaves the optional comparison baseline unchanged.
     """
 
     #: Version 2 runs registered attack techniques instead of ``single_turn``/``multi_turn``.
@@ -705,12 +717,12 @@ class AssertPolicy(Scenario):
     def _get_dataset_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
         return resolve_technique_factories_for_techniques(
             scenario_techniques=self._scenario_techniques,
-            extra_factories={_ASSERT_PACKAGE: _build_assert_package_factory()},
+            extra_factories={name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES},
         )
 
     def _get_dataset_target_errors(self, factory: AttackTechniqueFactory) -> list[str]:
         # ASSERT's normal recipe chooses its existing attack from the case data below.
-        if factory.name == _ASSERT_PACKAGE or self._objective_target is None:
+        if factory.name in _ASSERT_PACKAGES or self._objective_target is None:
             return []
         return self._get_target_requirements(factory).check_target(
             target=self._objective_target, attack_class=factory.attack_class
@@ -719,7 +731,7 @@ class AssertPolicy(Scenario):
     def _validate_dataset_technique_group(
         self, *, factory: AttackTechniqueFactory, seed_group: AttackSeedGroup
     ) -> None:
-        if factory.name == _ASSERT_PACKAGE:
+        if factory.name in _ASSERT_PACKAGES:
             self._validate_assert_package_group(factory=factory, group=seed_group, target=self._objective_target)
         else:
             super()._validate_dataset_technique_group(factory=factory, seed_group=seed_group)
@@ -758,7 +770,7 @@ class AssertPolicy(Scenario):
             )
             if errors:
                 raise IncompatibleTechniqueError(
-                    describe_target_incompatibility(technique_name=_ASSERT_PACKAGE, errors=errors)
+                    describe_target_incompatibility(technique_name=factory.name, errors=errors)
                 )
 
     @staticmethod
@@ -766,7 +778,7 @@ class AssertPolicy(Scenario):
         if group.adversarial_prompts is not None:
             return factory
         return AttackTechniqueFactory(
-            name=_ASSERT_PACKAGE, attack_class=PromptSendingAttack, supports_additional_request_converters=True
+            name=factory.name, attack_class=PromptSendingAttack, supports_additional_request_converters=True
         )
 
     async def _resolve_seed_groups_by_dataset_async(
@@ -958,14 +970,14 @@ class AssertPolicy(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         self._warn_if_target_untraced(target=context.objective_target)
-        local = {_ASSERT_PACKAGE: _build_assert_package_factory()}
+        local = {name: _build_assert_package_factory(name) for name in _ASSERT_PACKAGES}
         factories = resolve_technique_factories(context=context, extra_factories=local)
         display_groups = self._get_display_groups(context=context, technique_names=list(factories))
         attacks = (
             self._build_baselines(context=context, display_groups=display_groups) if context.include_baseline else []
         )
         for name, factory in factories.items():
-            if name != _ASSERT_PACKAGE and not check_target_compatibility(
+            if name not in _ASSERT_PACKAGES and not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
                 requirements=self._get_target_requirements(factory),
@@ -986,7 +998,7 @@ class AssertPolicy(Scenario):
                         self._validate_assert_package_group(
                             factory=factory, group=group, target=context.objective_target
                         )
-                        if factory.name == _ASSERT_PACKAGE
+                        if factory.name in _ASSERT_PACKAGES
                         else self._validate_dataset_technique_group(factory=factory, seed_group=group)
                     ),
                 )
@@ -1106,11 +1118,17 @@ class AssertPolicy(Scenario):
         group: AttackSeedGroup,
         display_group: str,
     ) -> AtomicAttack:
-        prompt_case = technique_name == _ASSERT_PACKAGE and group.adversarial_prompts is None
-        if technique_name == _ASSERT_PACKAGE:
+        prompt_case = technique_name in _ASSERT_PACKAGES and group.adversarial_prompts is None
+        if technique_name in _ASSERT_PACKAGES:
             factory = self._get_assert_case_factory(factory=factory, group=group)
         scoring = self._get_scoring(group)
-        extra = context.technique_converters.get(technique_name)
+        extra = list(context.technique_converters.get(technique_name) or [])
+        if technique_name == _ASSERT_PACKAGE_SPANISH:
+            extra.append(
+                TranslationConverter(
+                    converter_target=self._adversarial_chat or get_default_adversarial_target(), language="Spanish"
+                )
+            )
         adversarial_chat = (
             self._adversarial_chat if factory.uses_adversarial and factory.adversarial_chat is None else None
         )
@@ -1124,7 +1142,7 @@ class AssertPolicy(Scenario):
             "adversarial_chat": adversarial_chat,
             "extra_request_converters": ConverterConfiguration.from_converters(converters=extra) if extra else None,
         }
-        if technique_name == _ASSERT_PACKAGE and not prompt_case:
+        if technique_name in _ASSERT_PACKAGES and not prompt_case:
             attack_technique = factory.create(**create_kwargs, **self._get_tester_prompts(group))
             # ASSERT's tester replaces the group's stored tester prompt; record the group's prompt on the
             # technique so the stored group still runs and resumes as-is.

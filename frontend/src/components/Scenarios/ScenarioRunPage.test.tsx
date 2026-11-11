@@ -243,6 +243,7 @@ describe('ScenarioRunPage', () => {
       const definitions = [
         { id: 'baseline-group', name: 'baseline', label: 'Baseline', kind: 'baseline' as const, technique: null },
         { id: 'assert-group', name: 'assert_package', label: 'ASSERT package', kind: 'attack' as const, technique: 'assert_package' },
+        { id: 'spanish-group', name: 'assert_package_spanish', label: 'ASSERT package (Spanish)', kind: 'attack' as const, technique: 'assert_package_spanish' },
         { id: 'role-group', name: 'role_play_movie_script', label: 'role play movie script', kind: 'attack' as const, technique: 'role_play_movie_script' },
       ]
       const atomicGroups = definitions.map((definition) => ({
@@ -284,7 +285,7 @@ describe('ScenarioRunPage', () => {
       const table = await screen.findByRole('table', { name: 'cross_turn_policy_drift attack results' })
       if (saved) await waitFor(() => expect(screen.queryByText(/Loading result relationships/)).not.toBeInTheDocument())
       expect(screen.getAllByRole('button', { name: /Collapse attacks in / })).toHaveLength(1)
-      expect(within(table).getAllByRole('row')).toHaveLength(4)
+      expect(within(table).getAllByRole('row')).toHaveLength(5)
       for (const definition of definitions) {
         expect(within(table).getByText(definition.label, { exact: true })).toBeVisible()
         expect(within(table).getByRole('button', { name: `Open details for ${definition.label}: First objective` })).toBeVisible()

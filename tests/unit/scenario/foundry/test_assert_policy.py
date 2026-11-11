@@ -19,7 +19,7 @@ from unit.assert_mocks import make_assert_config, make_assert_result, make_asser
 from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_scenario_statistics
-from pyrit.converter import Base64Converter
+from pyrit.converter import Base64Converter, TranslationConverter
 from pyrit.datasets import AssertProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
@@ -44,6 +44,7 @@ from pyrit.models import (
     SeedObjective,
     construct_response_from_request,
 )
+from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, SourceRegistry
 from pyrit.scenario import (
@@ -1197,6 +1198,97 @@ async def test_assert_package_gives_each_group_its_own_instructions_async(harnes
     assert len(systems) == 2
     for system in systems:
         assert sum(text in system for text in instructions) == 1
+
+
+@pytest.mark.parametrize("conversation_case", [False, True])
+async def test_spanish_variant_translates_native_target_requests_not_baseline_or_controls_async(
+    harness: _Harness, conversation_case: bool
+) -> None:
+    source = _result(group_count=1, include_adversarial_prompt=conversation_case)
+    await _store_async(name="assert_a", result=source)
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package"), _technique("assert_package_spanish")],
+        max_turns=3,
+        **_datasets("assert_a"),
+    )
+    translations: list[str] = []
+    prefix = "Solicitud traducida: "
+
+    async def adversarial_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1]
+        if "[TRANSLATE_START]" not in request.get_value():
+            return await harness.adversarial_async(normalized_conversation=normalized_conversation)
+        assert "spanish" in request.get_value().lower()
+        original = request.get_piece().original_value
+        translations.append(original)
+        return _reply(request, value=f"{prefix}{original}")
+
+    with (
+        harness.patched(),
+        patch.object(harness.adversarial, "_send_prompt_to_target_async", side_effect=adversarial_async),
+    ):
+        result = await scenario.run_async()
+
+    expected_turns = 3 if conversation_case else 1
+    outgoing = [request[-1].get_value() for request in harness.target_requests]
+    assert len(outgoing) == 1 + 2 * expected_turns
+    assert len(translations) == expected_turns
+    assert [value.removeprefix(prefix) for value in outgoing if value.startswith(prefix)] == translations
+    assert translations[0] == "Explain the return policy for item 0."
+    assert outgoing.count("Explain the return policy for item 0.") == 2  # Baseline and unconverted ASSERT.
+    assert all(request[0].get_value() == _SYSTEM_A for request in harness.target_requests)
+    assert all(not value.startswith(("<target_response>", "Begin the conversation")) for value in translations)
+    if conversation_case:
+        assert translations[1:] == ["Tester follow-up 3.", "Tester follow-up 4."]
+        assert harness.adversarial_requests == [f"<target_response>\n{_SAFE_REPLY}\n</target_response>"] * 4
+        assert all(_ASSERT_TESTER in system for system in harness.adversarial_systems)
+    else:
+        assert harness.adversarial_requests == []
+    assert len(harness.judge_systems) == 6
+    assert all(prefix not in system for system in harness.judge_systems)
+    assert sum(len(items) for items in result.attack_results.values()) == 3
+    units = {unit.atomic_attack_name.split("__")[0]: unit for unit in scenario._atomic_attacks}
+    for name in ("baseline", "assert_package"):
+        assert units[name].attack_technique.attack._request_converters == []
+    (configuration,) = units["assert_package_spanish"].attack_technique.attack._request_converters
+    (converter,) = configuration.converters
+    assert isinstance(converter, TranslationConverter)
+    assert converter.converter_target is harness.adversarial
+    assert units["assert_package_spanish"].technique_eval_hash != units["assert_package"].technique_eval_hash
+
+
+async def test_spanish_variant_resume_keeps_converter_and_native_execution_identity_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    args = {
+        "scenario_techniques": [_technique("assert_package_spanish")],
+        "include_baseline": False,
+        **_datasets("assert_a"),
+    }
+    original = await harness.initialize_async(harness.scenario(), **args)
+    restored = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    assert restored._build_run_plan() == original._build_run_plan()
+    assert restored._atomic_attacks[0].technique_eval_hash == original._atomic_attacks[0].technique_eval_hash
+    assert (
+        original._atomic_attacks[0].seed_groups[0].logical_id == restored._atomic_attacks[0].seed_groups[0].logical_id
+    )
+
+
+async def test_spanish_prompt_case_requires_an_explicitly_configured_translation_role_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    with (
+        patch(
+            "pyrit.scenario.scenarios.foundry.assert_policy.get_default_adversarial_target",
+            side_effect=TargetRoleConfigurationError(role="adversarial_chat"),
+        ),
+        pytest.raises(ScenarioConfigurationError, match="adversarial_chat"),
+    ):
+        await harness.initialize_async(
+            AssertPolicy(judge_target=harness.judge),
+            scenario_techniques=[_technique("assert_package_spanish")],
+            include_baseline=False,
+            **_datasets("assert_a"),
+        )
 
 
 @pytest.mark.parametrize("policy", ["skip", "raise"])
