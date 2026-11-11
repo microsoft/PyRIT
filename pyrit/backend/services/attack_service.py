@@ -94,6 +94,7 @@ from pyrit.models import (
     ConversationStats,
     Message,
     MessagePiece,
+    RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -1197,6 +1198,8 @@ class AttackService:
                 )
                 saved.set_simulated_role()
                 saved.prompt_metadata.pop("source_piece_id", None)
+                if not same_values:
+                    RequestGenerationInfo.clear_metadata(saved.prompt_metadata)
                 if source:
                     saved.prompt_metadata["source_piece_id"] = str(source.id)
                 if same_values and source and piece.applied_converter_ids is None:
