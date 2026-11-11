@@ -210,9 +210,24 @@ def _argument_expectation(*names: str, to: str = "a@example.com") -> ScoringExpe
     return ScoringExpectation(conditions=(ToolsCalled(tools=tuple(tools)),))
 
 
+async def test_name_only_requirement_gets_no_argument_note_or_warning_async(caplog: pytest.LogCaptureFixture) -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_span(name="lookup"))
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+
+    with caplog.at_level("WARNING"):
+        score = (
+            await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_expectation("other"))
+        )[0]
+
+    assert score.is_undetermined
+    assert "retain tool arguments" not in score.score_rationale
+    assert "argument constraints" not in caplog.text
+
+
 @pytest.mark.parametrize("complete", [False, True])
 async def test_name_only_trace_evidence_cannot_confirm_an_argument_requirement_async(
-    sqlite_instance: SQLiteMemory, complete: bool
+    sqlite_instance: SQLiteMemory, complete: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     client = InMemoryTraceClient()
     span = _span(name="send_email")
@@ -222,14 +237,19 @@ async def test_name_only_trace_evidence_cannot_confirm_an_argument_requirement_a
         client.mark_complete(trace_ids=(span.trace_id,))
     scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
 
-    score = (
-        await scorer.score_async(
-            scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_argument_expectation()
-        )
-    )[0]
+    with caplog.at_level("WARNING"):
+        score = (
+            await scorer.score_async(
+                scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_argument_expectation()
+            )
+        )[0]
 
     assert score.is_undetermined
     assert "send_email(to)" in score.score_rationale
+    # The rationale says why, so a user is not left to guess that traces drop arguments.
+    assert "Trace evidence does not retain tool arguments" in score.score_rationale
+    assert "MessageToolCallScorer" in score.score_rationale
+    assert "argument constraints, which trace evidence cannot confirm" in caplog.text
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert "a@example.com" not in observation.model_dump_json()
     client.close()

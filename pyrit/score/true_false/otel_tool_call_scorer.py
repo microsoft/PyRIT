@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
@@ -30,6 +31,13 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
+
+logger = logging.getLogger(__name__)
+
+_NO_TRACE_ARGUMENTS_REASON = (
+    "Trace evidence does not retain tool arguments, so it cannot confirm an argument requirement; "
+    "use MessageToolCallScorer to match arguments."
+)
 
 _UNLINKED_REQUESTS_REASON = (
     "One or more requests in this conversation carry no trace link, so tool calls outside the "
@@ -122,6 +130,12 @@ class OtelToolCallScorer(TrueFalseScorer):
         condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
         names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        constrains_arguments = any(tool.arguments for tool in condition.tools)
+        if constrains_arguments:
+            logger.warning(
+                "OtelToolCallScorer received a requirement with argument constraints, which trace evidence "
+                "cannot confirm. Use MessageToolCallScorer to match arguments."
+            )
         rationale = (
             f"Observed execution of all required tools: {names}."
             if value is True
@@ -129,6 +143,8 @@ class OtelToolCallScorer(TrueFalseScorer):
             if value is False
             else f"Trace evidence cannot establish invocation of all required tools: {names}."
         )
+        if value is None and constrains_arguments:
+            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),

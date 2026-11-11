@@ -152,19 +152,28 @@ class MessageToolCallScorer(TrueFalseScorer):
             pieces=(p for p in conversation if p.sequence <= piece.sequence)
         ):
             calls.setdefault(name, []).append(arguments)
-        missing = [
-            describe_tool_requirement(tool)
+        unmet = [
+            tool
             for tool in condition.tools
             if match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) is not True
         ]
         piece_id = self._piece_id_from_scorable(scorable)
         names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
-        if missing:
+        if unmet:
+            # A tool that ran with other arguments did run, so say so rather than report no execution.
+            not_run = [describe_tool_requirement(tool) for tool in unmet if tool.name not in calls]
+            unmatched = [describe_tool_requirement(tool) for tool in unmet if tool.name in calls]
+            reasons = []
+            if not_run:
+                reasons.append(f"Stored messages show no execution of: {', '.join(not_run)}.")
+            if unmatched:
+                reasons.append(
+                    f"Stored messages show execution of {', '.join(unmatched)}, but no stored call matches "
+                    "the required arguments."
+                )
             return [
                 self._build_undetermined_score(
-                    rationale=(
-                        f"Stored messages show no execution of: {', '.join(missing)}. {_INCOMPLETE_EVIDENCE_REASON}"
-                    ),
+                    rationale=" ".join([*reasons, _INCOMPLETE_EVIDENCE_REASON]),
                     description="Tool invocation; successful completion is not required.",
                     scorable=scorable,
                     message_piece_id=piece_id,

@@ -339,6 +339,22 @@ async def test_executed_call_without_matching_arguments_is_undetermined_not_fals
     assert score.status == ScoreStatus.UNDETERMINED
     assert score.score_value is None
     assert "send_email(to)" in score.score_rationale
+    # The tool ran, so the rationale must not report that it did not.
+    assert "show execution of send_email(to), but no stored call matches the required arguments" in (
+        score.score_rationale
+    )
+    assert "no execution of" not in score.score_rationale
+
+
+async def test_a_tool_that_never_ran_is_reported_as_not_executed_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    reply = await conversation.reply_async()
+
+    score = await _score_arguments(reply, to="a@example.com")
+
+    assert score.status == ScoreStatus.UNDETERMINED
+    assert "Stored messages show no execution of: send_email(to)." in score.score_rationale
+    assert "required arguments" not in score.score_rationale
 
 
 async def test_one_matching_execution_among_several_is_enough_async(sqlite_instance: SQLiteMemory) -> None:
