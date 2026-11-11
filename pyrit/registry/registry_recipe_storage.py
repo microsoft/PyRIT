@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
-from pyrit.common.azure_storage import is_azure_blob_uri
+from pyrit.common.azure_storage import is_azure_blob_uri, redact_urls
 from pyrit.models.catalog import (
     ComponentRecipe,
     IgnoredRecipeFile,
@@ -81,7 +81,8 @@ class RecipeListing:
     recipes: Mapping[str, StoredRecipe] = field(default_factory=lambda: MappingProxyType({}))
     failures: tuple[RestoreFailure, ...] = ()
     ignored: tuple[IgnoredRecipeFile, ...] = ()
-    # The error behind each recipe that couldn't be read, by name, for the log only.
+    # For the log only, by name: the error behind each recipe that couldn't be read, and every problem with each
+    # one that isn't a valid recipe.
     causes: Mapping[str, BaseException] = field(default_factory=lambda: MappingProxyType({}), compare=False, repr=False)
 
 
@@ -167,7 +168,7 @@ class RegistryRecipeStorage(FileDocumentStorage):
         ]
         causes = {issue.name: issue.error for issue in listing.unreadable if issue.error is not None}
         for name, content in listing.documents.items():
-            parsed = self._parse_recipe(name=name, content=content)
+            parsed = self._parse_recipe(name=name, content=content, causes=causes)
             if isinstance(parsed, RestoreFailure):
                 failures.append(parsed)
             else:
@@ -287,9 +288,17 @@ class RegistryRecipeStorage(FileDocumentStorage):
         current = recipe.model_copy(update={"schema_version": RECIPE_SCHEMA_VERSION})
         return current.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
 
-    def _parse_recipe(self, *, name: str, content: bytes) -> StoredRecipe | RestoreFailure:
+    def _parse_recipe(
+        self, *, name: str, content: bytes, causes: dict[str, BaseException] | None = None
+    ) -> StoredRecipe | RestoreFailure:
         """
         Parse one stored document, checking its schema version before anything else.
+
+        Args:
+            name (str): The document's name.
+            content (bytes): The stored document.
+            causes (dict[str, BaseException] | None): Where to add, by name, every problem with a document that
+                isn't a valid recipe, for the log. Defaults to None, which adds nothing.
 
         Returns:
             StoredRecipe | RestoreFailure: The recipe, or why it can't be used.
@@ -330,6 +339,9 @@ class RegistryRecipeStorage(FileDocumentStorage):
             # pydantic stops at a fixed depth and reports it as a recursion error, though a JSON file can't hold a loop.
             if any(issue["type"] == "recursion_loop" for issue in error.errors()):
                 return self._failure(name=name, version=version, reason=invalid, message=too_deep)
+            if causes is not None:
+                # Not the error itself: its text repeats the stored values.
+                causes[name] = ValueError(self._describe_validation_error(error, full=True))
             return self._failure(
                 name=name, version=version, reason=invalid, message=self._describe_validation_error(error)
             )
@@ -350,20 +362,29 @@ class RegistryRecipeStorage(FileDocumentStorage):
         )
 
     @staticmethod
-    def _describe_validation_error(error: ValidationError) -> str:
+    def _describe_validation_error(error: ValidationError, *, full: bool = False) -> str:
         """
-        Summarize a validation error, naming each field and what's wrong with it, without the stored values.
+        Describe a validation error, naming each field and what's wrong with it, without the stored values.
 
-        A field's location can repeat a stored key, such as an unknown one, so each part of a location
-        is escaped and shortened. ``_failure`` shortens the whole summary.
+        A field's location can repeat a stored key, such as an unknown one, so each part of a location, and each
+        message, is escaped and loses any URL credentials. The summary also shortens each part of a location, and
+        ``_failure`` shortens the whole summary. The full description, for the log, keeps every location whole and
+        puts each problem on its own line.
+
+        Args:
+            error (ValidationError): The error from checking the recipe.
+            full (bool): Whether to describe every problem in full, for the log. Defaults to False.
 
         Returns:
-            str: The summary.
+            str: The description.
         """
         problems = []
-        for issue in error.errors():
-            location = ".".join(
-                shorten_text(escape_unprintable(str(part)), limit=_MAX_LOCATION_PART_LENGTH) for part in issue["loc"]
-            )
-            problems.append(f"{location or 'document'}: {issue['msg']}")
+        for issue in error.errors(include_input=False, include_url=False, include_context=False):
+            # Credentials go before shortening, which could cut a URL before the end of its user name and password.
+            parts = [redact_urls(escape_unprintable(str(part))) for part in issue["loc"]]
+            if not full:
+                parts = [shorten_text(part, limit=_MAX_LOCATION_PART_LENGTH) for part in parts]
+            problems.append(f"{'.'.join(parts) or 'document'}: {redact_urls(escape_unprintable(issue['msg']))}")
+        if full:
+            return "Every problem in the file:\n" + "\n".join(f"  {problem}" for problem in problems)
         return "Not a valid saved recipe: " + "; ".join(problems)
