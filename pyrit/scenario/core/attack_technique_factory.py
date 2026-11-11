@@ -57,6 +57,7 @@ from pyrit.models import (
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
+from pyrit.scenario.core._attack_adversarial_config import _AttackAdversarialConfigHelper
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -1196,22 +1197,13 @@ class AttackTechniqueFactory(Identifiable):
                 f"so the extra request converters can't be applied."
             )
 
-        if create_time_target is not None and self._adversarial_chat is not None:
-            raise ValueError(
-                f"Factory '{self._name}': an adversarial chat is already baked into this technique, so "
-                f"create() cannot supply one. Remove the baked adversarial_chat or the create-time one."
-            )
-
-        if (
-            adversarial_system_prompt is not None
-            or adversarial_seed_prompt is not None
-            or adversarial_prompt_template is not None
-        ) and self._has_custom_adversarial_prompt:
-            raise ValueError(
-                f"Factory '{self._name}': a custom adversarial prompt is already baked into this technique, "
-                f"so create() cannot supply 'adversarial_system_prompt', 'adversarial_seed_prompt', or "
-                f"'adversarial_prompt_template'."
-            )
+        adv_helper = self._adversarial_config_helper
+        adv_helper.validate_target_conflict(create_time_target=create_time_target)
+        adv_helper.validate_prompt_conflict(
+            create_time_system_prompt=adversarial_system_prompt,
+            create_time_seed_prompt=adversarial_seed_prompt,
+            create_time_prompt_template=adversarial_prompt_template,
+        )
 
         kwargs = dict(self._attack_kwargs)
         self._requirements.validate_target(target=objective_target, attack_class=self._attack_class)
@@ -1236,13 +1228,12 @@ class AttackTechniqueFactory(Identifiable):
                     f"{self._attack_class.__name__} and no attack_scoring_config is set in attack_kwargs."
                 )
             kwargs["attack_scoring_config"] = self._apply_score_feedback_override(attack_scoring_config=baked_config)
-        if "attack_adversarial_config" in accepted_params and (
-            create_time_target is not None
-            or adversarial_system_prompt is not None
-            or adversarial_seed_prompt is not None
-            or adversarial_prompt_template is not None
-            or self._adversarial_system_prompt_prefix is not None
-            or self._uses_adversarial
+        if adv_helper.should_build_adversarial_config(
+            accepted_params=accepted_params,
+            create_time_target=create_time_target,
+            create_time_system_prompt=adversarial_system_prompt,
+            create_time_seed_prompt=adversarial_seed_prompt,
+            create_time_prompt_template=adversarial_prompt_template,
         ):
             kwargs["attack_adversarial_config"] = self._build_adversarial_config(
                 create_time_target=create_time_target,
@@ -1323,6 +1314,20 @@ class AttackTechniqueFactory(Identifiable):
             response_converters=base_response,
         )
 
+    @property
+    def _adversarial_config_helper(self) -> _AttackAdversarialConfigHelper:
+        """Helper encapsulating adversarial configuration validation and assembly."""
+        return _AttackAdversarialConfigHelper(
+            factory_name=self._name,
+            attack_class=self._attack_class,
+            uses_adversarial=self._uses_adversarial,
+            adversarial_chat=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_system_prompt,
+            adversarial_seed_prompt=self._adversarial_seed_prompt,
+            adversarial_prompt_template=self._adversarial_prompt_template,
+            adversarial_system_prompt_prefix=self._adversarial_system_prompt_prefix,
+        )
+
     def _build_adversarial_config(
         self,
         *,
@@ -1342,6 +1347,8 @@ class AttackTechniqueFactory(Identifiable):
         create-time values, so a technique keeps its bespoke persona while a scenario can still
         supply the target.
 
+        Delegates configuration assembly to :class:`_AttackAdversarialConfigHelper`.
+
         Args:
             create_time_target: An adversarial target supplied at ``create()`` time.
             create_time_system_prompt: An adversarial system prompt supplied at ``create()`` time.
@@ -1352,32 +1359,13 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             AttackAdversarialConfig: Config wrapping the resolved adversarial chat target.
         """
-        if create_time_target is not None:
-            target: PromptTarget = create_time_target
-        elif self._adversarial_chat is not None:
-            target = self._adversarial_chat
-        else:
-            target = get_default_adversarial_target()
-
-        system_prompt = self._adversarial_system_prompt or create_time_system_prompt
-        seed_prompt = self._adversarial_seed_prompt or create_time_seed_prompt
-        prompt_template = (
-            self._adversarial_prompt_template
-            if self._adversarial_prompt_template is not None
-            else create_time_prompt_template
+        return self._adversarial_config_helper.build_adversarial_config(
+            create_time_target=create_time_target,
+            create_time_system_prompt=create_time_system_prompt,
+            create_time_seed_prompt=create_time_seed_prompt,
+            create_time_prompt_template=create_time_prompt_template,
+            default_target_resolver=get_default_adversarial_target,
         )
-
-        config_kwargs: dict[str, Any] = {
-            "target": target,
-            "system_prompt_prefix": self._adversarial_system_prompt_prefix,
-        }
-        if system_prompt is not None:
-            config_kwargs["system_prompt"] = system_prompt
-        if seed_prompt is not None:
-            config_kwargs["first_message"] = seed_prompt
-        if prompt_template is not None:
-            config_kwargs["adversarial_prompt_template"] = prompt_template
-        return AttackAdversarialConfig(**config_kwargs)
 
     def _copy_seed_technique_with_prefix(
         self,
