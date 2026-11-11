@@ -61,26 +61,24 @@ async def _connect_and_run(browser_debug_port, run_function):
 
         # Get all contexts from the browser
         contexts = browser.contexts
-        if contexts:
-            # Use existing context if available
-            context = contexts[0]
-            pages = context.pages
-            if pages:
-                # Use existing page if available
-                page = pages[0]
-            else:
-                # Create new page in existing context
-                page = await context.new_page()
+        if not contexts:
+            raise RuntimeError(
+                "No existing browser context is available. Start the browser with remote debugging enabled "
+                "using an authenticated profile before running this notebook."
+            )
+
+        # Reuse the authenticated context owned by the existing browser.
+        context = contexts[0]
+        pages = context.pages
+        if pages:
+            # Use existing page if available
+            page = pages[0]
         else:
-            # Create new context in existing browser
-            context = await browser.new_context()
+            # Create new page in existing context
             page = await context.new_page()
 
         # Now use the PlaywrightTarget with the existing browser's page
         await run_function(page)
-
-        # Don't close browser since it was already running
-        await context.close()
 
 
 async def connect_to_existing_browser(browser_debug_port, run_function):
