@@ -13,7 +13,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.scenarios.airt import Cyber
-from pyrit.score import TrueFalseScorer
+from pyrit.score import TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import (
     build_technique_factories,
 )
@@ -131,8 +131,8 @@ FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparat
 class TestCyberBasic:
     """Tests for Cyber initialization and class properties."""
 
-    def test_version_is_3(self):
-        assert Cyber.VERSION == 3
+    def test_version_is_4(self):
+        assert Cyber.VERSION == 4
 
     def test_get_technique_class(self):
         strat = _technique_class()
@@ -186,6 +186,24 @@ class TestCyberBasic:
     def test_initialization_with_default_scorer(self):
         scenario = Cyber()
         assert scenario._objective_scorer_identifier is None
+
+    def test_default_objective_scorer_uses_malware_question(self):
+        scorer_target = MagicMock(spec=PromptTarget)
+        scorer_target.capabilities.includes.return_value = True
+        scorer_target.get_identifier.return_value = _mock_target_id("MockScorerTarget")
+        registry = MagicMock()
+        registry.instances.get_by_tag.return_value = []
+
+        with (
+            patch("pyrit.scenario.core.scenario.ScorerRegistry.get_registry_singleton", return_value=registry),
+            patch("pyrit.scenario.core.scenario.get_default_scorer_target", return_value=scorer_target),
+        ):
+            scorer = Cyber()._get_default_objective_scorer()
+
+        assert isinstance(scorer, TrueFalseCompositeScorer)
+        malware_scorer, inverted_refusal_scorer = scorer._scorers
+        assert malware_scorer._score_category == ["malware"]
+        assert isinstance(inverted_refusal_scorer, TrueFalseInverterScorer)
 
     def test_scenario_name_is_cyber(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
