@@ -62,7 +62,7 @@ def _recipes_source(request: Request) -> str | None:
     },
 )
 async def get_saved_entry(  # pyrit-async-suffix-exempt
-    kind: RegistryRecipeKind, name: SavedEntryName, request: Request
+    *, kind: RegistryRecipeKind, name: SavedEntryName, request: Request
 ) -> SavedEntryResponse:
     """
     Get a saved entry's file version, who saved it, and whether the caller may delete it.
@@ -98,6 +98,7 @@ async def get_saved_entry(  # pyrit-async-suffix-exempt
     },
 )
 async def delete_saved_entry(  # pyrit-async-suffix-exempt
+    *,
     kind: RegistryRecipeKind,
     name: SavedEntryName,
     request: Request,

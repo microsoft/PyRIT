@@ -112,6 +112,7 @@ async def create_scorer(
     responses={404: {"model": ProblemDetail, "description": "Scorer not found"}},
 )
 async def get_scorer(  # pyrit-async-suffix-exempt
+    *,
     scorer_registry_name: IdentifierStr,
     user_oid: Annotated[str | None, Depends(current_user_oid)],
 ) -> ScorerInstance:
