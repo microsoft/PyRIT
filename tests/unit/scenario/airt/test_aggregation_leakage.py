@@ -14,6 +14,7 @@ from pyrit.converter import ROT13Converter
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
+from pyrit.registry.components.scenario_registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
@@ -177,9 +178,36 @@ class TestAggregationLeakageInitialization:
         assert params["include_context"].default is True
         assert params["max_turns"].default == 3
 
-    def test_default_scorer_is_composite(self) -> None:
+    def test_registry_catalog_does_not_construct_a_default_scorer(self) -> None:
+        with patch.object(
+            AggregationLeakage,
+            "_get_default_objective_scorer",
+            side_effect=AssertionError("catalog discovery must not create a provider-backed scorer"),
+        ):
+            metadata = ScenarioRegistry()._build_metadata("airt.aggregation_leakage", AggregationLeakage)
+
+        assert metadata.default_objective_scorer_identifier is None
+        assert metadata.uses_default_adversarial_target is False
+
+    async def test_default_scorer_is_resolved_when_initializing(self, groups_by_dataset) -> None:
         scenario = AggregationLeakage()
+        assert scenario._objective_scorer is None
+
+        await _initialize_async(scenario=scenario, groups_by_dataset=groups_by_dataset, args={})
+
         assert isinstance(scenario._objective_scorer, TrueFalseCompositeScorer)
+
+    def test_default_adversarial_target_requirement_tracks_selected_technique(self) -> None:
+        scenario = AggregationLeakage(objective_scorer=SubStringScorer(substring="default"))
+        assert scenario.uses_default_adversarial_target is False
+
+        scenario.set_params_from_args(args={"scenario_techniques": [AggregationLeakageTechnique.RedTeaming]})
+        scenario._resolve_runtime_configuration(require_objective_target=False)
+        assert scenario.uses_default_adversarial_target is True
+
+        scenario.set_params_from_args(args={"scenario_techniques": [AggregationLeakageTechnique.PromptSending]})
+        scenario._resolve_runtime_configuration(require_objective_target=False)
+        assert scenario.uses_default_adversarial_target is False
 
 
 @pytest.mark.usefixtures(*FIXTURES)

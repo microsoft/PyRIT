@@ -199,7 +199,7 @@ class Scenario(ABC):
         version: int,
         technique_class: type[ScenarioTechnique],
         default_dataset_config: DatasetAttackConfiguration,
-        objective_scorer: Scorer,
+        objective_scorer: Scorer | None,
         scenario_result_id: uuid.UUID | str | None = None,
         uses_default_adversarial_target: bool | None = None,
     ) -> None:
@@ -262,8 +262,10 @@ class Scenario(ABC):
         # attribute always exists for context construction.
         self._dataset_config: DatasetAttackConfiguration = default_dataset_config
 
+        # Defer provider-backed defaults until a run is initialized. Catalog
+        # discovery constructs scenarios before runtime targets are configured.
         self._objective_scorer = objective_scorer
-        self._objective_scorer_identifier = objective_scorer.get_identifier()
+        self._objective_scorer_identifier = objective_scorer.get_identifier() if objective_scorer else None
 
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
@@ -1065,6 +1067,9 @@ class Scenario(ABC):
             supplied_labels["operation"] = operation_name
         self.params["memory_labels"] = supplied_labels
         self._resolve_runtime_configuration(require_objective_target=True)
+        if self._objective_scorer is None:
+            self._objective_scorer = self._get_default_objective_scorer()
+            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         stored_plan = self._get_stored_run_plan(stored_result=stored_result) if stored_result is not None else None
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
