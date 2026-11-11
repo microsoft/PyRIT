@@ -177,7 +177,28 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   const selected = page.getByRole('table', { name: 'Selected datasets' })
   await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
   await expect(page.getByTestId('requested-datasets-warning')).toHaveCount(0)
-  await expect(page.getByRole('link', { name: 'Generate an ASSERT policy dataset' })).toBeVisible()
+  const actions = page.getByRole('group', { name: 'Dataset actions' })
+  await expect(actions.getByRole('link', { name: 'Browse datasets', exact: true })).toBeVisible()
+  await expect(actions.getByRole('link', { name: 'Generate datasets', exact: true }))
+    .toHaveAttribute('href', '/datasets/generate/new?generator=assert')
+  await actions.getByRole('link', { name: 'Browse datasets', exact: true }).focus()
+  await page.keyboard.press('Tab')
+  await expect(actions.getByRole('link', { name: 'Generate datasets', exact: true })).toBeFocused()
+  for (const field of [
+    'judgment_mode', 'target_system_prompt', 'judge_presets', 'judge_preset_files',
+    'disabled_judge_dimensions', 'judge_samples', 'objective_dimension', 'trace_source', 'trace_requirement',
+  ]) await expect(page.getByTestId(`scenario-param-${field}`)).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: 'Objective scorer', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Exact count is calculated when the scan starts.', { exact: true })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
+  for (const [label, width, height] of [['desktop', 1440, 1050], ['mobile', 390, 844]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.getByRole('region', { name: 'Datasets', exact: true }).scrollIntoViewIfNeeded()
+    await expect(actions.getByRole('link', { name: 'Generate datasets', exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`assert-launch-${label}.png`), fullPage: true, animations: 'disabled' })
+  }
+  await page.setViewportSize({ width: 1440, height: 1050 })
   expect(eligibilityLoads).toBe(1)
   await expect(page.getByRole('switch', { name: 'Show incompatible' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Reset datasets|Load and validate/ })).toHaveCount(0)
@@ -223,6 +244,9 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
     adversarial_target_name: TARGET,
     datasets: { sources: [{ name }] },
   })
+  expect(started.request().postDataJSON().scenario_params).not.toEqual(expect.objectContaining({
+    judge_samples: expect.anything(),
+  }))
   const run: ScenarioRunSummary = await started.json()
   const compatibilityId = started.request().headers()['pyrit-compatibility-id']
   if (!compatibilityId) throw new Error('The scanner launch did not send its compatibility identity.')

@@ -65,11 +65,10 @@ from pyrit.score import (
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
     TrueFalseScorer,
-    build_assert_policy_scorer,
 )
 from pyrit.score.assert_judge_presets import (
     AssertJudgeDimensionSpec,
-    get_assert_dimension_name,
+    build_assert_judge_scorers,
     resolve_assert_judge_dimensions,
 )
 from pyrit.score.scorer import _set_snapshot_participation
@@ -309,19 +308,12 @@ class AssertPolicy(Scenario):
     cases use a red-teaming tester that follows the group's stored tester instructions for
     ``max_turns`` turns with ASSERT's own tester system prompt. Compatible registered techniques can run too;
     ``red_teaming`` uses the same attack with the group's stored PyRIT tester prompt.
-    Judges built from each group's taxonomy read the whole conversation once per enabled dimension. These are policy
-    violation (the objective score) and overrefusal (an auxiliary score). ``judge_presets`` adds
-    dimensions from built-in presets and ``judge_preset_files`` from your own preset YAML files
-    (Python callers only), ``disabled_judge_dimensions`` removes them,
-    ``objective_dimension`` picks the dimension used as the objective, and ``judge_samples``
-    repeats every judge call and aggregates the verdicts as ASSERT does. Conversations with a
-    blocked or errored target reply are not judged and stay undetermined. Results are grouped by
-    technique.
+    By default, judges built from each group's stored policy read the whole conversation once:
+    policy violation is the objective score, and overrefusal is an auxiliary score. Blocked or
+    errored target replies stay undetermined. Results are grouped by technique.
 
-    With a trace source, each judge also reads the execution traces the target recorded for the
-    conversation (tool calls with arguments and results, model calls, and agent steps).
-    ``trace_requirement`` sets the evidence a judge needs before it runs; the default judges every
-    conversation, as ASSERT does, with whatever traces are available.
+    SDK callers can supply a configured objective scorer instead of these defaults. Legacy judge
+    settings and optional retained execution traces remain available through the SDK.
     """
 
     #: Version 2 runs registered attack techniques instead of ``single_turn``/``multi_turn``.
@@ -347,6 +339,7 @@ class AssertPolicy(Scenario):
         self,
         *,
         adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         judge_target: PromptTarget | None = None,
         trace_source: ObservationSource[TraceScorable] | None = None,
         scenario_result_id: str | None = None,
@@ -357,13 +350,25 @@ class AssertPolicy(Scenario):
         Args:
             adversarial_chat (PromptTarget | None): The adversarial chat for techniques that use one and
                 don't set their own. Defaults to the registered adversarial target.
+            objective_scorer (TrueFalseScorer | None): Explicit scorer used unchanged for every case.
+                When omitted, each stored policy defines the default policy-violation and overrefusal judges.
+                Configure an explicit scorer on the scorer itself, not with legacy ASSERT judge parameters.
             judge_target (PromptTarget | None): The ASSERT judge. Defaults to the registered scorer
                 target. The explicit ``scoring_target`` run parameter takes precedence.
             trace_source (ObservationSource[TraceScorable] | None): Execution evidence for the
                 judges, such as ``LocalTraceCapture.source()``. A registered source can instead be
                 named with the ``trace_source`` parameter. Defaults to None.
             scenario_result_id (str | None): Existing result to resume.
+
+        Raises:
+            TypeError: If the supplied objective scorer is not a true/false scorer.
+            ValueError: If a supplied scorer is mixed with scenario-owned judge configuration.
         """
+        if objective_scorer is not None and not isinstance(objective_scorer, TrueFalseScorer):
+            raise TypeError("objective_scorer must be a TrueFalseScorer.")
+        if objective_scorer is not None and (judge_target is not None or trace_source is not None):
+            raise ValueError("An explicit objective_scorer owns its judge target and trace configuration.")
+        self._assert_objective_scorer = objective_scorer
         self._adversarial_chat = adversarial_chat
         self._judge_target = judge_target
         self._trace_source = trace_source
@@ -374,7 +379,7 @@ class AssertPolicy(Scenario):
             version=self.VERSION,
             technique_class=_build_assert_policy_technique(),
             default_dataset_config=DatasetAttackConfiguration(max_per_dataset="all", max_total="all"),
-            objective_scorer=_AssertPlaceholderScorer(),
+            objective_scorer=objective_scorer if objective_scorer is not None else _AssertPlaceholderScorer(),
             scenario_result_id=scenario_result_id,
             uses_default_adversarial_target=adversarial_chat is None,
         )
@@ -387,6 +392,8 @@ class AssertPolicy(Scenario):
             ScenarioReadiness: Execution-role bindings and any missing judge target.
         """
         readiness = super().get_readiness()
+        if self._assert_objective_scorer is not None:
+            return readiness
         try:
             target = self._resolve_scoring_target(chat_target=self._judge_target)
         except ValueError as error:
@@ -555,7 +562,23 @@ class AssertPolicy(Scenario):
             and not self.params.get("trace_source")
         ):
             raise ValueError("trace_requirement needs a trace source to acquire execution evidence.")
-        self._get_judge_config()
+        config = self._get_judge_config()
+        if self._assert_objective_scorer is not None:
+            legacy = (
+                config != AssertJudgeConfig()
+                or AssertJudgmentMode(self.params["judgment_mode"]) is not AssertJudgmentMode.CATEGORY_VALIDATED
+                or prompt is not None
+                or self.params.get("trace_source") is not None
+                or self._get_trace_requirement() is not TraceEvidenceRequirement.NONE
+            )
+            if legacy:
+                raise ValueError(
+                    "An explicit objective_scorer owns its scoring configuration; "
+                    "omit non-default ASSERT judge settings."
+                )
+            selected_target = self.params.get("scoring_target")
+            if selected_target is not None and selected_target is not self._assert_objective_scorer.get_chat_target():
+                raise ValueError("Configure the scoring target on the explicit objective_scorer, not on the scenario.")
 
     async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         estimate = await super()._get_run_size_estimate_async(target_is_configured=target_is_configured)
@@ -566,6 +589,9 @@ class AssertPolicy(Scenario):
 
     async def _resolve_judge_dimensions_async(self) -> None:
         """Read the selected judge presets in a worker thread, so the event loop isn't blocked."""
+        if self._assert_objective_scorer is not None:
+            self._judge_dimensions = ()
+            return
         self._judge_dimensions = await asyncio.to_thread(resolve_assert_judge_dimensions, self._get_judge_config())
 
     def _get_judge_config(self) -> AssertJudgeConfig:
@@ -623,9 +649,14 @@ class AssertPolicy(Scenario):
         ]
         if self._include_baseline:
             components.append(ScenarioRunSizeComponent(label="Baseline", count=count, is_baseline=True))
+        scoring_note = (
+            "Each conversation uses the supplied objective scorer"
+            if self._assert_objective_scorer is not None
+            else f"Each conversation gets {self._count_judge_calls()} judge calls"
+        )
         note = (
             "At most one unit per selected group for each technique; groups a technique can't use are skipped. "
-            f"Each conversation gets {self._count_judge_calls()} judge calls, and techniques that take a turn "
+            f"{scoring_note}, and techniques that take a turn "
             f"count make up to {self.params['max_turns']} target turns."
         )
         if self._has_no_datasets():
@@ -804,6 +835,17 @@ class AssertPolicy(Scenario):
             ValueError: If a group lacks ASSERT metadata, or stores a system prompt while
                 ``target_system_prompt`` is set.
         """
+        if self._assert_objective_scorer is not None:
+            self._judges_by_policy = {
+                self._get_policy_key(
+                    metadata=self._read_metadata(group=group, dataset_name=name),
+                    system_prompt=self._get_judged_system_prompt(group),
+                ): _PolicyJudges(objective=self._assert_objective_scorer, auxiliaries=())
+                for name, groups in population.items()
+                for group in groups
+            }
+            self._objective_scorer = self._assert_objective_scorer
+            return
         judge_target = self._resolve_scoring_target(chat_target=self._judge_target)
         mode = AssertJudgmentMode(self.params["judgment_mode"])
         trace_evidence = self._resolve_trace_evidence()
@@ -896,29 +938,22 @@ class AssertPolicy(Scenario):
         Raises:
             ValueError: If the objective dimension is not enabled.
         """
-        objective_name = self.params["objective_dimension"]
-        objective: TrueFalseScorer | None = None
-        auxiliaries: list[TrueFalseScorer] = []
-        for dimension in self._judge_dimensions:
-            name = get_assert_dimension_name(dimension)
-            scorer = build_assert_policy_scorer(
-                target=judge_target,
-                taxonomy=metadata.taxonomy,
-                dimension=dimension,
-                application_context=metadata.config.context,
-                target_system_prompt=system_prompt,
-                judgment_mode=mode,
-                samples=self.params["judge_samples"],
-                trace_evidence=trace_evidence,
-            ).with_scorer_block_policy(raise_if_scorer_blocks=False)
-            judged = _AssertJudgedScorer(scorer=cast("TrueFalseScorer", scorer), dimension_name=name)
-            if name == objective_name:
-                objective = judged
-            else:
-                auxiliaries.append(judged)
-        if objective is None:
-            raise ValueError(f"objective_dimension '{objective_name}' is not an enabled judge dimension.")
-        return _PolicyJudges(objective=objective, auxiliaries=tuple(auxiliaries))
+        config = self._get_judge_config()
+        scorers = build_assert_judge_scorers(
+            target=judge_target,
+            taxonomy=metadata.taxonomy,
+            config=config,
+            dimensions=self._judge_dimensions,
+            application_context=metadata.config.context,
+            target_system_prompt=system_prompt,
+            judgment_mode=mode,
+            trace_evidence=trace_evidence,
+        )
+        judged = {name: _AssertJudgedScorer(scorer=scorer, dimension_name=name) for name, scorer in scorers.items()}
+        return _PolicyJudges(
+            objective=judged[config.objective_dimension],
+            auxiliaries=tuple(scorer for name, scorer in judged.items() if name != config.objective_dimension),
+        )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         self._warn_if_target_untraced(target=context.objective_target)

@@ -402,6 +402,14 @@ techniques to the data. Invalid policy/case groups reject the selection even und
 `skip`. The GUI recommends generating both prompt types; the Python generation
 defaults remain unchanged.
 
+The ASSERT launch form uses default scoring: category-validated policy violation and
+overrefusal, one sample, each case's stored policy/context, and the configured judge target.
+SDK callers may supply `AssertPolicy(objective_scorer=...)`; that scorer is used unchanged
+instead of the default judge bundle. Its target and evidence configuration belong to the
+scorer, so mixing it with non-default legacy ASSERT judge parameters is rejected. Legacy
+SDK judge settings still use the same scorer-package construction helpers. Saved custom
+scoring configurations are not silently converted to defaults by the GUI.
+
 Assessments are read-only snapshots, not launch authorization. SDK estimates for
 scenarios with data requirements validate their selected stored data, and launch/resume
 revalidates contents using the established dataset identities and saved run plan.

@@ -2001,6 +2001,8 @@ export type ScenarioRunEstimateResult =
       scope: 'default' | 'request'
       label: string
       note?: string
+      /** An uncapped selection is valid; its exact count is deferred until initialization. */
+      deferredCount?: boolean
     }
 
 export type ScenarioRunEstimateState =

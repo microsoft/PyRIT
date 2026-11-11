@@ -3324,6 +3324,75 @@ describe('ScenarioDetail', () => {
       expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
       expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
     })
+
+    it('uses default scoring without judge controls or hidden overrides and launches All available data', async () => {
+      const user = userEvent.setup()
+      const judgeParameters = [
+        ['judgment_mode', 'category_validated'], ['target_system_prompt', null], ['judge_presets', null],
+        ['judge_preset_files', null], ['disabled_judge_dimensions', null], ['judge_samples', 1],
+        ['objective_dimension', 'policy_violation'], ['trace_source', null], ['trace_requirement', 'none'],
+      ] as const
+      const scenario = policyScenario()
+      const parameters = judgeParameters.map(([name, value]) => ({
+        name, default: value, type_name: typeof value === 'number' ? 'int' : 'str | None', required: false,
+      }))
+      mockGetScenario.mockResolvedValue({
+        ...scenario, supports_objective_scorer: true,
+        supported_parameters: parameters,
+        supported_parameter_names: [...scenario.supported_parameter_names, ...parameters.map((item) => item.name)],
+      })
+      mockEstimateRun.mockResolvedValue({
+        ...makeEstimate(0), estimated_attack_count: null, components: [],
+        dataset_size: { kind: 'all_available' },
+        dataset_limit: { state: 'scenario_default' }, effective_datasets: {
+          ...scenario.dataset_defaults, sources: [{ name: 'ds_a', max_size: 'all', fetch: 'if_missing', configured_provider: false }],
+        },
+      })
+      renderDetail(`${POLICY_PATH}?dataset=ds_a`)
+      const target = await screen.findByRole('combobox', { name: 'Objective Target' })
+      expect(target).toBeRequired()
+      expect(screen.getByRole('combobox', { name: 'Add dataset' })).not.toBeRequired()
+      expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+      for (const [name] of judgeParameters) {
+        expect(screen.queryByTestId(`scenario-param-${name}`)).not.toBeInTheDocument()
+        expect(screen.queryByText(name, { exact: true })).not.toBeInTheDocument()
+      }
+      const actions = screen.getByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual([
+        'Browse datasets', 'Generate datasets',
+      ])
+      await screen.findByText('Exact count is calculated when the scan starts.')
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun.mock.calls[0][0].scenario_params ?? {}).toEqual({})
+      expect(mockStartRun.mock.calls[0][0].objective_scorer).toBeUndefined()
+    })
+
+    it('marks missing ASSERT data as required and validates only when launching', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(policyScenario())
+      renderDetail(POLICY_PATH)
+      const picker = await screen.findByRole('combobox', { name: 'Add dataset' })
+      expect(picker).toBeRequired()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+      expect(screen.getByRole('alert')).toHaveTextContent('Select an ASSERT dataset.')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('keeps the paired dataset actions available in the empty state', async () => {
+      mockGetScenario.mockResolvedValue(policyScenario())
+      jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValueOnce({ items: [] })
+      renderDetail(POLICY_PATH)
+      expect(await screen.findByText('No compatible datasets available.')).toBeInTheDocument()
+      const actions = screen.getByRole('group', { name: 'Dataset actions' })
+      expect(within(actions).getAllByRole('link').map((link) => link.textContent)).toEqual([
+        'Browse datasets', 'Generate datasets',
+      ])
+      expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+    })
+
   })
 
   describe('dataset links', () => {
@@ -3408,8 +3477,8 @@ describe('ScenarioDetail', () => {
       }] })
       renderDetail(SCENARIO_PATH)
 
-      const link = await screen.findByRole('link', { name: 'Generate an ASSERT policy dataset' })
-      expect(link).toHaveAttribute('href', '/datasets/generate/new?generator=assert')
+      const link = await screen.findByRole('link', { name: 'Generate datasets', exact: true })
+      await waitFor(() => expect(link).toHaveAttribute('href', '/datasets/generate/new?generator=assert'))
       expect(screen.queryByRole('link', { name: /Objective dataset/ })).not.toBeInTheDocument()
     })
 

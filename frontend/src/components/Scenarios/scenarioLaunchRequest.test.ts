@@ -140,4 +140,28 @@ describe('scenario launch requests', () => {
     // An identical payload keeps the estimate key, so editing launch-only fields sends no new estimate.
     expect(after).toEqual(before)
   })
+
+  it('omits saved default ASSERT judge settings instead of sending hidden overrides', () => {
+    const parameter: Parameter = { name: 'judge_samples', type_name: 'int', default: 1, required: false }
+    const scenario = makeScenario({
+      scenario_name: 'foundry.assert_policy', default_datasets: [],
+      supported_parameter_names: ['objective_target', 'scenario_techniques', 'dataset_config', 'judge_samples'],
+      supported_parameters: [parameter],
+    })
+    const input = makeInput({
+      scenario, scenarioParamValues: {}, presetScenarioParams: { judge_samples: 1 },
+      datasetEdits: { sources: [{ name: 'valid_policy' }], max_total: 'all' },
+    })
+    expect(scenarioDynamicParameters(scenario)).toEqual([])
+    const result = buildRunRequest(input)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.request.scenario_params).toBeUndefined()
+    expect(buildRunRequest({ ...input, presetScenarioParams: { judge_samples: 3 } })).toEqual({
+      ok: false,
+      error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.',
+    })
+    expect(buildRunRequest({
+      ...input, objectiveScorer: { registry_name: 'saved', identifier_hash: 'saved-identity' },
+    }).ok).toBe(false)
+  })
 })

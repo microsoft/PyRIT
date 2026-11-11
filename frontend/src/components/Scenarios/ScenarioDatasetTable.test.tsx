@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { Link, MemoryRouter } from 'react-router'
+import { MemoryRouter } from 'react-router'
 
 import type {
   DatasetInfo, ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings,
@@ -59,7 +59,6 @@ function Harness({
   return <FluentProvider theme={webLightTheme}><MemoryRouter>
     <ScenarioDatasetTable request={request} defaults={defaults} effective={effective} options={options}
       datasets={datasets} disabled={false} loading={loading} metadataError={metadataError}
-      generateLink={<Link to="/datasets/generate/new?generator=assert">Generate an ASSERT dataset</Link>}
       onReload={onReload} onValidationChange={setValidation}
       onChange={(next) => { setRequest(next); onChange(next) }} />
     <button disabled={validation !== null}>Launch</button>
@@ -114,13 +113,10 @@ describe('ScenarioDatasetTable', () => {
     expect(onReload).not.toHaveBeenCalled()
   })
 
-  it('has a single useful generation action when no eligible dataset exists', () => {
+  it('does not duplicate the section-level catalog actions in its empty state', () => {
     render(<Harness defaults={{ ...DEFAULTS, sources: [] }} datasets={[]} />)
     expect(screen.getByText('No compatible datasets available.')).toBeInTheDocument()
-    expect(screen.getAllByRole('link')).toHaveLength(1)
-    expect(screen.getByRole('link', { name: 'Generate an ASSERT dataset' })).toHaveAttribute(
-      'href', '/datasets/generate/new?generator=assert',
-    )
+    expect(screen.queryAllByRole('link')).toHaveLength(0)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()

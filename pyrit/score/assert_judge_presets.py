@@ -9,18 +9,61 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import AssertJudgeDimension, AssertJudgePreset
-from pyrit.score.true_false.assert_policy_scorer import AssertScoringDimension
+from pyrit.score.true_false.assert_policy_scorer import (
+    AssertJudgmentMode,
+    AssertScoringDimension,
+    AssertTraceEvidence,
+    build_assert_policy_scorer,
+)
 
 if TYPE_CHECKING:
+    from pyrit.models import AssertTaxonomy
     from pyrit.models.score.assert_judge import AssertJudgeConfig
+    from pyrit.prompt_target import PromptTarget
+    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 ASSERT_JUDGE_PRESETS_PATH = Path(SCORER_SEED_PROMPT_PATH, "assert", "judge_presets").resolve()
 
 AssertJudgeDimensionSpec = AssertScoringDimension | AssertJudgeDimension
+
+
+def build_assert_judge_scorers(
+    *,
+    target: PromptTarget,
+    taxonomy: AssertTaxonomy,
+    config: AssertJudgeConfig,
+    dimensions: tuple[AssertJudgeDimensionSpec, ...],
+    application_context: str,
+    target_system_prompt: str | None,
+    judgment_mode: AssertJudgmentMode,
+    trace_evidence: AssertTraceEvidence | None,
+) -> dict[str, TrueFalseScorer]:
+    """
+    Bind the resolved judge configuration to one stored policy, without resolving presets again.
+
+    Returns:
+        dict[str, TrueFalseScorer]: Dimension scorers keyed by their configured names.
+    """
+    return {
+        get_assert_dimension_name(dimension): cast(
+            "TrueFalseScorer",
+            build_assert_policy_scorer(
+                target=target,
+                taxonomy=taxonomy,
+                dimension=dimension,
+                application_context=application_context,
+                target_system_prompt=target_system_prompt,
+                judgment_mode=judgment_mode,
+                samples=config.samples,
+                trace_evidence=trace_evidence,
+            ).with_scorer_block_policy(raise_if_scorer_blocks=False),
+        )
+        for dimension in dimensions
+    }
 
 
 def list_assert_judge_presets() -> dict[str, AssertJudgePreset]:

@@ -45,7 +45,6 @@ import { useScenarioRunEstimate } from '@/hooks/useScenarioRunEstimate'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
-import GenerateDatasetLinks from '@/components/PromptGeneration/GenerateDatasetLinks'
 import { PRESET_QUERY_PARAM, presetScannerRoutePath } from '@/components/ScenarioPresets/presetRoutes'
 import type { ViewName } from '@/components/Sidebar/Navigation'
 import { attacksApi } from '@/services/api'
@@ -97,11 +96,14 @@ import {
   MIN_MAX_CONCURRENCY,
   MIN_MAX_RETRIES,
   OBJECTIVE_PARAMETER_NAMES,
+  isScorerOwnedParameter,
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
   supportsParameter,
+  usesDefaultAssertScoring,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
+import DatasetActions from './DatasetActions'
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
@@ -427,6 +429,7 @@ function ScenarioLaunchForm({
   const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
+  const defaultAssertScoring = usesDefaultAssertScoring(scenario)
   const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
   const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
@@ -518,7 +521,7 @@ function ScenarioLaunchForm({
   ) || (supportsTechniques
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
-  const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
+  const carriedScenarioParamNames = Object.keys(carriedScenarioParams).filter((name) => !isScorerOwnedParameter(scenario, name))
   const presetScenarioParams = useMemo(
     () => ({
       ...carriedScenarioParams,
@@ -961,7 +964,7 @@ function ScenarioLaunchForm({
                   )}
                 </>}
                 {objectiveParameters.map(renderScenarioParameter)}
-                {scenario.supports_objective_scorer && <ChatScorerPicker
+                {scenario.supports_objective_scorer && !defaultAssertScoring && <ChatScorerPicker
                   label="Objective scorer" usage="scenario" value={objectiveScorer}
                   scorers={scorers} loading={scorersLoading} error={scorersError}
                   disabled={submitting || previewOpen || !runtime.ready}
@@ -1007,17 +1010,20 @@ function ScenarioLaunchForm({
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
             <section className={styles.section} aria-labelledby="datasets-section-title">
-              <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
-                <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
-                  Seed examples used by this scan. Limits and filters control which examples are selected.
-                </ContextualHelpLabel>
-              </Text>
+              <div className={styles.sectionHeader}>
+                <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
+                  <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold', required: defaultAssertScoring }}>
+                    Seed examples used by this scan. Limits and filters control which examples are selected.
+                  </ContextualHelpLabel>
+                </Text>
+                <DatasetActions scenarioName={scenario.scenario_name} />
+              </div>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
-                generateLink={<GenerateDatasetLinks scenarioName={scenario.scenario_name} />}
+                required={defaultAssertScoring} showCatalogLink={false}
                 onReload={datasetMetadata.retry} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
             </section>
@@ -1148,7 +1154,7 @@ function ScenarioLaunchForm({
               unchecked: uncheckedRefreshDatasets,
             }}
             objectiveTarget={supportsObjectiveTarget ? targetName : null}
-            objectiveScorer={scenario.supports_objective_scorer
+            objectiveScorer={scenario.supports_objective_scorer && !defaultAssertScoring
               ? objectiveScorer?.registry_name ?? 'Use scenario default' : null}
             adversarialTarget={scenario.uses_default_adversarial_target ? adversarialTargetName || 'Use server default' : null}
             techniques={supportsTechniques || supportsBaseline ? {
