@@ -566,20 +566,14 @@ def test_blob_delete_rejected_by_the_service_is_reported_as_a_conflict() -> None
     assert error.value.actual_version == hashlib.sha256(changed).hexdigest()
 
 
-def _missing_blob() -> Exception:
-    from azure.core.exceptions import ResourceNotFoundError
-    from azure.storage.blob import StorageErrorCode
-
-    error = ResourceNotFoundError(message="missing")
-    error.error_code = StorageErrorCode.BLOB_NOT_FOUND
-    return error
-
-
 def test_blob_conditional_delete_of_a_missing_document_reports_absence() -> None:
     """Test that a versioned delete of a blob someone already removed is not a conflict."""
+    from azure.core.exceptions import ResourceNotFoundError
+
     client = MagicMock()
     client.__enter__.return_value = client
-    client.download_blob.side_effect = _missing_blob()
+    client.download_blob.side_effect = ResourceNotFoundError("missing")
+    client.download_blob.side_effect.error_code = "BlobNotFound"
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
@@ -591,14 +585,16 @@ def test_blob_conditional_delete_of_a_missing_document_reports_absence() -> None
 @pytest.mark.parametrize("removed_during", ["delete", "precondition"])
 def test_blob_conditional_delete_that_loses_to_another_delete_reports_absence(removed_during: str) -> None:
     """Test that a blob removed between the version check and the delete reports absence, not a conflict."""
-    from azure.core.exceptions import ResourceModifiedError
+    from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
 
     document = json.dumps({"scenario_name": "foundry.red_team_agent"}).encode("utf-8")
     client = _blob_client_holding(document)
+    missing = ResourceNotFoundError("missing")
+    missing.error_code = "BlobNotFound"
     if removed_during == "delete":
-        client.delete_blob.side_effect = _missing_blob()
+        client.delete_blob.side_effect = missing
     else:
-        client.download_blob.side_effect = [client.download_blob.return_value, _missing_blob()]
+        client.download_blob.side_effect = [client.download_blob.return_value, missing]
         client.delete_blob.side_effect = ResourceModifiedError("changed")
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 

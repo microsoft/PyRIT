@@ -943,20 +943,25 @@ class FileDocumentStorage:
 
         Raises:
             DocumentConflictError: If the stored version does not match *expected_version*.
+            DocumentUnreadableError: If a version is given and something that can't be read is stored under
+                the name.
             TimeoutError: If the document lock could not be acquired.
         """
         path = self._local_directory(create=True) / f"{name}{self._extension}"
         with self._local_document_lock(path):
+            if expected_version is not None:
+                stored = self._read_local_document(path=str(path), name=name, file_name=path.name)
+                if stored is None:
+                    return False
+                actual_version = self._compute_version(stored)
+                if actual_version != expected_version:
+                    raise self._conflict_error(
+                        name=name,
+                        expected_version=expected_version,
+                        actual_version=actual_version,
+                        action="deleted",
+                    )
             try:
-                if expected_version is not None:
-                    actual_version = self._compute_version(path.read_bytes())
-                    if actual_version != expected_version:
-                        raise self._conflict_error(
-                            name=name,
-                            expected_version=expected_version,
-                            actual_version=actual_version,
-                            action="deleted",
-                        )
                 path.unlink()
             except FileNotFoundError:
                 return False
