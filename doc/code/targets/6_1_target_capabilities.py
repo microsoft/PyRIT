@@ -98,6 +98,10 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # `get_known_capabilities` — for example, `gpt-5` gains `supports_json_schema=True`
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
+#
+# Runtime temperature support depends on the configured target instance, not just its model profile.
+# Check `target.capabilities.supports_temperature`; see
+# [Runtime generation configuration](./0_prompt_targets.md#runtime-generation-configuration) for usage and bounds.
 
 # %%
 class_default = OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities
