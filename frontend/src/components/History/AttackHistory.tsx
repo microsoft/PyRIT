@@ -295,6 +295,7 @@ export default function AttackHistory({
     filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
   const filtersPending = settledListKey !== listKey
   const displayLoading = loading || filtersPending
+  const displayedError = settledListKey === listKey ? error : null
   useAutoRefresh(() => {
     if (!pending.current) {
       if (!optionsPending.current) setOptionsRevision((revision: number) => revision + 1)
@@ -332,13 +333,13 @@ export default function AttackHistory({
         {targetsError && <MessageBar intent="error"><MessageBarBody>Target registry: {targetsError}</MessageBarBody></MessageBar>}
       </div>
 
-      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+      {displayedError && <MessageBar intent="error"><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
       <div className={styles.content} data-testid="attack-history-scroll-region">
         {displayLoading ? (
           <div className={styles.emptyState}>
             <Spinner size="medium" label="Loading attacks..." />
           </div>
-        ) : error && attacks.length === 0 ? null
+        ) : displayedError && attacks.length === 0 ? null
         : attacks.length === 0 ? (
           <div className={styles.emptyState} data-testid="empty-state">
             <Text size={400}>No attacks found</Text>

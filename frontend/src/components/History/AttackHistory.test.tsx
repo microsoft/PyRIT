@@ -1163,6 +1163,53 @@ describe('AttackHistory', () => {
       expect(mockedAttacksApi.getConverterOptions).not.toHaveBeenCalled()
     })
 
+    it.each(['success', 'failure'] as const)('should hide a list error from the previous runtime generation until replacement %s', async (outcome: 'success' | 'failure') => {
+      runtimeGeneration = 'gen-1'
+      const nextPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      mockedAttacksApi.listAttacks
+        .mockRejectedValueOnce(new Error('Old runtime history error'))
+        .mockReturnValueOnce(nextPage.promise)
+
+      const history = render(renderHistory())
+      expect(await screen.findByText('Old runtime history error')).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument())
+
+      runtimeReady = false
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+
+      expect(screen.queryByText('Old runtime history error')).not.toBeInTheDocument()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+      await advanceAutoRefresh()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+
+      runtimeReady = true
+      history.rerender(renderHistory())
+
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+      expect(screen.queryByText('Old runtime history error')).not.toBeInTheDocument()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+      expect(screen.queryByText('No attacks found')).not.toBeInTheDocument()
+
+      await act(async () => {
+        if (outcome === 'success') {
+          nextPage.resolve({ items: [], pagination: { limit: 25, has_more: false } })
+        } else {
+          nextPage.reject(new Error('New runtime history error'))
+        }
+      })
+
+      expect(screen.queryByText('Old runtime history error')).not.toBeInTheDocument()
+      expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument()
+      if (outcome === 'success') {
+        expect(screen.getByText('No attacks found')).toBeInTheDocument()
+      } else {
+        expect(screen.getByText('New runtime history error')).toBeInTheDocument()
+        expect(screen.queryByText('No attacks found')).not.toBeInTheDocument()
+      }
+    })
+
     it('should ignore a list response from the previous runtime generation', async () => {
       runtimeGeneration = 'gen-1'
       const previousPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
@@ -1188,6 +1235,31 @@ describe('AttackHistory', () => {
       expect(screen.getByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
       expect(screen.queryByTestId('attack-row-ar-conv-1')).not.toBeInTheDocument()
       expect(screen.getByTestId('next-page-btn')).toBeDisabled()
+    })
+
+    it('should ignore a late list rejection from the previous runtime generation', async () => {
+      runtimeGeneration = 'gen-1'
+      const previousPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      const nextPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      mockedAttacksApi.listAttacks
+        .mockReturnValueOnce(previousPage.promise)
+        .mockReturnValueOnce(nextPage.promise)
+      const history = render(renderHistory())
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+
+      await act(async () => { previousPage.reject(new Error('Late old runtime history error')) })
+      expect(screen.queryByText('Late old runtime history error')).not.toBeInTheDocument()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+
+      await act(async () => {
+        nextPage.resolve({ items: [sampleAttacks[0]], pagination: { limit: 25, has_more: false } })
+      })
+      expect(screen.getByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+      expect(screen.queryByText('Late old runtime history error')).not.toBeInTheDocument()
+      expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument()
     })
 
     it('should return to page one with fresh options and ignore old runtime options', async () => {
