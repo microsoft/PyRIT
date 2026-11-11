@@ -17,6 +17,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     MessageScorable,
+    Score,
     ScoreStatus,
     ScoringExpectation,
     ToolCallRequirement,
@@ -443,7 +444,7 @@ async def test_scores_the_response_target_tool_loop_async(
     }
 
 
-async def _score_exhaustive(message: Message, *names: str):
+async def _score_exhaustive_async(message: Message, *names: str) -> Score:
     expectation = ScoringExpectation(
         conditions=(ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names), exhaustive=True),)
     )
@@ -462,7 +463,7 @@ async def test_exhaustive_stored_execution_of_an_unnamed_tool_is_false_async(sql
     await conversation.output_async("call_2")
     reply = await conversation.reply_async()
 
-    score = await _score_exhaustive(reply, "lookup")
+    score = await _score_exhaustive_async(reply, "lookup")
 
     assert score.status == ScoreStatus.COMPLETE
     assert score.get_value() is False
@@ -479,7 +480,7 @@ async def test_exhaustive_match_is_never_true_from_stored_messages_async(
         await conversation.output_async("call_1")
     reply = await conversation.reply_async()
 
-    score = await _score_exhaustive(reply, *names)
+    score = await _score_exhaustive_async(reply, *names)
 
     assert score.status == ScoreStatus.UNDETERMINED
     assert score.score_value is None
@@ -496,6 +497,6 @@ async def test_exhaustive_ignores_unnamed_calls_that_did_not_run_async(sqlite_in
     await conversation.output_async("call_3")
     reply = await conversation.reply_async()
 
-    score = await _score_exhaustive(reply)
+    score = await _score_exhaustive_async(reply)
 
     assert score.status == ScoreStatus.UNDETERMINED
