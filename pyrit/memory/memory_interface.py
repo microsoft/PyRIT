@@ -526,6 +526,58 @@ class AttackConversationPage:
     reference_revision: str
     objective_score_id: str | None = None
 
+    @classmethod
+    def from_references(
+        cls,
+        *,
+        main_conversation_id: str,
+        pruned_conversation_ids: Sequence[str],
+        timestamp: datetime,
+        offset: int = 0,
+        limit: int = 50,
+        conversation_id: str | None = None,
+        objective_score_id: str | None = None,
+    ) -> "AttackConversationPage":
+        """
+        Page main and pruned references in stored order: main first, then pruned in their recorded order.
+
+        The revision fingerprints the full ordering, so continuation cursors detect reference changes.
+
+        Returns:
+            AttackConversationPage: The selected or paged references and their ordering revision.
+        """
+        references: dict[str, AttackConversationRecord] = {}
+        if main_conversation_id:
+            references[main_conversation_id] = AttackConversationRecord(conversation_id=main_conversation_id)
+        for identifier in pruned_conversation_ids:
+            if identifier:
+                references.setdefault(
+                    identifier,
+                    AttackConversationRecord(conversation_id=identifier, conversation_type=ConversationType.PRUNED),
+                )
+        ordered = tuple(references.values())
+        revision = hashlib.sha256(
+            json.dumps(
+                [
+                    (
+                        reference.conversation_id,
+                        reference.conversation_type.value if reference.conversation_type is not None else None,
+                    )
+                    for reference in ordered
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        if conversation_id is not None:
+            ordered = tuple(reference for reference in ordered if reference.conversation_id == conversation_id)
+        return cls(
+            main_conversation_id=main_conversation_id,
+            conversations=ordered[offset : offset + limit],
+            total_count=len(ordered),
+            timestamp=timestamp,
+            reference_revision=revision,
+            objective_score_id=objective_score_id,
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _AttackResultQuery:
@@ -1261,6 +1313,25 @@ class MemoryInterface(abc.ABC):
                 )
             )
             return entry.get_evidence() if entry else None
+
+    async def get_findings_for_attack_result_async(
+        self, *, attack_result_id: uuid.UUID
+    ) -> list[tuple[Finding, FindingEvidence]]:
+        """
+        Read every finding that links an attack result as evidence, highest severity first, then newest first.
+
+        Returns:
+            list[tuple[Finding, FindingEvidence]]: Each linked finding with the evidence that links it.
+        """
+        statement = (
+            select(FindingEntry, FindingEvidenceEntry)
+            .join(FindingEvidenceEntry, FindingEvidenceEntry.finding_id == FindingEntry.id)
+            .where(FindingEvidenceEntry.attack_result_id == attack_result_id)
+            .order_by(*self._finding_order())
+        )
+        async with await self.get_session_async() as session:
+            rows = (await session.execute(statement)).all()
+            return [(finding.get_finding(), evidence.get_evidence()) for finding, evidence in rows]
 
     async def delete_finding_evidence_async(self, *, finding_id: uuid.UUID, evidence_id: uuid.UUID) -> None:
         """
@@ -8647,6 +8718,7 @@ class MemoryInterface(abc.ABC):
                 status=ScoreStatus(row["score_status"]),
                 score_value=row["score_value"],
                 score_rationale=row["score_rationale"],
+                score_category=list(row["score_category"] or []),
             )
         related_cids: list[str] = []
         for col in (
@@ -8705,6 +8777,7 @@ class MemoryInterface(abc.ABC):
             ScoreEntry.score_type,
             ScoreEntry.status.label("score_status"),
             ScoreEntry.score_rationale,
+            ScoreEntry.score_category,
             ScoreEntry.scorer_class_identifier,
         ).outerjoin(
             ScoreEntry,
@@ -9152,38 +9225,16 @@ class MemoryInterface(abc.ABC):
             row = session.execute(statement).mappings().one_or_none()
         if row is None:
             return None
-        references: dict[str, AttackConversationRecord] = {}
-        main_id = row["conversation_id"] or ""
-        if main_id:
-            references[main_id] = AttackConversationRecord(conversation_id=main_id)
         values = row["pruned_conversation_ids"]
-        if isinstance(values, list):
-            for identifier in values:
-                if isinstance(identifier, str) and identifier:
-                    references.setdefault(
-                        identifier,
-                        AttackConversationRecord(conversation_id=identifier, conversation_type=ConversationType.PRUNED),
-                    )
-        ordered = tuple(references.values())
-        revision = hashlib.sha256(
-            json.dumps(
-                [
-                    (
-                        reference.conversation_id,
-                        reference.conversation_type.value if reference.conversation_type is not None else None,
-                    )
-                    for reference in ordered
-                ]
-            ).encode("utf-8")
-        ).hexdigest()
-        if conversation_id is not None:
-            ordered = tuple(reference for reference in ordered if reference.conversation_id == conversation_id)
-        return AttackConversationPage(
-            main_conversation_id=main_id,
-            conversations=ordered[offset : offset + limit],
-            total_count=len(ordered),
+        return AttackConversationPage.from_references(
+            main_conversation_id=row["conversation_id"] or "",
+            pruned_conversation_ids=[value for value in values if isinstance(value, str)]
+            if isinstance(values, list)
+            else [],
             timestamp=row["timestamp"],
-            reference_revision=revision,
+            offset=offset,
+            limit=limit,
+            conversation_id=conversation_id,
             objective_score_id=str(row["objective_score_id"]) if row["objective_score_id"] is not None else None,
         )
 
