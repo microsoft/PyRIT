@@ -214,6 +214,7 @@ async def create_target(
     },
 )
 async def get_target(
+    *,
     target_registry_name: IdentifierStr,
     user_oid: Annotated[str | None, Depends(current_user_oid)],
 ) -> TargetInstance:  # pyrit-async-suffix-exempt

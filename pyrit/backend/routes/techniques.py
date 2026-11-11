@@ -58,7 +58,7 @@ async def technique_types_async() -> TechniqueTypeResponse:
 
 @router.get("/{name}", response_model=TechniqueInstance, responses={404: {"model": ProblemDetail}})
 async def get_technique_async(
-    name: IdentifierStr, user_oid: Annotated[str | None, Depends(current_user_oid)]
+    *, name: IdentifierStr, user_oid: Annotated[str | None, Depends(current_user_oid)]
 ) -> TechniqueInstance:
     """
     Get safe factory settings.
