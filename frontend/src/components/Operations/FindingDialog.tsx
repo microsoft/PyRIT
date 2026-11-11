@@ -6,7 +6,7 @@ import {
 } from '@fluentui/react-components'
 
 import { operationsApi } from '@/services/api'
-import { toApiError, type ApiFieldError } from '@/services/errors'
+import { toApiError, type FieldError } from '@/services/errors'
 import type { FindingCreate, FindingSeverity } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { FINDING_SEVERITY_LABELS } from '@/utils/findingSeverity'
@@ -44,7 +44,7 @@ export default function FindingDialog({
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<FindingFormField, string>>>({})
-  const [unmatchedErrors, setUnmatchedErrors] = useState<ApiFieldError[]>([])
+  const [unmatchedErrors, setUnmatchedErrors] = useState<FieldError[]>([])
   const [saving, setSaving] = useState(false)
   const form = useRef<HTMLFormElement>(null)
   const focusInvalidOnNextRender = useRef(false)

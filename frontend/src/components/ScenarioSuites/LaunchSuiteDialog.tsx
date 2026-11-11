@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 
 import {
   Badge,
@@ -19,6 +19,7 @@ import TargetSelect from '@/components/Config/TargetSelect'
 import HelpField from '@/components/HelpField'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { useRuntime } from '@/hooks/useRuntime'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
   DEFAULT_MAX_CONCURRENCY,
@@ -80,6 +81,9 @@ export default function LaunchSuiteDialog({
 }: LaunchSuiteDialogProps) {
   const styles = useLaunchSuiteDialogStyles()
   const navigate = useNavigate()
+  const runtime = useRuntime()
+  const [openedGeneration] = useState(runtime.generation)
+  const staleSelection = openedGeneration !== runtime.generation
   const { rememberScanTargets } = useUserPreferences()
   const adversarialTargets = targets.filter(
     (target) => target.capabilities?.supports_multi_turn === true,
@@ -101,9 +105,13 @@ export default function LaunchSuiteDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (staleSelection) onDismiss()
+  }, [staleSelection, onDismiss])
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
-    if (targetName === '' || submitting || !defaultsReady) {
+    if (staleSelection || !runtime.ready || targetName === '' || submitting || !defaultsReady) {
       return
     }
 
@@ -139,6 +147,8 @@ export default function LaunchSuiteDialog({
       setSubmitting(false)
     }
   }
+
+  if (staleSelection) return null
 
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open) onDismiss() }}>
@@ -222,7 +232,7 @@ export default function LaunchSuiteDialog({
               <Button
                 appearance="primary"
                 type="submit"
-                disabled={targetName === '' || submitting || !defaultsReady}
+                disabled={!runtime.ready || targetName === '' || submitting || !defaultsReady}
                 data-testid="confirm-launch-suite"
               >
                 {submitting ? 'Launching...' : 'Launch suite'}

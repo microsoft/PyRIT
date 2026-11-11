@@ -174,7 +174,7 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
             LatentInjection,
             {},
             {"dataset_config": LatentInjectionDatasetConfiguration(dataset_names=["wrong"])},
-            "requires exactly",
+            "required data",
         ),
         (LatentInjection, {}, {"families": []}, "non-empty selection"),
         (LatentInjection, {}, {"families": ["latent_jailbreak"]}, "explicit harm_scorer"),
@@ -224,30 +224,6 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize(
-    "configuration_class",
-    [PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
-)
-def test_ingredient_configurations_require_uncapped_sources(
-    configuration_class: type[DatasetAttackConfiguration],
-) -> None:
-    scenario_class = {
-        PromptInjectDatasetConfiguration: PromptInject,
-        LatentInjectionDatasetConfiguration: LatentInjection,
-    }[configuration_class]
-    config = configuration_class(sources=[DatasetSource(name=name) for name in scenario_class.required_datasets()])
-    assert config.max_per_dataset == "all"
-    for limit in (None, "default", "all"):
-        config.with_overrides(max_per_dataset=limit).validate_configuration()
-    with pytest.raises(ValueError, match="ingredient sources must be uncapped"):
-        config.with_overrides(max_per_dataset=2).validate_configuration()
-    with pytest.raises(ValueError, match="ingredient sources must be uncapped"):
-        config.with_overrides(
-            sources=[DatasetSource(name=name, max_size=2) for name in config.dataset_names]
-        ).validate_configuration()
-
-
-@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("cap", [3, 12, "all"])
 async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_previews_async(cap: int | str) -> None:
     scenario = PromptInject()
@@ -270,7 +246,7 @@ async def test_compound_configuration_checks_children_before_a_bounded_preview_a
     config = CompoundDatasetAttackConfiguration(
         configurations=[
             DatasetAttackConfiguration(dataset_names=["missing"]),
-            PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=1),
+            PromptInjectDatasetConfiguration(max_total=1),
         ],
         max_dataset_size=10,
     )

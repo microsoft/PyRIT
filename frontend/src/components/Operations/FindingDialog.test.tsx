@@ -301,6 +301,76 @@ describe('FindingDialog', () => {
       id: expect.any(String), attackResultId: 'attack-1',
     })
   })
+
+  it('shows the API field message on the Evidence attack ID and keeps it invalid until edited', async () => {
+    const user = userEvent.setup()
+    const rejection = Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [{ field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' }],
+        },
+      },
+    })
+    const onSave = jest.fn().mockRejectedValueOnce(rejection).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField onSave={onSave} onClose={jest.fn()} />
+    </FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Bad evidence')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'not-a-uuid')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(/Input should be a valid UUID/)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'x')
+    expect(screen.queryByText(/Input should be a valid UUID/)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+  })
+
+  it.each([false, true])('preserves mixed validation feedback with evidenceField=%s', async evidenceField => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [
+            { field: 'body.attack_result_id', message: 'Attack is unavailable', code: 'value_error' },
+            { field: 'body.title', message: 'Title is invalid', code: 'value_error' },
+          ],
+        },
+      },
+    }))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField={evidenceField}
+      initialValues={{ title: 'Assessment', severity: 'low', description: '' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const save = screen.getByRole('button', { name: 'Save finding' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
+    expect(await screen.findByText('Title is invalid')).toBeInTheDocument()
+    const title = screen.getByRole('textbox', { name: 'Title' })
+    expect(title).toHaveAttribute('aria-invalid', 'true')
+    expect(save).toBeDisabled()
+    if (evidenceField) {
+      expect(screen.getByText('Attack is unavailable')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+    } else {
+      expect(screen.getByText('body.attack_result_id: Attack is unavailable')).toBeInTheDocument()
+    }
+
+    await user.type(title, ' corrected')
+    expect(screen.queryByText('Title is invalid')).not.toBeInTheDocument()
+    if (evidenceField) {
+      expect(save).toBeDisabled()
+      await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'corrected-id')
+    }
+    expect(save).toBeEnabled()
+  })
 })
 
 describe('FindingDialog server field validation', () => {

@@ -17,7 +17,7 @@ export function conflictingOperation(cause: unknown): Operation | null {
 }
 
 /** One RFC 7807 `errors[]` entry describing a problem with a specific field. */
-export interface ApiFieldError {
+export interface FieldError {
   /** Raw backend field path, e.g. `body.attack_result_id` or `pieces[0].data_type`. */
   field: string
   /** The server's explanation, e.g. a UUID parsing message. */
@@ -41,7 +41,7 @@ export interface ApiError {
   /** RFC 7807 `type` URI, if the backend included one. */
   type?: string
   /** Field-level errors from an RFC 7807 `errors[]` array, in server order. */
-  fieldErrors: ApiFieldError[]
+  fieldErrors: FieldError[]
   /** True when no HTTP response was received (DNS failure, CORS block, etc.). */
   isNetworkError: boolean
   /** True when the request exceeded the configured timeout. */
@@ -163,7 +163,7 @@ export interface GroupedApiFieldErrors<K extends string> {
   /** Server messages keyed by the form field they belong to, in server order. */
   fields: Partial<Record<K, string>>
   /** Errors that did not match a field the caller can display. */
-  unmatched: ApiFieldError[]
+  unmatched: FieldError[]
 }
 
 /**
@@ -180,7 +180,7 @@ export function groupApiFieldErrors<K extends string>(
 ): GroupedApiFieldErrors<K> {
   const allowed = new Set<string>(visibleFields)
   const fields: Partial<Record<K, string>> = {}
-  const unmatched: ApiFieldError[] = []
+  const unmatched: FieldError[] = []
 
   for (const item of error.fieldErrors) {
     const leaf = apiFieldLeaf(item.field)
@@ -258,7 +258,7 @@ function readBlobText(blob: Blob): Promise<string> {
 function extractProblem(data: unknown): {
   detail: string | undefined
   type: string | undefined
-  fieldErrors: ApiFieldError[]
+  fieldErrors: FieldError[]
 } {
   if (typeof data === 'string') {
     return { detail: data, type: undefined, fieldErrors: [] }
@@ -273,9 +273,9 @@ function extractProblem(data: unknown): {
 }
 
 /** Keep only well-formed `errors[]` entries; ignore anything untrusted. */
-function extractFieldErrors(value: unknown): ApiFieldError[] {
+function extractFieldErrors(value: unknown): FieldError[] {
   if (!Array.isArray(value)) return []
-  const result: ApiFieldError[] = []
+  const result: FieldError[] = []
   for (const entry of value) {
     if (result.length >= MAX_FIELD_ERRORS) break
     if (typeof entry !== 'object' || entry === null) continue

@@ -313,6 +313,56 @@ def test_delete_reports_the_outcome_of_the_delete_itself(tmp_path: Path) -> None
     assert storage.delete_preset("nightly") is False
 
 
+def test_delete_with_the_version_that_was_read_removes_the_preset(tmp_path: Path) -> None:
+    """Test that a delete confirmed against the current version goes through."""
+    storage = ScenarioPresetStorage(source=str(tmp_path))
+    saved = storage.save_preset(preset=_make_preset(), expected_version=None)
+
+    assert storage.delete_preset("nightly", expected_version=saved.version) is True
+    assert storage.load_preset("nightly") is None
+
+
+def test_delete_with_a_stale_version_is_a_conflict_and_keeps_the_preset(tmp_path: Path) -> None:
+    """Test that a delete confirmed against an old read cannot discard an edit made since."""
+    storage = ScenarioPresetStorage(source=str(tmp_path))
+    first = storage.save_preset(preset=_make_preset(description="first"), expected_version=None)
+    second = storage.save_preset(preset=_make_preset(description="second"), expected_version=first.version)
+
+    with pytest.raises(ScenarioPresetConflictError, match="could not be deleted because it was changed") as error:
+        storage.delete_preset("nightly", expected_version=first.version)
+
+    assert error.value.expected_version == first.version
+    assert error.value.actual_version == second.version
+    loaded = storage.load_preset("nightly")
+    assert loaded is not None
+    assert loaded.preset.description == "second"
+
+
+def test_conditional_delete_of_a_missing_preset_reports_absence(tmp_path: Path) -> None:
+    """Test that a versioned delete of a preset someone already removed is not a conflict."""
+    storage = ScenarioPresetStorage(source=str(tmp_path))
+
+    assert storage.delete_preset("absent", expected_version="some_version") is False
+
+
+def test_conditional_delete_checks_the_version_under_the_document_lock(tmp_path: Path) -> None:
+    """Test that a versioned delete waits for a live writer instead of comparing against a moving target."""
+    storage = ScenarioPresetStorage(source=str(tmp_path))
+    saved = storage.save_preset(preset=_make_preset(), expected_version=None)
+    descriptor = os.open(tmp_path / ".nightly.json.lock", os.O_CREAT | os.O_RDWR)
+    assert _try_acquire_exclusive_lock(descriptor)
+
+    try:
+        with patch.object(ScenarioPresetStorage, "LOCK_TIMEOUT_SECONDS", 0.1):
+            with pytest.raises(TimeoutError, match="nightly.json.lock"):
+                storage.delete_preset("nightly", expected_version=saved.version)
+    finally:
+        _release_exclusive_lock(descriptor)
+        os.close(descriptor)
+
+    assert storage.load_preset("nightly") is not None
+
+
 @pytest.mark.parametrize("name", ["../victim", "..\\victim", "nested/victim", "Nightly", "night-ly", ""])
 def test_document_operations_reject_illegal_names(tmp_path: Path, name: str) -> None:
     """Test that a name which would escape the configured source is refused on every path."""
@@ -444,6 +494,103 @@ def test_blob_delete_of_a_missing_document_reports_absence_instead_of_raising() 
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
         assert storage.delete_preset("absent") is False
+
+
+def _blob_client_holding(document: bytes) -> MagicMock:
+    """
+    Build a container client whose download returns *document* with a fixed ETag.
+
+    Returns:
+        MagicMock: The mocked container client.
+    """
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.download_blob.return_value.readall.return_value = document
+    client.download_blob.return_value.properties.etag = '"0x8DCAFE"'
+    return client
+
+
+def test_blob_delete_is_conditional_on_the_version_that_was_read() -> None:
+    """Test that a versioned blob delete asks the service to reject a delete over content that moved."""
+    from azure.core import MatchConditions
+
+    document = json.dumps({"scenario_name": "foundry.red_team_agent"}).encode("utf-8")
+    client = _blob_client_holding(document)
+    storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
+
+    with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+        assert storage.delete_preset("nightly", expected_version=hashlib.sha256(document).hexdigest()) is True
+
+    client.delete_blob.assert_called_once_with(
+        "nightly.json", etag='"0x8DCAFE"', match_condition=MatchConditions.IfNotModified
+    )
+
+
+def test_blob_delete_of_changed_content_never_reaches_delete() -> None:
+    """Test that a stale versioned blob delete is refused before any delete is attempted."""
+    document = json.dumps({"scenario_name": "foundry.red_team_agent"}).encode("utf-8")
+    client = _blob_client_holding(document)
+    storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
+
+    with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+        with pytest.raises(ScenarioPresetConflictError, match="could not be deleted because it was changed") as error:
+            storage.delete_preset("nightly", expected_version="stale_version")
+
+    assert error.value.actual_version == hashlib.sha256(document).hexdigest()
+    client.delete_blob.assert_not_called()
+
+
+def test_blob_delete_rejected_by_the_service_is_reported_as_a_conflict() -> None:
+    """Test that losing the delete precondition race surfaces as a conflict naming the new version."""
+    from azure.core.exceptions import ResourceModifiedError
+
+    document = json.dumps({"scenario_name": "foundry.red_team_agent"}).encode("utf-8")
+    changed = json.dumps({"scenario_name": "foundry.red_team_agent", "description": "edited"}).encode("utf-8")
+    client = _blob_client_holding(document)
+    edited_downloader = MagicMock()
+    edited_downloader.readall.return_value = changed
+    client.download_blob.side_effect = [client.download_blob.return_value, edited_downloader]
+    client.delete_blob.side_effect = ResourceModifiedError("changed")
+    storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
+
+    with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+        with pytest.raises(ScenarioPresetConflictError, match="could not be deleted because it was changed") as error:
+            storage.delete_preset("nightly", expected_version=hashlib.sha256(document).hexdigest())
+
+    assert error.value.actual_version == hashlib.sha256(changed).hexdigest()
+
+
+def test_blob_conditional_delete_of_a_missing_document_reports_absence() -> None:
+    """Test that a versioned delete of a blob someone already removed is not a conflict."""
+    from azure.core.exceptions import ResourceNotFoundError
+
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.download_blob.side_effect = ResourceNotFoundError("missing")
+    storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
+
+    with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+        assert storage.delete_preset("absent", expected_version="some_version") is False
+
+    client.delete_blob.assert_not_called()
+
+
+@pytest.mark.parametrize("removed_during", ["delete", "precondition"])
+def test_blob_conditional_delete_that_loses_to_another_delete_reports_absence(removed_during: str) -> None:
+    """Test that a blob removed between the version check and the delete reports absence, not a conflict."""
+    from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+
+    document = json.dumps({"scenario_name": "foundry.red_team_agent"}).encode("utf-8")
+    client = _blob_client_holding(document)
+    if removed_during == "delete":
+        client.delete_blob.side_effect = ResourceNotFoundError("missing")
+    else:
+        client.download_blob.side_effect = [client.download_blob.return_value, ResourceNotFoundError("missing")]
+        client.delete_blob.side_effect = ResourceModifiedError("changed")
+    storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
+
+    with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+        assert storage.delete_preset("nightly", expected_version=hashlib.sha256(document).hexdigest()) is False
 
 
 def test_name_is_not_written_into_the_document(tmp_path: Path) -> None:

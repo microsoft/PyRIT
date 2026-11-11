@@ -35,7 +35,9 @@ matches them against the fields a form currently renders.
 
 Forms such as `FindingDialog` show mapped messages as Fluent `Field` validation
 feedback, mark the control invalid, move focus to the first invalid control,
-and guard resubmission until that value changes. Errors for hidden or unknown
+and guard resubmission until the submitted value changes. Whitespace-only edits
+to Evidence attack ID and searching or reselecting the same harm category do not
+clear validation feedback or re-enable Save. Errors for hidden or unknown
 fields appear in the error summary with their original field path, so no server
 explanation is lost or used to block Save behind an invisible message.
 Non-validation failures keep the existing generic message and remain retryable.
