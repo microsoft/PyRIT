@@ -1887,11 +1887,16 @@ class TestSaveTarget:
         assert not (tmp_path / "targets").exists()
 
     @pytest.mark.parametrize(
-        ("target_type", "reason"),
+        ("target_type", "params", "reason"),
         [
-            ("HTTPTarget", "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials."),
+            (
+                "HTTPTarget",
+                {"http_request": "POST /chat HTTP/1.1\nHost: example.test\n\n{PROMPT}"},
+                "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials.",
+            ),
             (
                 "WebSocketCopilotTarget",
+                {},
                 (
                     "'WebSocketCopilotTarget' can't be saved. It signs in with the Copilot account this server is set "
                     "up with."
@@ -1900,10 +1905,10 @@ class TestSaveTarget:
         ],
     )
     async def test_refuses_to_save_a_type_that_cant_be_saved(
-        self, tmp_path: Path, target_type: str, reason: str
+        self, tmp_path: Path, target_type: str, params: dict[str, str], reason: str
     ) -> None:
         service = TargetService()
-        request = CreateTargetRequest(name="unsaveable", type=target_type, params={}, persist=True)
+        request = CreateTargetRequest(name="unsaveable", type=target_type, params=params, persist=True)
 
         with pytest.raises(SavedTargetRefusedError) as refusal:
             await service.create_target_async(request=request, is_admin=True, recipes_source=str(tmp_path))
