@@ -11,9 +11,10 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { SearchRegular } from '@fluentui/react-icons'
-import { useSearchParams } from 'react-router'
+import { SearchRegular, SparkleRegular } from '@fluentui/react-icons'
+import { useNavigate, useSearchParams } from 'react-router'
 
+import { PROMPT_GENERATIONS_PATH } from '@/components/PromptGeneration/promptGenerationRoutes'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import type { DatasetInfo, FilterOption } from '@/types'
@@ -56,10 +57,27 @@ function harmOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
   return uniqueLabels(values)
 }
 
+const ORIGIN_LABELS: Readonly<Record<string, string>> = {
+  generated: 'Generated',
+  local: 'Local files',
+  remote: 'Remote provider',
+  user: 'User',
+  unknown: 'Unknown',
+}
+
+function originOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
+  const values = new Set<string>()
+  for (const dataset of datasets) for (const origin of dataset.origins ?? []) values.add(origin)
+  return [...values]
+    .map((value) => ({ value, label: ORIGIN_LABELS[value] ?? value }))
+    .sort((left, right) => left.label.localeCompare(right.label, 'en', { sensitivity: 'base' }))
+}
+
 /** Loaded-dataset catalog. Search, facets, and sort stay in the URL. */
 export default function DatasetCatalog() {
   const styles = useDatasetCatalogStyles()
   const titleId = useId()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const catalogSearch = searchParams.toString()
   const query = useMemo(
@@ -71,6 +89,7 @@ export default function DatasetCatalog() {
   const filtered = useMemo(() => filterDatasets(datasets, query), [datasets, query])
   const modalities = useMemo(() => modalityOptions(datasets), [datasets])
   const harms = useMemo(() => harmOptions(datasets), [datasets])
+  const origins = useMemo(() => originOptions(datasets), [datasets])
   const filtersActive = !catalogQueryIsDefault(query)
 
   const updateQuery = (next: DatasetCatalogQuery): void => {
@@ -94,6 +113,15 @@ export default function DatasetCatalog() {
             This view does not download datasets or list individual examples.
           </Text>
         </div>
+        <Button
+          className={styles.touchTarget}
+          appearance="primary"
+          icon={<SparkleRegular />}
+          onClick={() => navigate(PROMPT_GENERATIONS_PATH)}
+          data-testid="generate-dataset-btn"
+        >
+          Generate dataset
+        </Button>
       </div>
 
       <div className={styles.filters}>
@@ -129,6 +157,16 @@ export default function DatasetCatalog() {
           checked={query.unlabeled}
           onChange={(_, data) => updateQuery({ ...query, unlabeled: data.checked === true })}
           label="Not labeled"
+        />
+        <SearchableMultiCombobox
+          className={styles.filterControl}
+          ariaLabel="Origins"
+          placeholder="All origins"
+          summaryPrefix="Origins"
+          options={origins}
+          selectedOptions={[...query.origins]}
+          onSelect={(selected) => updateQuery({ ...query, origins: selected })}
+          testId="dataset-origin-filter"
         />
         <Select
           className={styles.filterControl}

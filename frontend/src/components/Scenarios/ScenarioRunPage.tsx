@@ -37,6 +37,8 @@ import {
 } from '@/utils/routeParams'
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
+import AssertPolicyMetricsPanel from './AssertPolicyMetricsPanel'
+import { isAssertPolicyRun } from './assertPolicyRun'
 import AttackExecutionTable from './AttackExecutionTable'
 import PairedOutcomes from './PairedOutcomes'
 import { ObjectiveDetailsDialog } from './ScenarioRunDialogs'
@@ -143,6 +145,16 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     () => new Map(state.plan?.atomic_groups.map((group) => [group.id, group]) ?? []),
     [state.plan],
   )
+  const assertTechniqueLabels = useMemo(() => {
+    if (!state.run?.is_assert_policy) return undefined
+    return new Map(state.plan?.atomic_groups.map((group) => [
+      group.id,
+      group.kind === 'baseline' ? 'Baseline'
+        : group.technique_name === 'assert_package' ? 'ASSERT package'
+          : group.technique_name === 'assert_package_spanish' ? 'ASSERT package (Spanish)'
+            : group.technique_name?.replace(/_/g, ' ') ?? group.atomic_attack_name,
+    ]) ?? [])
+  }, [state.plan, state.run])
   const progressAtomicGroups = useMemo(
     () => new Map(state.summary?.atomic_groups.map((group) => [group.id, group]) ?? []),
     [state.summary],
@@ -410,6 +422,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             <Link to={scenarioConversationRoutePath(scenarioResultId, conversation.conversation_id)}>Open saved conversation</Link>
           </div>)}
         </section>}
+        {run.status === 'COMPLETED' && isAssertPolicyRun(run) && <AssertPolicyMetricsPanel scenarioResultId={scenarioResultId} />}
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
           <div className={styles.sectionHeading}>
             <div className={styles.objectivesHeading}>
@@ -433,6 +446,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
               {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executionCount.toLocaleString()} ${producerCounts ? '' : 'loaded '}execution${executionCount === 1 ? '' : 's'}`}
             </Text>
           </div>
+          {run.is_assert_policy && <Text className={styles.sectionHint}>
+            New runs group baseline and technique executions by generated category; older runs keep their recorded grouping.
+            Category rates use judged relevance.
+          </Text>}
           <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
             {atomicGroupsExpanded && (
               <ScenarioResultHierarchy hierarchy={hierarchy} runStatus={run.status}>
@@ -462,9 +479,9 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                             />
                             <span className={styles.displayGroupIdentity}>
                               <Text size={400} weight="semibold">{group.display_group}</Text>
-                              <Text size={200} className={styles.sectionHint}>
+                              {!run.is_assert_policy && <Text size={200} className={styles.sectionHint}>
                                 {group.atomic_attack_names.join(', ')}
-                              </Text>
+                              </Text>}
                             </span>
                             <span className={styles.displayGroupMetrics}>
                               <DisplayGroupMetric
@@ -499,6 +516,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                                 showTimestamp={false}
                                 showConversationLink
                                 booleanOutcome
+                                techniqueLabels={assertTechniqueLabels}
                               />
                             </div>
                           )}

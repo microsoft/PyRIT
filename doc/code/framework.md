@@ -171,6 +171,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A scenario takes user input and uses it to package datasets with attack techniques
 - A scenario orchestrates resiliency and parallelism from a high level
 - A scenario chooses whether to skip or raise for incompatible techniques.
+- A scenario declares evaluation-wide dataset requirements; techniques add delivery-specific inputs.
+  Catalog facts are only hints. The selected contents are validated before sampling and checked again at launch/resume.
 - No result should depend on previous results (that is an attack's job)
 - **Does not own**: the per-objective conversation logic. Branching, turn-by-turn adaptation, and scoring-based decisions belong to the attack; a scenario selects and packages existing attack techniques rather than defining new attack algorithms or datasets.
 
@@ -306,6 +308,11 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
+- `OtelExecutionTraceSource` normalizes model, tool, and agent spans, with bounded tool
+  arguments, results, and messages, into an execution snapshot. A conversation scorer given a
+  trace source renders those steps after the turns they produced and owns citation and coverage
+  handling. A `trace_requirement` lets it decline to judge, with an undetermined result, when
+  the evidence it needs is missing.
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
   root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
   evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
@@ -335,7 +342,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   When the judge's response is blocked, conversation scoring handles direct and message-triggered
   calls the same way. If it returns an undetermined score, it retains the evidence snapshot.
 - The local SDK exporter supports caller-owned, in-process capture, not a remote collector or
-  durable store.
+  durable store. `LocalTraceCapture` bundles it with a provider and completion tracking for
+  in-process targets.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
 - Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets
@@ -382,6 +390,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 - Shared analytics contracts (filters, dimensions, typed values, reports, facets, result pages, and `AttackStats`) live in `pyrit.models.analytics`. They validate data without querying memory or calculating statistics. `AttackResultSelection` defines selection modes without changing existing callers.
 - `compute_outcome_statistics` owns both success-rate denominators, totals, and shares. `success_rate_decided` (the explicit alias of `success_rate`) divides by successes plus failures; `success_rate_all` divides by all outcomes. `combine_outcome_statistics` revalidates and combines disjoint counts, never averages rates. Attack and scenario analytics share the same `OutcomeStatistics` model and calculations after independently selecting their populations. Models reject contradictory supplied totals/rates; they do not select populations or replace the supplied numbers.
 - `analyze_results` and `compute_technique_stats_async` remain maintained APIs. Their `include_outcome_statistics=True` option exposes the shared statistics directly; default `AttackStats` results retain their six-field shape. Existing scenario percentage fields also retain their defaults. Only the already-deprecated sync memory wrappers and `ScenarioResult.objective_achieved_rate` are scheduled for removal in 1.4.0.
+- `compute_assert_policy_metrics_async` owns ASSERT's permissible/impermissible split, judge-dimension rates, and per-category rates for `foundry.assert_policy` results, reading stored scores and seed metadata over the same execution units. The scenario and scorers only record judgments; the GUI backend serializes the SDK result.
 - [`AttackResultAnalytics`](./analytics/0_attack_results.md) provides async saved-result reports, lightweight result pages, and facet lookups. It supplies both shared success rates, display labels and exact additional drill-down predicates, and counts every saved result ID rather than latest scenario execution units. Memory owns cohort SQL and consistent projections; the SDK owns their interpretation.
 - Analytics facades sharing a memory instance share one loop-bound, bounded report/quick-query controller. Close that shared SDK lifetime before replacing or disposing memory; cancellation does not free a running query's slot before its actual session cleanup. SDK lifecycle is independent of backend runtime integration.
 - Filter-bound cursor and label-normalization helpers live in `pyrit.common.pagination`. The backend pagination module retains compatibility exports, including History's invalid-cursor first-page fallback.
@@ -493,6 +502,7 @@ The below describes the user-facing surfaces built on top of the framework.
 - Organized into `routes/`, `services/`, `models/`, `mappers/`, and `middleware/`, and launched through the `pyrit_backend` command (configurable via `PYRIT_API_HOST` / `PYRIT_API_PORT` / `PYRIT_API_RELOAD`).
 - Saved-result analytics routes consume the cached SDK directly and serialize shared models. The shared runtime owns admission, busy checks, SDK draining and cache invalidation before memory replacement/disposal, including work still cleaning up after an HTTP timeout. It does not calculate statistics or add an SDK authorization scope.
 - `ChatScoringService` owns manual chat scoring policy: the scorer and input for the next evaluation, reuse of a complete matching result, publication to the attack, and the latest-response result and outcome that the frontend shows.
+- `PromptGenerationService` owns prompt generation jobs: admission, queueing, checkpoint persistence, review pauses, cancellation, retry, and saving the dataset. Generators own model calls, stages, and checkpoints; dataset providers package results.
 
 ## [CLI](../scanner/0_scanner)
 

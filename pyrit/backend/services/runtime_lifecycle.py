@@ -15,6 +15,7 @@ from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.prompt_generation_service import peek_prompt_generation_service
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.scenario_suite_execution_service import peek_scenario_suite_execution_service
 from pyrit.backend.services.service_lifecycle import (
@@ -246,9 +247,11 @@ class RuntimeLifecycle:
         """Return whether any admitted or background runtime operation remains."""
         service = peek_scenario_run_service()
         suite_execution_service = peek_scenario_suite_execution_service()
+        generation_service = peek_prompt_generation_service()
         return bool(
             (service and service.has_active_work())
             or (suite_execution_service and suite_execution_service.has_active_work())
+            or (generation_service and generation_service.has_active_work())
             or self.operations
             or outstanding_estimates()
             or has_active_manual_sends()
@@ -273,10 +276,13 @@ class RuntimeLifecycle:
         """Finish retained requests without cancelling their offloaded writes."""
         service = peek_scenario_run_service()
         suite_execution_service = peek_scenario_suite_execution_service()
+        generation_service = peek_prompt_generation_service()
         if suite_execution_service:
             suite_execution_service.stop_admission()
         if service:
             service.stop_admission()
+        if generation_service:
+            generation_service.stop_admission()
         pending = self.operations | self.management_operations
         if self.apply_task is not None:
             pending.add(self.apply_task)

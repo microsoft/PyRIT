@@ -480,6 +480,8 @@ export interface TargetCapabilities {
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
   supports_temperature?: boolean
+  /** Whether the target can search the web while it answers, such as for research. */
+  supports_web_search?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
@@ -1605,6 +1607,37 @@ export interface ScenarioDatasetLoadResponse {
   items: DatasetInfo[]
 }
 
+export interface DatasetCompatibilityReason {
+  code: string
+  message: string
+  requirement: string
+  count: number | null
+}
+
+export interface DatasetTechniqueCompatibility {
+  technique_name: string
+  is_baseline: boolean
+  usable_count: number
+  skipped_count: number
+  reasons: DatasetCompatibilityReason[]
+}
+
+export interface DatasetCompatibility {
+  name: string
+  status: 'compatible' | 'incompatible' | 'not_verified'
+  selected: boolean
+  group_count: number | null
+  reasons: DatasetCompatibilityReason[]
+  techniques: DatasetTechniqueCompatibility[]
+}
+
+export interface ScenarioDatasetCompatibility {
+  requirements: Array<{ name: string; description: string }>
+  items: DatasetCompatibility[]
+  selection_compatible: boolean | null
+  selection_reasons: DatasetCompatibilityReason[]
+}
+
 export interface RegisteredScenario {
   supports_objective_scorer?: boolean
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
@@ -2106,6 +2139,7 @@ export interface ScenarioProgressHeader {
   scenario_result_id: string
   scenario_name: string
   scenario_registry_name?: string | null
+  is_assert_policy?: boolean
   scenario_version: number
   description?: string | null
   operation_id?: string | null
@@ -2617,4 +2651,341 @@ export interface FindingExportRequest {
   format: FindingExportFormat
   /** The dashboard origin that evidence links open. */
   dashboard_origin: string
+}
+
+/** A flagged share of applicable conversations with a 90% Wilson interval; `rate` is null when none apply. */
+export interface AssertBinaryRate {
+  rate: number | null
+  flagged_count: number
+  applicable_count: number
+  not_applicable_count: number
+  ci_lower: number | null
+  ci_upper: number | null
+  /** False below 5 applicable conversations, ASSERT's minimum support. */
+  sufficient_support: boolean
+}
+
+export interface AssertCategoryMetrics {
+  behavior_name: string
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
+  policy_id: string
+  name: string
+  permissible: boolean
+  /** Violated share of conversations that judged this category relevant. */
+  node_violation: AssertBinaryRate
+}
+
+/** Grade counts in declared scale order and the median grade for a graded judge dimension. */
+export interface AssertGradeDistribution {
+  counts: Record<string, number>
+  median: number | string | null
+}
+
+export interface AssertNotJudgedCounts {
+  target_input_refused: number
+  target_error: number
+  judge_no_verdict: number
+  attack_error: number
+  not_scored: number
+}
+
+export interface AssertTechniqueMetrics {
+  technique: string
+  total: number
+  scored_total: number
+  not_judged: AssertNotJudgedCounts
+  unresolved_policy: number
+  rows_without_node_judgments: number
+  policy_violation_on_not_permissible: AssertBinaryRate | null
+  policy_violation_on_permissible: AssertBinaryRate | null
+  /** One violation rate per judge dimension; not-applicable answers stay out of the denominator. */
+  dimensions: Record<string, AssertBinaryRate>
+  /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
+  dimension_no_verdict: Record<string, number>
+  dimension_grades: Record<string, AssertGradeDistribution>
+  categories: AssertCategoryMetrics[]
+}
+
+/** ASSERT's headline metrics for one completed foundry.assert_policy run. */
+export interface AssertPolicyMetrics {
+  scenario_result_id: string
+  judgment_mode: string | null
+  split_unavailable_reason: string | null
+  total: number
+  scored_total: number
+  techniques: Record<string, AssertTechniqueMetrics>
+}
+
+// --- Prompt generation ---
+
+/** Lifecycle of a generation job. Active statuses are queued, running, and saving. */
+export type PromptGenerationStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_review'
+  | 'saving'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface PromptGeneratorStage {
+  name: string
+  label: string
+  /** Whether generation can pause after this stage for review. */
+  reviewable: boolean
+}
+
+export interface PromptGeneratorTargetRole {
+  role: string
+  label: string
+  description: string
+  required: boolean
+}
+
+/** A registered generator from `GET /api/prompt-generators`. */
+export interface PromptGeneratorDescriptor {
+  name: string
+  display_name: string
+  description: string
+  stages: PromptGeneratorStage[]
+  target_roles: PromptGeneratorTargetRole[]
+  /** A scenario that runs datasets from this generator, preselected after completion. */
+  follow_up_scenario: string | null
+}
+
+export interface PromptGeneratorListResponse {
+  items: PromptGeneratorDescriptor[]
+}
+
+export interface PromptGenerationProgress {
+  completed_stages: string[]
+  /** The next or running stage, or null when every stage is done. */
+  current_stage: string | null
+  items_completed: number
+  items_total: number
+}
+
+export interface PromptGenerationSummary {
+  id: string
+  generator: string
+  dataset_name: string
+  status: PromptGenerationStatus
+  pause_for_review: boolean
+  group_id: string | null
+  group_label: string | null
+  progress: PromptGenerationProgress
+  error: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+/** A generation with its generator-specific request and result summary. */
+export interface PromptGenerationDetail extends PromptGenerationSummary {
+  request: Record<string, unknown>
+  /** Target registry name for each target role. */
+  targets: Record<string, string>
+  review_completed: boolean
+  summary: Record<string, unknown> | null
+  started_at: string | null
+}
+
+export interface PromptGenerationListResponse {
+  items: PromptGenerationSummary[]
+}
+
+export interface PromptGenerationCreateRequest {
+  generator: string
+  dataset_name: string
+  request: Record<string, unknown>
+  targets: Record<string, string>
+  pause_for_review: boolean
+}
+
+export interface PromptGenerationStageEstimate {
+  stage: string
+  target_role: string
+  min_calls: number
+  max_calls: number
+  min_tokens: number
+  max_tokens: number
+}
+
+/** Provider-call-free estimate of the remaining work. Tokens are approximate. */
+export interface PromptGenerationEstimate {
+  stages: PromptGenerationStageEstimate[]
+  exact_calls: boolean
+  notes: string[]
+  min_calls: number
+  max_calls: number
+  low_tokens: number
+  high_tokens: number
+}
+
+export interface PromptGenerationPreflightResponse {
+  valid: boolean
+  errors: string[]
+  dataset_name_available: boolean
+  estimate: PromptGenerationEstimate | null
+}
+
+/** Output awaiting review, in the generator's review shape. */
+export interface PromptGenerationReview {
+  generation_id: string
+  stage: string
+  payload: Record<string, unknown>
+}
+
+export interface PromptGenerationBatchItem {
+  dataset_name: string
+  request: Record<string, unknown>
+}
+
+/** Several generations that share a generator, targets, and settings, such as an ASSERT suite. */
+export interface PromptGenerationBatchRequest {
+  generator: string
+  label: string
+  items: PromptGenerationBatchItem[]
+  targets: Record<string, string>
+  pause_for_review: boolean
+}
+
+/** The created generations; they share a `group_id` and `group_label`. */
+export interface PromptGenerationBatchResponse {
+  items: PromptGenerationSummary[]
+}
+
+/** A generator request reconstructed from a stored dataset. */
+export interface PromptGenerationRequestFromDataset {
+  generator: string
+  request: Record<string, unknown>
+  source_dataset_name: string
+}
+
+/** A ready-made behavior from the bundled ASSERT library; `description` is markdown policy text. */
+export interface AssertBehaviorPreset {
+  name: string
+  version: string
+  tags: string[]
+  applicable_to: string[]
+  summary: string
+  description: string
+  suggested_judge_presets: string[]
+}
+
+export interface AssertBehaviorPresetListResponse {
+  items: AssertBehaviorPreset[]
+}
+
+/** An application context and the library behaviors to evaluate in it, one dataset per behavior. */
+export interface AssertSuitePreset {
+  name: string
+  version: string
+  tags: string[]
+  applicable_to: string[]
+  summary: string
+  context: string
+  behaviors: string[]
+  suggested_judge_presets: string[]
+}
+
+export interface AssertSuitePresetListResponse {
+  items: AssertSuitePreset[]
+}
+
+export interface AssertDimensionLevel {
+  name: string
+  definition: string
+}
+
+/** A coverage dimension: explicit levels, or a description from which levels are generated. */
+export interface AssertDimension {
+  name: string
+  description: string
+  levels: AssertDimensionLevel[]
+}
+
+export type AssertSamplingMethod = 'pairwise' | 'stratified' | 'full_factorial' | 'random'
+export type AssertReplication = 'balanced' | 'none'
+
+export interface AssertSamplingConfig {
+  method: AssertSamplingMethod
+  stratify_by: string[]
+  replication: AssertReplication
+  with_replacement: boolean
+}
+
+/** The `request` of an `assert` generation (`AssertGenerationConfig`). */
+export interface AssertGenerationRequest {
+  behavior_name: string
+  behavior_description: string
+  context: string
+  group_count: number
+  include_user_prompt: boolean
+  include_adversarial_prompt: boolean
+  behavior_category_count: number
+  dimensions: AssertDimension[]
+  dimension_level_count: number
+  sampling: AssertSamplingConfig
+  random_seed: number
+  web_search: boolean
+  target_system_prompt: string | null
+  target_owns_instructions: boolean
+}
+
+export interface AssertTerm {
+  term: string
+  definition: string
+  examples: string[]
+}
+
+export interface AssertBehaviorCategory {
+  name: string
+  definition: string
+  examples: string[]
+  permissible: boolean
+}
+
+export interface AssertTaxonomy {
+  behavior: { name: string; definition: string }
+  definition_of_terms: AssertTerm[]
+  behavior_categories: AssertBehaviorCategory[]
+}
+
+/** The read-only research summary shown during ASSERT review. */
+export interface AssertSystematizationSummary {
+  scope: string
+  reasoning_summary: string
+}
+
+export interface AssertReviewPayload {
+  systematization: AssertSystematizationSummary | null
+  taxonomy: AssertTaxonomy
+  dimensions: AssertDimension[]
+}
+
+export interface AssertCoverage {
+  sample_size: number
+  unique_assignments: number
+  total_levels: number
+  covered_levels: number
+  total_pairs: number
+  covered_pairs: number
+}
+
+/** The `summary` of a completed `assert` generation. */
+export interface AssertGenerationResultSummary {
+  group_count: number
+  coverage: AssertCoverage | null
+  categories: Array<{ name: string; permissible: boolean; groups: number }>
+  edited_stages: string[]
+}
+
+/** The `request` of a `target_objective` generation. */
+export interface TargetObjectiveGenerationRequest {
+  instructions: string
+  count: number
+  harm_categories: string[]
 }

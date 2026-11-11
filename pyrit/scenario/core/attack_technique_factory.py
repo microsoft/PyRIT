@@ -937,6 +937,8 @@ class AttackTechniqueFactory(Identifiable):
             return {"type": f"{value.__module__}.{value.__qualname__}"}
         if isinstance(value, Identifiable):
             return value.get_identifier().model_dump(mode="json")
+        if isinstance(value, SeedGroupRequirements):
+            return value.to_identity()
         if isinstance(value, BaseModel):
             return {
                 name: cls._configuration_value(getattr(value, name))

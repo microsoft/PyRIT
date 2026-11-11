@@ -76,6 +76,31 @@ export function scenarioRerunRoutePath(scenarioName: string, scenarioResultId: s
   return `/scanner/launch/${encodeURIComponent(scenarioName)}?rerun=${encodeURIComponent(scenarioResultId)}`
 }
 
+/** Names a stored dataset that the Scanner launch form preselects. Repeatable. */
+export const DATASET_QUERY_PARAM = 'dataset'
+
+/** Opens the Scanner launch form for a scenario with stored datasets preselected. */
+export function scenarioLaunchRoutePath(scenarioName: string, datasetNames: readonly string[] = []): string {
+  const path = `/scanner/launch/${encodeURIComponent(scenarioName)}`
+  if (datasetNames.length === 0) return path
+  const params = new URLSearchParams()
+  for (const name of datasetNames) params.append(DATASET_QUERY_PARAM, name)
+  return `${path}?${params.toString()}`
+}
+
+/**
+ * Reads the distinct dataset names requested for preselection, exactly as written. Names are
+ * opaque, so whitespace is kept; blank values are kept too so the form can reject them.
+ */
+export function datasetNamesFromSearchParams(params: URLSearchParams): string[] {
+  return [...new Set(params.getAll(DATASET_QUERY_PARAM))]
+}
+
+/** Whether a linked dataset name is blank, which no dataset can be named. */
+export function isBlankDatasetName(name: string): boolean {
+  return name.trim() === ''
+}
+
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {
   if (!scenarioResultId || !UUID_PATTERN.test(scenarioResultId)) {
     return path
@@ -113,6 +138,19 @@ export function datasetDetailPath(selectionKey: string): string {
   const params = new URLSearchParams()
   params.set(SELECTION_KEY_PARAM, selectionKey)
   return `${DATASET_DETAIL_PATH}?${params.toString()}`
+}
+
+const NAMED_DATASET_SELECTION_PREFIX = 'dataset:named:'
+
+/** The selection key the dataset catalog assigns to a named dataset. */
+export function namedDatasetSelectionKey(datasetName: string): string {
+  return `${NAMED_DATASET_SELECTION_PREFIX}${datasetName}`
+}
+
+/** Whether a catalog selection key names a dataset, rather than the unnamed seeds. */
+export function isNamedDatasetSelectionKey(selectionKey: string): boolean {
+  return selectionKey.startsWith(NAMED_DATASET_SELECTION_PREFIX)
+    && selectionKey.length > NAMED_DATASET_SELECTION_PREFIX.length
 }
 
 const CATALOG_PATH_STATE_KEY = 'catalogPath'

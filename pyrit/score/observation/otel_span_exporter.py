@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from opentelemetry.attributes import BoundedAttributes
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
-from pyrit.models import TraceSpan, TraceSpanStatus
+from pyrit.models import TraceSpan, TraceSpanEvent, TraceSpanStatus
 from pyrit.score.observation.trace_client import TraceAcquisitionError
 
 if TYPE_CHECKING:
@@ -53,30 +53,29 @@ class InMemoryTraceExporter(SpanExporter):
             logger.warning("Cannot export into a closed trace exporter.")
             return SpanExportResult.FAILURE
         result = SpanExportResult.SUCCESS
-        try:
-            for span in spans:
-                # ReadableSpan's public mapping hides the SDK's string-length limit.
-                attributes = getattr(span, "_attributes", None)
-                if (
-                    not isinstance(attributes, BoundedAttributes)
-                    or getattr(attributes, "max_value_len", -1) is not None
-                ):
-                    self._client.record_capture_failure()
-                    logger.warning(
-                        "SDK span attribute length is limited or unknown; span omitted. "
-                        "Use SpanLimits(max_span_attribute_length=SpanLimits.UNSET)."
-                    )
-                    result = SpanExportResult.FAILURE
-                    continue
-                if span.dropped_attributes:
-                    self._client.record_capture_failure()
-                    logger.warning("SDK span attributes were dropped; evidence is not complete.")
-                    result = SpanExportResult.FAILURE
+        for span in spans:
+            context = span.get_span_context()
+            trace_id = f"{context.trace_id:032x}" if context is not None and context.is_valid else None
+            # ReadableSpan's public mapping hides the SDK's string-length limit.
+            attributes = getattr(span, "_attributes", None)
+            if not isinstance(attributes, BoundedAttributes) or getattr(attributes, "max_value_len", -1) is not None:
+                self._client.record_capture_failure(trace_id=trace_id)
+                logger.warning(
+                    "SDK span attribute length is limited or unknown; span omitted. "
+                    "Use SpanLimits(max_span_attribute_length=SpanLimits.UNSET)."
+                )
+                result = SpanExportResult.FAILURE
+                continue
+            if span.dropped_attributes or span.dropped_events:
+                self._client.record_capture_failure(trace_id=trace_id)
+                logger.warning("SDK span attributes or events were dropped; evidence is not complete.")
+                result = SpanExportResult.FAILURE
+            try:
                 self._client.add_span(self._convert_span(span))
-        except (TraceAcquisitionError, ValueError):
-            self._client.record_capture_failure()
-            logger.warning("Local trace export failed; evidence is not complete.")
-            return SpanExportResult.FAILURE
+            except (TraceAcquisitionError, ValueError):
+                self._client.record_capture_failure(trace_id=trace_id)
+                logger.warning("Local trace export failed; evidence is not complete.")
+                result = SpanExportResult.FAILURE
         return result
 
     def shutdown(self) -> None:
@@ -100,14 +99,28 @@ class InMemoryTraceExporter(SpanExporter):
         attributes = {
             key: InMemoryTraceExporter._convert_attribute(value) for key, value in (span.attributes or {}).items()
         }
+        events = tuple(
+            TraceSpanEvent(
+                name=event.name,
+                timestamp=datetime.fromtimestamp(event.timestamp / 1e9, tz=UTC) if event.timestamp else None,
+                attributes={
+                    key: InMemoryTraceExporter._convert_attribute(value)
+                    for key, value in (event.attributes or {}).items()
+                },
+            )
+            for event in span.events
+        )
         return TraceSpan(
             trace_id=f"{context.trace_id:032x}",
             span_id=f"{context.span_id:016x}",
             parent_span_id=f"{span.parent.span_id:016x}" if span.parent else None,
+            name=span.name,
             start_time=datetime.fromtimestamp(span.start_time / 1e9, tz=UTC),
             end_time=datetime.fromtimestamp(span.end_time / 1e9, tz=UTC) if span.end_time is not None else None,
             attributes=attributes,
+            events=events,
             status=TraceSpanStatus(span.status.status_code.name.lower()),
+            status_message=span.status.description or None,
             sampled=context.trace_flags.sampled,
         )
 

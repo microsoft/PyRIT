@@ -34,6 +34,7 @@ describe('datasetQuery', () => {
       modalities: ['image/png', 'text'],
       harmCategories: ['a&b', 'データ'],
       unlabeled: true,
+      origins: ['generated', 'remote'],
       sort: 'logical_examples_desc',
     }
     const params = catalogQueryToSearchParams(query)
@@ -43,6 +44,7 @@ describe('datasetQuery', () => {
     expect(catalogQueryIsDefault(restored)).toBe(false)
     expect(params.getAll('modality')).toEqual(['image/png', 'text'])
     expect(params.getAll('harm_category')).toEqual(['a&b', 'データ'])
+    expect(params.getAll('origin')).toEqual(['generated', 'remote'])
   })
 
   it('ignores an unknown sort value', () => {
@@ -61,12 +63,15 @@ describe('datasetQuery', () => {
       ['harm_category', 'violence'],
       ['harm_category', 'データ'],
       ['harm_category', 'a&b'],
+      ['origin', 'generated'],
+      ['origin', 'generated'],
     ])
 
     expect(catalogQueryFromSearchParams(params)).toEqual({
       ...DEFAULT_DATASET_CATALOG_QUERY,
       modalities: ['text', 'image/png', 'audio_path'],
       harmCategories: ['violence', 'a&b', 'データ'],
+      origins: ['generated'],
     })
   })
 
@@ -114,6 +119,21 @@ describe('datasetQuery', () => {
       modalities: ['text'],
       unlabeled: true,
     })).toEqual([])
+  })
+
+  it('filters by any matching seed origin and treats a missing origin list as no match', () => {
+    const generated = makeDataset({ name: 'Generated', selection_key: 'dataset:named:generated', origins: ['generated'] })
+    const mixed = makeDataset({ name: 'Mixed', selection_key: 'dataset:named:mixed', origins: ['local', 'remote'] })
+    const legacy = makeDataset({ name: 'Legacy', selection_key: 'dataset:named:legacy' })
+    const datasets = [generated, mixed, legacy]
+
+    expect(filterDatasets(datasets, DEFAULT_DATASET_CATALOG_QUERY).map((item) => item.name))
+      .toEqual(['Generated', 'Legacy', 'Mixed'])
+    expect(filterDatasets(datasets, { ...DEFAULT_DATASET_CATALOG_QUERY, origins: ['generated'] }).map((item) => item.name))
+      .toEqual(['Generated'])
+    expect(filterDatasets(datasets, { ...DEFAULT_DATASET_CATALOG_QUERY, origins: ['remote', 'generated'] }).map((item) => item.name))
+      .toEqual(['Generated', 'Mixed'])
+    expect(catalogQueryIsDefault({ ...DEFAULT_DATASET_CATALOG_QUERY, origins: ['generated'] })).toBe(false)
   })
 
   it('sorts names and known counts with deterministic ties', () => {

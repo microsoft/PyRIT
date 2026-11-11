@@ -91,6 +91,22 @@ class _Scenario(Scenario):
         ]
 
 
+class _InlineScenario(_Scenario):
+    """Builds attacks from inline seeds instead of named datasets."""
+
+    def __init__(self, *, scenario_result_id: str | None = None) -> None:
+        Scenario.__init__(
+            self,
+            version=1,
+            technique_class=_Technique,
+            default_dataset_config=DatasetAttackConfiguration(
+                seeds=[SeedObjective(value=f"inline-{index}") for index in range(5)], max_total=5
+            ),
+            objective_scorer=SubStringScorer(substring="yes"),
+            scenario_result_id=scenario_result_id,
+        )
+
+
 @pytest.mark.usefixtures("patch_central_database")
 async def test_python_rest_scanner_shell_resolve_identical_settings_without_fetching() -> None:
     tokens = "--datasets a b:all --max-per-dataset 3 --max-total 4 --dataset-fetch never"
@@ -217,6 +233,29 @@ async def test_catalog_dataset_controls_do_not_depend_on_estimates() -> None:
     assert [source.name for source in item.dataset_defaults.sources] == ApiKey.required_datasets()
     assert item.default_datasets == ApiKey.required_datasets()
     assert item.dataset_defaults.max_total == 20
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_inline_default_seeds_fix_sources_but_keep_other_overrides() -> None:
+    with patch.object(ScenarioRegistry, "_discover"):
+        registry = ScenarioRegistry()
+        registry.register_class(_InlineScenario, name="inline")
+        with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+            [item] = (await ScenarioService().list_scenarios_async(include_estimates=False)).items
+    assert item.dataset_options.mode is DatasetSelectionMode.FIXED
+    assert item.dataset_options.supports_overrides
+    assert item.dataset_options.total_limit
+    assert item.dataset_options.filters
+    assert item.dataset_defaults.sources == []
+
+    limited = _InlineScenario()
+    limited.set_params_from_args(args={"dataset_overrides": {"max_total": 2}})
+    assert (await limited.get_run_size_estimate_async()).effective_datasets.max_total == 2
+
+    replaced = _InlineScenario()
+    replaced.set_params_from_args(args={"dataset_overrides": {"sources": [{"name": "harmbench"}]}})
+    with pytest.raises(ValueError, match="Cannot replace inline seeds"):
+        await replaced.get_run_size_estimate_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

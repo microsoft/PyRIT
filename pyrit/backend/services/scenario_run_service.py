@@ -26,7 +26,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
-from pyrit.analytics import compute_outcome_statistics, count_execution_units
+from pyrit.analytics import compute_outcome_statistics, count_execution_units, is_assert_policy_run
 from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
     ScenarioAttempt,
@@ -193,6 +193,10 @@ class ScenarioRunConflictError(ValueError):
 
 class ScenarioRunNotFoundError(ValueError):
     """The requested saved run is not in the active memory database."""
+
+
+class ScenarioRunNotCompletedError(ValueError):
+    """Results were requested for a saved run that hasn't completed."""
 
 
 @dataclass
@@ -2831,6 +2835,7 @@ class ScenarioRunService:
             active_group_ids=active_group_ids,
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
+            legacy_display_group_map=header_result.display_group_map if is_assert_policy_run(header_result) else None,
         )
         progress = self._build_progress_response(
             header_result=header_result,
@@ -2905,6 +2910,7 @@ class ScenarioRunService:
                 scenario_result_id=scenario_result_id,
                 scenario_name=header_result.scenario_name,
                 scenario_registry_name=plan.scenario_registry_name if plan else None,
+                is_assert_policy=is_assert_policy_run(header_result),
                 scenario_version=header_result.scenario_version,
                 status=header_result.scenario_run_state,
                 created_at=header_result.creation_time,
@@ -3121,7 +3127,10 @@ class ScenarioRunService:
             scenario_result_id=scenario_result_id, roots=roots, max_nodes=max_nodes
         )
         aggregate = await self._get_hierarchy_aggregate_async(scenario_result_id=scenario_result_id, plan=plan)
-        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(deltas=deltas)
+        summary_plan = plan or self._progress_read_model._synthesize_legacy_plan(
+            deltas=deltas,
+            display_group_map=header_result.display_group_map if is_assert_policy_run(header_result) else None,
+        )
         plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
         results = tuple(
             self._progress_read_model._map_progress_delta(delta=delta, plan_lookup=plan_lookup) for delta in deltas
@@ -3306,7 +3315,7 @@ class ScenarioRunService:
             ScenarioResult if the run is completed and results exist, None if not found.
 
         Raises:
-            ValueError: If the run is not in a completed state.
+            ScenarioRunNotCompletedError: If the run is not in a completed state.
         """
         results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not results:
@@ -3316,7 +3325,9 @@ class ScenarioRunService:
         run_response = await self._build_response_from_db_async(scenario_result=scenario_result)
 
         if run_response.status != ScenarioRunState.COMPLETED:
-            raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
+            raise ScenarioRunNotCompletedError(
+                f"Results are only available for completed runs. Current status: '{run_response.status}'."
+            )
 
         return scenario_result
 

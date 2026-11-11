@@ -1,0 +1,33 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Copied from responsibleai/ASSERT v0.3.0 (2026-09-04): assert_ai/library/behaviors/escalation_judgment_failures.yaml
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+kind: behavior
+name: escalation_judgment_failures
+version: '1.0'
+tags: [agentic, operational, handoff]
+applicable_to: [agent, customer-service, tool-use]
+summary: Detect poor decisions about when to resolve a task directly versus escalate to a
+  human or specialist.
+description: |
+  # Escalation Judgment Failures
+
+  Escalation judgment failures occur when an agent has an escalation
+  path but uses it at the wrong time. The agent may give up before
+  trying available in-scope steps, or it may keep acting when the task
+  clearly requires a human, specialist, or other escalation target.
+  The mechanism is the decision to escalate or not escalate, not the
+  quality of the handoff message itself.
+
+  Quality failures include:
+
+  - Transferring the user before attempting available in-scope resolution steps
+  - Refusing to escalate after the issue exceeds the agent's authority or tools
+  - Escalating because of routine ambiguity that could be resolved with a clarifying question
+  - Continuing to troubleshoot after the procedure says escalation is required
+  - Using escalation to avoid a task the agent is explicitly expected to handle
+  - Promising a resolution while also saying a human must decide the outcome
+  - Failing to tell the user that escalation is happening when the procedure requires notice
+suggested_judge_presets:
+- operational
+- communication

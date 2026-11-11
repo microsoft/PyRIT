@@ -106,6 +106,10 @@ jobs:
             config: playwright.scenario-techniques.config.ts
             shard: 1
             total: 1
+          - project: prompt-generation-desktop
+            config: playwright.prompt-generation.config.ts
+            shard: 1
+            total: 1
     outputs:
       expected-reports: ${{ strategy.job-total }}
     permissions:
@@ -151,7 +155,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Build the isolated fixture frontend
-        if: matrix.project == 'analytics' || matrix.project == 'paired-outcomes' || matrix.project == 'scenario-hierarchy' || startsWith(matrix.project, 'scenario-datasets-') || matrix.project == 'scenario-techniques' || matrix.project == 'scan-launch'
+        if: matrix.project == 'analytics' || matrix.project == 'paired-outcomes' || matrix.project == 'scenario-hierarchy' || startsWith(matrix.project, 'scenario-datasets-') || matrix.project == 'scenario-techniques' || matrix.project == 'prompt-generation-desktop' || matrix.project == 'scan-launch'
         run: npm run build
 
       - name: Run E2E shard (no credentials needed)

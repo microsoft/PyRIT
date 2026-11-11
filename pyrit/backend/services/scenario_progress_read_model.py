@@ -4,6 +4,7 @@
 """Incremental read model for persisted scenario progress."""
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -172,6 +173,7 @@ class ScenarioProgressReadModel:
         terminal: bool,
         objective_scorer_identifier: ComponentIdentifier | None,
         max_deltas: int | None = None,
+        legacy_display_group_map: Mapping[str, str] | None = None,
     ) -> ScenarioProgressSnapshot:
         """
         Refresh and return the mapped progress state for one run.
@@ -184,12 +186,18 @@ class ScenarioProgressReadModel:
             terminal (bool): Whether the run has stopped.
             objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identity.
             max_deltas (int | None): Maximum deltas to hydrate, bounding cold queries.
+            legacy_display_group_map (Mapping[str, str] | None): Authoritative recorded legacy labels.
 
         Returns:
             ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
         """
         async with self._refresh_run_async(scenario_result_id=scenario_result_id):
-            entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
+            entry = self._get_cache_entry(
+                scenario_result_id=scenario_result_id,
+                plan=plan,
+                terminal=terminal,
+                legacy_display_group_map=legacy_display_group_map,
+            )
             first_new_index = len(entry.results)
             deltas_updated = await self._hydrate_new_deltas_async(
                 scenario_result_id=scenario_result_id,
@@ -215,6 +223,7 @@ class ScenarioProgressReadModel:
                 objective_scorer_identifier=objective_scorer_identifier,
                 deltas_updated=deltas_updated,
                 scorer_metrics=scorer_metrics,
+                legacy_display_group_map=legacy_display_group_map,
             )
 
     @asynccontextmanager
@@ -235,9 +244,18 @@ class ScenarioProgressReadModel:
             self._trim_cache()
 
     def _get_cache_entry(
-        self, *, scenario_result_id: str, plan: ScenarioRunPlan | None, terminal: bool
+        self,
+        *,
+        scenario_result_id: str,
+        plan: ScenarioRunPlan | None,
+        terminal: bool,
+        legacy_display_group_map: Mapping[str, str] | None = None,
     ) -> _ProgressCacheEntry:
-        plan_signature = plan.model_dump_json() if plan is not None else None
+        plan_signature = (
+            plan.model_dump_json()
+            if plan is not None
+            else json.dumps(dict(legacy_display_group_map or {}), sort_keys=True)
+        )
         entry = self._cache.get(scenario_result_id)
         if entry is not None and entry.plan_signature == plan_signature:
             has_unenriched_identifier = any(
@@ -277,8 +295,11 @@ class ScenarioProgressReadModel:
         objective_scorer_identifier: ComponentIdentifier | None,
         deltas_updated: bool = False,
         scorer_metrics: ScenarioObjectiveScorerMetrics | None = None,
+        legacy_display_group_map: Mapping[str, str] | None = None,
     ) -> ScenarioProgressSnapshot:
-        summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
+        summary_plan = plan or self._synthesize_legacy_plan(
+            deltas=entry.deltas, display_group_map=legacy_display_group_map
+        )
         if len(entry.results) < len(entry.deltas):
             plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
             entry.results.extend(
@@ -958,7 +979,9 @@ class ScenarioProgressReadModel:
         return identifiers
 
     @staticmethod
-    def _synthesize_legacy_plan(*, deltas: list[ScenarioAttackResultDelta]) -> ScenarioRunPlan:
+    def _synthesize_legacy_plan(
+        *, deltas: list[ScenarioAttackResultDelta], display_group_map: Mapping[str, str] | None = None
+    ) -> ScenarioRunPlan:
         """
         Synthesize only known completed legacy units without claiming pending totals.
 
@@ -987,7 +1010,7 @@ class ScenarioProgressReadModel:
                 ScenarioRunPlanAtomicGroup(
                     id=mapped.atomic_group_id,
                     atomic_attack_name=mapped.atomic_attack_name,
-                    display_group=mapped.atomic_attack_name,
+                    display_group=(display_group_map or {}).get(mapped.atomic_attack_name, mapped.atomic_attack_name),
                     technique_eval_hash=str(delta.attribution_data.get("parent_eval_hash") or ""),
                     seed_group_ids=[],
                 ),

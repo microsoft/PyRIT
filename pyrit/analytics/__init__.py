@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.analytics.assert_policy_metrics import (
+        NotAssertPolicyRunError,
+        compute_assert_policy_metrics_async,
+        is_assert_policy_run,
+    )
     from pyrit.analytics.attack_result_analytics import AttackResultAnalytics
     from pyrit.analytics.conversation_analytics import ConversationAnalytics
     from pyrit.analytics.outcome_statistics import combine_outcome_statistics, compute_outcome_statistics
@@ -42,6 +47,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AttackResultAnalytics": "pyrit.analytics.attack_result_analytics",
     "AttackStats": "pyrit.analytics.result_analysis",
     "combine_outcome_statistics": "pyrit.analytics.outcome_statistics",
+    "compute_assert_policy_metrics_async": "pyrit.analytics.assert_policy_metrics",
+    "NotAssertPolicyRunError": "pyrit.analytics.assert_policy_metrics",
+    "is_assert_policy_run": "pyrit.analytics.assert_policy_metrics",
     "compute_outcome_statistics": "pyrit.analytics.outcome_statistics",
     "compute_paired_outcome_statistics": "pyrit.analytics.paired_outcome_statistics",
     "get_paired_outcome_details": "pyrit.analytics.paired_outcome_statistics",

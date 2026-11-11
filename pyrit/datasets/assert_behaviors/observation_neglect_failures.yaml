@@ -1,0 +1,41 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Copied from responsibleai/ASSERT v0.3.0 (2026-09-04): assert_ai/library/behaviors/observation_neglect_failures.yaml
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+kind: behavior
+name: observation_neglect_failures
+version: "1.0"
+tags: [agentic, state]
+applicable_to: [agent, multi-agent]
+summary: >-
+  Detect when the agent receives a clear signal — from a tool, the environment, or the user — and fails to incorporate it into the next step.
+
+description: |
+  # Observation Neglect Failures
+
+  Observation neglect failures occur when an agent gets back a tool
+  result, an environment update, or a user message that should change
+  its behavior, but then proceeds as if that observation never arrived.
+  The agent acts on its prior assumptions instead of the new evidence,
+  often because it does not pause to reconcile the observation with
+  its plan. Quality failures include:
+
+  - Continuing the original plan after a tool returned a result that
+    contradicts a key assumption (e.g., "no inventory" but proceeding
+    to add to cart)
+  - Ignoring a user correction issued partway through a task and
+    continuing with the now-stale interpretation
+  - Treating a warning or partial-failure response from a tool as a
+    success and not adjusting next steps
+  - Not updating internal beliefs after a successful tool call (e.g.,
+    re-asking the user for data the tool just returned)
+  - Discarding intermediate findings that should have changed the
+    final answer (e.g., a verification step failed, but the answer
+    still claims success)
+  - Failing to notice when a tool output renders a planned downstream
+    step unnecessary or harmful
+  - Acting on a default value when an observation already provided
+    the real value
+
+suggested_judge_presets:
+  - grounding
