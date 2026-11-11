@@ -18,6 +18,7 @@ import type {
  */
 export const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
   'objective_target',
+  'scoring_target',
   'scenario_techniques',
   'technique_converters',
   'local_technique_factory',
@@ -58,6 +59,7 @@ export interface ScenarioLaunchInput {
   scenario: RegisteredScenario
   targetName: string
   adversarialTargetName: string
+  scoringTargetName?: string
   techniques: string[]
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
@@ -93,6 +95,7 @@ export function buildEstimateRequest({
   scenario,
   targetName,
   adversarialTargetName,
+  scoringTargetName,
   techniques,
   dynamicParameters,
   scenarioParamValues,
@@ -142,6 +145,7 @@ export function buildEstimateRequest({
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
   if (supportsDatasets && datasetError) return { ok: false, error: datasetError }
   const request: ScenarioRunSizeEstimateRequest = {}
+  if (scoringTargetName) request.scoring_target_name = scoringTargetName
   if (objectiveScorer) request.objective_scorer = objectiveScorer
   if (techniqueOverride) request.technique_override = techniqueOverride
   if (supportsParameter(scenario, 'scenario_techniques')) {
@@ -153,7 +157,7 @@ export function buildEstimateRequest({
   if (supportsParameter(scenario, 'objective_target') && targetName) {
     request.target_name = targetName
   }
-  if (scenario.uses_default_adversarial_target && adversarialTargetName) {
+  if (adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
   if (supportsDatasets && Object.keys(datasetEdits).length > 0) {

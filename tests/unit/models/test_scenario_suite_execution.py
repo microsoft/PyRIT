@@ -16,10 +16,21 @@ from pyrit.models import (
     ScenarioSuiteExecutionEntrySummary,
     ScenarioSuiteExecutionMetadata,
     ScenarioSuiteLaunchEntrySnapshot,
+    ScenarioSuiteReadinessRequest,
     ScenarioSuiteSubmissionState,
 )
 
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
+
+
+def test_suite_preview_allows_unselected_roles_but_launch_still_requires_target() -> None:
+    entry = ScenarioSuiteLaunchEntrySnapshot(
+        entry_id=ENTRY_ID, preset_name="nightly", origin="registered", preset_version=None
+    )
+    preview = ScenarioSuiteReadinessRequest(entries=[entry])
+    assert preview.target_name is None
+    with pytest.raises(ValidationError, match="target_name"):
+        LaunchScenarioSuiteRequest(entries=[entry])
 
 
 def test_suite_execution_metadata_round_trips_through_scenario_metadata() -> None:

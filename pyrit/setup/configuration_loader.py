@@ -572,13 +572,17 @@ class ConfigurationLoader(YamlLoadable):
         def to_init_data(config: ConfigurationLoader) -> dict[str, Any]:
             return {name: copy.deepcopy(getattr(config, name)) for name in init_fields}
 
+        # Console messages are deferred until the merged ``silent`` value is known, so that ``silent: true`` in a
+        # config file suppresses them just like it suppresses the other initialization messages.
+        console_messages: list[str] = []
+
         # 1. Try loading default config file if it exists
         config_data = to_init_data(cls())
         default_config_path = DEFAULT_CONFIG_PATH
         if default_config_path.exists():
             try:
                 logger.info(f"Loading default configuration file: {default_config_path}")
-                print(f"Loading default configuration file: {default_config_path}")
+                console_messages.append(f"Loading default configuration file: {default_config_path}")
                 config_data = to_init_data(cls.from_yaml_file(default_config_path))
             except _RemovedConfigurationOptionError:
                 raise
@@ -592,7 +596,7 @@ class ConfigurationLoader(YamlLoadable):
             if not config_file.exists():
                 raise FileNotFoundError(f"Configuration file not found: {config_file}")
             logger.info(f"Loading configuration file: {config_file}")
-            print(f"Loading configuration file: {config_file}")
+            console_messages.append(f"Loading configuration file: {config_file}")
             explicit_layer = cls._load_layer_from_yaml_file(file=config_file)
             cls._apply_layer(config_data=config_data, layer=explicit_layer, init_fields=init_fields)
         # 3. Apply overrides (non-None values take precedence)
@@ -622,6 +626,10 @@ class ConfigurationLoader(YamlLoadable):
 
         if env_akv_strict is not None:
             config_data["env_akv_strict"] = env_akv_strict
+
+        if not config_data.get("silent", False):
+            for message in console_messages:
+                print(message)
 
         return cls.from_dict(config_data)
 
