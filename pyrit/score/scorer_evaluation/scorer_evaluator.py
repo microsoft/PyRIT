@@ -785,11 +785,22 @@ class HarmScorerEvaluator(ScorerEvaluator):
         # not turn agreement with itself into extra raters.
         krippendorff_alpha_gold_model = None
         if num_responses > 0:
-            # Reuse the noise-normalized diff: floating-point medians such as
-            # 0.30000000000000004 must not look like disagreement with 0.3.
-            aligned_model_scores = gold_scores + diff
+            # Ordinal categories are shared across items and both rows. Merge
+            # adjacent floating-point values (e.g. 0.3 and the median of 0.2 and
+            # 0.4), rather than reconstructing model scores from rounded diffs.
+            # Limit each group to one ULP from its first value: decimal rounding
+            # would discard fine score levels, and chaining could merge more.
+            gold_model_scores = np.vstack((gold_scores, median_model_scores))
+            categories, inverse = np.unique(gold_model_scores, return_inverse=True)
+            normalized_categories = categories.copy()
+            representative = categories[0]
+            for index, category in enumerate(categories[1:], start=1):
+                if category <= np.nextafter(representative, np.inf):
+                    normalized_categories[index] = representative
+                else:
+                    representative = category
             krippendorff_alpha_gold_model = krippendorff_alpha(
-                reliability_data=np.vstack((gold_scores, aligned_model_scores)),
+                reliability_data=normalized_categories[inverse].reshape(gold_model_scores.shape),
                 level_of_measurement="ordinal",
             )
 
