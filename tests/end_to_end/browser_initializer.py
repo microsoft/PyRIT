@@ -19,7 +19,13 @@ from pyrit.models import (
     SeedObjective,
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.registry import ScenarioPresetRegistry, ScenarioRegistry, ScenarioSuiteRegistry, TargetRegistry
+from pyrit.registry import (
+    ScenarioPresetRegistry,
+    ScenarioRegistry,
+    ScenarioSuiteRegistry,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -30,6 +36,7 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import SubStringScorer
+from pyrit.setup.initializers import ScorerInitializerTags
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
@@ -108,6 +115,11 @@ class BrowserInitializer(PyRITInitializer):
         memory = CentralMemory.get_memory_instance()
         TargetRegistry.get_registry_singleton().register_class(BrowserTarget)
         TargetRegistry.get_registry_singleton().instances.register(BrowserTarget(), name="browser_offline")
+        ScorerRegistry.get_registry_singleton().instances.register(
+            SubStringScorer(substring="Offline browser"),
+            name="browser_scorer",
+            tags=[ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER],
+        )
         ScenarioRegistry.get_registry_singleton().register_class(BrowserScenario, name="browser_offline")
         await asyncio.to_thread(self._register_suites)
         await asyncio.to_thread(self._store_legacy_attack)
