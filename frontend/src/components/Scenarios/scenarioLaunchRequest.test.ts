@@ -3,6 +3,7 @@ import type { Parameter, RegisteredScenario } from '@/types'
 import {
   buildEstimateRequest,
   buildRunRequest,
+  linkedDatasetProblem,
   scenarioDynamicParameters,
   type ScenarioLaunchInput,
 } from './scenarioLaunchRequest'
@@ -118,6 +119,13 @@ describe('scenario launch requests', () => {
     ['pending technique edits', { techniqueEditError: 'Wait for valid technique settings before launch.' },
       'Wait for valid technique settings before launch.'],
     ['invalid datasets', { datasetError: 'Bad dataset limit.' }, 'Bad dataset limit.'],
+    ['linked datasets that cannot launch', { linkedDatasetError: 'Linked problem.' }, 'Linked problem.'],
+    ['an ASSERT launch without a dataset', {
+      scenario: makeScenario({
+        scenario_name: 'foundry.assert_policy', default_datasets: [],
+        dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
+      }),
+    }, 'Select an ASSERT dataset.'],
     ['an unsupported conversation', {
       supportsPrependedConversation: false,
       scenarioParamValues: { objective: '', prepended_conversation_id: 'saved' },
@@ -130,6 +138,21 @@ describe('scenario launch requests', () => {
 
   it('estimates without a target, since only the launch needs one', () => {
     expect(buildEstimateRequest(makeInput({ targetName: '' })).ok).toBe(true)
+  })
+
+  it('does not estimate a configuration whose linked datasets cannot launch', () => {
+    expect(buildEstimateRequest(makeInput({ linkedDatasetError: 'Linked problem.' })))
+      .toEqual({ ok: false, error: 'Linked problem.' })
+  })
+
+  it('reports only linked names the client knows cannot launch, keeping whitespace visible', () => {
+    expect(linkedDatasetProblem([], false)).toBeNull()
+    expect(linkedDatasetProblem([' returns ', 'returns ', 'missing'], true)).toBeNull()
+    expect(linkedDatasetProblem(['ds_a', ' returns ', ''], false)).toBe(
+      'This scenario does not take datasets, so it can\'t launch with the linked datasets: ds_a, " returns ", "".',
+    )
+    expect(linkedDatasetProblem(['ds_a', ' '], true))
+      .toBe("The link includes a blank dataset name, so this scan can't launch with it.")
   })
 
   it('keeps run-only limits out of the estimate', () => {

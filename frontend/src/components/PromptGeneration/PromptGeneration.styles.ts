@@ -177,14 +177,6 @@ export const usePromptGenerationStyles = makeStyles({
     ...linkFocus,
     ...mobileTouchTargetHeight,
   },
-  hintLink: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    color: tokens.colorBrandForegroundLink,
-    fontSize: tokens.fontSizeBase200,
-    ...linkFocus,
-    ...mobileTouchTargetHeight,
-  },
   tableScroll: {
     width: '100%',
     overflowX: 'auto',

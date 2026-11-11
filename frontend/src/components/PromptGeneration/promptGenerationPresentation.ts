@@ -86,10 +86,6 @@ export function generatorDisplayName(
   return descriptors.find((descriptor) => descriptor.name === generator)?.display_name ?? generator
 }
 
-export function withIndefiniteArticle(text: string): string {
-  return /^[aeiou]/i.test(text) ? `an ${text}` : `a ${text}`
-}
-
 export function formatCount(value: number): string {
   return value.toLocaleString('en-US')
 }

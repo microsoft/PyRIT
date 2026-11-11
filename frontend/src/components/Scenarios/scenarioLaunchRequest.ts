@@ -9,6 +9,10 @@ import type {
   TechniqueOverride,
 } from '@/types'
 
+import { isBlankDatasetName } from '@/utils/routeParams'
+
+import { scenarioDatasetDefaults } from './datasetPresentation'
+
 /**
  * Common/opaque parameters the base scenario declares via
  * `Scenario._common_scenario_parameters` — the launch form exposes a
@@ -71,6 +75,23 @@ export function supportsParameter(scenario: RegisteredScenario, name: string): b
   return scenario.supported_parameter_names.includes(name)
 }
 
+function linkedDatasetLabel(name: string): string {
+  return name !== '' && name === name.trim() ? name : JSON.stringify(name)
+}
+
+/**
+ * Why a link's dataset names can't launch, or null. A scenario without dataset input can't take
+ * any, and no dataset can have a blank name. Other names are left for the server to validate.
+ */
+export function linkedDatasetProblem(names: readonly string[], supportsDatasets: boolean): string | null {
+  if (names.length === 0) return null
+  if (!supportsDatasets) {
+    return "This scenario does not take datasets, so it can't launch with the linked datasets: "
+      + `${names.map(linkedDatasetLabel).join(', ')}.`
+  }
+  return names.some(isBlankDatasetName) ? "The link includes a blank dataset name, so this scan can't launch with it." : null
+}
+
 /** The scenario-specific parameters the launch form renders, without the common ones. */
 export function scenarioDynamicParameters(scenario: RegisteredScenario): Parameter[] {
   return scenario.supported_parameters.filter(
@@ -99,6 +120,8 @@ export interface ScenarioLaunchInput {
   presetScenarioParams?: Record<string, unknown>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
+  /** Why the linked dataset names can't launch; see `linkedDatasetProblem`. */
+  linkedDatasetError?: string | null
   includeBaseline: boolean
   techniqueOverride?: TechniqueOverride
   techniqueEditError?: string
@@ -138,7 +161,9 @@ export function buildEstimateRequest({
   supportsPrompt = true,
   objectiveScorer,
   scorerError,
+  linkedDatasetError,
 }: ScenarioLaunchInput): BuildEstimateRequestResult {
+  if (linkedDatasetError) return { ok: false, error: linkedDatasetError }
   if (usesDefaultAssertScoring(scenario)) {
     if (objectiveScorer || scoringTargetName) {
       return { ok: false, error: 'This saved ASSERT configuration uses a custom scorer. Use the SDK to preserve it; this form uses default scoring.' }
@@ -221,6 +246,10 @@ export function buildEstimateRequest({
 export function buildRunRequest(input: ScenarioLaunchInput): BuildRunRequestResult {
   if (supportsParameter(input.scenario, 'objective_target') && !input.targetName) {
     return { ok: false, error: 'Select a target.' }
+  }
+  if (usesDefaultAssertScoring(input.scenario)
+    && (input.datasetEdits.sources ?? scenarioDatasetDefaults(input.scenario).sources).length === 0) {
+    return { ok: false, error: 'Select an ASSERT dataset.' }
   }
   const estimateResult = buildEstimateRequest(input)
   if (!estimateResult.ok) {

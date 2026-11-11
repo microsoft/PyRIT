@@ -16,6 +16,7 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 import type { PromptGeneratorDescriptor } from '@/types'
 
 import NewPromptGenerationPage from './NewPromptGenerationPage'
+import { newPromptGenerationRoutePath } from './promptGenerationRoutes'
 
 jest.mock('@/services/api', () => ({
   promptGeneratorsApi: { list: jest.fn(), listAssertBehaviors: jest.fn(), listAssertSuites: jest.fn() },
@@ -184,6 +185,18 @@ describe('NewPromptGenerationPage', () => {
     expect(screen.getByTestId('generation-seed-source')).toHaveTextContent('Pre-filled from the policy that generated "returns_v2"')
     expect(screen.getByTestId('generation-dataset-name')).toHaveValue('returns_v3')
     expect(mockApi.getRequestFromDataset).toHaveBeenCalledWith('dataset:named:returns_v2', expect.any(AbortSignal))
+  })
+
+  it('looks up the exact dataset a regenerate link names, including surrounding whitespace', async () => {
+    mockApi.getRequestFromDataset.mockResolvedValue({
+      generator: 'assert',
+      request: { behavior_name: 'returns', behavior_description: 'Explain returns.' },
+      source_dataset_name: ' returns ',
+    })
+    renderPage(newPromptGenerationRoutePath({ generator: 'assert', selectionKey: 'dataset:named: returns ' }))
+
+    expect(await screen.findByTestId('assert-behavior-name')).toHaveValue('returns')
+    expect(mockApi.getRequestFromDataset).toHaveBeenCalledWith('dataset:named: returns ', expect.any(AbortSignal))
   })
 
   it('explains a dataset no generator made and retries', async () => {

@@ -8,6 +8,7 @@ import { DismissRegular } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
 import { MODALITY_LABELS } from '@/components/Config/targetFilters'
+import HelpField from '@/components/HelpField'
 import type {
   DatasetInfo, DatasetFetchPolicy, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
   ScenarioDatasetSettings, ScenarioDatasetSourceInput,
@@ -30,6 +31,9 @@ interface ScenarioDatasetTableProps {
   loadError?: string | null
   loadEnabled?: boolean
   onLoad?: () => void
+  /** Marks the picker required until the first dataset is chosen. */
+  required?: boolean
+  showCatalogLink?: boolean
   onReload: () => void
   onChange: (request: ScenarioDatasetRequest) => void
   onValidationChange: (error: string | null) => void
@@ -37,7 +41,8 @@ interface ScenarioDatasetTableProps {
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
-  preparing = false, loadError, loadEnabled = false, onLoad, onReload, onChange, onValidationChange,
+  preparing = false, loadError, loadEnabled = false, onLoad, required = false, showCatalogLink = true,
+  onReload, onChange, onValidationChange,
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
   const loadingId = useId()
@@ -139,6 +144,22 @@ export default function ScenarioDatasetTable({
     : policies[0] === 'always' ? 'Refresh datasets for each new scan'
     : policies[0] === 'never' ? 'Only use datasets already in memory'
     : 'Load missing datasets'
+  const picker = <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
+    placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
+    onOpenChange={(_, data) => { if (data.open) onReload() }}
+    onChange={(event) => setSearch(event.target.value)}
+    onOptionSelect={(_, data) => {
+      const name = data.optionValue
+      if (!name || !candidates.includes(name)) return
+      if (replaceSingleSource) clearSourceDrafts()
+      onChange({ ...request, sources: replaceSingleSource ? [{ name }] : [...selected, { name }] })
+      setSearch('')
+    }}>
+    {candidates.map((name) => {
+      const label = datasetNameWithOrigin(name, datasets.find((dataset) => dataset.name === name))
+      return <Option key={name} value={name} text={label}>{label}</Option>
+    })}
+  </Combobox>
 
   return (
     <div className={styles.root}>
@@ -222,22 +243,10 @@ export default function ScenarioDatasetTable({
       </div>}
       {(selected.length > 0 || canSelect) && <div className={styles.controls}>
         {canSelect && <>
-        {(canAdd || replaceSingleSource) && <Combobox aria-label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'}
-          placeholder={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} value={search} selectedOptions={[]} disabled={busy}
-          onOpenChange={(_, data) => { if (data.open) onReload() }}
-          onChange={(event) => setSearch(event.target.value)}
-          onOptionSelect={(_, data) => {
-            const name = data.optionValue
-            if (!name || !candidates.includes(name)) return
-            if (replaceSingleSource) clearSourceDrafts()
-            onChange({ ...request, sources: replaceSingleSource ? [{ name }] : [...selected, { name }] })
-            setSearch('')
-          }}>
-          {candidates.map((name) => {
-            const label = datasetNameWithOrigin(name, datasets.find((dataset) => dataset.name === name))
-            return <Option key={name} value={name} text={label}>{label}</Option>
-          })}
-        </Combobox>}
+        {(canAdd || replaceSingleSource) && (required ? <HelpField
+          label={replaceSingleSource ? 'Choose dataset' : 'Add dataset'} required={selected.length === 0}>
+          {picker}
+        </HelpField> : picker)}
         <Button className={styles.button} disabled={busy} onClick={() => {
           const edits = { ...request }
           delete edits.sources
@@ -247,7 +256,7 @@ export default function ScenarioDatasetTable({
           onChange(edits)
         }}>Reset datasets</Button>
         </>}
-        <Link className={styles.browseLink} to="/datasets">Browse datasets</Link>
+        {showCatalogLink && <Link className={styles.browseLink} to="/datasets">Browse datasets</Link>}
       </div>}
       {(selected.length > 0 || canSelect) && <Divider />}
       {canFilter && emptySelections.length > 0 && <Button className={styles.button} disabled={busy}

@@ -269,12 +269,13 @@ describe('ScenarioDatasetTable', () => {
     expect(within(row).queryByText('1 of 8', { exact: true })).not.toBeInTheDocument()
   })
 
-  it('does not expose loading or source selection for an inline-only scenario', () => {
-    render(<Harness defaults={{ ...DEFAULTS, sources: [] }}
-      options={{ ...OPTIONS, mode: 'fixed', supports_overrides: false }} />)
+  it('keeps an inline-only scenario from choosing named datasets while its limits stay editable', () => {
+    // The backend reports inline seeds as fixed sources and keeps the other overrides.
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, mode: 'fixed' }} />)
     expect(screen.getByText('This scenario has no named datasets.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toBeEnabled()
   })
 
   it('lets a scenario without default datasets choose its first dataset', async () => {

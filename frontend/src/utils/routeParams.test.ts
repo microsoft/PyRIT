@@ -5,6 +5,7 @@ import {
   DATASET_DETAIL_PATH,
   datasetDetailPath,
   datasetNamesFromSearchParams,
+  isBlankDatasetName,
   isNamedDatasetSelectionKey,
   namedDatasetSelectionKey,
   scenarioLaunchRoutePath,
@@ -170,16 +171,18 @@ describe('scenario dataset links', () => {
     )
   })
 
-  it('reads distinct, trimmed dataset names and skips blanks', () => {
+  it('reads distinct dataset names exactly as written, keeping blanks for the form to reject', () => {
     const params = new URLSearchParams('dataset=a&dataset=%20b%20&dataset=&dataset=a&preset=p')
-    expect(datasetNamesFromSearchParams(params)).toEqual(['a', 'b'])
+    expect(datasetNamesFromSearchParams(params)).toEqual(['a', ' b ', ''])
     expect(datasetNamesFromSearchParams(new URLSearchParams())).toEqual([])
+    expect(['', ' \t', ' b '].map(isBlankDatasetName)).toEqual([true, true, false])
   })
 
-  it('round-trips names through the launch path', () => {
-    const path = scenarioLaunchRoutePath('scenario', ['returns_policy', 'x+y'])
+  it('round-trips names through the launch path without merging whitespace variants', () => {
+    const names = ['returns_policy', 'x+y', ' returns ', 'returns ', 'returns']
+    const path = scenarioLaunchRoutePath('scenario', [...names, ' returns '])
     const search = new URL(path, 'http://localhost').searchParams
-    expect(datasetNamesFromSearchParams(search)).toEqual(['returns_policy', 'x+y'])
+    expect(datasetNamesFromSearchParams(search)).toEqual(names)
   })
 
   it('builds the catalog selection key for a named dataset', () => {
