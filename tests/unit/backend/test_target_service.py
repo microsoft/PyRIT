@@ -93,6 +93,7 @@ async def test_manual_model_field_never_inherits_ambient_default_async(
 ) -> None:
     monkeypatch.setenv("OPENAI_CHAT_MODEL", "ambient-model")
     request = CreateTargetRequest(
+        name="manual_model",
         type="OpenAIChatTarget",
         params={"endpoint": "https://api.openai.com", "api_key": "test-key", "model_name": value},
         auth_mode="api_key",
