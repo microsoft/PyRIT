@@ -512,22 +512,6 @@ describe("parseWeight", () => {
 });
 
 describe("CreateTargetDialog", () => {
-  it("explains explicit manual model entry instead of promising environment fallback", async () => {
-    mockedTargetsApi.listTargetTypes.mockResolvedValue({
-      items: [{ target_type: "OpenAIChatTarget", supported_auth_modes: ["api_key"],
-        parameters: OPENAI_COMMON_PARAMETERS.map((parameter) =>
-        parameter.name === "model_name" ? {
-          ...parameter, required: true, description: "If None, uses OPENAI_CHAT_MODEL from the environment.",
-        } : parameter) }],
-    });
-    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
-    await selectTargetType("OpenAIChatTarget");
-    expect(await screen.findByText(/Enter the model or deployment name explicitly/)).toBeVisible();
-    expect(screen.queryByText(/If None, uses OPENAI_CHAT_MODEL/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: SUBMIT_BUTTON_NAME })).toBeDisabled();
-    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
-  });
-
   const defaultProps = {
     open: true,
     onClose: jest.fn(),
@@ -1041,25 +1025,6 @@ describe("CreateTargetDialog", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("preserves an optional endpoint default for a locally implemented target", async () => {
-    const user = userEvent.setup();
-    mockedTargetsApi.listTargetTypes.mockResolvedValue({
-      items: [{
-        target_type: "LocalTarget",
-        parameters: [{ name: "endpoint", type_name: "str", required: false, default: "" }],
-        supported_auth_modes: ["api_key"],
-      }],
-    });
-    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
-    await selectTargetType("LocalTarget");
-    const create = screen.getByRole("button", { name: SUBMIT_BUTTON_NAME });
-    expect(create).toBeEnabled();
-    await user.click(create);
-    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "LocalTarget", params: {} }),
-    );
-  });
-
   it("should require an endpoint when identity authentication is selected", async () => {
     const user = userEvent.setup();
 
@@ -1082,6 +1047,53 @@ describe("CreateTargetDialog", () => {
     await waitFor(() => {
       expect(screen.getByText("Please provide an endpoint URL")).toBeInTheDocument();
     });
+  });
+
+  it.each([false, true])("should honor endpoint required metadata (%s)", async (required: boolean) => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{
+        target_type: "LiteLLMChatTarget",
+        parameters: [
+          { name: "endpoint", type_name: "str | None", required, default: null },
+          { name: "model_name", type_name: "str", required: true, default: null },
+        ],
+        supported_auth_modes: ["api_key"],
+      }],
+    });
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "litellm", target_type: "LiteLLMChatTarget",
+    }));
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("LiteLLMChatTarget");
+    await user.type(screen.getByRole("textbox", { name: "Model / Deployment Name", exact: true }), "provider/model");
+    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    const endpoint = screen.getByRole("textbox", { name: "Endpoint URL", exact: true });
+    if (required) {
+      expect(endpoint).toBeRequired();
+      expect(create).toBeDisabled();
+      fireEvent.submit(screen.getByTestId("create-target-form"));
+      expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
+      expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+    } else {
+      expect(endpoint).not.toBeRequired();
+      expect(create).toBeEnabled();
+      await user.click(create);
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "LiteLLMChatTarget", params: { model_name: "provider/model" },
+      });
+    }
+  });
+
+  it("should still require an endpoint when target metadata is unavailable", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await screen.findByText(/Target details could not be loaded/);
+    await selectTargetType("OpenAIChatTarget");
+    expect(screen.getByRole("button", { name: "Create Target", exact: true })).toBeDisabled();
+    fireEvent.submit(screen.getByTestId("create-target-form"));
+    expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
 
   it("should surface string throws verbatim via toApiError", async () => {

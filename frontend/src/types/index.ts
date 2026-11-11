@@ -1801,10 +1801,6 @@ export interface LaunchScenarioSuiteRequest {
   labels?: Record<string, string> | null
 }
 
-export interface ScenarioSuiteReadinessRequest extends Omit<LaunchScenarioSuiteRequest, 'target_name'> {
-  target_name?: string | null
-}
-
 export type ScenarioSuiteExecutionStatus =
   | 'QUEUING'
   | 'IN_PROGRESS'
@@ -1934,11 +1930,6 @@ export interface ScenarioRunSizeEstimateRequest {
   datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
-}
-
-export interface ScenarioReadiness {
-  bindings: Array<{ role: string; component: string; identifier: ComponentIdentifier }>
-  issues: Array<{ role: string; component: string; reason: string; remediation: string }>
 }
 
 export interface ScenarioRunEstimateComponent {
