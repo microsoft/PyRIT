@@ -199,7 +199,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }, [])
 
   const scenarioIsCurrent = scenario !== null && scenario.scenario_name === selectedScenarioName
-  const datasetMetadata = useScenarioDatasets(selectedScenarioName, scenarioIsCurrent)
+  const datasetMetadata = useScenarioDatasets(selectedScenarioName)
   const datasetBaseline = useMemo(
     () => (scenario
       ? {

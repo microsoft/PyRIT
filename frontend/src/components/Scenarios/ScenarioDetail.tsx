@@ -212,9 +212,10 @@ function ScenarioDetailContent({
   const supportsDatasets = scenario !== null && supportsParameter(scenario, 'dataset_config')
   const datasetMetadata = useScenarioDatasets(
     decodedScenarioName, supportsDatasets || (scenario !== null && scenarioDatasetDefaults(scenario).sources.length > 0),
+    scenario !== null && usesDefaultAssertScoring(scenario),
   )
   const requestedDatasets = supportsDatasets
-    ? resolveRequestedDatasets(datasetNames, datasetMetadata)
+    ? resolveRequestedDatasets(datasetNames, { ...datasetMetadata, loading: datasetMetadata.initialLoading })
     : { loading: false, known: datasetNames, unknown: [], error: null }
 
   const handleRetry = (): void => {
@@ -609,6 +610,15 @@ function ScenarioLaunchForm({
   const datasetOptions: ScenarioDatasetOptions = datasetProjection?.dataset_options
     ?? scenarioDatasetOptions(scenario)
   const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
+  const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
+  const previousDatasetSelection = useRef(datasetSelectionKey)
+  const reloadDatasetMetadata = datasetMetadata.reload
+  useEffect(() => {
+    if (previousDatasetSelection.current !== datasetSelectionKey) {
+      previousDatasetSelection.current = datasetSelectionKey
+      if (!defaultAssertScoring) reloadDatasetMetadata()
+    }
+  }, [datasetSelectionKey, defaultAssertScoring, reloadDatasetMetadata])
   const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
     ? currentDatasetEstimate.datasetSettings : undefined
   const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
@@ -662,6 +672,7 @@ function ScenarioLaunchForm({
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
+      if (!defaultAssertScoring) datasetMetadata.reload()
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
@@ -1023,6 +1034,16 @@ function ScenarioLaunchForm({
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
                 datasets={datasetMetadata.items} disabled={submitting}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
+                compatibleOnly={defaultAssertScoring} allowSourceReset={!defaultAssertScoring}
+                preparing={!defaultAssertScoring && datasetMetadata.preparing}
+                loadError={defaultAssertScoring ? null : datasetMetadata.loadError}
+                loadEnabled={!defaultAssertScoring && runtime.ready && !staleSelection && estimateRequest !== null
+                  && confirmedDatasetSettings !== undefined
+                  && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
+                    && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
+                onLoad={defaultAssertScoring ? undefined : () => {
+                  if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
+                }}
                 required={defaultAssertScoring} showCatalogLink={false}
                 onReload={datasetMetadata.retry} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />
@@ -1092,7 +1113,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

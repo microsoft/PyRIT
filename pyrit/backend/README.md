@@ -379,6 +379,12 @@ once per scenario/runtime, keeps it through form edits, and offers retry only af
 failed load. Fixed/subset source restrictions still apply; the general dataset catalog
 remains unfiltered. Launch and resume validate the actual selected contents again.
 
+The ASSERT launch form opts into that compatible-only picker. Other scenarios and
+preset editing keep provider-inclusive metadata browsing and their existing reload/reset
+behavior; non-ASSERT scanner pages retain the explicit missing-only `Load datasets`
+action. `Stored only`, `Load missing`, and `Refresh` remain scan fetch policies, not
+replacements for that manual action.
+
 `POST /api/scenarios/catalog/{scenario_name}/datasets/assess` accepts the same
 configuration as the scenario estimate route. By default it lists scenario-permitted
 candidates using grouped stored facts, without hydrating prompts, parsing policy

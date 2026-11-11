@@ -9,6 +9,7 @@ export const useScenarioDatasetTableStyles = makeStyles({
   scroll: { overflowX: 'auto' },
   table: { width: '100%', minWidth: '36em', borderCollapse: 'collapse' },
   empty: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalS },
+  toolbar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalM },
   metadata: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalXS },
   chip: { ...mobileTouchTarget, padding: tokens.spacingHorizontalXXS, minWidth: 'unset' },
   actionsCell: { width: '3em' },
