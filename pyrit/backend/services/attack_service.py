@@ -648,7 +648,7 @@ class AttackService:
                 return None
             attack_result_id = legacy_attack.attack_result_id
         attack = await self.get_attack_async(attack_result_id=attack_result_id)
-        if attack is None or conversation_id not in attack.get_active_conversation_ids():
+        if attack is None or attack.in_progress or conversation_id not in attack.get_active_conversation_ids():
             return None
         messages = await self.get_conversation_messages_async(
             attack_result_id=attack_result_id, conversation_id=conversation_id
