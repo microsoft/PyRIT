@@ -142,6 +142,36 @@ def test_possible_order_uses_the_earliest_starting_attempt() -> None:
 @pytest.mark.parametrize(
     ("runs", "tolerance", "expected"),
     [
+        # lookup overlaps both neighbours, but send ended before read started, so read, lookup,
+        # send cannot have happened in that order.
+        ((("read", 5, 6), ("lookup", 0, 10), ("send", 1, 2)), 0, False),
+        # Within the clock tolerance the same gap is no longer a contradiction.
+        ((("read", 5, 6), ("lookup", 0, 10), ("send", 1, 2)), 3, None),
+        # All three overlap one another, so the order stays unknown.
+        ((("read", 0, 3), ("lookup", 1, 10), ("send", 2, 4)), 0, None),
+        # A later attempt of send that does not end before read starts keeps the order possible.
+        ((("read", 5, 6), ("lookup", 0, 10), ("send", 1, 2), ("send", 4, 7)), 0, None),
+    ],
+)
+def test_possible_order_checks_every_earlier_tool_not_only_the_neighbour(
+    runs: tuple[tuple[str, float, float | None], ...], tolerance: float, expected: bool | None
+) -> None:
+    payload = _payload(*runs, complete=True)
+
+    assert (
+        match_tools_called_in_order(
+            condition=_order("read", "lookup", "send"),
+            payload=payload,
+            acquisition=Acquisition.COMPLETE,
+            clock_skew_tolerance=timedelta(seconds=tolerance),
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("runs", "tolerance", "expected"),
+    [
         ((("read", 0, 1), ("send", 1.5, 2)), 0, True),
         ((("read", 0, 1), ("send", 1.5, 2)), 1, None),
         ((("read", 0, 1), ("send", 2.5, 3)), 1, True),

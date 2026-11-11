@@ -26,6 +26,7 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation, ToolExecution
     from pyrit.score.observation.execution import _ObservationEvidence
@@ -68,13 +69,18 @@ def _ordered_chain_exists(*, runs: Sequence[Sequence[ToolExecution]], tolerance:
     """
     Search for one attempt per tool that respects the required order.
 
-    With ``definite``, every adjacent pair must be ordered beyond doubt. Otherwise a pair only
-    must not be ordered the wrong way beyond doubt, so overlapping attempts remain possible.
+    With ``definite``, every adjacent pair must be ordered beyond doubt, which orders the whole
+    chain. Otherwise no pair in the chain, adjacent or not, may be ordered the wrong way beyond
+    doubt, so overlapping attempts remain possible.
 
     Returns:
         bool: Whether such a chain of attempts exists.
     """
     previous: ToolExecution | None = None
+    # The latest start among the attempts chosen so far. Overlap is not transitive: an attempt can
+    # overlap both its neighbours while the first ends before the last starts, so a later attempt
+    # is checked against every earlier tool, not only the one just before it.
+    latest_start: datetime | None = None
     for index, attempts in enumerate(runs):
         if previous is None:
             candidates = list(attempts)
@@ -84,7 +90,9 @@ def _ordered_chain_exists(*, runs: Sequence[Sequence[ToolExecution]], tolerance:
             ]
         else:
             candidates = [
-                run for run in attempts if not _definitely_precedes(first=run, second=previous, tolerance=tolerance)
+                run
+                for run in attempts
+                if latest_start is None or run.end_time is None or run.end_time + tolerance >= latest_start
             ]
         if definite and index < len(runs) - 1:
             # The next tool must start after this attempt ends, so the earliest finished end is best.
@@ -97,6 +105,7 @@ def _ordered_chain_exists(*, runs: Sequence[Sequence[ToolExecution]], tolerance:
             if not candidates:
                 return False
             previous = min(candidates, key=lambda run: run.start_time)
+            latest_start = previous.start_time if latest_start is None else max(latest_start, previous.start_time)
     return True
 
 
