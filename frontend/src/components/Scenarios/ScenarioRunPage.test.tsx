@@ -215,7 +215,7 @@ describe('ScenarioRunPage', () => {
     expect(screen.queryByRole('heading', { name: 'ASSERT policy metrics' })).not.toBeInTheDocument()
   })
 
-  it.each(['ASSERT package / public_policy', 'assert_package'])(
+  it.each(['public_policy', 'ASSERT package / public_policy', 'assert_package'])(
     'keeps the recorded ASSERT group %s without a hash-list subtitle or invented categories',
     (displayGroup: string) => {
       state = makeState({
@@ -234,6 +234,63 @@ describe('ScenarioRunPage', () => {
       if (displayGroup === 'assert_package') {
         expect(screen.queryByText(/public_policy/)).not.toBeInTheDocument()
       }
+    },
+  )
+
+  it.each([false, true])(
+    'shows baseline and every technique in one category with server totals, not visible row counts (hierarchy ready: %s)',
+    async (saved: boolean) => {
+      const definitions = [
+        { id: 'baseline-group', name: 'baseline', label: 'Baseline', kind: 'baseline' as const, technique: null },
+        { id: 'assert-group', name: 'assert_package', label: 'ASSERT package', kind: 'attack' as const, technique: 'assert_package' },
+        { id: 'role-group', name: 'role_play_movie_script', label: 'role play movie script', kind: 'attack' as const, technique: 'role_play_movie_script' },
+      ]
+      const atomicGroups = definitions.map((definition) => ({
+        ...PLAN.atomic_groups[0], id: definition.id, kind: definition.kind, technique_name: definition.technique,
+        atomic_attack_name: `${definition.name}__case_hash`, display_group: 'cross_turn_policy_drift',
+      }))
+      const results = atomicGroups.map((group, index) => ({
+        ...ATTEMPT, attack_result_id: `attempt-${index}`, atomic_group_id: group.id,
+        atomic_attack_name: group.atomic_attack_name,
+      }))
+      const counts = { ...COUNTS, completed: 12, planned: 15, succeeded: 6, success_percentage: 50 }
+      if (saved) {
+        jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValueOnce({
+          scenario_result_id: RUN_ID, scenario_name: 'AssertPolicy', scenario_version: 2, status: 'COMPLETED',
+          groups: atomicGroups.map((group, index) => ({
+            atomic_group_id: group.id, atomic_attack_name: group.atomic_attack_name, display_group: group.display_group,
+            counts: COUNTS,
+            roots: [{
+              ...results[index], objective: 'First objective', result_role: 'target_facing', executed_turns: 1,
+              retries_truncated: false, child_attack_result_ids: [], child_references_truncated: false,
+              children: [], children_truncated: false, child_offset: 0, unresolved_child_attack_result_ids: [],
+              unresolved_child_references_truncated: false, conversations: [], conversations_truncated: false,
+            }],
+          })),
+          overall_counts: counts, truncated: false, has_more: false, next_cursor: null,
+        })
+      }
+      state = makeState({
+        run: { ...RUN, status: 'COMPLETED', scenario_registry_name: 'foundry.assert_policy', scenario_name: 'AssertPolicy' },
+        plan: { ...PLAN, atomic_groups: atomicGroups },
+        summary: { ...SUMMARY, display_groups: [{
+          ...counts, id: 'category', display_group: 'cross_turn_policy_drift',
+          atomic_attack_names: atomicGroups.map((group) => group.atomic_attack_name),
+          atomic_group_ids: atomicGroups.map((group) => group.id),
+        }] },
+        results,
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      const table = await screen.findByRole('table', { name: 'cross_turn_policy_drift attack results' })
+      if (saved) await waitFor(() => expect(screen.queryByText(/Loading result relationships/)).not.toBeInTheDocument())
+      expect(screen.getAllByRole('button', { name: /Collapse attacks in / })).toHaveLength(1)
+      expect(within(table).getAllByRole('row')).toHaveLength(4)
+      for (const definition of definitions) {
+        expect(within(table).getByText(definition.label, { exact: true })).toBeVisible()
+        expect(within(table).getByRole('button', { name: `Open details for ${definition.label}: First objective` })).toBeVisible()
+      }
+      expect(within(table).queryByText(/__case_hash/)).not.toBeInTheDocument()
+      expect(screen.getByText('12/15', { exact: true })).toBeVisible()
     },
   )
 

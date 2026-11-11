@@ -44,6 +44,7 @@ interface AttackExecutionTableProps {
   readonly showTimestamp?: boolean
   readonly showConversationLink?: boolean
   readonly booleanOutcome?: boolean
+  readonly techniqueLabels?: ReadonlyMap<string, string>
 }
 
 export default function AttackExecutionTable({
@@ -58,6 +59,7 @@ export default function AttackExecutionTable({
   showTimestamp = true,
   showConversationLink = false,
   booleanOutcome = false,
+  techniqueLabels,
 }: AttackExecutionTableProps) {
   const styles = useAttackExecutionTableStyles()
   const columnCount = showTimestamp ? 7 : 6
@@ -113,6 +115,7 @@ export default function AttackExecutionTable({
                 showTimestamp={showTimestamp}
                 showConversationLink={showConversationLink}
                 booleanOutcome={booleanOutcome}
+                techniqueLabels={techniqueLabels}
                 columnCount={columnCount}
               />
             )
@@ -136,12 +139,13 @@ interface ResultRowsProps {
   readonly showTimestamp: boolean
   readonly showConversationLink: boolean
   readonly booleanOutcome: boolean
+  readonly techniqueLabels?: ReadonlyMap<string, string>
   readonly columnCount: number
 }
 
 function ResultRows({
   nodeKey, result, objective, position, depth, ancestors, hierarchy, scenarioResultId, onOpenDetails,
-  showTimestamp, showConversationLink, booleanOutcome, columnCount,
+  showTimestamp, showConversationLink, booleanOutcome, techniqueLabels, columnCount,
 }: ResultRowsProps) {
   const styles = useAttackExecutionTableStyles()
   const navigate = useNavigate()
@@ -150,7 +154,10 @@ function ResultRows({
   const isExpanded = hierarchy.expanded.has(nodeKey)
   const expandable = node !== null && hasChildReferences(node)
   const preview = objectivePreview(objective || null, result.seed_group_id)
-  const label = resultLabel(result, preview, position)
+  const attackLabel = techniqueLabels
+    ? techniqueLabels.get(result.atomic_group_id) ?? 'Technique not recorded'
+    : result.atomic_attack_name
+  const label = resultLabel(attackLabel, preview, position)
   const role = node?.result_role ?? 'unknown'
   const conversationPath = result.conversation_id
     ? attackConversationRoutePath(result.attack_result_id, result.conversation_id, scenarioResultId)
@@ -208,7 +215,7 @@ function ResultRows({
               ) : (
                 <Text title={objective}>{preview}</Text>
               )}
-              <Text size={200} className={styles.hint}>{result.atomic_attack_name}</Text>
+              <Text size={200} className={styles.hint}>{attackLabel}</Text>
             </div>
           </div>
         </TableCell>
@@ -264,6 +271,7 @@ function ResultRows({
           showTimestamp={showTimestamp}
           showConversationLink={showConversationLink}
           booleanOutcome={booleanOutcome}
+          techniqueLabels={techniqueLabels}
           columnCount={columnCount}
         />
       )}
@@ -283,12 +291,13 @@ interface ChildRowsProps {
   readonly showTimestamp: boolean
   readonly showConversationLink: boolean
   readonly booleanOutcome: boolean
+  readonly techniqueLabels?: ReadonlyMap<string, string>
   readonly columnCount: number
 }
 
 function ChildRows({
   parentKey, parent, depth, ancestors, state, hierarchy, scenarioResultId, onOpenDetails,
-  showTimestamp, showConversationLink, booleanOutcome, columnCount,
+  showTimestamp, showConversationLink, booleanOutcome, techniqueLabels, columnCount,
 }: ChildRowsProps) {
   const styles = useAttackExecutionTableStyles()
   const pages = state?.pages ?? []
@@ -313,6 +322,7 @@ function ChildRows({
               showTimestamp={showTimestamp}
               showConversationLink={showConversationLink}
               booleanOutcome={booleanOutcome}
+              techniqueLabels={techniqueLabels}
               columnCount={columnCount}
             />
           )
@@ -388,9 +398,9 @@ function indent(depth: number): CSSProperties {
   return { paddingInlineStart: `calc(${depth} * ${INDENT_STEP})` }
 }
 
-function resultLabel(result: ScenarioProgressResult | ScenarioHierarchyNode, objective: string, position: number | null): string {
+function resultLabel(attackLabel: string, objective: string, position: number | null): string {
   const text = objective.length > LABEL_OBJECTIVE_LENGTH
     ? `${objective.slice(0, LABEL_OBJECTIVE_LENGTH)}...`
     : objective
-  return `${position === null ? '' : `#${position + 1} `}${result.atomic_attack_name}: ${text}`
+  return `${position === null ? '' : `#${position + 1} `}${attackLabel}: ${text}`
 }

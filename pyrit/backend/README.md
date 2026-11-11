@@ -425,9 +425,10 @@ scorer, so mixing it with non-default legacy ASSERT judge parameters is rejected
 SDK judge settings still use the same scorer-package construction helpers. Saved custom
 scoring configurations are not silently converted to defaults by the GUI.
 
-New ASSERT plans display groups by technique and each case's stored generated category,
-with policy labels when several policies are selected. Each case still executes once
-per compatible technique, with separate baseline groups and unchanged execution identities.
+New ASSERT plans display one group per stored generated category, containing baseline
+and selected technique executions with readable technique labels on the rows. Policy labels
+qualify categories when several policies are selected. Each case still executes once
+per compatible technique, with unchanged baseline/technique metadata and execution identities.
 Category-rate metrics continue to use judged relevance, not the generation assignment.
 Saved plans and resumed runs retain their recorded grouping; completed history is not rewritten.
 Technical atomic names remain available in result details, not the ASSERT group header.

@@ -280,17 +280,22 @@ async def test_category_rates_count_conversations_that_judged_each_category_rele
 async def test_techniques_and_baseline_are_reported_separately_async(harness: _Harness) -> None:
     await _store_async(_groups(include_adversarial_prompt=True))
     result = await harness.run_async(
-        scenario_techniques=[_technique("red_teaming")], include_baseline=True, **_datasets()
+        scenario_techniques=[_technique("assert_package"), _technique("red_teaming")],
+        include_baseline=True,
+        **_datasets(),
     )
 
     metrics = await compute_assert_policy_metrics_async(result)
 
-    assert list(metrics.techniques) == ["baseline", "red_teaming"]
+    assert set(metrics.techniques) == {"baseline", "assert_package", "red_teaming"}
     for technique in metrics.techniques.values():
         assert technique.total == 4
         assert _counts(technique.policy_violation_on_not_permissible) == (1, 1, 3)
-    assert (metrics.total, metrics.scored_total) == (8, 8)
-    assert compute_scenario_statistics(result).overall.completed == metrics.total
+    assert (metrics.total, metrics.scored_total) == (12, 12)
+    statistics = compute_scenario_statistics(result)
+    assert set(statistics.display_groups) == {"public_policy", "private_disclosure"}
+    assert all((counts.completed, counts.planned) == (6, 6) for counts in statistics.display_groups.values())
+    assert statistics.overall.completed == metrics.total
 
 
 async def test_direct_mode_reports_dimensions_without_split_async(harness: _Harness) -> None:

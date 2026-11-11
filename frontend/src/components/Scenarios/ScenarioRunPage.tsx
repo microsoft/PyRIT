@@ -145,6 +145,15 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     () => new Map(state.plan?.atomic_groups.map((group) => [group.id, group]) ?? []),
     [state.plan],
   )
+  const assertTechniqueLabels = useMemo(() => {
+    if (!state.run || !isAssertPolicyRun(state.run)) return undefined
+    return new Map(state.plan?.atomic_groups.map((group) => [
+      group.id,
+      group.kind === 'baseline' ? 'Baseline'
+        : group.technique_name === 'assert_package' ? 'ASSERT package'
+          : group.technique_name?.replace(/_/g, ' ') ?? 'Technique not recorded',
+    ]) ?? [])
+  }, [state.plan, state.run])
   const progressAtomicGroups = useMemo(
     () => new Map(state.summary?.atomic_groups.map((group) => [group.id, group]) ?? []),
     [state.summary],
@@ -437,7 +446,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             </Text>
           </div>
           {isAssertPolicyRun(run) && <Text className={styles.sectionHint}>
-            New runs group cases by their generated category; older runs keep their recorded grouping.
+            New runs group baseline and technique executions by generated category; older runs keep their recorded grouping.
             Category rates use judged relevance.
           </Text>}
           <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
@@ -506,6 +515,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                                 showTimestamp={false}
                                 showConversationLink
                                 booleanOutcome
+                                techniqueLabels={assertTechniqueLabels}
                               />
                             </div>
                           )}

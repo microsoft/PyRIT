@@ -310,8 +310,8 @@ class AssertPolicy(Scenario):
     ``red_teaming`` uses the same attack with the group's stored PyRIT tester prompt.
     By default, judges built from each group's stored policy read the whole conversation once:
     policy violation is the objective score, and overrefusal is an auxiliary score. Blocked or
-    errored target replies stay undetermined. Results are grouped by technique and each case's
-    generated category, qualified by policy when several policies are selected.
+    errored target replies stay undetermined. Results are grouped by each case's generated category,
+    across baseline and selected techniques, qualified by policy when several policies are selected.
 
     SDK callers can supply a configured objective scorer instead of these defaults. Legacy judge
     settings and optional retained execution traces remain available through the SDK.
@@ -1031,12 +1031,7 @@ class AssertPolicy(Scenario):
             policy, category = assignments[str(group.objective.id)]
             category_label = f"{policy_labels[policy]} / {category}" if len(policies) > 1 else category
             for technique_name in ["baseline", *technique_names]:
-                technique_label = {"baseline": "Baseline", _ASSERT_PACKAGE: "ASSERT package"}.get(
-                    technique_name, technique_name
-                )
-                display_groups[self._get_unit_name(prefix=technique_name, group=group)] = (
-                    f"{technique_label} / {category_label}"
-                )
+                display_groups[self._get_unit_name(prefix=technique_name, group=group)] = category_label
         if context.stored_run_plan is not None:
             # Resume retains the recorded display labels, just as it retains the execution units.
             display_groups.update(
