@@ -28,6 +28,94 @@ def _provider(name: str) -> MagicMock:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_deleted_prepared_dataset_fetches_fresh_data_and_shares_overlapping_waiters() -> None:
+    memory = CentralMemory.get_memory_instance()
+    owner = DatasetPreparation(memory)
+    provider = _provider("deleted")
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="deleted", provider=provider)])
+    entered, release = asyncio.Event(), asyncio.Event()
+    refreshed = SeedDataset(
+        dataset_name="deleted", seeds=[SeedObjective(value="New provider contents", dataset_name="deleted")]
+    )
+
+    async def fetch_async(*, cache: bool = True) -> SeedDataset:
+        entered.set()
+        await release.wait()
+        return refreshed
+
+    tasks: list[asyncio.Task[None]] = []
+    try:
+        with owner.scope():
+            await config.prepare_async()
+            provider.fetch_dataset_async.assert_awaited_once()
+            await memory.delete_dataset_async(dataset_name="deleted")
+            provider.fetch_dataset_async.side_effect = fetch_async
+            tasks.append(asyncio.create_task(config.prepare_async()))
+            await wait_for_event_async(event=entered, tasks=tasks)
+            tasks.append(asyncio.create_task(config.with_overrides(max_total=1).prepare_async()))
+            release.set()
+            await asyncio.gather(*tasks)
+            assert provider.fetch_dataset_async.await_count == 2
+            assert [seed.value for seed in await memory.get_seeds_async(dataset_name="deleted")] == [
+                "New provider contents"
+            ]
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await owner.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_completed_fetch_remains_shared_until_its_held_store_commits() -> None:
+    memory = CentralMemory.get_memory_instance()
+    owner = DatasetPreparation(memory)
+    provider = _provider("storing")
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="storing", provider=provider)])
+    store_entered, second_waiter, release_store = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_write = memory.add_seed_datasets_to_memory_async
+    original_store = owner.store_missing_async
+    store_calls = 0
+
+    async def write_async(*, datasets: list[SeedDataset], added_by: str) -> None:
+        store_entered.set()
+        await release_store.wait()
+        await original_write(datasets=datasets, added_by=added_by)
+
+    async def store_async(*, name: str, dataset: SeedDataset) -> None:
+        nonlocal store_calls
+        store_calls += 1
+        if store_calls == 2:
+            second_waiter.set()
+        await original_store(name=name, dataset=dataset)
+
+    async def prepare_async() -> None:
+        with owner.scope():
+            await config.with_overrides().prepare_async()
+
+    tasks: list[asyncio.Task[None]] = []
+    try:
+        with (
+            patch.object(memory, "add_seed_datasets_to_memory_async", side_effect=write_async),
+            patch.object(owner, "store_missing_async", side_effect=store_async),
+        ):
+            tasks.append(asyncio.create_task(prepare_async()))
+            await wait_for_event_async(event=store_entered, tasks=tasks)
+            assert await memory.get_seed_dataset_names_async() == []
+            provider.fetch_dataset_async.assert_awaited_once()
+            tasks.append(asyncio.create_task(prepare_async()))
+            await wait_for_event_async(event=second_waiter, tasks=tasks)
+            provider.fetch_dataset_async.assert_awaited_once()
+            assert not release_store.is_set()
+            release_store.set()
+            await asyncio.gather(*tasks)
+            provider.fetch_dataset_async.assert_awaited_once()
+    finally:
+        release_store.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await owner.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_overlapping_selections_share_provider_work_and_stored_sources_win() -> None:
     memory = CentralMemory.get_memory_instance()
     await memory.add_seeds_to_memory_async(

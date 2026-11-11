@@ -22,12 +22,15 @@ const RESPONSE: ScenarioDatasetLoadResponse = {
   items: [{ ...MISSING, loaded: true }],
 }
 
-function Harness({ names = ['selected'], stored = false }: { names?: string[]; stored?: boolean }) {
+function Harness({
+  names = ['selected'], stored = false, revision = 'initial',
+}: { names?: string[]; stored?: boolean; revision?: string }) {
   const [limit, setLimit] = useState('5')
   const result = useScenarioDatasetPreparation({
     scenarioName: 'test', datasetNames: names,
     request: { datasets: { sources: names.map((name) => ({ name })), max_total: Number(limit) } },
     metadata: [{ ...MISSING, loaded: stored }], metadataLoading: false, metadataError: null,
+    metadataRevision: revision,
     enabled: true, onPrepared: prepared,
   })
   return <>
@@ -64,6 +67,23 @@ describe('useScenarioDatasetPreparation', () => {
     render(<Harness stored />)
     expect(screen.getByRole('status')).toHaveTextContent('Ready')
     expect(load).not.toHaveBeenCalled()
+  })
+
+  it('prepares again when refreshed metadata reports a previously prepared source was deleted', async () => {
+    let finishReload: (value: ScenarioDatasetLoadResponse) => void = () => {}
+    load.mockResolvedValueOnce(RESPONSE)
+    load.mockReturnValueOnce(new Promise((resolve) => { finishReload = resolve }))
+    const view = render(<Harness />)
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Ready'))
+    view.rerender(<Harness stored revision="stored" />)
+    expect(load).toHaveBeenCalledTimes(1)
+    view.rerender(<Harness revision="deleted" />)
+    expect(screen.getByRole('status')).toHaveTextContent('Preparing')
+    expect(load).toHaveBeenCalledTimes(2)
+    view.rerender(<Harness revision="deleted" />)
+    expect(load).toHaveBeenCalledTimes(2)
+    await act(async () => { finishReload(RESPONSE) })
+    expect(screen.getByRole('status')).toHaveTextContent('Ready')
   })
 
   it('retains failures through edits and retries only on explicit action', async () => {

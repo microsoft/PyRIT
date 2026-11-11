@@ -279,7 +279,11 @@ async def assess_scenario_datasets_async(
     },
 )
 async def load_scenario_datasets_async(
-    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest, retry: bool = False
+    *,
+    scenario_name: IdentifierStr,
+    request: ScenarioRunSizeEstimateRequest,
+    retry: bool = False,
+    automatic: bool = False,
 ) -> ScenarioDatasetLoadResponse:
     """
     Load missing selected datasets on explicit request, without starting a scan.
@@ -289,7 +293,7 @@ async def load_scenario_datasets_async(
     """
     try:
         result = await get_scenario_service().load_datasets_async(
-            scenario_name=scenario_name, request=request, retry=retry
+            scenario_name=scenario_name, request=request, retry=retry, automatic=automatic
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None

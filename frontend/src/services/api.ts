@@ -711,7 +711,7 @@ export const scenariosApi = {
   ): Promise<ScenarioDatasetLoadResponse> => {
     const response = await apiClient.post(
       `/scenarios/catalog/${encodeURIComponent(scenarioName)}/datasets/load`, request,
-      { timeout: 300_000, params: retry ? { retry: true } : undefined },
+      { timeout: 300_000, params: { automatic: true, ...(retry ? { retry: true } : {}) } },
     )
     return response.data
   },

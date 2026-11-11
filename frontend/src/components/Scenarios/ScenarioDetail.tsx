@@ -634,6 +634,7 @@ function ScenarioLaunchForm({
     metadata: datasetMetadata.items,
     metadataLoading: datasetMetadata.loading,
     metadataError: datasetMetadata.error,
+    metadataRevision: datasetMetadata.revision,
     enabled: !staleSelection,
     onPrepared: datasetMetadata.reload,
   })

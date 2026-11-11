@@ -1041,7 +1041,7 @@ class ScenarioRunService:
                     metadata["scenario_expected_role_references_v1"] = references
             from pyrit.backend.services.dataset_preparation_service import get_dataset_preparation_service
 
-            with get_dataset_preparation_service().scope():
+            with get_dataset_preparation_service().scope(retry_failed=not request.prepare_in_background):
                 scenario = await self._initialize_scenario_async(
                     request=request,
                     init_kwargs=init_kwargs,

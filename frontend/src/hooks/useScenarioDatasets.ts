@@ -70,6 +70,8 @@ export function useScenarioDatasets(scenarioName: string, enabled = true) {
       ? snapshot.items : [],
     error: current?.error ?? null,
     loading: ready && current === null,
+    revision: ready && snapshot?.generation === runtime.generation && snapshot.scenarioName === scenarioName
+      ? snapshot.key : null,
     reload,
   }
 }

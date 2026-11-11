@@ -78,11 +78,16 @@ The backend shares missing-only provider work across selections, tabs, and launc
 one runtime and memory lifetime. Registered providers share by provider class and source;
 configured providers share only when they are the same live instance, not merely the same
 dataset name. Distinct configured providers are not assumed equivalent.
+Successful fetches are shared through their missing-only commit, not cached for the runtime:
+deleting a stored source permits a fresh fetch. Refreshed scanner metadata also invalidates
+the previous selection's prepared state when a source is no longer stored.
 
 Provider failures stay visible until **Retry loading datasets** is selected. They cannot
 silently restart on a parameter edit or execute an incomplete run. Cancellation stops that
 run's wait without cancelling work another caller may need. Runtime replacement refuses
 active preparation, and shutdown drains owned provider work before disposing memory.
+This sticky-failure behavior is limited to automatic GUI preparation. Repeating an explicit
+legacy API load or eager API run makes a new attempt after a transient provider failure.
 
 The scanner uses `if_missing`. Saved `never`/`always` settings are visibly normalized for
 that scan when overrides are permitted; protected policies are rejected instead. Preset

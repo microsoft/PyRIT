@@ -65,7 +65,6 @@ from pyrit.models import (
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
-    ScenarioRunSizeEstimateCondition,
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
     ScenarioRunState,
@@ -852,8 +851,8 @@ class Scenario(ABC):
             )
         if isinstance(budget, AllAvailableDatasetSize):
             return ScenarioRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Conditional,
-                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
+                status=ScenarioRunSizeEstimateStatus.Unavailable,
+                count_deferred=True,
                 dataset_size=budget,
                 dataset_limit=dataset_limit,
                 note=(

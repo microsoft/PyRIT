@@ -256,7 +256,12 @@ class ScenarioService:
         return estimate
 
     async def load_datasets_async(
-        self, *, scenario_name: str, request: ScenarioRunSizeEstimateRequest, retry: bool = False
+        self,
+        *,
+        scenario_name: str,
+        request: ScenarioRunSizeEstimateRequest,
+        retry: bool = False,
+        automatic: bool = False,
     ) -> ScenarioDatasetLoadResponse | None:
         """
         Resolve the same source selection as launch and load only its missing datasets.
@@ -295,7 +300,7 @@ class ScenarioService:
             scenario.set_params_from_args(args={**(request.scenario_params or {}), **kwargs})
             from pyrit.backend.services.dataset_preparation_service import get_dataset_preparation_service
 
-            with get_dataset_preparation_service().scope(retry_failed=retry):
+            with get_dataset_preparation_service().scope(retry_failed=retry or not automatic):
                 settings = await scenario.load_datasets_async()
         metadata = await get_dataset_service().list_datasets_async()
         names = {source.name for source in settings.sources}

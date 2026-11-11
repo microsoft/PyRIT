@@ -87,7 +87,8 @@ Per-send values use
 See [background scanner preparation](../../doc/code/datasets/0_dataset.md#background-scanner-preparation)
 for the shared behavior. `POST /api/scenarios/catalog/{name}/datasets/load` accepts the
 same configuration as an estimate and loads selected missing sources only. `?retry=true`
-explicitly retries failed provider work; discovery GETs and estimates never prepare data.
+explicitly retries failed provider work for `?automatic=true` GUI requests. Ordinary explicit
+API loads retry on each request. Discovery GETs and estimates never prepare data.
 
 GUI launches send `prepare_in_background: true` to `POST /api/scenarios/runs`.
 Configuration, dependency, and Operation validation still precede acceptance. Fresh
@@ -97,6 +98,9 @@ persisted run state is introduced. Attacks execute only after initialization com
 Preparation errors terminalize the run without executing attacks. A run without a prepared
 plan cannot resume; reopen its configuration, retry its sources, and start a new run.
 Omitting the flag preserves eager API initialization and all fetch-policy capabilities.
+Uncapped estimates retain their existing `unavailable` status for subclass validation,
+with `count_deferred: true` marking a supported count deferred to preparation. Actual
+estimate failures are not marked deferred; both paths retain their server-provided notes.
 
 ### Dataset creation, batch mutation, and deletion
 

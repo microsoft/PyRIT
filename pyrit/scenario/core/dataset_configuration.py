@@ -685,7 +685,7 @@ class DatasetConfiguration:
             owner = current_dataset_preparation(self._memory) if not refresh else None
             if owner is not None:
                 preparation, retry_failed = owner
-                fetched[name] = await preparation.fetch_async(
+                dataset = await preparation.fetch_async(
                     name=name,
                     provider=providers[name],
                     registered=configured_providers[name] is None,
@@ -694,6 +694,8 @@ class DatasetConfiguration:
                         name=name, provider=providers[name], refresh=False
                     ),
                 )
+                if dataset is not None:
+                    fetched[name] = dataset
             else:
                 fetched[name] = await self._fetch_provider_async(name=name, provider=providers[name], refresh=refresh)
         return fetched, policies

@@ -56,7 +56,7 @@ const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
 describe('ScenarioRunEstimate', () => {
   it('distinguishes a supported uncapped count from a real estimate failure', () => {
     const state = mapScenarioRunEstimate({
-      ...EXACT_ESTIMATE, status: 'conditional', estimated_attack_count: null, components: [], datasets: [],
+      ...EXACT_ESTIMATE, status: 'unavailable', count_deferred: true, estimated_attack_count: null, components: [], datasets: [],
       note: 'The exact compatible population is checked during preparation.',
     }, 'request')
     render(<TestWrapper>

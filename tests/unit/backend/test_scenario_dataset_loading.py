@@ -6,6 +6,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -283,3 +284,75 @@ async def test_background_launch_rejects_non_missing_only_source_policies(policy
     with pytest.raises(ValueError, match="missing-only"):
         ScenarioRunService._resolved_role_metadata(scenario, missing_only=True)
     assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+@pytest.mark.parametrize("path", ["load", "run"])
+async def test_explicit_api_requests_retry_a_transient_provider_failure(
+    *, path: str, compatibility_headers: dict[str, str]
+) -> None:
+    provider = _provider()
+    dataset: SeedDataset = provider.fetch_dataset_async.return_value
+    provider.fetch_dataset_async.side_effect = [ValueError("Transient provider failure"), dataset]
+    with patch.object(ScenarioRegistry, "_discover"):
+        registry = ScenarioRegistry()
+        registry.register_class(_RunScenario, name="test.explicit")
+    target = MockPromptTarget()
+    await close_dataset_preparation_async()
+    run_service = ScenarioRunService()
+    url = "/api/scenarios/catalog/test.explicit/datasets/load" if path == "load" else "/api/scenarios/runs"
+    payload = {} if path == "load" else {"scenario_name": "test.explicit", "target_name": "offline"}
+    try:
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(TargetRegistry.get_registry_singleton().instances, "get", return_value=target),
+            patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"manual_load": provider}),
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", return_value=["manual_load"]),
+            patch("pyrit.backend.routes.scenarios.get_scenario_service", return_value=ScenarioService()),
+            patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=run_service),
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=compatibility_headers
+            ) as client:
+                first = await client.post(url, json=payload)
+                assert first.status_code == 400
+                assert "Transient provider failure" in first.text
+                second = await client.post(url, json=payload)
+                assert second.status_code == (200 if path == "load" else 202), second.text
+            assert provider.fetch_dataset_async.await_count == 2
+    finally:
+        await run_service.shutdown_async()
+        await close_dataset_preparation_async()
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+async def test_automatic_load_api_keeps_failures_until_explicit_retry(
+    compatibility_headers: dict[str, str],
+) -> None:
+    provider = _provider()
+    dataset: SeedDataset = provider.fetch_dataset_async.return_value
+    provider.fetch_dataset_async.side_effect = [ValueError("Retry loading this source"), dataset]
+    with patch.object(ScenarioRegistry, "_discover"):
+        registry = ScenarioRegistry()
+        registry.register_class(_RunScenario, name="test.automatic")
+    await close_dataset_preparation_async()
+    try:
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"manual_load": provider}),
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", return_value=["manual_load"]),
+            patch("pyrit.backend.routes.scenarios.get_scenario_service", return_value=ScenarioService()),
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=compatibility_headers
+            ) as client:
+                url = "/api/scenarios/catalog/test.automatic/datasets/load"
+                for _ in range(2):
+                    response = await client.post(url, params={"automatic": True}, json={})
+                    assert response.status_code == 400
+                provider.fetch_dataset_async.assert_awaited_once()
+                response = await client.post(url, params={"automatic": True, "retry": True}, json={})
+                assert response.status_code == 200, response.text
+                assert provider.fetch_dataset_async.await_count == 2
+    finally:
+        await close_dataset_preparation_async()

@@ -1911,6 +1911,7 @@ export type DatasetLimitInput =
   | { state: 'scenario_default' | 'not_applicable'; value?: null }
 
 export interface ScenarioRunSizeEstimateResponse {
+  count_deferred?: boolean
   status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
   dataset_size: ScenarioDatasetSizeEstimate
   dataset_limit: DatasetLimitInput

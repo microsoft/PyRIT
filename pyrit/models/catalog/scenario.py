@@ -283,6 +283,7 @@ class ScenarioRunSizeEstimate(BaseModel):
     """
 
     status: ScenarioRunSizeEstimateStatus = ScenarioRunSizeEstimateStatus.Conditional
+    count_deferred: bool = Field(False, description="A supported uncapped count will be resolved during preparation")
     total_attack_count: int | None = Field(
         default=None,
         ge=0,

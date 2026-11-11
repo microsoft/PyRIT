@@ -259,8 +259,8 @@ async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_p
     )
     estimate = await scenario.get_run_size_estimate_async()
     if cap == "all":
-        assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-        assert estimate.condition is ScenarioRunSizeEstimateCondition.LaunchConfiguration
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+        assert estimate.count_deferred
     else:
         assert estimate.estimated_attack_count == cap * 5
 
@@ -366,8 +366,8 @@ async def test_unlimited_estimate_does_not_load_data_or_invent_a_count_async() -
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate.condition is ScenarioRunSizeEstimateCondition.LaunchConfiguration
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.count_deferred
     assert estimate.estimated_attack_count is None
     assert "No size limit" in estimate.note
 
@@ -625,8 +625,8 @@ async def test_system_prompt_extraction_uses_one_shared_generation_cap_async(
     assert estimate.estimated_attack_count == (None if expected == "all" else expected)
     assert estimate.dataset_size == scenario_dataset_size_from_limit(expected)
     if expected == "all":
-        assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-        assert estimate.condition is ScenarioRunSizeEstimateCondition.LaunchConfiguration
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+        assert estimate.count_deferred
     else:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
         assert estimate.effective_parameters == {"prompt_cap": expected}
