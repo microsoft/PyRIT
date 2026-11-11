@@ -34,11 +34,12 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     SeedPrompt,
 )
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
-from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target, resolve_technique_factories
+from pyrit.scenario.core import DatasetConstraintError, resolve_technique_factories
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -337,7 +338,7 @@ class AssertPolicy(Scenario):
                 omitted, each stored policy defines the default policy-violation and overrefusal judges.
                 Configure a supplied scorer on the scorer itself, not with the legacy judge settings.
             judge_target (PromptTarget | None): The ASSERT judge. Defaults to the registered scorer
-                target, resolved when the selected groups are read.
+                target. The explicit ``scoring_target`` run parameter takes precedence.
             scenario_result_id (str | None): Existing result to resume.
 
         Raises:
@@ -362,6 +363,36 @@ class AssertPolicy(Scenario):
             scenario_result_id=scenario_result_id,
             uses_default_adversarial_target=adversarial_chat is None,
         )
+
+    def get_readiness(self) -> ScenarioReadiness:
+        """
+        Resolve ASSERT's judge target before its dataset-specific judges are built.
+
+        A supplied objective scorer owns its own target, so no judge target is resolved for it.
+
+        Returns:
+            ScenarioReadiness: Execution-role bindings and any missing judge target.
+        """
+        readiness = super().get_readiness()
+        if self._assert_objective_scorer is not None:
+            return readiness
+        try:
+            target = self._resolve_scoring_target(chat_target=self._judge_target)
+        except ValueError as error:
+            readiness.issues.append(
+                ScenarioConfigurationIssue(
+                    role="scoring_target",
+                    component=self.name,
+                    reason=str(error),
+                    remediation="Select a scoring target, or register objective_scorer_chat for ASSERT's judges.",
+                )
+            )
+        else:
+            readiness.bindings = [binding for binding in readiness.bindings if binding.role != "scoring_target"]
+            readiness.bindings.append(
+                ScenarioRoleBinding(role="scoring_target", component=self.name, identifier=target.get_identifier())
+            )
+        return readiness
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -615,7 +646,7 @@ class AssertPolicy(Scenario):
             }
             self._objective_scorer = self._assert_objective_scorer
             return
-        judge_target = self._judge_target or get_default_scorer_target()
+        judge_target = self._resolve_scoring_target(chat_target=self._judge_target)
         mode = AssertJudgmentMode(self.params["judgment_mode"])
         self._judges_by_policy = {}
         for dataset_name, groups in population.items():

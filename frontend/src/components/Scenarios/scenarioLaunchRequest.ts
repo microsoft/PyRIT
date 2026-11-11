@@ -42,7 +42,7 @@ export const OBJECTIVE_PARAMETER_NAMES = new Set(['objective', 'harm_categories'
 
 const ASSERT_SCORER_PARAMETERS = new Set([
   'judgment_mode', 'target_system_prompt', 'judge_presets', 'judge_preset_files',
-  'disabled_judge_dimensions', 'judge_samples', 'objective_dimension',
+  'disabled_judge_dimensions', 'judge_samples', 'objective_dimension', 'scoring_target',
 ])
 
 /** The ASSERT launch form always uses ASSERT's default scoring; custom scoring stays in the SDK. */
@@ -52,6 +52,18 @@ export function usesDefaultAssertScoring(scenario: RegisteredScenario): boolean 
 
 export function isScorerOwnedParameter(scenario: RegisteredScenario, name: string): boolean {
   return usesDefaultAssertScoring(scenario) && ASSERT_SCORER_PARAMETERS.has(name)
+}
+
+/** Whether a saved value leaves a setting at its default; defaults arrive as display strings. */
+function isDefaultSetting(parameter: Parameter | undefined, value: unknown): boolean {
+  if (value == null) return true
+  if (parameter?.is_list) {
+    const defaults = parameter.default == null ? [] : [parameter.default].flat()
+    return Array.isArray(value) && value.length === defaults.length
+      && value.every((item, index) => String(item) === defaults[index])
+  }
+  return parameter?.default != null && ['string', 'number', 'boolean'].includes(typeof value)
+    && String(value) === String(parameter.default)
 }
 
 export function supportsParameter(scenario: RegisteredScenario, name: string): boolean {
@@ -130,12 +142,9 @@ export function buildEstimateRequest({
     if (objectiveScorer || scoringTargetName) {
       return { ok: false, error: 'This saved ASSERT configuration uses a custom scorer. Use the SDK to preserve it; this form uses default scoring.' }
     }
-    const nonDefaultScoring = Object.entries(presetScenarioParams).some(([name, value]) => {
-      if (!isScorerOwnedParameter(scenario, name)) return false
-      const parameter = scenario.supported_parameters.find((item) => item.name === name)
-      if (value == null || (parameter?.default == null && (value === '' || (Array.isArray(value) && value.length === 0)))) return false
-      return JSON.stringify(value) !== JSON.stringify(parameter?.default)
-    })
+    const nonDefaultScoring = Object.entries(presetScenarioParams).some(([name, value]) =>
+      isScorerOwnedParameter(scenario, name)
+      && !isDefaultSetting(scenario.supported_parameters.find((item) => item.name === name), value))
     if (nonDefaultScoring) {
       return { ok: false, error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.' }
     }

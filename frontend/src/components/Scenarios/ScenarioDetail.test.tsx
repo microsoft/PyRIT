@@ -342,6 +342,31 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].scenario_params).not.toHaveProperty('judge_samples')
   })
 
+  it.each(['preset', 'saved run'] as const)(
+    'rejects a %s whose ASSERT scoring target is not the default instead of launching it',
+    async (seed) => {
+      const user = userEvent.setup()
+      const scenarioParams = { scoring_target: 'registered-judge' }
+      mockGetScenario.mockResolvedValue(makeScenario({ scenario_name: 'foundry.assert_policy' }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        scenario_name: 'foundry.assert_policy', scenario_params: scenarioParams,
+      }))
+      renderDetail(
+        '/scanner/launch/foundry.assert_policy' + (seed === 'preset' ? '?preset=spanish_probe' : ''),
+        seed === 'saved run' ? {
+          initialRun: { scenario_name: 'foundry.assert_policy', target_name: 'target-a', scenario_params: scenarioParams },
+        } : {},
+      )
+      await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('has custom judge settings. Use the SDK to preserve them')
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      expect(mockEstimateRun).not.toHaveBeenCalledWith(
+        'foundry.assert_policy', expect.objectContaining({ scenario_params: scenarioParams }), expect.anything(),
+      )
+    },
+  )
+
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')

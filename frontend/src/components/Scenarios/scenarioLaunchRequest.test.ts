@@ -143,12 +143,26 @@ describe('scenario launch requests', () => {
 
   it('uses default ASSERT scoring and rejects saved custom scoring instead of replaying it as defaults', () => {
     const samples: Parameter = {
-      name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: 1, required: false,
+      name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: '1', required: false,
+    }
+    const presets: Parameter = {
+      name: 'judge_presets', description: 'Presets.', type_name: 'list[str] | None', choices: null, default: null,
+      required: false, is_list: true,
+    }
+    const prompt: Parameter = {
+      name: 'target_system_prompt', description: 'Instructions.', type_name: 'str | None', choices: null,
+      default: null, required: false,
     }
     const scenario = makeScenario({
       scenario_name: 'foundry.assert_policy',
-      supported_parameter_names: ['objective_target', 'scenario_techniques', 'dataset_config', 'judge_samples'],
-      supported_parameters: [samples],
+      supported_parameter_names: [
+        'objective_target', 'scenario_techniques', 'dataset_config', 'judge_samples', 'scoring_target',
+        'judge_presets', 'target_system_prompt',
+      ],
+      supported_parameters: [samples, presets, prompt, {
+        name: 'scoring_target', description: 'Judge.', type_name: 'PromptTarget | None', choices: null,
+        default: null, required: false,
+      }],
     })
     const input = makeInput({ scenario, scenarioParamValues: {}, presetScenarioParams: { judge_samples: 1 } })
     expect(scenarioDynamicParameters(scenario)).toEqual([])
@@ -159,6 +173,22 @@ describe('scenario launch requests', () => {
       ok: false,
       error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.',
     })
+    for (const saved of [{ scoring_target: null }, { judge_presets: [] }, { judge_samples: '1' }]) {
+      const defaults = buildRunRequest({ ...input, presetScenarioParams: saved })
+      expect(defaults.ok).toBe(true)
+      if (defaults.ok) expect(defaults.request.scenario_params).toBeUndefined()
+    }
+    for (const saved of [
+      { scoring_target: 'registered-judge' },
+      { judge_presets: ['safety-extended'] },
+      { target_system_prompt: '' },
+      { target_system_prompt: [] },
+    ]) {
+      expect(buildRunRequest({ ...input, presetScenarioParams: saved })).toEqual({
+        ok: false,
+        error: 'This saved ASSERT configuration has custom judge settings. Use the SDK to preserve them; this form uses default scoring.',
+      })
+    }
     for (const saved of [
       { objectiveScorer: { registry_name: 'saved', identifier_hash: 'saved-identity' } },
       { scoringTargetName: 'rubric' },
