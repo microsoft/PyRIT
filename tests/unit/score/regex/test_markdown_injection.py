@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -271,6 +272,53 @@ async def test_md_injection_scales_on_unclosed_images_across_lines(patch_central
     scorer = MarkdownInjectionScorer()
     score = (await scorer.score_text_async("![a](b\n" * 20_000))[0]
     assert score.get_value() is False
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Unclosed inline images on one line make the default inline regex backtrack in cubic time.
+        "![x](" * 20_000,
+        "![x](y\r" * 20_000,
+        # Image openers alone are quadratic for the inline and reference regexes.
+        "![" * 100_000,
+    ],
+    ids=["unclosed-inline-one-line", "unclosed-inline-cr-lines", "image-openers"],
+)
+async def test_md_injection_scales_on_unclosed_images_on_one_line(text: str, patch_central_database):
+    scorer = MarkdownInjectionScorer(
+        patterns={
+            name: MarkdownInjectionScorer._DEFAULT_PATTERNS[name]
+            for name in ("Markdown Image (inline)", "Markdown Image (reference)")
+        }
+    )
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is False
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The default inline and reference patterns match on one line even where CommonMark renders no image.
+        ("![a](b c)", ["Markdown Image (inline)"]),
+        ("![a][b]", ["Markdown Image (reference)"]),
+        ("x ![a] y](z) w", ["Markdown Image (inline)"]),
+        ("![a\r](b)", ["Markdown Image (inline)"]),
+        ("![a](b", []),
+        ("![a]\n(b)", []),
+        ("]()![", []),
+    ],
+)
+async def test_md_image_default_patterns_keep_regex_verdict(text: str, expected: list[str], patch_central_database):
+    patterns = {
+        name: MarkdownInjectionScorer._DEFAULT_PATTERNS[name]
+        for name in ("Markdown Image (inline)", "Markdown Image (reference)")
+    }
+    scorer = MarkdownInjectionScorer(patterns=patterns)
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is bool(expected)
+    assert [name for name, pattern in patterns.items() if re.search(pattern, text)] == expected
 
 
 async def test_md_injection_adds_to_memory():

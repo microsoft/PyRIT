@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+from pyrit.models.target.target_capabilities import TargetCapabilities
 
 
 class RegisteredComponentReference(BaseModel):
@@ -41,6 +42,7 @@ class TargetBinding(BaseModel):
     source_hash: str = Field(min_length=1)
     temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
     effective_hash: str = Field(min_length=1)
+    capabilities: TargetCapabilities | None = None
 
     def to_spec(self) -> SourceInstanceSpec:
         """Return the constructor specification."""

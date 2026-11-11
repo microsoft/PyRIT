@@ -45,6 +45,7 @@ import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
+import { useTargetCapabilityDetection } from './hooks/useTargetCapabilityDetection'
 import { useOperationSelection } from './hooks/useOperationSelection'
 import { useScenarioLaunchSeed } from './hooks/useScenarioLaunchSeed'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
@@ -62,6 +63,7 @@ import type {
 } from './types'
 import {
   resolveTargetReference,
+  sameTarget,
   targetReference,
   targetEndpoint,
   targetIdentifierHash,
@@ -235,11 +237,12 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     target: TargetReference | null
   }>({ pathname: location.pathname, key: 0, target: targetDefaults.objectiveReference })
   if (draftSession.pathname !== location.pathname) {
+    const unsavedPreserved = draftHandoff.getPreservedDraft(null, null)
     const isReturningToUnsavedChatWithPreservedDraft =
       location.pathname === VIEW_PATHS.chat &&
-      draftHandoff.preservedDraft?.originatingAttackId === null
-    const nextTarget = isReturningToUnsavedChatWithPreservedDraft && draftHandoff.preservedDraft?.draft.target !== undefined
-      ? draftHandoff.preservedDraft.draft.target
+      unsavedPreserved?.originatingAttackId === null
+    const nextTarget = isReturningToUnsavedChatWithPreservedDraft && unsavedPreserved?.draft.target !== undefined
+      ? unsavedPreserved.draft.target
       : targetDefaults.objectiveReference
     setDraftSession({
       pathname: location.pathname,
@@ -253,6 +256,15 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     if (target) registry.rememberTarget(target)
     targetDefaults.setDefault(role, target)
   }
+  const capabilityDetection = useTargetCapabilityDetection({
+    generation,
+    onTargetDetected: (updated, previous) => {
+      registry.rememberTarget(updated)
+      if (sameTarget(targetDefaults.adversarialTarget, previous)) {
+        targetDefaults.setDefault('adversarial', updated.capabilities?.supports_multi_turn ? updated : null)
+      }
+    },
+  })
 
   // The URL is the source of truth for which attack/conversation is open.
   const conversationMatch = matchPath(
@@ -298,7 +310,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
   const rerunValues = matchPath('/scanner/launch/:scenarioName', location.pathname)
     ? new URLSearchParams(location.search).getAll('rerun') : []
-  const rerunId = rerunValues.length ? rerunValues.length === 1 ? rerunValues[0] : '' : null
+  const rerunId = rerunValues.length ? (rerunValues.length === 1 ? (rerunValues[0] ?? '') : '') : null
   const rerun = useScenarioLaunchSeed(rerunId, generation, ready)
   const { updateAttribution: updateRerunAttribution } = rerun
   const launchLabels = useMemo<Record<string, string>>(() => rerun.active
@@ -619,8 +631,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }
     if (view === 'chat') {
       if (matchPath(VIEW_PATHS.chat, location.pathname) || routeAttackId !== null) return
-      if (draftHandoff.preservedDraft?.originatingPath) {
-        navigate(draftHandoff.preservedDraft.originatingPath, { state: draftHandoff.preservedDraft.originatingState })
+      const targetDraft = draftHandoff.getPreservedDraft()
+      if (targetDraft?.originatingPath) {
+        navigate(targetDraft.originatingPath, { state: targetDraft.originatingState })
         return
       }
       if (lastChatLocation.current.path) {
@@ -631,7 +644,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       return
     }
     navigate(VIEW_PATHS[view])
-  }, [navigate, draftHandoff.preservedDraft, location.pathname, routeAttackId])
+  }, [navigate, draftHandoff, location.pathname, routeAttackId])
 
   const handleNewAttack = useCallback(() => {
     const id = generateClientId()
@@ -954,6 +967,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   path="targets"
                   element={
                     <TargetConfig
+                      detection={capabilityDetection}
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
                       onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
                       onTargetsLoaded={registry.synchronizeTargets}
@@ -1089,7 +1103,7 @@ function App() {
   const accountKey = account?.homeAccountId
     ? `${account.tenantId}:${account.homeAccountId}`
     : authConfig.clientId ? null : 'local'
-  const operatorAlias = account?.username ? account.username.split('@')[0].toLowerCase() : null
+  const operatorAlias = account?.username ? (account.username.split('@')[0]?.toLowerCase() ?? null) : null
   return (
     <RuntimeProvider>
       <RuntimeBanner />
