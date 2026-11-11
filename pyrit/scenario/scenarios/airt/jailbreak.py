@@ -280,9 +280,6 @@ class Jailbreak(Scenario):
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
         # Resolved lazily at build time (from the run parameter bag) and cached so the same
         # template set feeds both attack construction and the persisted metadata.
         self._resolved_jailbreaks: list[str] = []
@@ -295,7 +292,7 @@ class Jailbreak(Scenario):
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=4
             ),
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
@@ -555,6 +552,9 @@ class Jailbreak(Scenario):
             note=f"{formula}{baseline_explanation}{capability_note}",
         )
 
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return {**super()._get_readiness_factories(), **_extra_default_factories()}
+
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build one atomic attack per (technique x jailbreak template x dataset x attempt).
@@ -592,7 +592,9 @@ class Jailbreak(Scenario):
         """
         num_attempts = self.params["num_jailbreak_attempts"]
 
-        technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
+        technique_factories = resolve_technique_factories(
+            context=context, extra_factories=self._get_readiness_factories()
+        )
         technique_factories = {
             name: factory
             for name, factory in technique_factories.items()
