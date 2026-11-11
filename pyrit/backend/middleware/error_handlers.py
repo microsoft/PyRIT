@@ -197,7 +197,7 @@ def register_error_handlers(app: FastAPI) -> None:
     async def storage_unavailable_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: DocumentStorageUnavailableError,
-    ) -> JSONResponse:
+    ) -> JSONResponse:  # pyrit-keyword-only-exempt Starlette exception handler (request, exc)
         """
         Handle stored documents that can't be read or written as 503 Service Unavailable.
 
