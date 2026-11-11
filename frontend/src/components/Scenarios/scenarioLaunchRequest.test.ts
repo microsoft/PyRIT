@@ -83,13 +83,13 @@ describe('scenario launch requests', () => {
       uses_default_adversarial_target: false,
     })
 
-    const run = buildRunRequest(makeInput({ scenario, adversarialTargetName: '', datasetEdits: { max_total: 3 } }))
+    const run = buildRunRequest(makeInput({ scenario, datasetEdits: { max_total: 3 } }))
 
     expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation' } })
   })
 
   it('carries explicitly selected generation and scoring targets through estimates and launches', () => {
-    const scenario = makeScenario({ uses_default_adversarial_target: false })
+    const scenario = makeScenario()
     const input = makeInput({ scenario, adversarialTargetName: 'generation', scoringTargetName: 'rubric' })
 
     for (const result of [buildEstimateRequest(input), buildRunRequest(input)]) {
