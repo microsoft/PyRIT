@@ -498,7 +498,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
             RuntimeError: If Playwright is not installed.
         """
         try:
-            from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]
+            from playwright.async_api import async_playwright  # type: ignore[ty:import-not-found]
         except ImportError:
             raise RuntimeError(
                 "Playwright is required for browser-session authentication. "

@@ -236,7 +236,7 @@ def _get_nlp() -> Any:
         if _nlp_loaded:
             return _nlp
         try:
-            import spacy  # type: ignore[ty:unresolved-import]
+            import spacy  # type: ignore[ty:import-not-found]
 
             _nlp = spacy.load("en_core_web_sm")
         except (ImportError, OSError):

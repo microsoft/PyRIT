@@ -163,7 +163,7 @@ class _LayaEncoder:
 
     def _load_model(self) -> Any:
         try:
-            import laya  # type: ignore[ty:unresolved-import]
+            import laya  # type: ignore[ty:import-not-found]
         except (ImportError, ModuleNotFoundError) as exc:
             raise RuntimeError(
                 "LocalRefusalClassifierScorer requires the 'laya' package. Install it with `pip install laya`."
@@ -217,7 +217,7 @@ class _LayaEncoder:
 
     def _features_from_sequences(self, sequences: list[tuple[list[int], list[int]]]) -> list[float]:
         import torch
-        from laya.common import QTYPES, collate_items  # type: ignore[ty:unresolved-import]
+        from laya.common import QTYPES, collate_items  # type: ignore[ty:import-not-found]
 
         agent = self._agent
         if agent is None:
@@ -279,7 +279,7 @@ class _LayaEncoder:
         chunk_overlap_tokens: int,
         max_objective_tokens: int,
     ) -> tuple[Iterator[list[tuple[list[int], list[int]]]], bool]:
-        from laya.common import build_sequence  # type: ignore[ty:unresolved-import]
+        from laya.common import build_sequence  # type: ignore[ty:import-not-found]
 
         agent = self._agent
         if agent is None:

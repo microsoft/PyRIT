@@ -10,7 +10,7 @@ import pytest
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.audio_achilles_heel import (
     DEFAULT_MAX_DATASET_SIZE,
     DEFAULT_TEXT_PROMPT,

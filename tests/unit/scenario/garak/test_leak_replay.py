@@ -39,7 +39,7 @@ from pyrit.scenario import (
     DatasetSource,
 )
 from pyrit.scenario.core import DatasetConstraintError
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     LeakReplay,
     LeakReplayDatasetConfiguration,
     LeakReplayTechnique,

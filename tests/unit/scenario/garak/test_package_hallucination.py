@@ -14,7 +14,7 @@ from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, Seed
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import BaselineAttackPolicy, DatasetConfiguration
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     PackageHallucination,
     PackageHallucinationTechnique,
     WebInjectionTechnique,

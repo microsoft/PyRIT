@@ -41,7 +41,7 @@ async def test_ensure_async_token_provider_preserves_string_and_awaitable_result
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
