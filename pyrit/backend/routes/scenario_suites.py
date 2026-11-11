@@ -97,8 +97,6 @@ async def get_scenario_suite_readiness_async(
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
 
 
 @router.get(
