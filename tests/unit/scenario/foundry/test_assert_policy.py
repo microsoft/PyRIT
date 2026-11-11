@@ -52,6 +52,7 @@ from pyrit.scenario import (
     DatasetSource,
     IncompatibleTechniqueError,
 )
+from pyrit.scenario.core.scenario_target_defaults import TargetRoleConfigurationError
 from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
@@ -59,6 +60,7 @@ from pyrit.score import (
     AssertJudgmentMode,
     AssertScoringDimension,
     LocalTraceCapture,
+    SubStringScorer,
     TraceEvidenceRequirement,
     TrueFalseCompositeScorer,
     build_assert_policy_scorer,
@@ -246,6 +248,7 @@ def test_registry_name_and_argument_free_construction() -> None:
     assert ScenarioRegistry.get_registry_singleton().get_class("foundry.assert_policy") is AssertPolicy
     scenario = AssertPolicy()
     assert scenario._objective_scorer_identifier.class_name == "_AssertPlaceholderScorer"
+    assert ScenarioRegistry.supports_objective_scorer(AssertPolicy)
     technique_class = _build_assert_policy_technique()
     assert scenario._technique_class is technique_class
     assert [technique.value for technique in technique_class.expand({technique_class.default()})] == ["assert_package"]
@@ -823,7 +826,7 @@ async def test_resume_rejects_changed_judge_or_run_settings_async(
     first, args = build(original)
     await harness.initialize_async(first, **args)
     resumed, changed_args = build(changed, scenario_result_id=first._scenario_result_id)
-    with pytest.raises(ValueError, match="matching configuration"):
+    with pytest.raises(ValueError, match="matching configuration|does not match the current configuration"):
         await harness.initialize_async(resumed, **changed_args)
 
 
@@ -1252,6 +1255,130 @@ async def test_only_techniques_with_a_tester_get_the_adversarial_chat_async(harn
 
     chats = {attack.display_group: attack._adversarial_chat for attack in scenario._atomic_attacks}
     assert chats == {"prompt_sending": None, "red_teaming": harness.adversarial}
+
+
+async def test_supplied_objective_scorer_runs_unchanged_without_default_judges_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scorer = SubStringScorer(substring=_SAFE_REPLY)
+    scenario = AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial)
+    result = await harness.run_async(scenario, **_prompt_case(), **_datasets("assert_a"))
+
+    (unit,) = scenario._atomic_attacks
+    config = unit.attack_technique.attack.get_attack_scoring_config()
+    assert config.objective_scorer is scorer
+    assert not config.auxiliary_scorers
+    assert scenario._objective_scorer is scorer
+    assert harness.judge_systems == []
+    (attack_result,) = next(iter(result.attack_results.values()))
+    assert attack_result.outcome is AttackOutcome.SUCCESS
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        {"judge_samples": 3},
+        {"judge_presets": ["safety-extended"]},
+        {"judgment_mode": "direct"},
+        {"target_system_prompt": "Owned instructions."},
+        {"trace_source": "saved"},
+        {"trace_requirement": "available"},
+    ],
+)
+async def test_supplied_scorer_rejects_non_default_legacy_judge_settings_async(
+    harness: _Harness, legacy: dict[str, Any]
+) -> None:
+    scenario = AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), adversarial_chat=harness.adversarial)
+    with pytest.raises(ValueError, match="omit non-default ASSERT judge settings"):
+        await harness.initialize_async(scenario, **legacy)
+
+
+def test_supplied_scorer_rejects_a_judge_target(harness: _Harness) -> None:
+    with pytest.raises(ValueError, match="owns its judge target"):
+        AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), judge_target=harness.judge)
+
+
+def test_supplied_scorer_rejects_a_trace_source(capture: LocalTraceCapture) -> None:
+    with pytest.raises(ValueError, match="owns its judge target and trace configuration"):
+        AssertPolicy(objective_scorer=SubStringScorer(substring="safe"), trace_source=capture.source())
+
+
+async def test_supplied_scorer_identity_is_preserved_when_resuming_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scorer = SubStringScorer(substring=_SAFE_REPLY)
+    args = {**_prompt_case(), **_datasets("assert_a")}
+    scenario = await harness.initialize_async(
+        AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial), **args
+    )
+    restored = await harness.initialize_async(
+        AssertPolicy(
+            objective_scorer=scorer,
+            adversarial_chat=harness.adversarial,
+            scenario_result_id=scenario._scenario_result_id,
+        ),
+        **args,
+    )
+    assert [unit.atomic_attack_name for unit in restored._atomic_attacks] == [
+        unit.atomic_attack_name for unit in scenario._atomic_attacks
+    ]
+    changed = AssertPolicy(
+        objective_scorer=SubStringScorer(substring="different"),
+        adversarial_chat=harness.adversarial,
+        scenario_result_id=scenario._scenario_result_id,
+    )
+    with pytest.raises(ValueError, match="does not match the current configuration|matching configuration"):
+        await harness.initialize_async(changed, **args)
+
+
+async def test_selected_scoring_target_is_used_by_every_assert_judge_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    selected = MockPromptTarget()
+    selected.set_model_name(model_name="selected-assert-judge")
+    scenario = await harness.initialize_async(
+        harness.scenario(), scoring_target=selected, **_prompt_case(), **_datasets("assert_a")
+    )
+
+    assert all(
+        scorer.get_chat_target() is selected for judges in scenario._judges_by_policy.values() for scorer in judges.all
+    )
+    bindings = [binding for binding in scenario.get_readiness().bindings if binding.role == "scoring_target"]
+    assert [binding.identifier.hash for binding in bindings] == [selected.get_identifier().hash]
+
+
+def test_readiness_binds_the_judge_target(harness: _Harness) -> None:
+    scenario = harness.scenario()
+    scenario.set_params_from_args(args={"objective_target": harness.objective})
+    readiness = scenario.get_readiness()
+    bindings = [binding for binding in readiness.bindings if binding.role == "scoring_target"]
+    assert [binding.identifier.hash for binding in bindings] == [harness.judge.get_identifier().hash]
+    assert not [issue for issue in readiness.issues if issue.role == "scoring_target"]
+
+
+def test_readiness_reports_a_missing_default_judge_target(harness: _Harness) -> None:
+    scenario = AssertPolicy(adversarial_chat=harness.adversarial)
+    scenario.set_params_from_args(args={"objective_target": harness.objective})
+    with patch(
+        "pyrit.scenario.core.scenario.get_default_scorer_target",
+        side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
+    ):
+        readiness = scenario.get_readiness()
+    assert [issue.role for issue in readiness.issues] == ["scoring_target"]
+
+
+async def test_supplied_scorer_needs_no_default_judge_target_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scorer = SubStringScorer(substring=_SAFE_REPLY)
+    scenario = AssertPolicy(objective_scorer=scorer, adversarial_chat=harness.adversarial)
+    with patch(
+        "pyrit.scenario.core.scenario.get_default_scorer_target",
+        side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
+    ):
+        scenario.set_params_from_args(args={"objective_target": harness.objective})
+        readiness = scenario.get_readiness()
+        await harness.initialize_async(scenario, **_prompt_case(), **_datasets("assert_a"))
+
+    assert not [issue for issue in readiness.issues if issue.role == "scoring_target"]
+    (unit,) = scenario._atomic_attacks
+    assert unit.attack_technique.attack.get_attack_scoring_config().objective_scorer is scorer
 
 
 class _TracedObjective(PromptTarget):

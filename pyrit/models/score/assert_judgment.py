@@ -70,14 +70,14 @@ class _AssertScoreMetadata(BaseModel):
         return merged
 
 
-def _load_json(values: dict[str, Any], key: str) -> Any:
+def _load_json(values: dict[str, Any], *, key: str) -> Any:
     raw = values[key]
     if not isinstance(raw, str):
         raise ValueError(f"Score metadata '{key}' must be a JSON string.")
     return json.loads(raw)
 
 
-def _load_flag(values: dict[str, Any], key: str) -> bool:
+def _load_flag(values: dict[str, Any], *, key: str) -> bool:
     raw = values[key]
     if raw not in ("true", "false"):
         raise ValueError(f"Score metadata '{key}' must be 'true' or 'false'.")
@@ -137,15 +137,15 @@ class AssertDimensionResult(_AssertScoreMetadata):
 
     @classmethod
     def _decode(cls, values: dict[str, Any]) -> Self:
-        scale = _load_json(values, "assert_scale") if "assert_scale" in values else None
+        scale = _load_json(values, key="assert_scale") if "assert_scale" in values else None
         return cls.model_validate(
             {
                 "dimension": values.get("assert_dimension"),
                 "skip_reason": values.get("assert_scoring_skipped"),
-                "not_applicable": _load_flag(values, "assert_not_applicable")
+                "not_applicable": _load_flag(values, key="assert_not_applicable")
                 if "assert_not_applicable" in values
                 else False,
-                "grade": _load_json(values, "assert_grade") if "assert_grade" in values else None,
+                "grade": _load_json(values, key="assert_grade") if "assert_grade" in values else None,
                 "scale": tuple(scale) if isinstance(scale, list) else scale,
             }
         )
@@ -217,14 +217,14 @@ class AssertCategoryJudgment(_AssertScoreMetadata):
         _require(values, "assert_judgment_mode", "assert_node_judgments", "assert_original_score_value")
         if values["assert_judgment_mode"] != cls._MODE:
             raise ValueError(f"Score metadata 'assert_judgment_mode' must be '{cls._MODE}'.")
-        nodes = _load_json(values, "assert_node_judgments")
-        warnings = _load_json(values, "assert_judgment_warnings") if "assert_judgment_warnings" in values else []
+        nodes = _load_json(values, key="assert_node_judgments")
+        warnings = _load_json(values, key="assert_judgment_warnings") if "assert_judgment_warnings" in values else []
         if not isinstance(nodes, list) or not isinstance(warnings, list):
             raise ValueError("ASSERT node judgments and warnings must be JSON lists.")
         return cls.model_validate(
             {
                 "node_judgments": nodes,
-                "original_score_value": _load_flag(values, "assert_original_score_value"),
+                "original_score_value": _load_flag(values, key="assert_original_score_value"),
                 "correction_reason": values.get("assert_correction_reason"),
                 "original_description": values.get("assert_original_description"),
                 "warnings": warnings,
@@ -288,7 +288,7 @@ class AssertSampleVotes(_AssertScoreMetadata):
     @classmethod
     def _decode(cls, values: dict[str, Any]) -> Self:
         _require(values, "assert_sample_count", "assert_sample_votes")
-        votes = _load_json(values, "assert_sample_votes")
+        votes = _load_json(values, key="assert_sample_votes")
         count = values["assert_sample_count"]
         if not isinstance(votes, list) or isinstance(count, bool) or count != len(votes):
             raise ValueError("Score metadata 'assert_sample_count' must match 'assert_sample_votes'.")
@@ -299,7 +299,7 @@ class AssertSampleVotes(_AssertScoreMetadata):
             {
                 "votes": votes,
                 "agreement": agreement,
-                "voted_score_value": _load_flag(values, "assert_voted_score_value")
+                "voted_score_value": _load_flag(values, key="assert_voted_score_value")
                 if "assert_voted_score_value" in values
                 else None,
             }
