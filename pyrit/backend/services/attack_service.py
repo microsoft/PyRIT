@@ -31,12 +31,11 @@ from pyrit.backend.mappers import (
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
 )
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AddMessageResponse,
     AttackConversationsResponse,
     AttackListResponse,
-    AttackMetadata,
     AttackSummary,
     ConversationMessagesResponse,
     ConversationSummary,
@@ -47,15 +46,15 @@ from pyrit.backend.models.attacks import (
     MessagePieceRequest,
     MessageRequest,
     MessageView,
+    PaginationInfo,
     PrependedMessageRequest,
-    SaveConversationRequest,
     ScoreView,
     TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
 )
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
 from pyrit.backend.services.chat_scoring_service import get_chat_scoring_service
 from pyrit.backend.services.component_lifecycle import release_component_async
@@ -95,13 +94,13 @@ from pyrit.models import (
     ConversationStats,
     Message,
     MessagePiece,
+    RequestTraceContext,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
 )
 from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.models.results.attack_result import AttackScoringInputs
-from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -573,6 +572,11 @@ class AttackService:
             registry_name=request.target_registry_name, binding=request.target_binding
         )
         copied: Sequence[MessagePiece] = []
+        # The two branching fields form one spec; the conversation endpoint
+        # rejects a half provided pair, and a silent fallthrough here would
+        # create an unbranched attack while the caller believes it branched.
+        if (request.source_conversation_id is None) != (request.cutoff_index is None):
+            raise ValueError("Both source_conversation_id and cutoff_index must be provided together")
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             conversation, copied = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,

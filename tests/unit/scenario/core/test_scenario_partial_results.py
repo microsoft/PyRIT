@@ -12,8 +12,7 @@ from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutorResult, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,

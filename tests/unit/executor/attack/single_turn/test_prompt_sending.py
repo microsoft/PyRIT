@@ -33,6 +33,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     PromptSendingAttackParameters,
     RTASystemPromptPaths,
+    SimulatedConversationResult,
     SingleTurnAttackContext,
 )
 from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
@@ -40,7 +41,6 @@ from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
-from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import TokenizerTemplateNormalizer
 from pyrit.models import (
@@ -59,9 +59,7 @@ from pyrit.models import (
     SeedSimulatedConversation,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.extra import get_technique_factories
 
@@ -440,7 +438,7 @@ class TestSetupPhase:
 
         # Mock that simulates initialize_context_async merging labels
         async def mock_initialize(*, context, memory_labels=None, **kwargs):
-            from pyrit.common.utils import combine_dict
+            from pyrit.common import combine_dict
 
             context.memory_labels = combine_dict(existing_dict=memory_labels, new_dict=context.memory_labels)
 
@@ -464,7 +462,7 @@ class TestSetupPhase:
         assert basic_context.conversation_id  # Should have a new conversation_id
 
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
-        from pyrit.prompt_normalizer.converter_configuration import (
+        from pyrit.prompt_normalizer import (
             ConverterConfiguration,
         )
 
@@ -692,7 +690,7 @@ class TestPromptSending:
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context
     ):
-        from pyrit.prompt_normalizer.converter_configuration import (
+        from pyrit.prompt_normalizer import (
             ConverterConfiguration,
         )
 

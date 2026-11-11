@@ -10,8 +10,7 @@ import re
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece
 from pyrit.prompt_target import (
     CopilotType,
     PlaywrightCopilotTarget,
@@ -20,7 +19,7 @@ from pyrit.prompt_target import (
     TargetCapabilities,
     TargetConfiguration,
 )
-from pyrit.registry.components import TargetMetadata, TargetRegistry
+from pyrit.registry import TargetMetadata, TargetRegistry
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -360,9 +359,13 @@ class TestClassMetadata:
         assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
-        # OpenAI targets expose all three modes; api-key-only targets expose one.
+        # Identity-capable targets expose their modes; api-key-only targets expose one.
         assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity", "none")
-        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
+        assert self._metadata_for(registry, "GitHubCopilotTarget").supported_auth_modes == ("api_key",)
+
+    def test_metadata_supported_auth_modes_empty_for_credential_free_target(self, registry: TargetRegistry):
+        # TextTarget writes to a local stream, so it must not advertise api-key auth.
+        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ()
 
     def test_metadata_supported_auth_modes_sourced_from_class_attributes(self, registry: TargetRegistry):
         # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.
@@ -384,8 +387,8 @@ class TestClassMetadata:
 
         assert params["endpoint"].param_type == str | None
         assert params["model_name"].param_type == str | None
-        assert params["endpoint"].type_name == "str"
-        assert params["model_name"].type_name == "str"
+        assert params["endpoint"].type_name == "str | None"
+        assert params["model_name"].type_name == "str | None"
         assert "api_key" in params
 
     def test_http_request_metadata_is_multiline(self, registry: TargetRegistry) -> None:
@@ -424,7 +427,7 @@ class TestRegistrationGate:
         assert "RoundRobinTarget" in names
 
     def test_every_target_reference_maps_to_a_wired_registry(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
@@ -437,7 +440,7 @@ class TestRegistrationGate:
                     )
 
     def test_credential_parameters_are_sensitive(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)

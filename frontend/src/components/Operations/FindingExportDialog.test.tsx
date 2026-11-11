@@ -137,6 +137,17 @@ describe('FindingExportDialog', () => {
     expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual([ALPHA.id, GAMMA.id])
   })
 
+  it('stops with an error when the server repeats the same page offset', async () => {
+    ;(operationsApi.listFindings as jest.Mock).mockImplementation(
+      async () => ({ items: [ALPHA], has_more: true, next_offset: 0 }),
+    )
+    const user = userEvent.setup()
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText(/did not advance/)).toBeInTheDocument()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(1)
+  })
+
   it('lists and exports once a finding that a later page repeats', async () => {
     const user = userEvent.setup()
     // A finding created while pages load shifts the next page, so it can start with the previous page's last row.

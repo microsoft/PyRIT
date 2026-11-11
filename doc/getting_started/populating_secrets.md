@@ -57,7 +57,7 @@ Requires [Ollama](https://ollama.com/) running locally. No API key needed.
 ```bash
 OPENAI_CHAT_ENDPOINT="https://api.groq.com/openai/v1"
 OPENAI_CHAT_KEY="gsk_your-key-here"
-OPENAI_CHAT_MODEL="llama3-8b-8192"
+OPENAI_CHAT_MODEL="openai/gpt-oss-20b"
 ```
 
 Get your API key from [console.groq.com](https://console.groq.com/).
@@ -77,7 +77,7 @@ Get your token from [huggingface.co/docs/hub/security-tokens](https://huggingfac
 ```bash
 OPENAI_CHAT_ENDPOINT="https://openrouter.ai/api/v1"
 OPENAI_CHAT_KEY="sk-or-v1-your-key-here"
-OPENAI_CHAT_MODEL="anthropic/claude-3.7-sonnet"
+OPENAI_CHAT_MODEL="anthropic/claude-sonnet-5"
 ```
 
 Get your API key from [openrouter.ai](https://openrouter.ai/).

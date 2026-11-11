@@ -76,7 +76,7 @@ class TestAudioAchillesHeelInitialization:
         assert AudioAchillesHeel.required_datasets() == ["garak_audio_achilles_heel"]
 
     def test_baseline_disabled_by_default(self):
-        from pyrit.scenario.core.scenario import BaselineAttackPolicy
+        from pyrit.scenario import BaselineAttackPolicy
 
         assert BaselineAttackPolicy.Disabled == AudioAchillesHeel.BASELINE_ATTACK_POLICY
 

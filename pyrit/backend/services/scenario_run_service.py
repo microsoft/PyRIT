@@ -25,17 +25,20 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
-from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics import compute_outcome_statistics, count_execution_units
+from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import (
     ScenarioAttempt,
     ScenarioExecutionUnit,
-    count_execution_units,
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
-from pyrit.backend.models.attacks import ConversationMessagesResponse
-from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
-from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.models import (
+    ConversationMessagesResponse,
+    PaginationInfo,
+    ScenarioRunListResponse,
+    filter_sensitive_fields,
+)
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -52,13 +55,15 @@ from pyrit.backend.services.scenario_progress_read_model import (
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.exceptions.exceptions_helpers import summarize_exception
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
-from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
-from pyrit.memory.memory_interface import (
+from pyrit.memory import (
+    AttackResultKeysetCursor,
+    CentralMemory,
     MemoryInterface,
     ScenarioAttemptSeedSummary,
     ScenarioHistoryAggregate,
     ScenarioHistoryKeysetCursor,
     ScenarioHistoryRunRecord,
+    SQLiteMemory,
 )
 from pyrit.models import (
     SCENARIO_CONVERSATIONS_METADATA_KEY,
@@ -82,23 +87,17 @@ from pyrit.models import (
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
+    ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunProgress,
     ScenarioRunState,
+    ScenarioTechniqueSummary,
     TargetIdentifier,
     project_behavioral_identity,
 )
-from pyrit.models.catalog.scenario import (
-    AttackErrorSummary,
-    AttackRetrySummary,
-    RunScenarioRequest,
-    ScenarioOverloadSummary,
-    ScenarioRunListItem,
-    ScenarioRunSummary,
-    ScenarioTargetSummary,
-    ScenarioTechniqueSummary,
-)
+from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
@@ -439,7 +438,7 @@ class ScenarioRunService:
         Returns:
             list[Any | None]: The factory corresponding to each selected technique.
         """
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry import AttackTechniqueRegistry
 
         technique_class = metadata.technique_class
         if not isinstance(technique_class, type):
@@ -534,7 +533,7 @@ class ScenarioRunService:
         Returns:
             ConversationMessagesResponse | None: Owned messages, or None for an unrelated conversation.
         """
-        from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
+        from pyrit.backend.mappers import pyrit_messages_to_dto_async
         from pyrit.backend.services.attack_service import get_attack_service
 
         metadata = await self._memory.get_conversation_metadata_async(conversation_id=conversation_id)
@@ -1213,7 +1212,8 @@ class ScenarioRunService:
             if queued is not None:
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
-                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
+                    # A failed handoff can leave a queued run IN_PROGRESS, but it has no task until the retry starts it.
+                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=ScenarioRunState.CANCELLED,
                     error_message=_USER_CANCELLATION_REASON,
                     error_type="CancelledError",
@@ -1433,6 +1433,10 @@ class ScenarioRunService:
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
             },
         )
+        self._launch_scheduled_run_locked(scheduled=scheduled)
+
+    def _launch_scheduled_run_locked(self, *, scheduled: _ActiveTask) -> None:
+        """Make a run persisted as IN_PROGRESS the active run and create its execution task."""
         self._active_scenario_result_id = scheduled.scenario_result_id
         self._active_tasks[scheduled.scenario_result_id] = scheduled
         scheduled.task = asyncio.create_task(self._execute_run_async(scenario_result_id=scheduled.scenario_result_id))
@@ -1453,17 +1457,34 @@ class ScenarioRunService:
                 persisted = await self._memory.get_scenario_result_header_async(
                     scenario_result_id=next_run.scenario_result_id
                 )
-                if persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
+                if persisted is not None and self._is_start_persisted(run=next_run, persisted=persisted):
+                    self._launch_scheduled_run_locked(scheduled=next_run)
+                elif persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
                     self._queue_revision += 1
                     continue
-                await self._start_scheduled_run_locked_async(scheduled=next_run)
+                else:
+                    await self._start_scheduled_run_locked_async(scheduled=next_run)
                 self._queued_runs.popleft()
                 self._release_completed_task(scenario_result_id=scenario_result_id)
                 return
             self._active_scenario_result_id = None
             self._release_completed_task(scenario_result_id=scenario_result_id)
             self._queue_revision += 1
+
+    @staticmethod
+    def _is_start_persisted(*, run: _ActiveTask, persisted: ScenarioResult) -> bool:
+        """
+        Check whether an earlier handoff attempt saved this run's start before reporting a failure.
+
+        Returns:
+            bool: True if the row is IN_PROGRESS with the start time this scheduler wrote for the run.
+        """
+        return (
+            run.started_at is not None
+            and persisted.scenario_run_state == ScenarioRunState.IN_PROGRESS
+            and ScenarioRunService._load_started_at(scenario_result=persisted) == run.started_at
+        )
 
     def _release_completed_task(self, *, scenario_result_id: str) -> None:
         """Release executable state while retaining bounded terminal error evidence."""
@@ -2638,7 +2659,7 @@ class ScenarioRunService:
         Returns:
             dict[str, ScenarioTechniqueSummary]: Technique metadata keyed by name.
         """
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry import AttackTechniqueRegistry
 
         revision = AttackTechniqueRegistry.get_registry_singleton().catalog_revision
         if getattr(self, "_technique_metadata_revision", None) != revision:

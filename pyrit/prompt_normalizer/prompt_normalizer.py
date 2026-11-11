@@ -6,12 +6,15 @@ import copy
 import logging
 import os
 import tempfile
+import threading
 import traceback
 import wave
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
+from contextvars import copy_context
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 from uuid import uuid4
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
@@ -38,6 +41,8 @@ from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 def _is_write_only_response(responses: object) -> bool:
@@ -415,7 +420,7 @@ class PromptNormalizer:
         if not converter_configurations:
             return raw_pcm
 
-        input_path = _write_pcm_to_temp_wav(
+        input_path = await _write_pcm_to_temp_wav_async(
             raw_pcm=raw_pcm,
             sample_rate_hz=sample_rate_hz,
             num_channels=num_channels,
@@ -434,7 +439,9 @@ class PromptNormalizer:
                 converter_configurations=converter_configurations,
                 message=message,
             )
-            actual_rate, actual_channels, actual_width, converted_pcm = _read_pcm_from_wav(piece.converted_value)
+            actual_rate, actual_channels, actual_width, converted_pcm = await _finish_file_io_async(
+                partial(_read_pcm_from_wav, piece.converted_value)
+            )
             if (actual_rate, actual_channels, actual_width) != (
                 sample_rate_hz,
                 num_channels,
@@ -448,7 +455,7 @@ class PromptNormalizer:
                 )
             return converted_pcm
         finally:
-            Path(input_path).unlink(missing_ok=True)
+            await _finish_file_io_async(partial(Path(input_path).unlink, missing_ok=True))
 
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
@@ -521,6 +528,136 @@ class PromptNormalizer:
             (await self.memory.add_message_to_memory_async(request=request))
 
         return prepended_conversation
+
+
+def _submit_file_io(operation: Callable[[], _T]) -> asyncio.Future[_T]:
+    """
+    Keep the worker's completion handle outside shutdown's task cancellation.
+
+    Returns:
+        asyncio.Future[_T]: The executor's completion handle.
+    """
+    # Shutdown cancels all Tasks, even shielded to_thread Tasks. Preserve to_thread's
+    # context propagation while retaining the executor Future instead.
+    context = copy_context()
+    return asyncio.get_running_loop().run_in_executor(None, context.run, operation)
+
+
+async def _finish_file_io_async(operation: Callable[[], _T]) -> _T:
+    """
+    Finish file I/O before propagating cancellation, even during loop shutdown.
+
+    Returns:
+        _T: The operation's result.
+
+    Raises:
+        asyncio.CancelledError: After the worker finishes if the caller was cancelled.
+    """
+    work = _submit_file_io(operation)
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not work.cancelled() and (error := work.exception()) is not None:
+            raise asyncio.CancelledError from error
+        raise
+
+
+class _TempWavWrite:
+    """Coordinate ownership between a WAV writer and a cancelled caller."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._abandoned = False
+        self._path: str | None = None
+
+    def record_path(self, path: str) -> bool:
+        """Return whether the caller still owns a completed write."""
+        with self._lock:
+            if self._abandoned:
+                return False
+            self._path = path
+            return True
+
+    def abandon(self) -> str | None:
+        """
+        Transfer ownership of a completed write to cleanup.
+
+        Returns:
+            str | None: The completed path, or None if the worker still owns it.
+        """
+        with self._lock:
+            self._abandoned = True
+            return self._path
+
+
+async def _write_pcm_to_temp_wav_async(
+    *,
+    raw_pcm: bytes,
+    sample_rate_hz: int,
+    num_channels: int,
+    sample_width_bytes: int,
+) -> str:
+    """
+    Write the PCM to a new temp WAV file in a worker thread and return its path.
+
+    A worker thread cannot be stopped, so a cancelled caller would never learn the path of the
+    file the thread goes on to create. In that case the file is removed once the write finishes.
+
+    Args:
+        raw_pcm (bytes): Raw PCM audio samples (no WAV header).
+        sample_rate_hz (int): Sample rate of the PCM in Hz.
+        num_channels (int): Channel count.
+        sample_width_bytes (int): Bytes per sample.
+
+    Returns:
+        str: The path of the new temp WAV file.
+
+    Raises:
+        asyncio.CancelledError: If the caller is cancelled before the write finishes.
+    """
+    ownership = _TempWavWrite()
+
+    def write_owned_wav() -> str:
+        path = _write_pcm_to_temp_wav(
+            raw_pcm=raw_pcm,
+            sample_rate_hz=sample_rate_hz,
+            num_channels=num_channels,
+            sample_width_bytes=sample_width_bytes,
+        )
+        if not ownership.record_path(path):
+            _remove_abandoned_temp_wav(path)
+        return path
+
+    write = _submit_file_io(write_owned_wav)
+    try:
+        return await asyncio.shield(write)
+    except asyncio.CancelledError:
+        path = ownership.abandon()
+        if path is not None:
+            cleanup = _submit_file_io(partial(_remove_abandoned_temp_wav, path))
+            cleanup.add_done_callback(_report_abandoned_temp_wav_failure)
+        write.add_done_callback(_report_abandoned_temp_wav_failure)
+        raise
+
+
+def _remove_abandoned_temp_wav(path: str) -> None:
+    """Remove a temp WAV whose caller was cancelled."""
+    Path(path).unlink(missing_ok=True)
+
+
+def _report_abandoned_temp_wav_failure(work: asyncio.Future[Any]) -> None:
+    """Report failures from a write or removal after its caller was cancelled."""
+    if work.cancelled():
+        logger.error("An abandoned temporary WAV operation was unexpectedly cancelled.")
+    elif (error := work.exception()) is not None:
+        logger.error("Failed to finish an abandoned temporary WAV operation.", exc_info=error)
 
 
 def _write_pcm_to_temp_wav(

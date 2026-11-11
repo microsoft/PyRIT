@@ -15,8 +15,7 @@ from sqlalchemy import String, event, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import AnswerMatches, MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 
 
@@ -469,6 +468,37 @@ async def test_get_seeds_with_dataset_name_pattern_startswith(sqlite_instance: M
     assert all(seed.dataset_name.startswith("harm") for seed in result)
 
 
+async def test_add_seeds_mixed_case_url_schemes_hash_original_value(
+    sqlite_instance: MemoryInterface, tmp_path: Path
+) -> None:
+    """Regression test for #3861: mixed-case URL schemes hash the original spelling.
+
+    Before the fix, a mixed-case scheme was misclassified as a local file path and
+    ingestion raised FileNotFoundError; a future fix must not lowercase the stored
+    URL or its hash input either. No URL is fetched.
+    """
+    urls = [
+        "HTTPS://example.invalid/é?q=☃",
+        "HtTp://example.invalid/é?q=☃",
+        "https://example.invalid/é?q=☃",
+    ]
+    local_file = tmp_path / "seed.txt"
+    local_file.write_bytes(b"local-seed-content")
+
+    seeds = [SeedPrompt(value=url, dataset_name="dataset", data_type="url") for url in urls]
+    seeds.append(SeedPrompt(value=str(local_file), dataset_name="dataset", data_type="url"))
+
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+
+    stored = await sqlite_instance.get_seeds_async(dataset_name="dataset")
+    assert len(stored) == 4
+    by_value = {seed.value: seed for seed in stored}
+    for url in urls:
+        assert by_value[url].value == url
+        assert by_value[url].value_sha256 == sha256(url.encode("utf-8")).hexdigest()
+    assert by_value[str(local_file)].value_sha256 == sha256(b"local-seed-content").hexdigest()
+
+
 async def test_get_seeds_with_dataset_name_pattern_contains(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="prompt1", dataset_name="test_harm_dataset", data_type="text"),
@@ -766,7 +796,7 @@ async def test_get_seed_groups_with_list_filters_matches_decoded_elements(
 
 
 @pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
-async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
+async def test_seed_list_filters_require_explicit_patterns_and_ignore_case(
     sqlite_instance: MemoryInterface, field: str
 ) -> None:
     await sqlite_instance.add_seeds_to_memory_async(
@@ -774,10 +804,13 @@ async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
         added_by="test",
     )
 
-    for needle in ["ann", "a_n", "a%n", "\u00c9THIQUE"]:
+    for needle in ["ann", "\u00c9THIQUE", "\u00e9thique"]:
         result = await sqlite_instance.get_seeds_async(**{field: [needle]})
         assert [seed.value for seed in result] == ["match"]
-    assert await sqlite_instance.get_seeds_async(**{field: ["\u00e9thique"]}) == []
+    for pattern in ["a_n", "a%n"]:
+        assert await sqlite_instance.get_seeds_async(**{field: [pattern]}) == []
+        result = await sqlite_instance.get_seeds_async(**{f"{field}_patterns": [pattern]})
+        assert [seed.value for seed in result] == ["match"]
 
 
 @pytest.mark.parametrize(
@@ -795,8 +828,9 @@ def test_seed_list_substring_filters_decode_json_on_both_dialects(
     assert sql.count(expansion) == 2
     assert sql.count("EXISTS") == 2
     assert " AND " in sql
-    assert needle in compiled.params.values()
-    assert r"\u00e9" in compiled.params.values()
+    assert f"%{needle}%" in compiled.params.values()
+    assert r"%\u00e9%" in compiled.params.values()
+    assert "ESCAPE '/'" in sql
 
 
 async def test_get_seeds_with_substring_filters_groups(sqlite_instance: MemoryInterface):
@@ -1974,6 +2008,65 @@ async def test_get_seed_groups_filter_by_count(sqlite_instance: MemoryInterface)
     # Test without filtering (should return all)
     all_groups = await sqlite_instance.get_seed_groups_async()
     assert len(all_groups) == 2
+
+
+async def test_get_seed_groups_keeps_ungrouped_seeds_when_other_matches_are_grouped(sqlite_instance: MemoryInterface):
+    # Some loaders, like HarmBench, store seeds without a prompt_group_id.
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Text-only objective", dataset_name="text_only")], added_by="test_user"
+    )
+    grouped = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective", dataset_name="grouped"),
+            SeedPrompt(value="Describe this picture", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[grouped], added_by="test_user")
+
+    groups = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in groups) == [
+        ["Describe this picture", "Grouped objective"],
+        ["Text-only objective"],
+    ]
+
+    single_groups = await sqlite_instance.get_seed_groups_async(seed_type="objective", group_length=[1])
+    assert [group.seeds[0].value for group in single_groups] == ["Text-only objective"]
+
+
+async def test_get_seed_groups_keeps_multiple_ungrouped_and_grouped_matches(sqlite_instance: MemoryInterface):
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value="Ungrouped objective 1", dataset_name="text_only"),
+            SeedObjective(value="Ungrouped objective 2", dataset_name="text_only"),
+        ],
+        added_by="test_user",
+    )
+    grouped_one = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective 1", dataset_name="grouped"),
+            SeedPrompt(value="Grouped prompt 1", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    grouped_two = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective 2", dataset_name="grouped"),
+            SeedPrompt(value="Grouped prompt 2", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(
+        prompt_groups=[grouped_one, grouped_two], added_by="test_user"
+    )
+
+    groups = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in groups) == [
+        ["Grouped objective 1", "Grouped prompt 1"],
+        ["Grouped objective 2", "Grouped prompt 2"],
+        ["Ungrouped objective 1"],
+        ["Ungrouped objective 2"],
+    ]
+    # Every seed appears exactly once across all groups.
+    all_ids = [seed.id for group in groups for seed in group.seeds]
+    assert len(all_ids) == len(set(all_ids)) == 6
 
 
 async def test_replace_seeds_for_dataset_async_replaces_all(sqlite_instance: MemoryInterface):

@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.backend.models.targets import CreateTargetRequest
-from pyrit.backend.services.target_service import TargetService, get_target_service
+from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.services import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
@@ -261,6 +261,15 @@ class TestListTargetTypes:
         azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
         assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
 
+    async def test_types_report_no_auth_modes_for_credential_free_target_async(self) -> None:
+        """TextTarget needs no credentials, so its type entry advertises no auth modes."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "TextTarget")
+        assert entry.supported_auth_modes == []
+
     async def test_types_include_github_copilot_form_parameters_async(self) -> None:
         service = TargetService()
 
@@ -331,7 +340,7 @@ class TestListTargetTypes:
         assert targets_parameter.type_name == "list[str]"
         assert targets_parameter.is_list is True
         weights_parameter = next(param for param in types_entry.parameters if param.name == "weights")
-        assert weights_parameter.type_name == "list[int]"
+        assert weights_parameter.type_name == "list[int] | None"
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
@@ -1648,9 +1657,10 @@ class TestFrontendBackendCompatibilitySync:
                     continue
                 if parameter.choices:
                     continue
-                if parameter.type_name in scalar_types or parameter.type_name in simple_list_types:
+                type_name = parameter.type_name.removesuffix(" | None")
+                if type_name in scalar_types or type_name in simple_list_types:
                     continue
-                if parameter.type_name == "dict" or parameter.type_name.startswith("dict["):
+                if type_name == "dict" or type_name.startswith("dict["):
                     continue
                 unsupported_names.append(parameter.name)
             if unsupported_names:

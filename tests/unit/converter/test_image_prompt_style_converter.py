@@ -10,7 +10,7 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import ImagePromptStyleConverter
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 
 
@@ -57,6 +57,17 @@ def test_init_no_filter_uses_configured_root_seed(mock_target) -> None:
         second = ImagePromptStyleConverter(converter_target=mock_target)
 
         assert first._filter_name == second._filter_name
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_init_no_filter_is_identified_by_the_filter_it_draws(mock_target) -> None:
+    try:
+        for seed in range(10):
+            configure_random_seed(seed=seed)
+            converter = ImagePromptStyleConverter(converter_target=mock_target)
+
+            assert converter.get_identifier().params["filter_name"] == converter._filter_name
     finally:
         configure_random_seed(seed=None)
 
