@@ -235,7 +235,7 @@ function isAzureMlEndpoint(endpoint: string): boolean {
 interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: (target: TargetInstance) => void
+  onCreated: () => void
   /** Existing targets, passed from the parent to avoid a redundant API call. */
   existingTargets?: TargetInstance[]
 }
@@ -694,7 +694,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       setError(null)
 
       try {
-        const target = await targetsApi.createTarget({
+        await targetsApi.createTarget({
           name: nameValue,
           type: 'RoundRobinTarget',
           params: {
@@ -704,7 +704,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
           persist,
         })
         resetForm()
-        onCreated(target)
+        onCreated()
       } catch (err) {
         handleCreateError(err, persist)
       } finally {
@@ -764,7 +764,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
       }
 
-      const target = await targetsApi.createTarget({
+      await targetsApi.createTarget({
         name: nameValue,
         type: targetType,
         params,
@@ -774,7 +774,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       })
 
       resetForm()
-      onCreated(target)
+      onCreated()
     } catch (err) {
       handleCreateError(err, persist)
     } finally {
@@ -1075,9 +1075,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameRequired
-                        ? 'Enter the model or deployment name explicitly. To use environment configuration, select an initializer-registered target instead.'
-                        : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
                       required={modelNameRequired}
                       validationMessage={fieldErrors.modelName}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}
