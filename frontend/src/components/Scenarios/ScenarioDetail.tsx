@@ -598,7 +598,8 @@ function ScenarioLaunchForm({
       : JSON.stringify({ scenarioName: scenario.scenario_name, request: estimateRequest, generation: runtime.generation }),
     [estimateRequest, scenario.scenario_name, runtime.generation],
   )
-  const datasetMetadata = useScenarioDatasets()
+  const datasetMetadata = useScenarioDatasets(scenario.scenario_name,
+    supportsDatasets || scenarioDatasetDefaults(scenario).sources.length > 0)
   const runEstimate = useScenarioRunEstimate({
     scenarioName: scenario.scenario_name,
     request: estimateRequest,
@@ -621,11 +622,11 @@ function ScenarioLaunchForm({
   const reloadDatasetMetadata = datasetMetadata.reload
   const previousDatasetSelection = useRef(datasetSelectionKey)
   useEffect(() => {
-    if (previousDatasetSelection.current !== datasetSelectionKey) {
+    if (!defaultAssertScoring && previousDatasetSelection.current !== datasetSelectionKey) {
       previousDatasetSelection.current = datasetSelectionKey
       reloadDatasetMetadata()
     }
-  }, [datasetSelectionKey, reloadDatasetMetadata])
+  }, [datasetSelectionKey, reloadDatasetMetadata, defaultAssertScoring])
   const confirmedDatasetSettings = currentDatasetEstimate?.status === 'resolved'
     ? currentDatasetEstimate.datasetSettings : undefined
   const checkingRefreshPolicies = supportsDatasets && selectedDatasetNames.length > 0 && currentDatasetEstimate === null
@@ -679,7 +680,7 @@ function ScenarioLaunchForm({
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
-      datasetMetadata.reload()
+      if (!defaultAssertScoring) datasetMetadata.reload()
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
@@ -1040,7 +1041,10 @@ function ScenarioLaunchForm({
                   && confirmedDatasetSettings !== undefined
                   && !confirmedDatasetSettings.sources.some((source) => source.fetch === 'always'
                     && !datasetMetadata.items.some((item) => item.name === source.name && item.loaded))}
-                onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
+                onLoad={defaultAssertScoring ? undefined : () => {
+                  if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest)
+                }}
+                compatibleOnly={defaultAssertScoring}
                 required={defaultAssertScoring} showCatalogLink={false}
                 onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
               />

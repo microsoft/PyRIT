@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { datasetsApi, scenariosApi } from '@/services/api'
+import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { DatasetInfo, ScenarioRunSizeEstimateRequest } from '@/types'
+import type { DatasetInfo, DatasetListResponse, ScenarioRunSizeEstimateRequest } from '@/types'
 
 import { useRuntime } from './useRuntime'
 
 interface DatasetSnapshot {
   key: string
   generation: string
+  scenarioName: string
   items: DatasetInfo[]
   error: string | null
 }
 
 /** Page-scoped metadata cache with an explicit, missing-only load action. */
-export function useScenarioDatasets() {
+export function useScenarioDatasets(scenarioName: string, enabled = true) {
   const runtime = useRuntime()
   const [snapshot, setSnapshot] = useState<DatasetSnapshot | null>(null)
   const [reloadCount, setReloadCount] = useState(0)
@@ -22,8 +23,14 @@ export function useScenarioDatasets() {
   const generationRef = useRef(runtime.generation)
   const mountedRef = useRef(true)
   const pendingRef = useRef<Promise<void> | null>(null)
+  const listingRef = useRef<{
+    key: string
+    controller: AbortController
+    response: Promise<DatasetListResponse>
+  } | null>(null)
+  const ready = runtime.ready && enabled && scenarioName !== ''
   const reload = useCallback(() => { setReloadCount((count) => count + 1) }, [])
-  const key = JSON.stringify([runtime.generation, runtime.ready, reloadCount])
+  const key = JSON.stringify([scenarioName, runtime.generation, ready, reloadCount])
 
   useEffect(() => { generationRef.current = runtime.generation }, [runtime.generation])
   useEffect(() => {
@@ -54,33 +61,47 @@ export function useScenarioDatasets() {
   }
 
   useEffect(() => {
-    if (!runtime.ready) return
-    const controller = new AbortController()
+    if (!ready) {
+      listingRef.current?.controller.abort()
+      listingRef.current = null
+      return
+    }
+    if (listingRef.current?.key !== key) {
+      listingRef.current?.controller.abort()
+      const controller = new AbortController()
+      listingRef.current = {
+        key, controller, response: scenariosApi.listCompatibleDatasets(scenarioName, controller.signal),
+      }
+    }
+    const listing = listingRef.current
+    let ignore = false
     const load = async (): Promise<void> => {
       try {
-        const data = await datasetsApi.listDatasets({ loaded_only: false }, controller.signal)
-        if (controller.signal.aborted) return
+        const data = await listing.response
+        if (ignore) return
         setSnapshot({
           key,
           generation: runtime.generation,
+          scenarioName,
           items: data.items.filter((item) => item.selection_key !== 'dataset:unnamed'),
           error: null,
         })
       } catch (err: unknown) {
-        if (!controller.signal.aborted) setSnapshot({
-          key, generation: runtime.generation, items: [], error: toApiError(err).detail,
+        if (!ignore) setSnapshot({
+          key, generation: runtime.generation, scenarioName, items: [], error: toApiError(err).detail,
         })
       }
     }
     void load()
-    return () => { controller.abort() }
-  }, [key, runtime.ready, runtime.generation])
+    return () => { ignore = true }
+  }, [key, ready, scenarioName, runtime.generation])
 
-  const current = runtime.ready && snapshot?.key === key ? snapshot : null
+  const current = ready && snapshot?.key === key ? snapshot : null
   return {
-    items: runtime.ready && snapshot?.generation === runtime.generation ? snapshot.items : [],
+    items: ready && snapshot?.generation === runtime.generation && snapshot.scenarioName === scenarioName
+      ? snapshot.items : [],
     error: current?.error ?? null,
-    loading: runtime.ready && current === null,
+    loading: ready && current === null,
     reload,
     loadSelected,
     preparing: operation?.generation === runtime.generation && operation.busy,

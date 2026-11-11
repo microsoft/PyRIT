@@ -368,6 +368,42 @@ external filesystem/blob modifications outside PyRIT's memory APIs do not
 participate in this protocol. Deploy the new Alembic migration before starting
 backends configured to require an already-current Azure SQL schema.
 
+### Scenario dataset compatibility
+
+`GET /api/scenarios/catalog/{scenario_name}/datasets` supplies scenario-compatible named
+choices without fetching providers or calling models. The source options still apply:
+`ANY` retains the general catalog, while `SUBSET` and `FIXED` retain permitted sources
+and mandatory ingredient metadata. Ingredients are not certified as standalone attack
+populations. For structural requirements, bounded stored facts can disprove suitability
+but never prove a schema valid; full population checks certify the stored choices.
+
+`POST /api/scenarios/catalog/{scenario_name}/datasets/assess` accepts the scenario estimate
+configuration and returns structured reasons plus separate technique/baseline coverage.
+The default assessment uses stored facts only. `?validate_selected=true` validates the
+selected groups through the shared SDK checker without fetching providers. Techniques can
+have disjoint usable subsets; the selection cap applies to their usable union. Launch and
+resume validate the actual stored contents again using existing seed and execution identities.
+
+ASSERT requires valid policy metadata and native case inputs independently of selected
+techniques or provenance. Imported valid groups work. Its default `assert_package` sends
+stored prompt cases directly, or uses the existing red-teaming attack with ASSERT tester
+framing and stored tester instructions for conversation cases. The optional baseline
+sends stored user prompts. Malformed policy/case groups are rejected even under `skip`;
+incompatible individual techniques retain shared skip/raise behavior.
+
+`assert_package_spanish` uses the existing `TranslationConverter` with the supplied or
+configured adversarial chat to translate target-bound user requests, including later
+conversation turns. Stored system/policy context, tester controls, judges and baseline
+are not translated. The original `assert_package` remains the unconverted default.
+The generation GUI recommends including tester instructions; SDK generation defaults
+remain unchanged.
+
+The ASSERT picker loads its compatible snapshot once per scenario/runtime and offers
+Retry after a failed read; form/technique edits do not reload it. Generic scanners keep
+their existing manual missing-only Load action, loading-policy choices, Reset, source
+safeguards and metadata refresh. Preset editing remains read-only. General dataset
+browsing is unfiltered. No automatic provider preparation is introduced here.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,

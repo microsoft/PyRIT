@@ -439,7 +439,7 @@ describe('AssertGenerationForm', () => {
     await user.type(screen.getByTestId('assert-group-count'), '40')
     await user.clear(screen.getByTestId('assert-category-count'))
     await user.type(screen.getByTestId('assert-category-count'), '10')
-    await user.click(screen.getByRole('checkbox', { name: /Include an adversarial prompt/ }))
+    await user.click(screen.getByRole('checkbox', { name: /Include tester instructions/ }))
     await user.click(screen.getByRole('checkbox', { name: 'Include a user prompt in each seed group' }))
 
     await waitFor(() => expect(lastPreflightBody()?.request).toEqual(expect.objectContaining({

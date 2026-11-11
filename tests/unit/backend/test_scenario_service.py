@@ -24,12 +24,18 @@ from pyrit.backend.services import (
     ScenarioService,
     get_scenario_service,
 )
+from pyrit.backend.services.dataset_service import DatasetService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
     _metadata_to_registered_scenario,
 )
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import SQLiteMemory
 from pyrit.models import (
+    AssertGroupMetadata,
+    AttackSeedGroup,
+    DatasetSelectionMode,
     Parameter,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
@@ -37,11 +43,15 @@ from pyrit.models import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
     ScenarioTechniqueSummary,
+    SeedGroupRequirements,
+    SeedMetadataRequirement,
+    SeedObjective,
+    SeedPrompt,
 )
 from pyrit.models.catalog import RegisteredScenario
 from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import Scenario
+from pyrit.scenario import DatasetSource, Scenario, ScenarioRequiredData
 from pyrit.scenario.core import (
     AttackTechniqueFactory,
     DatasetAttackConfiguration,
@@ -50,8 +60,9 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
 )
 from pyrit.scenario.scenarios.airt import Scam
-from pyrit.scenario.scenarios.garak import Exploitation
+from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, FigStep
 from pyrit.score import SubStringScorer
+from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
 
@@ -200,6 +211,140 @@ def test_catalog_support_names_match_real_scenario_declarations(scenario_class: 
     assert "dataset_config" not in [parameter.name for parameter in summary.supported_parameters]
     assert "scenario_techniques" in summary.supported_parameter_names
     assert "memory_labels" in summary.supported_parameter_names
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+@pytest.mark.parametrize("scenario_class", [Scam, FigStep, ApiKey])
+async def test_compatible_listing_respects_real_scenario_sources_without_loading_async(
+    *, sqlite_instance: SQLiteMemory, scenario_class: type[Scenario]
+) -> None:
+    required_names = ApiKey.required_datasets()
+    stored_names = {"figstep", "other", required_names[0]}
+    all_names = {*stored_names, "figstep_pro", "airt_scams", *required_names}
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            *(SeedObjective(value=f"Stored {name}.", dataset_name=name) for name in sorted(stored_names)),
+            SeedObjective(value="Unnamed example."),
+        ],
+        added_by="test",
+    )
+    with (
+        patch.object(ScenarioRegistry, "_discover"),
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=SubStringScorer(substring="test")),
+        override_default_adversarial_target(MockPromptTarget()),
+    ):
+        registry = ScenarioRegistry()
+        registry.register_class(scenario_class, name="test.source_options")
+        scenario = registry.create_instance("test.source_options")
+        assert scenario.get_dataset_requirements() == SeedGroupRequirements()
+        options = scenario.get_dataset_options()
+        expected_names = (
+            all_names
+            if options.mode is DatasetSelectionMode.ANY
+            else (set(required_names) if options.mode is DatasetSelectionMode.FIXED else set(options.allowed_names))
+        )
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as discovery,
+            patch("pyrit.backend.services.scenario_service.get_dataset_service", return_value=DatasetService()),
+            patch.object(
+                sqlite_instance, "get_seeds_async", side_effect=AssertionError("Listing must not hydrate seeds.")
+            ),
+            patch.object(Scenario, "load_datasets_async", side_effect=AssertionError("Listing must not prepare data.")),
+        ):
+            discovery.return_value = sorted(all_names - stored_names)
+            service = ScenarioService()
+            result = await service.list_compatible_datasets_async(scenario_name="test.source_options")
+            assessment = await service.assess_datasets_async(
+                scenario_name="test.source_options", request=ScenarioRunSizeEstimateRequest()
+            )
+        assert result is not None
+        assert {item.name for item in result.items} == expected_names
+        assert {item.name for item in result.items if item.loaded} == expected_names & stored_names
+        assert all(item.selection_key != "dataset:unnamed" for item in result.items)
+        assert assessment is not None
+        assert {item.name for item in assessment.items} == expected_names
+        if scenario_class is ApiKey:
+            assert scenario._default_dataset_config.dataset_names == []
+            assert all(item.selected for item in assessment.items)
+
+
+@pytest.mark.usefixtures("patch_central_database", "block_dataset_provider_lookup")
+async def test_compatible_listing_keeps_required_ingredients_but_validates_population_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    class RequiredPolicyScenario(Scam):
+        def get_required_data(self) -> ScenarioRequiredData:
+            return ScenarioRequiredData(
+                sources=[DatasetSource(name="required_template"), DatasetSource(name="required_unloaded")]
+            )
+
+        def get_dataset_requirements(self) -> SeedGroupRequirements:
+            return SeedGroupRequirements(
+                required_user_prompt=True,
+                metadata=(
+                    SeedMetadataRequirement(
+                        name="assert_generation",
+                        key=AssertGroupMetadata.METADATA_KEY,
+                        description="ASSERT policy metadata",
+                        validator=AssertGroupMetadata.from_metadata,
+                    ),
+                ),
+            )
+
+    valid = make_assert_result(config=make_assert_config(group_count=1, include_adversarial_prompt=False)).seed_groups[
+        0
+    ]
+    for seed in valid.seeds:
+        seed.dataset_name = "valid_population"
+    malformed = AttackSeedGroup(
+        seeds=[
+            SeedObjective(
+                value="Malformed policy case.",
+                dataset_name="malformed_population",
+                metadata={AssertGroupMetadata.METADATA_KEY: {}},
+            ),
+            SeedPrompt(value="Malformed policy request.", dataset_name="malformed_population", role="user"),
+        ]
+    )
+    template = SeedPrompt(value="Required template.", dataset_name="required_template", role="user")
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            template,
+            *valid.seeds,
+            *malformed.seeds,
+            SeedObjective(value="No user prompt.", dataset_name="missing_prompt"),
+        ],
+        added_by="test",
+    )
+    with (
+        patch.object(ScenarioRegistry, "_discover"),
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=SubStringScorer(substring="test")),
+        override_default_adversarial_target(MockPromptTarget()),
+    ):
+        registry = ScenarioRegistry()
+        registry.register_class(RequiredPolicyScenario, name="test.required_policy")
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as discovery,
+            patch("pyrit.backend.services.scenario_service.get_dataset_service", return_value=DatasetService()),
+            patch.object(Scenario, "load_datasets_async", side_effect=AssertionError("Listing must not prepare data.")),
+            patch.object(
+                ScenarioRequiredData, "load_async", side_effect=AssertionError("Listing must not assemble ingredients.")
+            ),
+        ):
+            discovery.return_value = ["required_unloaded", "unloaded_population"]
+            result = await ScenarioService().list_compatible_datasets_async(scenario_name="test.required_policy")
+    assert result is not None
+    assert {item.name: item.loaded for item in result.items} == {
+        "required_template": True,
+        "required_unloaded": False,
+        "valid_population": True,
+    }
+    requirements = RequiredPolicyScenario().get_dataset_requirements()
+    assert not requirements.check(seed_group=valid)
+    assert requirements.check(seed_group=malformed)
+    assert template.prompt_group_id is None
 
 
 def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> None:

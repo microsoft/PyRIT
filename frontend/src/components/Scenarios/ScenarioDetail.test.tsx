@@ -45,6 +45,8 @@ jest.mock('@/services/api', () => ({
   scenarioPresetsApi: { get: jest.fn() },
   promptGeneratorsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
   scenariosApi: {
+    listCompatibleDatasets: jest.fn(),
+    loadDatasets: jest.fn(),
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
     startRun: jest.fn(),
@@ -384,6 +386,16 @@ describe('ScenarioDetail', () => {
     mockListTargets.mockReset()
     mockStartRun.mockReset()
     mockGetScenario.mockResolvedValue(makeScenario())
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockReset().mockResolvedValue({
+      items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
+        name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+        logical_examples: 8, modalities: ['text', 'image_path', 'audio_path'],
+        harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
+      })),
+    })
+    jest.mocked(scenariosApi.loadDatasets).mockReset().mockResolvedValue({
+      items: [], settings: { sources: [], max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {} },
+    })
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
     mockStartRun.mockResolvedValue({ scenario_result_id: 'sr-default' })
     mockTechniques.getConfiguration.mockReset()
@@ -2363,7 +2375,7 @@ describe('ScenarioDetail', () => {
   it.each(['user', 'unknown'])('warns before replacing %s data and confirms through Run preview', async (origin) => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    jest.mocked(datasetsApi.listDatasets).mockResolvedValueOnce({ items: [{
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockResolvedValueOnce({ items: [{
       name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
       logical_examples: 8, origins: [origin], modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
     }] })
@@ -2396,7 +2408,7 @@ describe('ScenarioDetail', () => {
 
   it('shows a replacement warning when dataset metadata cannot be checked', async () => {
     const user = userEvent.setup()
-    jest.mocked(datasetsApi.listDatasets).mockRejectedValueOnce(new Error('Metadata unavailable'))
+    jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Metadata unavailable'))
     mockEstimateRun.mockResolvedValue({
       ...makeEstimate(8), effective_datasets: {
         sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: false }],
@@ -3399,6 +3411,29 @@ describe('ScenarioDetail', () => {
   describe('dataset links', () => {
     const SCENARIO_PATH = '/scanner/launch/foundry.red_team_agent'
 
+    it('loads ASSERT-compatible choices once without provider work on technique, parameter or selection edits', async () => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValue(makeScenario({
+        scenario_name: 'foundry.assert_policy',
+        supported_parameters: [
+          { name: 'max_turns', type_name: 'int', default: 6, required: false },
+        ],
+      }))
+      renderDetail('/scanner/launch/foundry.assert_policy')
+      await screen.findByText('harmbench (unknown)')
+      const turns = screen.getByTestId('scenario-param-max_turns')
+      await user.clear(turns)
+      await user.type(turns, '12')
+      await user.click(screen.getByRole('checkbox', { name: 'crescendo', exact: true }))
+      await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+      await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+      expect(scenariosApi.listCompatibleDatasets).toHaveBeenCalledTimes(1)
+      expect(scenariosApi.loadDatasets).not.toHaveBeenCalled()
+      expect(datasetsApi.listDatasets).not.toHaveBeenCalled()
+      expect(screen.queryByRole('button', { name: /Reset datasets|Load datasets/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('switch', { name: 'Show incompatible' })).not.toBeInTheDocument()
+    })
+
     it('keeps every linked dataset name, including unknown ones, for the server to validate', async () => {
       const user = userEvent.setup()
       renderDetail(`${SCENARIO_PATH}?dataset=ds_a&dataset=missing_set&dataset=ds_b&dataset=ds_a`)
@@ -3418,7 +3453,7 @@ describe('ScenarioDetail', () => {
     })
 
     it('keeps linked datasets when the catalog is unavailable', async () => {
-      jest.mocked(datasetsApi.listDatasets).mockRejectedValueOnce(new Error('Catalog offline'))
+      jest.mocked(scenariosApi.listCompatibleDatasets).mockRejectedValueOnce(new Error('Catalog offline'))
       renderDetail(`${SCENARIO_PATH}?dataset=ds_a`)
 
       expect(await screen.findByText(/Catalog offline/)).toBeInTheDocument()

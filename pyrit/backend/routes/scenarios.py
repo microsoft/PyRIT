@@ -31,6 +31,7 @@ from pyrit.analytics import (
 )
 from pyrit.backend.models import (
     ConversationMessagesResponse,
+    DatasetListResponse,
     ListRegisteredScenariosResponse,
     ProblemDetail,
     ScenarioRunListResponse,
@@ -57,6 +58,7 @@ from pyrit.models import (
     ScenarioRunState,
 )
 from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.dataset_compatibility import ScenarioDatasetCompatibility
 from pyrit.models.scenario_readiness import ScenarioReadiness
 
 logger = logging.getLogger(__name__)
@@ -156,6 +158,23 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
     )
 
 
+@router.get("/catalog/{scenario_name:path}/datasets", response_model=DatasetListResponse)
+async def list_compatible_scenario_datasets_async(scenario_name: IdentifierStr) -> DatasetListResponse:
+    """
+    List verified scenario-compatible choices without fetching providers or starting a scan.
+
+    Returns:
+        DatasetListResponse: Named datasets satisfying the scenario's data contract.
+    """
+    try:
+        result = await get_scenario_service().list_compatible_datasets_async(scenario_name=scenario_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
+
+
 @router.get(
     "/catalog/{scenario_name:path}",
     response_model=RegisteredScenario,
@@ -222,6 +241,33 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
             detail=f"Scenario '{scenario_name}' not found",
         )
     return estimate
+
+
+@router.post(
+    "/catalog/{scenario_name:path}/datasets/assess",
+    response_model=ScenarioDatasetCompatibility,
+)
+async def assess_scenario_datasets_async(
+    *,
+    scenario_name: IdentifierStr,
+    request: ScenarioRunSizeEstimateRequest,
+    validate_selected: bool = Query(False, description="Validate stored selected contents; never fetch providers"),
+) -> ScenarioDatasetCompatibility:
+    """
+    Assess candidate hints or fully validate selected stored data without starting a scan.
+
+    Returns:
+        ScenarioDatasetCompatibility: Structural hints and optional verified selected coverage.
+    """
+    try:
+        result = await get_scenario_service().assess_datasets_async(
+            scenario_name=scenario_name, request=request, validate_selected=validate_selected
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
 
 
 @router.post(

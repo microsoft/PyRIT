@@ -36,6 +36,14 @@ jest.mock('@/services/api', () => ({
     update: jest.fn(),
   },
   scenariosApi: {
+    listCompatibleDatasets: jest.fn().mockResolvedValue({
+      items: ['harmbench', 'xstest'].map((name) => ({
+        name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+        logical_examples: 8, modalities: ['text'], harm_categories: ['violence'],
+        has_unlabeled_harm_categories: false,
+      })),
+    }),
+    loadDatasets: jest.fn(),
     listCatalog: jest.fn(),
     getScenario: jest.fn(),
     estimateRun: jest.fn(),

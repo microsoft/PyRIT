@@ -18,7 +18,7 @@ from unit.assert_mocks import make_assert_config, make_assert_result, make_asser
 from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_scenario_statistics
-from pyrit.converter import Base64Converter
+from pyrit.converter import Base64Converter, TranslationConverter
 from pyrit.datasets import AssertProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
@@ -43,6 +43,7 @@ from pyrit.models import (
     SeedObjective,
     construct_response_from_request,
 )
+from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, SourceRegistry
 from pyrit.scenario import (
@@ -826,7 +827,10 @@ async def test_resume_rejects_changed_judge_or_run_settings_async(
     first, args = build(original)
     await harness.initialize_async(first, **args)
     resumed, changed_args = build(changed, scenario_result_id=first._scenario_result_id)
-    with pytest.raises(ValueError, match="matching configuration|does not match the current configuration"):
+    with pytest.raises(
+        ValueError,
+        match="matching configuration|does not match the current configuration|saved scenario dependencies changed",
+    ):
         await harness.initialize_async(resumed, **changed_args)
 
 
@@ -1133,18 +1137,189 @@ async def test_assert_package_gives_each_group_its_own_instructions_async(harnes
         assert sum(text in system for text in instructions) == 1
 
 
-async def test_assert_package_needs_tester_instructions_async(harness: _Harness) -> None:
+@pytest.mark.parametrize("conversation_case", [False, True])
+async def test_spanish_variant_translates_native_target_requests_not_baseline_or_controls_async(
+    harness: _Harness, conversation_case: bool
+) -> None:
+    source = _result(group_count=1, include_adversarial_prompt=conversation_case)
+    await _store_async(name="assert_a", result=source)
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("assert_package"), _technique("assert_package_spanish")],
+        max_turns=3,
+        **_datasets("assert_a"),
+    )
+    translations: list[str] = []
+    prefix = "Solicitud traducida: "
+
+    async def adversarial_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1]
+        if "[TRANSLATE_START]" not in request.get_value():
+            return await harness.adversarial_async(normalized_conversation=normalized_conversation)
+        assert "spanish" in request.get_value().lower()
+        original = request.get_piece().original_value
+        translations.append(original)
+        return _reply(request, value=f"{prefix}{original}")
+
+    with (
+        harness.patched(),
+        patch.object(harness.adversarial, "_send_prompt_to_target_async", side_effect=adversarial_async),
+    ):
+        result = await scenario.run_async()
+
+    expected_turns = 3 if conversation_case else 1
+    outgoing = [request[-1].get_value() for request in harness.target_requests]
+    assert len(outgoing) == 1 + 2 * expected_turns
+    assert len(translations) == expected_turns
+    assert [value.removeprefix(prefix) for value in outgoing if value.startswith(prefix)] == translations
+    assert translations[0] == "Explain the return policy for item 0."
+    assert outgoing.count("Explain the return policy for item 0.") == 2  # Baseline and unconverted ASSERT.
+    assert all(request[0].get_value() == _SYSTEM_A for request in harness.target_requests)
+    assert all(not value.startswith(("<target_response>", "Begin the conversation")) for value in translations)
+    if conversation_case:
+        assert translations[1:] == ["Tester follow-up 3.", "Tester follow-up 4."]
+        assert harness.adversarial_requests == [f"<target_response>\n{_SAFE_REPLY}\n</target_response>"] * 4
+        assert all(_ASSERT_TESTER in system for system in harness.adversarial_systems)
+    else:
+        assert harness.adversarial_requests == []
+    assert len(harness.judge_systems) == 6
+    assert all(prefix not in system for system in harness.judge_systems)
+    assert sum(len(items) for items in result.attack_results.values()) == 3
+    units = {unit.atomic_attack_name.split("__")[0]: unit for unit in scenario._atomic_attacks}
+    for name in ("baseline", "assert_package"):
+        assert units[name].attack_technique.attack._request_converters == []
+    (configuration,) = units["assert_package_spanish"].attack_technique.attack._request_converters
+    (converter,) = configuration.converters
+    assert isinstance(converter, TranslationConverter)
+    assert converter.converter_target is harness.adversarial
+    assert units["assert_package_spanish"].technique_eval_hash != units["assert_package"].technique_eval_hash
+
+
+async def test_spanish_variant_resume_keeps_converter_and_native_execution_identity_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    args = {
+        "scenario_techniques": [_technique("assert_package_spanish")],
+        "include_baseline": False,
+        **_datasets("assert_a"),
+    }
+    original = await harness.initialize_async(harness.scenario(), **args)
+    restored = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    assert restored._build_run_plan() == original._build_run_plan()
+    assert restored._atomic_attacks[0].technique_eval_hash == original._atomic_attacks[0].technique_eval_hash
+    assert (
+        original._atomic_attacks[0].seed_groups[0].logical_id == restored._atomic_attacks[0].seed_groups[0].logical_id
+    )
+
+
+async def test_spanish_prompt_case_requires_an_explicitly_configured_translation_role_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    with (
+        patch(
+            "pyrit.scenario.scenarios.foundry.assert_policy.get_default_adversarial_target",
+            side_effect=TargetRoleConfigurationError(role="adversarial_chat"),
+        ),
+        pytest.raises(ScenarioConfigurationError, match="adversarial_chat"),
+    ):
+        await harness.initialize_async(
+            AssertPolicy(judge_target=harness.judge),
+            scenario_techniques=[_technique("assert_package_spanish")],
+            include_baseline=False,
+            **_datasets("assert_a"),
+        )
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+async def test_assert_package_runs_mixed_prompt_and_conversation_cases_async(harness: _Harness, policy: str) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))
     await _store_async(
         name="assert_b", result=_result(include_adversarial_prompt=False, group_count=1, system_prompt=_SYSTEM_B)
     )
     args = {"include_baseline": False, **_datasets("assert_a", "assert_b")}
-    scenario = await harness.initialize_async(harness.scenario(), **args)
-    (attack,) = scenario._atomic_attacks
-    assert attack.seed_groups[0].adversarial_prompts is not None
+    scenario = await harness.initialize_async(harness.scenario(), incompatible_technique_policy=policy, **args)
+    assert len(scenario._atomic_attacks) == 2
+    assert {type(attack.attack_technique.attack) for attack in scenario._atomic_attacks} == {
+        PromptSendingAttack,
+        RedTeamingAttack,
+    }
+    assert {attack.display_group for attack in scenario._atomic_attacks} == {"assert_package"}
 
-    with pytest.raises(IncompatibleTechniqueError, match="stores no tester instructions"):
-        await harness.initialize_async(harness.scenario(), incompatible_technique_policy="raise", **args)
+
+@pytest.mark.parametrize("converted", [False, True])
+@pytest.mark.parametrize("multi_turn_target", [False, True])
+async def test_default_assert_package_runs_prompt_cases_without_a_comparison_baseline_async(
+    harness: _Harness, converted: bool, multi_turn_target: bool
+) -> None:
+    await _store_async(name="prompt_cases", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": multi_turn_target})
+    )
+    scenario = harness.scenario()
+    result = await harness.run_async(
+        scenario,
+        include_baseline=False,
+        technique_converters={"assert_package": [Base64Converter()]} if converted else {},
+        **_datasets("prompt_cases"),
+    )
+    (unit,) = scenario._atomic_attacks
+    assert isinstance(unit.attack_technique.attack, PromptSendingAttack)
+    assert unit.display_group == "assert_package"
+    assert unit.seed_groups[0].adversarial_prompts is None
+    assert harness.adversarial_requests == []
+    assert len(harness.target_requests) == 1
+    prompt = "Explain the return policy for item 0."
+    assert harness.target_requests[0][-1].get_value() == (
+        base64.b64encode(prompt.encode()).decode() if converted else prompt
+    )
+    assert len(harness.judge_systems) == 2
+    assert sum(len(items) for items in result.attack_results.values()) == 1
+
+
+async def test_explicit_scoring_target_is_used_by_every_assert_judge_async(harness: _Harness) -> None:
+    await _store_async(name="prompt_cases", result=_result(include_adversarial_prompt=False, group_count=1))
+    selected = MockPromptTarget()
+    selected.set_model_name(model_name="selected-assert-judge")
+    scenario = await harness.initialize_async(
+        harness.scenario(), scoring_target=selected, include_baseline=False, **_datasets("prompt_cases")
+    )
+    assert all(
+        scorer.get_chat_target() is selected for judges in scenario._judges_by_policy.values() for scorer in judges.all
+    )
+    bindings = [binding for binding in scenario.get_readiness().bindings if binding.role == "scoring_target"]
+    assert len(bindings) == 1
+    assert bindings[0].identifier.hash == selected.get_identifier().hash
+
+
+def test_assert_readiness_reports_the_missing_judge_role_before_reading_data(harness: _Harness) -> None:
+    scenario = AssertPolicy(adversarial_chat=harness.adversarial)
+    scenario.set_params_from_args(args={"objective_target": harness.objective})
+    with patch(
+        "pyrit.scenario.core.scenario.get_default_scorer_target",
+        side_effect=TargetRoleConfigurationError(role="objective_scorer_chat"),
+    ):
+        readiness = scenario.get_readiness()
+    assert [issue.role for issue in readiness.issues] == ["scoring_target"]
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+@pytest.mark.parametrize("description", [None, "   "])
+async def test_malformed_conversation_case_never_falls_back_to_prompt_sending_async(
+    harness: _Harness, policy: str, description: str | None
+) -> None:
+    group = _result(group_count=1).seed_groups[0]
+    prompts = group.adversarial_prompts
+    assert prompts is not None and prompts.system_prompt is not None
+    prompts = prompts.model_copy(
+        update={"system_prompt": prompts.system_prompt.model_copy(update={"description": description})}
+    )
+    group.adversarial_prompts = prompts
+    group.objective.metadata = {**(group.objective.metadata or {}), **prompts.to_metadata()}
+    with pytest.raises(ValueError, match="stores no tester instructions"):
+        await harness.initialize_async(
+            harness.scenario(),
+            dataset_config=DatasetAttackConfiguration(seed_groups=[group]),
+            include_baseline=False,
+            incompatible_technique_policy=policy,
+        )
 
 
 async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness: _Harness) -> None:
@@ -1215,7 +1390,8 @@ async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harn
         include_baseline=False,
         **_datasets("assert_b"),
     )
-    assert {attack.display_group for attack in scenario._atomic_attacks} == {"prompt_sending"}
+    expected = {"prompt_sending", "assert_package"} if technique == "assert_package" else {"prompt_sending"}
+    assert {attack.display_group for attack in scenario._atomic_attacks} == expected
 
 
 async def test_turn_settings_a_technique_sets_itself_are_kept_async(harness: _Harness) -> None:
