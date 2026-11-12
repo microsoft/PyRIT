@@ -660,7 +660,11 @@ def _taxonomy_with_category_names(taxonomy: AssertTaxonomy, *names: str) -> Asse
 
 @pytest.mark.parametrize(
     "returned_name",
-    ["Another Customer\u0019s Order Details", "Another Customer's Order Details", "another customer\u2019s order details"],
+    [
+        "Another Customer\u0019s Order Details",
+        "Another Customer's Order Details",
+        "another customer\u2019s order details",
+    ],
     ids=["control-character", "straight-apostrophe", "case"],
 )
 async def test_category_names_with_mangled_punctuation_match_the_taxonomy_async(
@@ -686,9 +690,7 @@ async def test_category_names_with_mangled_punctuation_match_the_taxonomy_async(
     assert transport.await_count == 1
     (saved,) = await sqlite_instance.get_scores_async(score_ids=[score.id])
     assert saved.get_value() is True
-    assert json.loads(saved.score_metadata["assert_node_judgments"]) == [
-        _category_node(name=canonical, violated=True)
-    ]
+    assert json.loads(saved.score_metadata["assert_node_judgments"]) == [_category_node(name=canonical, violated=True)]
     assert json.loads(saved.score_metadata["assert_judgment_warnings"]) == [f"normalized_node_name:{canonical}"]
 
 
