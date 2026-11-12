@@ -1227,6 +1227,18 @@ class TestResolveMediaUrl:
         url = "https://acct.blob.core.windows.net/container/image.png"
         assert _resolve_media_url(value=url, data_type="image_path") == url
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "HTTPS://acct.blob.core.windows.net/container/image.png",
+            "Http://example.test/image.png",
+            "DATA:image/png;base64,AAAA",
+        ],
+    )
+    def test_mixed_case_schemes_pass_through(self, value: str) -> None:
+        """Schemes are case-insensitive; mixed-case URLs and data URIs are returned as-is."""
+        assert _resolve_media_url(value=value, data_type="image_path") == value
+
     def test_local_file_returns_media_url(self) -> None:
         """Local file paths are converted to /api/media URLs."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
