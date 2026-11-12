@@ -113,6 +113,7 @@ if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 logger = logging.getLogger(__name__)
 
@@ -1198,6 +1199,19 @@ class Scenario(ABC):
             factories[local_factory.name] = local_factory
         return factories
 
+    @staticmethod
+    def _get_target_requirements(factory: "AttackTechniqueFactory") -> "TechniqueRequirements":
+        """
+        Return the effective technique requirements used by readiness and execution.
+
+        Args:
+            factory (AttackTechniqueFactory): The selected attack technique.
+
+        Returns:
+            TechniqueRequirements: Effective requirements for the selected technique.
+        """
+        return factory.requirements
+
     def _check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
         """
         Check scenario-owned generation consumers in addition to the selected factories.
@@ -1222,7 +1236,7 @@ class Scenario(ABC):
                 factory
                 for factory in selected
                 if factory is None
-                or not factory.requirements.check_target(
+                or not self._get_target_requirements(factory).check_target(
                     target=self._objective_target,
                     attack_class=factory.attack_class,
                 )
@@ -1294,7 +1308,7 @@ class Scenario(ABC):
                 )
             )
             if self._objective_target is not None:
-                errors = factory.requirements.check_target(
+                errors = self._get_target_requirements(factory).check_target(
                     target=self._objective_target, attack_class=factory.attack_class
                 )
                 compatible += not errors
@@ -1387,7 +1401,7 @@ class Scenario(ABC):
                     if (
                         self._objective_target is not None
                         and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-                        and factory.requirements.check_target(
+                        and self._get_target_requirements(factory).check_target(
                             target=self._objective_target, attack_class=factory.attack_class
                         )
                     ):
@@ -1864,6 +1878,20 @@ class Scenario(ABC):
 
         self._atomic_attacks = retained_attacks
 
+    def _get_identity_params(self) -> dict[str, Any]:
+        """
+        Return the scenario's own parameters recorded in its identity.
+
+        The framework common inputs are excluded: they are captured through the dedicated
+        identity fields and are often live, non-JSON-serializable objects. Saved launches
+        restore these parameters on resume.
+
+        Returns:
+            dict[str, Any]: The custom parameters that identify this run.
+        """
+        common_names = self._common_scenario_parameter_names()
+        return {name: value for name, value in self.params.items() if name not in common_names}
+
     def _build_scenario_identifier(self) -> ScenarioIdentifier:
         """
         Build the canonical ``ScenarioIdentifier`` for the current run.
@@ -1879,15 +1907,9 @@ class Scenario(ABC):
         # Required data first, so moving ingredients out of dataset_config keeps stored identities.
         required = self._required_data.dataset_names if self._required_data is not None else []
         datasets = [*required, *self._dataset_config.dataset_names]
-        # Persist only the scenario's own custom params. The framework common inputs
-        # (objective_target, techniques, dataset config, ...) are captured through the
-        # dedicated identity fields below and are often live, non-JSON-serializable
-        # objects, so they must not leak into the free-form params dict.
-        common_names = self._common_scenario_parameter_names()
-        custom_params = {name: value for name, value in self.params.items() if name not in common_names}
         return ScenarioIdentifier.of(
             self,
-            params=custom_params,
+            params=self._get_identity_params(),
             version=self._version,
             techniques=techniques,
             datasets=datasets,
