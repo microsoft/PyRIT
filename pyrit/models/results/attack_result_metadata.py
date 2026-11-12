@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pyrit.models.results.attack_result import AttackResultRole
 
@@ -32,7 +32,7 @@ class AttackResultMetadata:
         return metadata
 
     @classmethod
-    def from_metadata(cls, *, metadata: dict[str, Any] | None) -> AttackResultMetadata:
+    def from_metadata(cls, *, metadata: dict[str, Any] | None) -> Self:
         """
         Read semantic metadata without inferring a role from conversations or parent linkage.
 
@@ -40,7 +40,7 @@ class AttackResultMetadata:
             metadata (dict[str, Any] | None): Stored attribution data, including legacy records.
 
         Returns:
-            AttackResultMetadata: Unknown for unrecognized roles and None for absent or invalid child positions.
+            Self: Unknown for unrecognized roles and None for absent or invalid child positions.
         """
         metadata = metadata or {}
         try:

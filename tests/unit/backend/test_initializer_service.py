@@ -15,13 +15,15 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import require_admin
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import (
+    ListRegisteredInitializersResponse,
+    PaginationInfo,
+)
 from pyrit.backend.models.initializers import (
     ConfiguredInitializerSetting,
-    ListRegisteredInitializersResponse,
     RegisteredInitializer,
 )
-from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
+from pyrit.backend.services import InitializerService, get_initializer_service
 from pyrit.models import Parameter
 from pyrit.registry import InitializerMetadata
 

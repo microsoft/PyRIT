@@ -1,11 +1,14 @@
 import { useState, type FormEvent } from 'react'
 
 import {
-  Button, Field, Popover, PopoverSurface, PopoverTrigger, Radio, RadioGroup, Text, Tooltip,
+  Button, Popover, PopoverSurface, PopoverTrigger, Radio, RadioGroup, Text, Tooltip,
 } from '@fluentui/react-components'
 import type { RadioGroupOnChangeData } from '@fluentui/react-components'
 import { AddRegular, SubtractRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import type { MultiSendOptions } from '@/types'
 
 import { useMultiSendSettingsStyles } from './MultiSendSettings.styles'
@@ -32,6 +35,7 @@ export default function MultiSendSettings({ options, disabled, onChange, disable
     <Popover positioning="above-end" open={open && !disabled && !disabledReason}
       onOpenChange={(_event, data) => setOpen(data.open && !disabled && !disabledReason)}>
       <Tooltip content={disabledReason ?? 'Choose how many conversations receive this prompt'} relationship="description">
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
         <span tabIndex={disabledReason ? 0 : undefined} aria-label={disabledReason}
             aria-disabled={disabled || Boolean(disabledReason)}>
           <PopoverTrigger disableButtonEnhancement>
@@ -50,7 +54,9 @@ export default function MultiSendSettings({ options, disabled, onChange, disable
       </Tooltip>
       <PopoverSurface aria-label="Prompt repetitions">
         <div className={styles.content}>
-          <Text weight="semibold">Prompt repetitions</Text>
+          <ContextualHelpLabel term="Prompt repetitions" labelProps={{ weight: 'semibold' }}>
+            {HELP_DEFINITIONS.promptRepetitions}
+          </ContextualHelpLabel>
           <div className={styles.count}>
             <Button
               icon={<SubtractRegular />}
@@ -74,12 +80,12 @@ export default function MultiSendSettings({ options, disabled, onChange, disable
               : `Keep this conversation and create ${options.count - 1} copies of its history. Send the next prompt in each.`}
             {' '}The count resets to 1 after sending.
           </Text>
-          <Field label="Request converters">
+          <HelpField label="Request converters" help={HELP_DEFINITIONS.requestConverters}>
             <RadioGroup value={options.requestConverterMode} onChange={handleConverterChange} disabled={disabled}>
               <Radio value="shared" label="Convert once, reuse for all" />
               <Radio value="per_branch" label="Convert independently for each" />
             </RadioGroup>
-          </Field>
+          </HelpField>
           <Text size={200}>
             Completed conversions are added to the prompt automatically.
             {' '}Shared repeats use that prompt. Independent repeats run unapplied pipelines on original inputs.

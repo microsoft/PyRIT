@@ -91,6 +91,23 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         }),
       ).toBe(true)
     })
+
+    it('returns true when conversation draft messages are present', () => {
+      expect(
+        isChatDraftDirty({
+          text: '',
+          conversation: {
+            messages: [
+              {
+                id: 'm1',
+                role: 'user',
+                pieces: [{ draftId: 'p1', data_type: 'text', original_value: 'hello' }],
+              },
+            ],
+          },
+        }),
+      ).toBe(true)
+    })
   })
 
   it('preserves target and unapplied setup without marking prompt content dirty', () => {
@@ -99,6 +116,9 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       { target: null },
       { target: { registryName: 'selected-target', identifierHash: 'selected-hash' } },
       { converters: converterSetup },
+      { generationDraft: {} },
+      { generationDraft: { temperature: '0' } },
+      { generationDraft: { temperature: '' } },
     ]) {
       expect(hasChatDraftState({ text: '', attachments: [], ...setup })).toBe(true)
       expect(isChatDraftDirty({ text: '', attachments: [], ...setup })).toBe(false)
@@ -113,7 +133,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const cleanDraft = {
         originatingAttackId: null,
         originatingConversationId: null,
-        originatingPath: '/chat',
+        originatingPath: '/attack/chat',
         draft: { text: '   ', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -125,7 +145,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const unsavedDraft = {
         originatingAttackId: null,
         originatingConversationId: null,
-        originatingPath: '/chat',
+        originatingPath: '/attack/chat',
         draft: { text: 'draft prompt', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -137,7 +157,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const persistedDraft = {
         originatingAttackId: 'attack-456',
         originatingConversationId: 'conv-456',
-        originatingPath: '/attacks/attack-456',
+        originatingPath: '/attack/chat/attack-456',
         draft: { text: 'draft for attack 456', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -151,7 +171,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const attackDraft = {
         originatingAttackId: 'attack-1',
         originatingConversationId: 'conv-1',
-        originatingPath: '/attacks/attack-1',
+        originatingPath: '/attack/chat/attack-1',
         draft: { text: 'attack 1 prompt', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -162,7 +182,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const unsavedDraft = {
         originatingAttackId: null,
         originatingConversationId: null,
-        originatingPath: '/chat',
+        originatingPath: '/attack/chat',
         draft: { text: 'unsaved draft', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -254,6 +274,27 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       <ChatDraftProvider>{children}</ChatDraftProvider>
     )
 
+    it('releases uploaded history on discard but not while a newer handoff still owns it', () => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      const conversation = { messages: [{
+        id: 'history', role: 'user' as const, pieces: [{
+          draftId: 'image', data_type: 'image_path', original_value: '', previewUrl: 'blob:history',
+          file: new File(['image'], 'history.png', { type: 'image/png' }),
+        }],
+      }] }
+      act(() => result.current.preserveDraft({
+        originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
+        draft: { text: '', attachments: [], conversation },
+      }))
+      act(() => { result.current.stagePendingImport({
+        destinationType: 'new_attack', content: { text: '' }, conversation,
+      }) })
+      act(() => result.current.clearPreservedDraft())
+      expect(revokeObjectURLSpy).not.toHaveBeenCalledWith('blob:history')
+      act(() => result.current.dismissPendingImport())
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:history')
+    })
+
     it('returns fallback default context safely when used outside of Provider', () => {
       const { result } = renderHook(() => useChatDraftHandoff())
       expect(result.current.preservedDraft).toBeNull()
@@ -273,6 +314,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const draftContent: ChatDraftContent = {
         text: 'Hello from draft',
         systemPrompt: 'Adversarial system prompt',
+        generationDraft: { temperature: '0' },
         attachments: [
           { name: 'sample.png', type: 'image', mimeType: 'image/png', url: 'blob:http://localhost/img1', size: 500 },
         ],
@@ -283,7 +325,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: draftContent,
         })
       })
@@ -293,6 +335,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.preservedDraft?.draft.systemPrompt).toBe('Adversarial system prompt')
       expect(result.current.preservedDraft?.draft.attachments).toHaveLength(1)
       expect(result.current.preservedDraft?.draft.converters).toEqual(CONVERTERS)
+      expect(result.current.preservedDraft?.draft.generationDraft).toEqual({ temperature: '0' })
 
       // Consume preserved draft once
       let consumed: ChatDraftContent | null = null
@@ -301,6 +344,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       })
       expect(consumed).not.toBeNull()
       expect(consumed?.text).toBe('Hello from draft')
+      expect(consumed?.generationDraft).toEqual({ temperature: '0' })
       expect(consumed?.converters?.applied.text.convertedValue).toBe('Uryyb sebz qensg')
 
       // Second consumption returns null (single-use guarantee prevents duplicate restores)
@@ -318,7 +362,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: 'attack-100',
           originatingConversationId: 'conv-100',
-          originatingPath: '/attacks/attack-100',
+          originatingPath: '/attack/chat/attack-100',
           draft: { text: 'Attack 100 draft', attachments: [] },
         })
       })
@@ -354,7 +398,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: { text: 'my draft text', attachments: [] },
         })
       })
@@ -383,7 +427,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'v1',
             attachments: [
@@ -398,7 +442,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'v2',
             attachments: [
@@ -418,7 +462,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'to be cleared',
             attachments: [
@@ -497,7 +541,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'unmount draft',
             attachments: [
@@ -525,14 +569,14 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Earlier draft', attachments: [] },
         })
       })
       const sequence = result.current.preservedDraft?.sequence
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Newer draft', attachments: [] },
         })
         expect(result.current.consumePreservedDraft(null, null, sequence)).toBeNull()
@@ -567,7 +611,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       }
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Newer draft', attachments: [] },
         })
         expect(result.current.stagePendingImport({
@@ -594,7 +638,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       }
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Preserved', attachments: [attachment] },
         })
         result.current.stagePendingImport({
@@ -616,7 +660,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       }
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Preserved', attachments: [attachment] },
         })
         result.current.stagePendingImport({
@@ -640,7 +684,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
           destinationType: 'new_attack', content: { text: 'Old import', attachments: [attachment] },
         })
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Newer draft', attachments: [attachment] },
         })
         expect(result.current.consumePendingImport()).toBeNull()
@@ -648,6 +692,99 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.pendingImport).toBeNull()
       expect(result.current.preservedDraft?.draft.text).toBe('Newer draft')
       expect(revokeObjectURLSpy).not.toHaveBeenCalledWith(attachment.url)
+    })
+
+    it('preserves multiple drafts per conversation without clobbering each other', () => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      act(() => {
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-1',
+          originatingConversationId: 'conv-1',
+          originatingPath: '/attack/chat/attack-1/conversations/conv-1',
+          draft: { text: 'Draft for conv 1', attachments: [] },
+        })
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-2',
+          originatingConversationId: 'conv-2',
+          originatingPath: '/attack/chat/attack-2/conversations/conv-2',
+          draft: { text: 'Draft for conv 2', attachments: [] },
+        })
+      })
+
+      expect(result.current.getPreservedDraft('attack-1', 'conv-1')?.draft.text).toBe('Draft for conv 1')
+      expect(result.current.getPreservedDraft('attack-2', 'conv-2')?.draft.text).toBe('Draft for conv 2')
+
+      let consumed1: ChatDraftContent | null = null
+      act(() => {
+        consumed1 = result.current.consumePreservedDraft('attack-1', 'conv-1')
+      })
+      expect(consumed1?.text).toBe('Draft for conv 1')
+      expect(result.current.getPreservedDraft('attack-1', 'conv-1')).toBeNull()
+      expect(result.current.getPreservedDraft('attack-2', 'conv-2')?.draft.text).toBe('Draft for conv 2')
+
+      act(() => {
+        result.current.clearPreservedDraft(undefined, 'attack-2', 'conv-2')
+      })
+      expect(result.current.getPreservedDraft('attack-2', 'conv-2')).toBeNull()
+    })
+
+    it.each(['main', 'branch'])('retains a pending import while preserving %s during navigation', (conversationId: string) => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      act(() => {
+        result.current.stagePendingImport({
+          destinationType: 'current_conversation', targetAttackId: 'attack', targetConversationId: 'main',
+          content: { text: 'Imported main prompt' },
+        })
+      })
+      act(() => {
+        result.current.preserveDraft({
+          originatingAttackId: 'attack', originatingConversationId: conversationId,
+          draft: { text: 'Unsent prompt', attachments: [] },
+        }, result.current.activeSequence, result.current.pendingImport?.id)
+      })
+      expect(result.current.pendingImport?.sequence).toBe(result.current.activeSequence)
+      act(() => {
+        expect(result.current.consumePendingImport(undefined, 'attack', 'main')?.content.text).toBe('Imported main prompt')
+      })
+      expect(result.current.getPreservedDraft('attack', conversationId)?.draft.text).toBe('Unsent prompt')
+    })
+
+    it('does not revoke attachment blob URLs still referenced by another preserved conversation draft', () => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      const sharedAttachment: MessageAttachment = {
+        name: 'shared.png',
+        type: 'image',
+        mimeType: 'image/png',
+        url: 'blob:http://localhost/shared-across-convs',
+        size: 1024,
+      }
+
+      act(() => {
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-1',
+          originatingConversationId: 'conv-1',
+          originatingPath: '/attack/chat/attack-1/conversations/conv-1',
+          draft: { text: 'Draft 1', attachments: [sharedAttachment] },
+        })
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-2',
+          originatingConversationId: 'conv-2',
+          originatingPath: '/attack/chat/attack-2/conversations/conv-2',
+          draft: { text: 'Draft 2', attachments: [sharedAttachment] },
+        })
+      })
+
+      // Clearing draft 1 should NOT revoke sharedAttachment because draft 2 still references it
+      act(() => {
+        result.current.clearPreservedDraft(undefined, 'attack-1', 'conv-1')
+      })
+      expect(revokeObjectURLSpy).not.toHaveBeenCalledWith('blob:http://localhost/shared-across-convs')
+
+      // Clearing draft 2 should now revoke sharedAttachment since no other preserved draft references it
+      act(() => {
+        result.current.clearPreservedDraft(undefined, 'attack-2', 'conv-2')
+      })
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:http://localhost/shared-across-convs')
     })
   })
 })

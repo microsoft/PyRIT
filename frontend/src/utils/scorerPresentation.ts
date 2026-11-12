@@ -10,6 +10,19 @@ export function findRegisteredScorer(
     ?? (inherited ? scorers.find((scorer: ScorerInstance) => scorer.identifier.hash === reference.identifier_hash) : undefined)
 }
 
+export function isEligibleChatScorer(scorer: ScorerInstance): boolean {
+  return scorer.identifier.scorer_type === 'true_false' && !scorer.chat_scoring_disabled_reason
+}
+
+/** Validate automatic last-use references; explicit overrides retain their unavailable-state feedback. */
+export function resolveChatScorerReference(
+  reference: RegisteredComponentReference | null | undefined, scorers: ScorerInstance[],
+): RegisteredComponentReference | null | undefined {
+  if (reference == null) return reference
+  const scorer = findRegisteredScorer(reference, scorers)
+  return scorer && isEligibleChatScorer(scorer) ? reference : undefined
+}
+
 const METRIC_LABELS: Record<string, string> = {
   accuracy: 'Accuracy',
   accuracy_standard_error: 'Accuracy std error',
@@ -22,7 +35,9 @@ const METRIC_LABELS: Record<string, string> = {
   average_score_time_seconds: 'Average score time',
 }
 
-const RATIO_METRICS = new Set(['precision', 'recall', 'accuracy', 'f1_score'])
+// Shown as percentages. F1 stays on its 0-to-1 scale, like the other scores, and
+// standard errors stay raw decimals (as percentages they would need a percentage-points label).
+const PERCENT_METRICS = new Set(['precision', 'recall', 'accuracy'])
 const METRIC_DESCRIPTIONS: Record<string, string> = {
   precision: 'The share of positive predictions that are correct.',
   recall: 'The share of actual positives detected by the scorer.',
@@ -44,7 +59,7 @@ export function formatScorerMetric(name: string, value: unknown, fallback = 'n/a
     // Older evaluation records default an unmeasured duration to zero.
     return value > 0 ? `${value.toFixed(2)}s` : fallback
   }
-  if (name === 'accuracy') return `${(value * 100).toFixed(2)}%`
+  if (PERCENT_METRICS.has(name)) return `${(value * 100).toFixed(2)}%`
   if (name.startsWith('num_')) return String(value)
   return value.toFixed(4)
 }
@@ -53,7 +68,7 @@ export function formatScorerMetric(name: string, value: unknown, fallback = 'n/a
 export function formatScorerComparisonMetric(name: string, value: unknown): string {
   const numeric = scorerComparisonValue(name, value)
   if (numeric === undefined) return 'n/a'
-  return RATIO_METRICS.has(name) ? `${(numeric * 100).toFixed(1)}%` : formatScorerMetric(name, numeric)
+  return PERCENT_METRICS.has(name) ? `${(numeric * 100).toFixed(1)}%` : formatScorerMetric(name, numeric)
 }
 
 /** Keep display and sorting consistent about missing and unmeasured values. */

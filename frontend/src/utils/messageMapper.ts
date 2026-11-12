@@ -1,4 +1,5 @@
 import type {
+  AttachmentUploadOutcome,
   BackendMessage,
   BackendMessagePiece,
   BackendScore,
@@ -8,7 +9,96 @@ import type {
   MessageDisplayPiece,
   MessageError,
   MessagePieceRequest,
-} from '../types'
+} from '@/types'
+import { mediaApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+
+import { generationDisplay } from './requestGeneration'
+
+// File identity survives draft copies and handoffs without retaining discarded files.
+const ATTACHMENT_UPLOADS = new WeakMap<File, {
+  promise: Promise<AttachmentUploadOutcome>
+  expiresAt: number
+  outcome?: AttachmentUploadOutcome
+}>()
+const ATTACHMENT_UPLOAD_LISTENERS = new WeakMap<File, Set<(outcome: AttachmentUploadOutcome | undefined) => void>>()
+// Leave a one-hour buffer before the server's staging lease expires.
+const ATTACHMENT_REFRESH_BUFFER_MS = 60 * 60 * 1000
+const LEGACY_ATTACHMENT_REUSE_MS = 23 * 60 * 60 * 1000
+const MAX_ACTIVE_UPLOADS = 3
+let activeUploads = 0
+const pendingUploads: Array<() => void> = []
+
+function queueAttachmentUpload(task: () => Promise<AttachmentUploadOutcome>): Promise<AttachmentUploadOutcome> {
+  return new Promise((resolve, reject) => {
+    const start = (): void => {
+      activeUploads += 1
+      void task().then(resolve, reject).finally(() => {
+        activeUploads -= 1
+        pendingUploads.shift()?.()
+      })
+    }
+    if (activeUploads < MAX_ACTIVE_UPLOADS) start()
+    else pendingUploads.push(start)
+  })
+}
+
+/** Start once on attachment; message preparation awaits this same upload. */
+export function startAttachmentUpload(file: File, retry = false): Promise<AttachmentUploadOutcome> {
+  const existing = ATTACHMENT_UPLOADS.get(file)
+  if (existing && !retry && existing.expiresAt > Date.now()) return existing.promise
+  let expiresAt = Number.POSITIVE_INFINITY
+  const upload = queueAttachmentUpload(async (): Promise<AttachmentUploadOutcome> => {
+    try {
+      const response = await mediaApi.upload({
+        data_type: mimeTypeToDataType(file.type),
+        content: await fileToBase64(file),
+        mime_type: file.type || 'application/octet-stream',
+      })
+      if (response.expires_at !== undefined && !Number.isFinite(response.expires_at)) {
+        throw new Error('The upload returned an invalid staging expiration.')
+      }
+      expiresAt = response.expires_at === undefined
+        ? Date.now() + LEGACY_ATTACHMENT_REUSE_MS
+        : response.expires_at * 1000 - ATTACHMENT_REFRESH_BUFFER_MS
+      return { status: 'uploaded', value: response.value }
+    } catch (error: unknown) {
+      // Background failures are values so they can be shown before Send is clicked.
+      return { status: 'failed', detail: toApiError(error).detail }
+    }
+  })
+  ATTACHMENT_UPLOADS.set(file, { promise: upload, expiresAt: Number.POSITIVE_INFINITY })
+  for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(undefined)
+  void upload.then((outcome: AttachmentUploadOutcome) => {
+    const current = ATTACHMENT_UPLOADS.get(file)
+    if (current?.promise !== upload) return
+    current.outcome = outcome
+    current.expiresAt = expiresAt
+    for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(outcome)
+  })
+  return upload
+}
+
+/** Observe replacements and their outcomes, not just the first upload promise. */
+export function subscribeAttachmentUpload(
+  file: File, listener: (outcome: AttachmentUploadOutcome | undefined) => void,
+): () => void {
+  const listeners = ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? new Set()
+  listeners.add(listener)
+  ATTACHMENT_UPLOAD_LISTENERS.set(file, listeners)
+  void startAttachmentUpload(file)
+  listener(ATTACHMENT_UPLOADS.get(file)?.outcome)
+  return () => {
+    listeners.delete(listener)
+    if (!listeners.size) ATTACHMENT_UPLOAD_LISTENERS.delete(file)
+  }
+}
+
+export async function uploadedFileValue(file: File): Promise<string> {
+  const outcome = await startAttachmentUpload(file)
+  if (outcome.status === 'failed') throw new Error(`Upload failed for ${file.name}: ${outcome.detail}`)
+  return outcome.value
+}
 
 /**
  * Read a File or Blob and return its contents as a base64-encoded string (no data URI prefix).
@@ -30,7 +120,8 @@ export function fileToBase64(file: Blob): Promise<string> {
 /**
  * Map a frontend MIME type to the backend PromptDataType convention.
  */
-export function mimeTypeToDataType(mimeType: string): string {
+export function mimeTypeToDataType(mimeType?: string): string {
+  if (!mimeType) return 'binary_path'
   if (mimeType.startsWith('image/')) return 'image_path'
   if (mimeType.startsWith('audio/')) return 'audio_path'
   if (mimeType.startsWith('video/')) return 'video_path'
@@ -370,6 +461,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
+    ...(role === 'user' || role === 'assistant' ? generationDisplay(msg.message_pieces[0]?.prompt_metadata) : {}),
     attachments: attachments.length > 0 ? attachments : undefined,
     displayPieces: displayPieces.length > 0 ? displayPieces : undefined,
     error,
@@ -380,10 +472,65 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
 }
 
 /**
+ * Merge saved piece pages without duplicating or splitting their conversation turns.
+ */
+export function mergeBackendMessages(previous: BackendMessage[], incoming: BackendMessage[]): BackendMessage[] {
+  const turns = new Map<number, { message: BackendMessage; pieces: Map<string, BackendMessagePiece> }>()
+  const pieceOwners = new Map<string, number>()
+  for (const message of [...previous, ...incoming]) {
+    let turn = turns.get(message.turn_number)
+    if (turn && turn.message.role !== message.role) {
+      throw new Error(`Saved turn ${message.turn_number} changed role. Restart transcript loading.`)
+    }
+    if (!turn) {
+      turn = { message, pieces: new Map() }
+      turns.set(message.turn_number, turn)
+    }
+    for (const piece of message.message_pieces) {
+      const owner = pieceOwners.get(piece.id)
+      if (owner !== undefined && owner !== message.turn_number) {
+        throw new Error('A saved piece changed turns. Restart transcript loading.')
+      }
+      pieceOwners.set(piece.id, message.turn_number)
+      const existing = turn.pieces.get(piece.id)
+      const scores = new Map<string, BackendScore>()
+      for (const score of [...(existing?.scores ?? []), ...piece.scores]) {
+        scores.set(score.id, score)
+      }
+      turn.pieces.set(piece.id, { ...existing, ...piece, scores: [...scores.values()] })
+    }
+  }
+  return [...turns.values()].sort((a, b) => a.message.turn_number - b.message.turn_number).map(({ message, pieces }) => {
+    const orderedPieces = [...pieces.values()]
+    if (orderedPieces.every((piece) => piece.timestamp !== undefined)) {
+      orderedPieces.sort((a: BackendMessagePiece, b: BackendMessagePiece): number => {
+        const firstTimestamp = a.timestamp ?? ''
+        const secondTimestamp = b.timestamp ?? ''
+        const millisecondOrder = Date.parse(firstTimestamp) - Date.parse(secondTimestamp)
+        if (millisecondOrder) return millisecondOrder
+        // Date truncates Python's microseconds; keep them ahead of the ID tie-break.
+        const firstFraction = firstTimestamp.match(/\.(\d+)/)?.[1] ?? ''
+        const secondFraction = secondTimestamp.match(/\.(\d+)/)?.[1] ?? ''
+        const precision = Math.max(firstFraction.length, secondFraction.length)
+        return firstFraction.padEnd(precision, '0').localeCompare(secondFraction.padEnd(precision, '0'))
+          || a.id.localeCompare(b.id)
+      })
+    }
+    return { ...message, created_at: orderedPieces[0]?.timestamp ?? message.created_at, message_pieces: orderedPieces }
+  })
+}
+
+/**
  * Convert all backend messages to frontend messages.
  */
-export function backendMessagesToFrontend(messages: BackendMessage[]): Message[] {
-  return messages.map(backendMessageToFrontend)
+export function backendMessagesToFrontend(messages: BackendMessage[], partialSequences?: readonly number[]): Message[] {
+  return messages.map((message) => ({
+    ...backendMessageToFrontend(message),
+    ...(partialSequences === undefined ? {} : {
+      sequence: message.turn_number,
+      isPartial: partialSequences.includes(message.turn_number),
+    }),
+  }))
 }
 
 /**
@@ -392,7 +539,11 @@ export function backendMessagesToFrontend(messages: BackendMessage[]): Message[]
 export async function attachmentToMessagePieceRequest(att: MessageAttachment): Promise<MessagePieceRequest> {
   let base64Value: string
   if (att.file) {
-    base64Value = await fileToBase64(att.file)
+    if (ATTACHMENT_UPLOADS.has(att.file)) {
+      base64Value = await uploadedFileValue(att.file)
+    } else {
+      base64Value = await fileToBase64(att.file)
+    }
   } else if (att.sourceValue != null) {
     base64Value = att.sourceValue
   } else if (att.url.startsWith('data:')) {

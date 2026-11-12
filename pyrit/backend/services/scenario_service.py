@@ -12,15 +12,16 @@ from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
 
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.models.catalog.scenario import (
-    RegisteredScenario,
+from pyrit.models import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
+)
+from pyrit.models.catalog import (
+    RegisteredScenario,
 )
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params
@@ -273,6 +274,7 @@ class ScenarioService:
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 include_baseline=request.include_baseline,
             )
             constructor_kwargs = resolver.resolve_constructor_kwargs(
@@ -553,6 +555,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,

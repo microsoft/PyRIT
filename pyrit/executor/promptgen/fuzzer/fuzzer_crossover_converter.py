@@ -5,9 +5,9 @@ import pathlib
 import uuid
 from typing import Any
 
-from pyrit.common.apply_defaults import apply_defaults
+from pyrit.common import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.converter.converter import ConverterResult
+from pyrit.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
@@ -76,14 +76,6 @@ class FuzzerCrossOverConverter(FuzzerConverter):
                 "No prompt templates available for crossover. Please provide prompt templates via the update method."
             )
 
-        conversation_id = str(uuid.uuid4())
-
-        (
-            await self.converter_target.set_system_prompt_async(
-                system_prompt=self.system_prompt, conversation_id=conversation_id
-            )
-        )
-
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
         formatted_prompt += (
             "\n====TEMPLATE 2 BEGINS====\n"
@@ -97,8 +89,11 @@ class FuzzerCrossOverConverter(FuzzerConverter):
                 MessagePiece(
                     role="user",
                     original_value=formatted_prompt,
-                    converted_value=formatted_prompt,
-                    conversation_id=conversation_id,
+                    # The fuzzer instructions are sent in the user turn; see Converter._prepend_instructions.
+                    converted_value=self._prepend_instructions(
+                        instructions=self.system_prompt, prompt=formatted_prompt
+                    ),
+                    conversation_id=str(uuid.uuid4()),
                     sequence=1,
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,

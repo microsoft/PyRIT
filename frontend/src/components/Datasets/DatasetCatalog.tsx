@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef } from 'react'
+import { useId, useMemo } from 'react'
 
 import {
   Button,
@@ -11,7 +11,7 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { ArrowSyncRegular, SearchRegular } from '@fluentui/react-icons'
+import { SearchRegular } from '@fluentui/react-icons'
 import { useSearchParams } from 'react-router'
 
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
@@ -60,18 +60,13 @@ function harmOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
 export default function DatasetCatalog() {
   const styles = useDatasetCatalogStyles()
   const titleId = useId()
-  const retryRef = useRef<HTMLButtonElement>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const catalogSearch = searchParams.toString()
   const query = useMemo(
     () => catalogQueryFromSearchParams(new URLSearchParams(catalogSearch)),
     [catalogSearch],
   )
-  const { datasets, loading, error, retry } = useLoadedDatasets()
-
-  useEffect(() => {
-    if (error) retryRef.current?.focus()
-  }, [error])
+  const { datasets, loading, error } = useLoadedDatasets()
 
   const filtered = useMemo(() => filterDatasets(datasets, query), [datasets, query])
   const modalities = useMemo(() => modalityOptions(datasets), [datasets])
@@ -99,15 +94,6 @@ export default function DatasetCatalog() {
             This view does not download datasets or list individual examples.
           </Text>
         </div>
-        <Button
-          className={styles.touchTarget}
-          appearance="subtle"
-          icon={<ArrowSyncRegular />}
-          onClick={retry}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
       </div>
 
       <div className={styles.filters}>
@@ -164,26 +150,13 @@ export default function DatasetCatalog() {
         )}
       </div>
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading datasets..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState}>
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            ref={retryRef}
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={retry}
-          >
-            Retry
-          </Button>
-        </div>
-      ) : datasets.length === 0 ? (
+      ) : error && datasets.length === 0 ? null
+      : datasets.length === 0 ? (
         <div className={styles.centeredState}>
           <Text size={400}>No datasets in memory</Text>
           <Text size={200}>

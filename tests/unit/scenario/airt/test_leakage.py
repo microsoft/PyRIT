@@ -9,15 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
-from pyrit.scenario.core import BaselineAttackPolicy
-from pyrit.scenario.core._technique_resolution import resolve_technique_factories_for_techniques
+from pyrit.scenario.core import BaselineAttackPolicy, resolve_technique_factories_for_techniques
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique, _leakage_factories
 from pyrit.score import TrueFalseCompositeScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -101,7 +98,9 @@ def reset_technique_registry():
     _build_leakage_technique.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
+    adv_target.get_identifier.return_value = _mock_target_id("ConfiguredGenerator")
     adv_target.capabilities.includes.return_value = True
+    adv_target.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
@@ -148,7 +147,7 @@ class TestLeakageInitialization:
     def test_init_with_default_scorer(self):
         """Test initialization with default scorer."""
         scenario = Leakage()
-        assert scenario._objective_scorer_identifier
+        assert scenario._objective_scorer_identifier is None
 
     def test_default_scorer_uses_leakage_yaml(self):
         """Test that the default scorer uses leakage.yaml, not privacy.yaml."""

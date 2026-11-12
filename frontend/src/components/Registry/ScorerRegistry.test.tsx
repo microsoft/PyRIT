@@ -7,6 +7,9 @@ import { readUserPreferences } from '@/utils/userPreferences'
 import type { ScorerInstance } from '@/types'
 
 import ScorerRegistry from './ScorerRegistry'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 const scorers: ScorerInstance[] = [
   { scorer_registry_name: 'judge', identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'judge-hash', scorer_type: 'true_false' } },
@@ -35,9 +38,11 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByRole('option', { name: /criteria/ })).not.toBeInTheDocument()
     expect(screen.getByText('ScaleScorer')).toBeVisible()
     expect(screen.queryByText(/personal to this account and browser/)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     expect(onRefresh).toHaveBeenCalledTimes(1)
     const selector = screen.getByRole('combobox', { name: 'Default objective scorer for chats' })
+    expect(selector).toHaveValue('last-used')
     for (const option of within(selector).getAllByRole('option')) expect(option).toBeEnabled()
     expect(within(selector).getByRole('option', { name: 'judge - SubStringScorer' })).toBeInTheDocument()
     await user.selectOptions(selector, 'registered:judge')
@@ -53,9 +58,11 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByRole('option', { name: 'Unavailable: judge' })).not.toBeInTheDocument()
     await user.selectOptions(selector, '')
     expect(readUserPreferences('alice').chatScorer).toBeNull()
+    await user.selectOptions(selector, 'last-used')
+    expect(readUserPreferences('alice').chatScorer).toBeUndefined()
   })
 
-  it('shows nested types, evaluation-only details, primary metrics, and average time', async () => {
+  it('shows nested types, canonical identity JSON, primary metrics, and average time', async () => {
     const user = userEvent.setup()
     const evaluated: ScorerInstance = {
       scorer_registry_name: 'wrapped-judge',
@@ -84,20 +91,20 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByText('Message * true_false')).not.toBeInTheDocument()
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell')
     expect(cells.slice(2).map((cell: HTMLElement) => cell.textContent)).toEqual([
-      'Message', '95.7%', '0.0%', '94.0%', '91.0%', '0.25s',
+      'Message', '95.7%', '0.0%', '94.0%', '0.9100', '0.25s',
     ])
     await user.hover(within(cells[3]).getByText('95.7%'))
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Recorded value: 0.95678')
     expect(screen.queryByText('More metrics')).not.toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Num responses' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Evaluation details for wrapped-judge' }))
-    const details = screen.getByRole('region', { name: 'Evaluation details for wrapped-judge' })
-    expect(JSON.parse(details.textContent ?? '')).toEqual(evaluated.evaluation_identifier)
+    await user.click(screen.getByRole('button', { name: 'Identity for wrapped-judge' }))
+    const details = screen.getByRole('region', { name: 'Identity for wrapped-judge' })
+    expect(JSON.parse(details.textContent ?? '')).toEqual(evaluated.identifier)
     expect(details.textContent).toMatch(/\n\s+"class_name":/)
-    expect(screen.queryByText('https://private-deployment.invalid')).not.toBeInTheDocument()
-    expect(screen.queryByText('runtime-hash')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Evaluation details for wrapped-judge' }))
-    expect(screen.queryByRole('region', { name: 'Evaluation details for wrapped-judge' })).not.toBeInTheDocument()
+    expect(details).toHaveTextContent('runtime-hash')
+    expect(details).not.toHaveTextContent('evaluation-hash')
+    await user.click(screen.getByRole('button', { name: 'Identity for wrapped-judge' }))
+    expect(screen.queryByRole('region', { name: 'Identity for wrapped-judge' })).not.toBeInTheDocument()
   })
 
   it('uses harm metrics, distinguishes tool evidence, and reports unavailable values as n/a', () => {
@@ -146,7 +153,7 @@ describe('ScorerRegistry', () => {
     const binary = screen.getByRole('table', { name: 'True/false scorers' })
     const scale = screen.getByRole('table', { name: 'Float-scale scorers' })
     const names = (table: HTMLElement): string[] => within(table)
-      .getAllByRole('button', { name: /^Evaluation details for / })
+      .getAllByRole('button', { name: /^Identity for / })
       .map((button: HTMLElement) => button.textContent ?? '')
     expect(names(binary)).toEqual(['a_missing', 'b_fast', 'c_slow', 'd_tied'])
     const precision = within(binary).getByRole('button', { name: 'Precision', exact: true })

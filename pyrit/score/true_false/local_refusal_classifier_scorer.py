@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_REFUSAL_SCORER_PATH
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -631,13 +631,15 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
             objective=objective,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score one text piece.
 
         Args:
             message_piece (MessagePiece): The piece to score.
-            objective (str | None): The objective the response was meant to answer.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A single true/false score, or an undetermined score inside the abstain band.
@@ -645,6 +647,7 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
         Raises:
             RuntimeError: If the head is not trained.
         """
+        objective = expectation.objective if expectation else None
         if message_piece.is_blocked():
             return [self._build_blocked_refusal_score(message_piece=message_piece, objective=objective)]
         await self.load_model_async()
