@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import logging
 from abc import ABC, abstractmethod
@@ -122,6 +123,19 @@ class BaseImageToImageConverter(Converter, ABC):
             return image
         return image.convert("RGBA" if image.has_transparency_data else "RGB")
 
+    def _decode_and_transform(self, image_bytes: bytes) -> tuple[BytesIO, str]:
+        """
+        Decode the source image and apply the transformation.
+
+        Args:
+            image_bytes (bytes): The encoded source image.
+
+        Returns:
+            tuple[BytesIO, str]: The transformed image bytes and the output format.
+        """
+        original_img = Image.open(BytesIO(image_bytes))
+        return self._transform_image(original_img, original_img.format or "JPEG")
+
     def _transform_image(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
         """
         Resolve format, prepare the image, apply the transform, and save to a buffer.
@@ -189,10 +203,8 @@ class BaseImageToImageConverter(Converter, ABC):
             if input_type == "url"
             else await img_serializer.read_data_async()
         )
-        original_img = Image.open(BytesIO(original_img_bytes))
-        original_format = original_img.format or "JPEG"
-
-        transformed_bytes, output_format = self._transform_image(original_img, original_format)
+        # Decoding, transforming and re-encoding an image is CPU-bound, so keep it off the event loop.
+        transformed_bytes, output_format = await asyncio.to_thread(self._decode_and_transform, original_img_bytes)
         img_serializer.file_extension = output_format.lower()
 
         image_str = base64.b64encode(transformed_bytes.getvalue())
