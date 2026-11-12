@@ -279,6 +279,58 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # correlation does not install a remote collector or a backend adapter.
 
 # %% [markdown]
+# ## Read traces from a remote backend
+#
+# `OtlpJsonTraceClient` fetches each trace by ID from an HTTP endpoint that returns
+# OTLP/JSON, such as Grafana Tempo's `/api/traces/{trace_id}`. Pass credentials in
+# `headers`; the source identity records the endpoint without them, or its query.
+# Pass your own `httpx.AsyncClient` to control proxies and certificates.
+#
+# A remote backend cannot report when every span of a trace has arrived, so its
+# coverage is never complete. A tool call it returns counts, and a missing one is
+# undetermined, never false. A trace the backend does not have is unavailable. A
+# failed request, an error status, or an unreadable response is an acquisition
+# error, unless another requested trace was retrieved; then coverage is partial.
+#
+# This cell stands an in-process transport in for the backend.
+
+# %%
+from pyrit.models import ToolEventsObservationPayload
+from pyrit.score.observation import OtlpJsonTraceClient
+
+remote_trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+tool_span = {
+    "traceId": remote_trace_id,
+    "spanId": "00f067aa0ba902b7",
+    "startTimeUnixNano": "1767225600000000000",
+    "endTimeUnixNano": "1767225600002000000",
+    "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+        {"key": "gen_ai.tool.name", "value": {"stringValue": "my_tool_call"}},
+    ],
+}
+
+
+def trace_backend(request: httpx.Request) -> httpx.Response:
+    """Answer trace-by-ID requests the way an OTLP/JSON trace backend does."""
+    if request.url.path.endswith(remote_trace_id):
+        return httpx.Response(200, json={"resourceSpans": [{"scopeSpans": [{"spans": [tool_span]}]}]})
+    return httpx.Response(404)
+
+
+remote_source = OtelTraceSource(
+    trace_client=OtlpJsonTraceClient(
+        url_template="http://tempo.test:3200/api/traces/{trace_id}",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(trace_backend)),
+    )
+)
+found = await remote_source.acquire_async(scorable=TraceScorable(trace_ids=(remote_trace_id,)))  # type: ignore
+missing = await remote_source.acquire_async(scorable=TraceScorable(trace_ids=("5" * 32,)))  # type: ignore
+assert isinstance(found.payload, ToolEventsObservationPayload)
+print(f"Remote tools: {[event.name for event in found.payload.events]}, acquisition {found.acquisition.value}")
+print(f"Trace the backend does not have: {missing.acquisition.value}")
+
+# %% [markdown]
 # ## Score tool calls without traces
 #
 # `MessageToolCallScorer` reads the same `ToolsCalled` condition from stored

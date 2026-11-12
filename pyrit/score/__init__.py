@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.otlp_json_trace_client import OtlpJsonTraceClient
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
@@ -232,6 +233,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SurfaceLifecycleSource": "pyrit.score.observation.lifecycle",
     "ObservationSource": "pyrit.score.observation.observation_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
+    "OtlpJsonTraceClient": "pyrit.score.observation.otlp_json_trace_client",
     "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",
     "TraceClient": "pyrit.score.observation.trace_client",
