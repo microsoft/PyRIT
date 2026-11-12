@@ -165,3 +165,11 @@ class IgnoredRecipeFile(BaseModel):
     kind: RegistryRecipeKind
     file_name: str
     message: str
+
+
+class RegistryRestoreReport(BaseModel):
+    """What a restore rebuilt, what it couldn't, and which files it skipped."""
+
+    restored: list[SavedEntryRef] = Field(default_factory=list)
+    failures: list[RestoreFailure] = Field(default_factory=list)
+    ignored: list[IgnoredRecipeFile] = Field(default_factory=list)
