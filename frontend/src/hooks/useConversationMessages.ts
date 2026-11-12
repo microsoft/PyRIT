@@ -26,6 +26,12 @@ interface SavedTranscriptPage {
   consumedCursors: ReadonlySet<string>
 }
 
+interface LoadedFullTranscript {
+  readonly attackResultId: string | null
+  readonly conversationId: string
+  readonly response: ConversationMessagesResponse
+}
+
 function mergeTranscriptPage(
   previous: ConversationMessagesResponse | null, incoming: ConversationMessagesResponse, conversationId: string,
   cursor?: string, consumedCursors?: ReadonlySet<string>,
@@ -126,6 +132,7 @@ export function useConversationMessages({
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false)
   const [messageContinuationIssue, setMessageContinuationIssue] = useState<{ detail: string; restartRequired: boolean } | null>(null)
   const savedTranscriptPageRef = useRef<SavedTranscriptPage | null>(null)
+  const fullTranscriptRef = useRef<LoadedFullTranscript | null>(null)
   const loadedAttackResultIdRef = useRef<string | null>(null)
   const loadedConversationIdRef = useRef<string | null>(null)
   const viewedAttackRef = useRef(attackResultId)
@@ -201,6 +208,7 @@ export function useConversationMessages({
   }, [viewedConversationId, attackResultId, messagePageSize])
 
   const resetConversationMessages = useCallback((): void => {
+    fullTranscriptRef.current = null
     setMessages([])
     setLoadedConversationId(null)
     setLoadedAttackResultId(null)
@@ -235,10 +243,33 @@ export function useConversationMessages({
       }
       // Discard superseded loads and responses invalidated by a send.
       if (!isCurrentLoad()) { return }
-      const response = messagePageSize === undefined ? incoming : mergeTranscriptPage(null, incoming, convId)
+      let response = messagePageSize === undefined ? incoming : mergeTranscriptPage(null, incoming, convId)
+      const consumedCursors = new Set<string>()
+      const full = fullTranscriptRef.current
+      if (messagePageSize !== undefined && arId && full?.attackResultId === arId && full.conversationId === convId) {
+        const missing = new Set(full.response.messages.flatMap((message: BackendMessage) => message.message_pieces.map((piece: BackendMessagePiece) => piece.id)))
+        for (const message of response.messages) {
+          for (const piece of message.message_pieces) missing.delete(piece.id)
+        }
+        // Complete the already-visible live window before installing its saved paging state.
+        while (missing.size > 0 && response.pagination?.has_more) {
+          const cursor = response.pagination.next_cursor
+          if (!cursor) throw new Error('The saved transcript continuation is missing. Restart transcript loading.')
+          const next = await attacksApi.getMessages(arId, convId, { limit: messagePageSize, cursor })
+          if (!isCurrentLoad()) return
+          response = mergeTranscriptPage(response, next, convId, cursor, consumedCursors)
+          consumedCursors.add(cursor)
+          for (const message of next.messages) {
+            for (const piece of message.message_pieces) missing.delete(piece.id)
+          }
+        }
+      }
       setMessageContinuationIssue(null)
       if (messagePageSize !== undefined && arId) {
-        saveTranscriptPage({ attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response, consumedCursors: new Set() })
+        saveTranscriptPage({ attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response, consumedCursors })
+        fullTranscriptRef.current = null
+      } else {
+        fullTranscriptRef.current = { attackResultId: arId, conversationId: convId, response }
       }
       setConversationLoadIssue(
         findingEvidenceId && response.messages.length === 0 && !response.pagination?.has_more

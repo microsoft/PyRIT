@@ -33,6 +33,7 @@ import {
 } from "@/types";
 import { attacksApi, convertersApi, mediaApi, scoresApi, targetsApi } from "@/services/api";
 import * as messageMapper from "@/utils/messageMapper";
+import { LIVE_ATTACK_POLL_INTERVAL_MS } from "@/hooks/useLiveAttackMetadata";
 
 jest.mock("./FindingEvidenceDialog", () => ({
   __esModule: true,
@@ -572,7 +573,7 @@ describe("ChatWindow Integration", () => {
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
     mockedAttacksApi.getConversations.mockImplementation(async (attackId: string, params?: ConversationPageParams) => ({
-      attack_result_id: attackId, conversations: [], main_conversation_id: null,
+      attack_result_id: attackId, conversations: [], main_conversation_id: "main",
       ...(params ? { total_count: 0, pagination: { limit: params.limit ?? 50, has_more: false, next_cursor: null } } : {}),
     }));
     // Default: getMessages never resolves so loadConversation won't trigger
@@ -588,6 +589,123 @@ describe("ChatWindow Integration", () => {
     jest.restoreAllMocks();
   });
 
+  describe("running scan attack", () => {
+    const SCAN_ID = "123e4567-e89b-12d3-a456-426614174000";
+    const props = {
+      ...defaultProps, attackResultId: "live-attack", conversationId: "branch-1", activeConversationId: "branch-1",
+      executionReadOnly: true, inProgress: true, attackScenarioResultId: SCAN_ID, objective: "Live objective",
+    };
+    function liveRead(...texts: string[]): ConversationMessagesResponse {
+      return {
+        conversation_id: "branch-1", target_response_status: null,
+        messages: texts.map((text: string, index: number) => ({
+          turn_number: index, role: index % 2 === 0 ? "user" : "assistant", created_at: "2026-01-01T00:00:00Z",
+          message_pieces: [{
+            id: `piece-${index}`, original_value: text, converted_value: text, original_value_data_type: "text",
+            converted_value_data_type: "text", scores: [], response_error: "none",
+          }],
+        })),
+      };
+    }
+    const unavailable = { isAxiosError: true, response: { status: 503, data: { detail: "Live read unavailable" } } };
+
+    beforeEach(() => { jest.useFakeTimers(); });
+    afterEach(() => { jest.useRealTimers(); });
+
+    async function advancePoll(): Promise<void> {
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+    }
+
+    it("replaces the prompt with an in-progress bar and refreshes the transcript in place", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(liveRead("Live prompt"))
+        .mockResolvedValueOnce(liveRead("Live prompt", "Live response"));
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      expect(await screen.findByText("Live prompt", { exact: true })).toBeInTheDocument();
+      const bubble = screen.getByTestId("message-bubble-0");
+      const bar = screen.getByTestId("attack-in-progress-bar");
+      expect(bar).toHaveTextContent("Attack in progress");
+      expect(within(bar).getByRole("link", { name: "Back to scan" })).toHaveAttribute("href", `/scanner/history/${SCAN_ID}`);
+      expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Continue manually" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Edit Conversation", exact: true })).toBeDisabled();
+      expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("live-attack", "branch-1");
+
+      await advancePoll();
+      expect(screen.getByText("Live response", { exact: true })).toBeInTheDocument();
+      expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2);
+    });
+
+    it("reloads the saved transcript in place once the attack finishes and stops polling", async () => {
+      let finishSaved: (response: ConversationMessagesResponse) => void = () => { throw new Error("No saved read") };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(liveRead("Live prompt", "Live response"))
+        .mockImplementationOnce(() => new Promise<ConversationMessagesResponse>((resolve) => { finishSaved = resolve; }));
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      expect(await screen.findByText("Live response", { exact: true })).toBeInTheDocument();
+      rendered.rerender(<TestWrapper><ChatWindow {...props} inProgress={false} outcome="success" /></TestWrapper>);
+      expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("live-attack", "branch-1", { limit: 100 });
+      expect(screen.queryByTestId("loading-state")).not.toBeInTheDocument();
+      expect(screen.getByText("Live response", { exact: true })).toBeInTheDocument();
+      expect(screen.queryByTestId("attack-in-progress-bar")).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      await act(async () => {
+        finishSaved({
+          ...liveRead("Live prompt", "Saved response"), pagination: { limit: 100, has_more: false, next_cursor: null },
+          partial_message_sequences: [],
+        });
+      });
+      expect(screen.getByText("Saved response", { exact: true })).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("End of saved transcript.");
+      await advancePoll();
+      await advancePoll();
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps loaded messages and offers Retry when a background refresh fails", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(liveRead("Live prompt")).mockRejectedValueOnce(unavailable)
+        .mockResolvedValueOnce(liveRead("Live prompt", "Recovered response"));
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      expect(await screen.findByText("Live prompt", { exact: true })).toBeInTheDocument();
+      await advancePoll();
+      expect(screen.getByText(/Could not load conversation: Live read unavailable/)).toBeInTheDocument();
+      expect(screen.getByText("Live prompt", { exact: true })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Retry conversation load" }));
+      expect(await screen.findByText("Recovered response", { exact: true })).toBeInTheDocument();
+      expect(screen.queryByText(/Could not load conversation/)).not.toBeInTheDocument();
+    });
+
+    it("does not show the previous branch while another branch loads", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(liveRead("First branch prompt"))
+        .mockImplementationOnce(() => new Promise<ConversationMessagesResponse>(() => {}));
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      expect(await screen.findByText("First branch prompt", { exact: true })).toBeInTheDocument();
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="branch-2" /></TestWrapper>);
+      expect(screen.getByTestId("loading-state")).toBeInTheDocument();
+      expect(screen.queryByText("First branch prompt", { exact: true })).not.toBeInTheDocument();
+      expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("live-attack", "branch-2");
+    });
+
+    it("refreshes the whole conversation list while the attack runs", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue(liveRead("Live prompt"));
+      mockedAttacksApi.getConversations.mockResolvedValueOnce({
+        attack_result_id: "live-attack", main_conversation_id: "branch-1",
+        conversations: [{ conversation_id: "branch-1", message_count: 1, created_at: "2026-01-01T00:00:00Z" }],
+      }).mockResolvedValue({
+        attack_result_id: "live-attack", main_conversation_id: "branch-2",
+        conversations: [
+          { conversation_id: "branch-1", message_count: 2, created_at: "2026-01-01T00:00:00Z" },
+          { conversation_id: "branch-2", message_count: 1, created_at: "2026-01-01T00:00:01Z" },
+        ],
+      });
+      render(<TestWrapper><ChatWindow {...props} relatedConversationCount={1} /></TestWrapper>);
+      expect(await screen.findByTestId("conversation-item-branch-1")).toBeInTheDocument();
+      expect(mockedAttacksApi.getConversations).toHaveBeenLastCalledWith("live-attack");
+      const row = screen.getByTestId("conversation-item-branch-1");
+      await advancePoll();
+      expect(screen.getByTestId("conversation-item-branch-2")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-branch-1")).toBe(row);
+    });
+  });
   describe("bounded saved evidence", () => {
     const props = {
       ...defaultProps, attackResultId: "saved-attack", conversationId: "saved-main",
@@ -3766,13 +3884,14 @@ describe("ChatWindow Integration", () => {
     const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
     const { rerender } = render(
       <TestWrapper>
-        <ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />
+        <ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} inProgress attackScenarioResultId={scenarioResultId} />
       </TestWrapper>
     );
 
     expect(within(screen.getByRole("group", { name: "Conversation actions" })).getByRole("link", {
       name: "Back to scan",
     })).toHaveAttribute("href", `/scanner/history/${scenarioResultId}`);
+    expect(screen.getAllByRole("link", { name: "Back to scan" })).toHaveLength(1);
 
     rerender(
       <TestWrapper>
@@ -3802,7 +3921,7 @@ describe("ChatWindow Integration", () => {
           <Routes>
             <Route
               path="/attack/chat/:attackResultId"
-              element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />}
+              element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} inProgress />}
             />
             <Route
               path="/scanner/history/:scenarioResultId"
@@ -3824,6 +3943,17 @@ describe("ChatWindow Integration", () => {
     })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Originating scenario run" }))
       .toHaveAttribute("data-navigation-state", JSON.stringify(navigationState));
+  });
+
+  it("uses the only scan return link for the return callback while running", async () => {
+    const user = userEvent.setup();
+    const onReturnToScan = jest.fn();
+    render(<TestWrapper><ChatWindow {...defaultProps} inProgress scenarioResultId="scan"
+      attackScenarioResultId="scan" onReturnToScan={onReturnToScan} /></TestWrapper>);
+    await user.click(screen.getByRole("link", { name: "Back to scan" }));
+    expect(onReturnToScan).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByTestId("attack-in-progress-bar")).queryByRole("link", { name: "Back to scan" }))
+      .not.toBeInTheDocument();
   });
 
   it("should apply and persist the Markdown choice across remounts", async () => {

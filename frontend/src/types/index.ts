@@ -842,6 +842,9 @@ export type AttackTargetResolutionStatus =
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
 
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
+
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
   | 'operation'
@@ -1246,6 +1249,20 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
+/**
+ * The fields a score popover shows, independent of where the score was recorded,
+ * so scan results do not need to fabricate a message-piece score.
+ */
+export interface ScoreSummary {
+  scorer: string
+  scoreType: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
+}
+
 export interface BackendMessagePiece {
   id: string
   sequence?: number
@@ -1409,6 +1426,20 @@ export interface AttackConversationsResponse {
   pagination?: PaginationInfo | null
   total_count?: number | null
 }
+
+/** Read-only display references may lack saved-result counts and a main conversation. */
+export interface ConversationReferenceView extends Omit<ConversationSummary, 'message_count'> {
+  message_count: number | null
+}
+
+export interface AttackConversationReferencesView extends Omit<AttackConversationsResponse, 'main_conversation_id' | 'conversations'> {
+  main_conversation_id: string | null
+  conversations: ConversationReferenceView[]
+}
+
+export type ReadAttackConversationReferences = (
+  attackResultId: string, params?: ConversationPageParams,
+) => Promise<AttackConversationReferencesView>
 
 
 export interface CreateConversationRequest {
@@ -2272,6 +2303,8 @@ export interface PairedOutcomeDetailPage {
 }
 
 export interface ScenarioRunPlanAtomicGroup {
+  /** Absent in legacy plans, whose topology is unknown. */
+  is_compound?: boolean | null
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
