@@ -26,7 +26,7 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import RegistryNameTakenError
+from pyrit.registry.instance_registry import RegistryNameTakenError, saved_entry_registration
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage, safe_failure_text
 
 if TYPE_CHECKING:
@@ -518,7 +518,8 @@ class RegistryRecipeRestorer:
         from pyrit.registry.components.attack_technique_registry import TechniqueAdmissionError
 
         try:
-            await build_async(stored)
+            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name):
+                await build_async(stored)
         except RecipeRejectedError as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))
         except RegistryNameTakenError as error:

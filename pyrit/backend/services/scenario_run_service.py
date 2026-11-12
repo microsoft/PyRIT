@@ -103,6 +103,7 @@ from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTarge
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
+from pyrit.registry.instance_registry import SavedEntryReplacementError, record_saved_entry_refusals
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
@@ -194,6 +195,10 @@ _STARTED_AT_ADAPTER = TypeAdapter(datetime)
 
 class ScenarioRunConflictError(ValueError):
     """A saved run cannot be admitted to the scheduler in its current state."""
+
+
+class SavedEntryLaunchConflictError(ScenarioRunConflictError):
+    """A launch script would replace an entry rebuilt from a saved recipe."""
 
 
 class ScenarioRunNotFoundError(ValueError):
@@ -1656,7 +1661,8 @@ class ScenarioRunService:
         """
         Validate and execute initializers specified in the request.
 
-        Every initializer is built before any runs, so a rejected request changes nothing.
+        Every initializer is built before any runs, so a request naming an unknown or finding-fields
+        initializer is rejected before anything changes.
 
         Args:
             request: The run request containing initializer names and args.
@@ -1664,12 +1670,13 @@ class ScenarioRunService:
         Raises:
             ValueError: If an initializer name is not found in the registry, or an initializer sets the
                 deployment's finding fields, which only setup from ``.pyrit_conf`` may do.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
         if not request.initializers:
             return
 
         initializer_registry = await run_legacy_sync_async(InitializerRegistry.get_registry_singleton)
-        instances: list[PyRITInitializer] = []
+        instances: list[tuple[str, PyRITInitializer]] = []
         for initializer_name in request.initializers:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
@@ -1683,9 +1690,44 @@ class ScenarioRunService:
                     f"Initializer '{initializer_name}' sets the deployment's finding fields, so it can run only "
                     "from .pyrit_conf, not for one scenario run."
                 )
-            instances.append(instance)
-        for instance in instances:
-            await instance.initialize_async()
+            instances.append((initializer_name, instance))
+        for initializer_name, instance in instances:
+            # The registries refuse to replace a saved entry; the record also catches a refusal
+            # that the script itself caught, which would leave the saved entry in its place.
+            with record_saved_entry_refusals() as refusals:
+                try:
+                    await instance.initialize_async()
+                except SavedEntryReplacementError as error:
+                    refusals.append((error.kind, error.name))
+                except Exception as error:
+                    # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
+                    if refusals:
+                        raise self._saved_entry_conflict(
+                            initializer_name=initializer_name, refusals=refusals
+                        ) from error
+                    raise
+            if refusals:
+                raise self._saved_entry_conflict(initializer_name=initializer_name, refusals=refusals)
+
+    @staticmethod
+    def _saved_entry_conflict(
+        *, initializer_name: str, refusals: list[tuple[str, str]]
+    ) -> SavedEntryLaunchConflictError:
+        """
+        Describe the saved entries a launch script would have replaced.
+
+        Args:
+            initializer_name (str): The launch script's name.
+            refusals (list[tuple[str, str]]): The kind and name of each saved entry that was refused.
+
+        Returns:
+            SavedEntryLaunchConflictError: The error to raise.
+        """
+        entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
+        return SavedEntryLaunchConflictError(
+            f"The launch script '{initializer_name}' would replace the saved {entries}. "
+            "Leave that script out of the launch."
+        )
 
     async def _initialize_scenario_async(
         self,
