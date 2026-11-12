@@ -1624,3 +1624,150 @@ async def test_convert_audio_async_logs_abandoned_cleanup_failure(
                 await wait_for_event_async(event=failure_reported, tasks=[])
             for path in written_paths:
                 unlink(Path(path), missing_ok=True)
+
+
+async def test_cancelled_target_call_persists_the_request_without_a_response(mock_memory_instance):
+    target = MockPromptTarget()
+    with (
+        patch.object(target, "_send_prompt_to_target_async", side_effect=asyncio.CancelledError()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=target,
+            conversation_id="cancelled-conversation",
+        )
+
+    [persisted] = [call.kwargs["request"] for call in mock_memory_instance.add_message_to_memory_async.await_args_list]
+    assert [piece.api_role for piece in persisted.message_pieces] == ["user"]
+    assert persisted.get_value() == "request"
+    assert persisted.get_piece().conversation_id == "cancelled-conversation"
+
+
+async def test_cancelled_send_that_never_reached_the_target_persists_nothing(mock_memory_instance):
+    conversation_id = "prepended-conversation"
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+
+    target = MockPromptTarget()
+    with (
+        patch.object(target, "_get_normalized_conversation_async", side_effect=asyncio.CancelledError()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == 0
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
+
+
+async def test_failure_to_persist_a_cancelled_request_does_not_mask_the_cancellation(mock_memory_instance):
+    mock_memory_instance.add_message_to_memory_async.side_effect = RuntimeError("database unavailable")
+
+    target = MockPromptTarget()
+    with (
+        patch.object(target, "_send_prompt_to_target_async", side_effect=asyncio.CancelledError()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"), target=target
+        )
+
+    mock_memory_instance.add_message_to_memory_async.assert_awaited_once()
+
+
+async def test_cancelled_default_context_before_dispatch_persists_nothing(mock_memory_instance):
+    target = MockPromptTarget()
+    with (
+        patch.object(target, "_get_normalized_conversation_async", side_effect=asyncio.CancelledError()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"), target=target
+        )
+
+    mock_memory_instance.add_message_to_memory_async.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("invoked", "prior_invocations"), [(True, 0), (True, 1), (False, 1)])
+async def test_cancelled_history_context_records_only_this_send(mock_memory_instance, invoked, prior_invocations):
+    conversation_id = "prepended-conversation"
+    seed = Message.from_prompt(prompt="seed", role="user")
+    seed.get_piece().conversation_id = conversation_id
+    mock_memory_instance.get_conversation_messages_async.return_value = [seed]
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+    for _ in range(prior_invocations):
+        target_context.begin_send()
+        target_context.mark_target_invoked()
+        target_context.finish_send(succeeded=True)
+
+    target = MockPromptTarget()
+    cancelled_method = "_send_prompt_to_target_async" if invoked else "_get_normalized_conversation_async"
+    with (
+        patch.object(target, cancelled_method, side_effect=asyncio.CancelledError()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == prior_invocations + int(invoked)
+    if invoked:
+        mock_memory_instance.add_message_to_memory_async.assert_awaited_once()
+        assert mock_memory_instance.add_message_to_memory_async.call_args.kwargs["request"].get_value() == "request"
+    else:
+        mock_memory_instance.add_message_to_memory_async.assert_not_awaited()
+
+
+async def test_repeated_cancellation_finishes_request_persistence(mock_memory_instance):
+    sending = asyncio.Event()
+    saving = asyncio.Event()
+    release = asyncio.Event()
+    persisted: list[Message] = []
+    target = MockPromptTarget()
+
+    async def block_send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        sending.set()
+        await asyncio.Event().wait()
+        return []
+
+    async def save_async(*, request: Message) -> None:
+        saving.set()
+        await release.wait()
+        persisted.append(request)
+
+    mock_memory_instance.add_message_to_memory_async.side_effect = save_async
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=block_send_async):
+        task = asyncio.create_task(
+            PromptNormalizer().send_prompt_async(
+                message=Message.from_prompt(prompt="request", role="user"), target=target
+            )
+        )
+        try:
+            await wait_for_event_async(event=sending, tasks=[task])
+            task.cancel("original cancellation")
+            await wait_for_event_async(event=saving, tasks=[task])
+            task.cancel("repeated cancellation")
+            release.set()
+            with pytest.raises(asyncio.CancelledError, match="original cancellation"):
+                await wait_for_completion_async(future=task)
+            assert [request.get_value() for request in persisted] == ["request"]
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await drain_tasks_async(task)
