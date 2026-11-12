@@ -82,7 +82,8 @@ export default function Reinitialize({
   return (
     <section aria-label="Reinitialize PyRIT" className={styles.root}>
       {status && (showRuntimeStatus || statusIsError || !status.enabled) && (
-        <MessageBar intent={statusIsError ? 'error' : 'info'}>
+        // Multiline, since a status message such as a restore failure can be long and change after the bar lays out.
+        <MessageBar intent={statusIsError ? 'error' : 'info'} layout="multiline">
           <MessageBarBody>
             Runtime: {status.state}. {status.message}
             {!status.enabled && ' Reinitialization requires one backend worker and one replica.'}
