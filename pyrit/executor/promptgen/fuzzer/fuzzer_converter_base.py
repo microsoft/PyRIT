@@ -60,7 +60,6 @@ class FuzzerConverter(Converter):
         """
         super().__init__(converter_target=converter_target)
         self.converter_target = converter_target
-        self.prompt_template = prompt_template
         self.system_prompt = prompt_template.value
         self.template_label = "TEMPLATE"
 
