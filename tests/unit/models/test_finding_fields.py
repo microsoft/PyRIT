@@ -13,6 +13,7 @@ from pyrit.models import (
 )
 from pyrit.models.finding_fields import FindingFieldOption, FindingValueRow
 from pyrit.models.harm_category import HarmCategory
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 
 CONTOSO = FindingFields(
     severity=FindingField(
@@ -192,6 +193,20 @@ def test_finding_field_rejects_invalid_parts(field: dict, match: str) -> None:
 
 def test_severity_slot_accepts_explicit_required() -> None:
     assert FindingFields.model_validate({"severity": {**SEVERITY, "required": True}}).severity.required is True
+
+
+def test_finding_fields_accept_keys_up_to_the_request_limits_and_reject_more() -> None:
+    longest = "k" * MAX_IDENTIFIER_LENGTH
+    FindingField.model_validate(_choice(key=longest, levels=[(longest[:-1] + "l", "Level")], options=NESTED))
+    with pytest.raises(ValidationError, match=f"longer than the {MAX_IDENTIFIER_LENGTH}"):
+        FindingField.model_validate(_choice(key=longest + "k"))
+    with pytest.raises(ValidationError, match=f"longer than the {MAX_IDENTIFIER_LENGTH}"):
+        FindingField.model_validate(_choice(levels=[(longest + "k", "Level")], options=NESTED))
+
+    fields = [_choice(key=f"field_{number}") for number in range(MAX_ITEMS)]
+    FindingFields.model_validate({"severity": SEVERITY, "fields": fields})
+    with pytest.raises(ValidationError, match=f"use {MAX_ITEMS + 1} keys besides 'severity'"):
+        FindingFields.model_validate({"severity": SEVERITY, "fields": [*fields, _choice(key="one_more")]})
 
 
 def test_internal_defaults_to_false_and_is_rejected_on_the_severity_slot() -> None:

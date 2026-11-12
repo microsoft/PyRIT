@@ -42,6 +42,15 @@ MISSING_ID = UUID(int=404)
 EMPTY_USAGE = {"findings": 0, "attacks": 0, "scenario_runs": 0}
 
 
+def _listed(finding: dict, *rows: dict) -> dict:
+    """The list item of a saved finding with no evidence or retired values."""
+    return {**finding, "evidence_count": 0, "rows": list(rows), "retired": []}
+
+
+def _row(key: str, label: str, value: str, *, multiline: bool = False) -> dict:
+    return {"key": key, "label": label, "value": value, "multiline": multiline, "internal": False}
+
+
 def test_operations_create_list_and_get(compatibility_headers: dict[str, str]) -> None:
     client = TestClient(app, headers=compatibility_headers)
     created = client.post("/api/operations", json={"name": "  Red team / α% "})
@@ -207,7 +216,7 @@ def test_findings_are_created_and_listed_under_an_operation(compatibility_header
     assert finding["field_values"] == {}
     client.post(f"/api/operations/{other_id}/findings", json={"title": "Elsewhere", "severity": "low"})
     listed = client.get(f"/api/operations/{operation_id}/findings", params={"limit": 1}).json()
-    assert listed == {"items": [{**finding, "evidence_count": 0}], "has_more": False, "next_offset": None}
+    assert listed == {"items": [_listed(finding)], "has_more": False, "next_offset": None}
     counts = {item["name"]: item["finding_counts"] for item in client.get("/api/operations").json()["items"]}
     assert counts == {"Case": {"informational": 1}, "Other": {"low": 1}}
 
@@ -267,7 +276,7 @@ def test_finding_api_round_trips_field_values_and_drops_blanks(compatibility_hea
     finding = response.json()
     assert finding["severity"] == "Team severity"
     assert finding["field_values"] == {"harm_type": "Malware"}
-    assert client.get(path).json()["items"] == [{**finding, "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [_listed(finding, _row("harm_type", "Harm-type", "Malware"))]
     updated = client.put(f"{path}/{finding['id']}", json={"title": "Edited", "severity": "low"})
     assert updated.status_code == 200
     assert updated.json()["field_values"] == {}
@@ -280,7 +289,7 @@ def test_finding_api_round_trips_field_values_and_drops_blanks(compatibility_hea
     ]:
         assert client.post(path, json={"title": "Invalid", **invalid}).status_code == 422
         assert client.put(f"{path}/{finding['id']}", json={"title": "Invalid", **invalid}).status_code == 422
-    assert client.get(path).json()["items"] == [{**updated.json(), "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [_listed(updated.json())]
 
 
 def test_findings_require_an_existing_operation(compatibility_headers: dict[str, str]) -> None:
@@ -400,7 +409,9 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
         "severity": "critical",
         "field_values": {"description": "Notes"},
     }
-    assert client.get(path).json()["items"] == [{**edited.json(), "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [
+        _listed(edited.json(), _row("description", "Description", "Notes", multiline=True))
+    ]
     deleted = client.delete(finding_path)
     assert deleted.status_code == 204
     assert deleted.content == b""
@@ -434,7 +445,7 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
         assert client.put(finding_path, json=invalid).status_code == 422
     assert TestClient(app).put(finding_path, json=body).status_code != 200
     assert TestClient(app).delete(finding_path).status_code != 204
-    assert client.get(path).json()["items"] == [{**original, "evidence_count": 0}]
+    assert client.get(path).json()["items"] == [_listed(original)]
 
 
 async def test_update_keeps_an_unchanged_retired_value_async(

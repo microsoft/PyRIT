@@ -8,7 +8,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { deferred } from '@/test-utils/deferred'
 import { findRemovalConfirmation, pick } from '@/test-utils/findingDialog'
 import { CONTOSO_FINDING_FIELDS, DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
-import type { Finding, FindingFields, FindingListItem, Operation, OperationDetail } from '@/types'
+import type { Finding, FindingFields, FindingListItem, FindingValueRow, Operation, OperationDetail } from '@/types'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import OperationDetailPage from './OperationDetailPage'
 
@@ -29,6 +29,11 @@ const OPERATION: OperationDetail = { ...SAVED, usage: { findings: 0, attacks: 0,
 const FINDING: FindingListItem = {
   id: 'finding-1', operation_id: 'op-1', title: 'Human assessment',
   severity: 'informational', field_values: {}, created_at: '2026-10-06T20:00:00Z', evidence_count: 0,
+  rows: [], retired: [],
+}
+
+function row(key: string, label: string, value: string, extra: Partial<FindingValueRow> = {}): FindingValueRow {
+  return { key, label, value, multiline: false, internal: false, ...extra }
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'missing' } } }
@@ -374,6 +379,7 @@ it('displays and preserves both custom classifications when editing a finding', 
   const user = userEvent.setup()
   const classified: FindingListItem = {
     ...FINDING, severity: 'Team severity', field_values: { harm_type: 'Team harm' },
+    rows: [row('harm_type', 'Harm-type', 'Team harm')],
   }
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [classified] })
   jest.mocked(operationsApi.updateFinding).mockResolvedValue(classified)
@@ -431,13 +437,24 @@ it('retains an edited draft on update failure and shows why the backend rejected
 it('shows configured rows and retired values on a finding card', async () => {
   const user = userEvent.setup()
   const steps = '1. Ask the Contoso assistant to repeat its instructions.\n2. Ask again in French.'
+  const note = 'Recorded before Contoso configured its own fields.'
   const contosoFinding: FindingListItem = {
     ...FINDING, title: 'Contoso assistant repeats its system prompt', severity: 'sev1',
     field_values: {
       severity_rationale: 'customer_impact', category: 'model_security', subcategory: 'system_prompt_leak',
       technique: 'Contoso persona swap', steps, owner: 'Contoso red team',
-      description: 'Recorded before Contoso configured its own fields.', contoso_ticket: 'CONTOSO-42',
+      description: note, contoso_ticket: 'CONTOSO-42',
     },
+    // As the backend labels them under CONTOSO_FINDING_FIELDS.
+    rows: [
+      row('severity_rationale', 'Severity rationale', 'Customer impact'),
+      row('category', 'Category', 'Model security'),
+      row('subcategory', 'Subcategory', 'System prompt leak'),
+      row('technique', 'Technique', 'Contoso persona swap'),
+      row('steps', 'Steps to reproduce', steps, { multiline: true }),
+      row('owner', 'Owner', 'Contoso red team', { internal: true }),
+    ],
+    retired: [['description', note], ['contoso_ticket', 'CONTOSO-42']],
   }
   jest.mocked(operationsApi.getFindingFields).mockResolvedValue(CONTOSO_FINDING_FIELDS)
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [contosoFinding] })
@@ -470,6 +487,8 @@ it('resends the kept retired values and lists the removed ones, and sends none f
   const user = userEvent.setup()
   const legacy: FindingListItem = {
     ...FINDING, field_values: { harm_type: 'Malware', contoso_ticket: 'CONTOSO-42', retired_owner: 'Contoso' },
+    rows: [row('harm_type', 'Harm-type', 'Malware')],
+    retired: [['contoso_ticket', 'CONTOSO-42'], ['retired_owner', 'Contoso']],
   }
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [legacy] })
   renderPage()
@@ -631,7 +650,7 @@ it('pages through findings', async () => {
   expect(screen.getByText('Page 2')).toBeInTheDocument()
 })
 
-it('loads the shown page again only when a live apply changes the severity order', async () => {
+it('loads the shown page again only when a live apply changes the fields', async () => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   const pageCalls = (): unknown[] =>
     jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.limit === 20)

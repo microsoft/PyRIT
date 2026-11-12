@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
 
 import type {
-  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, FindingFields, Operation,
+  CreateAttackResponse, Finding, FindingEvidenceAttachResponse, FindingExportFormat, FindingFields,
+  FindingListResponse, Operation,
 } from '../src/types'
 import { waitForAppReady } from './_runtime'
 
@@ -530,9 +531,19 @@ test('keeps the page usable after removing a retired value and cancelling the ed
   })
   expect(findingResponse.status()).toBe(201)
   // The seeded backend accepts only known keys, so the browser gets the fields without Description instead,
-  // which makes the saved description a retired value.
+  // which makes the saved description a retired value. The list carries the backend's labels, so it changes too.
   await page.route('**/api/operations/finding-fields', async route => {
     await route.fulfill({ json: { ...fields, fields: fields.fields.filter(field => field.key !== 'description') } })
+  })
+  await page.route(new RegExp(`/api/operations/${operation.id}/findings\\?`), async route => {
+    const response = await route.fetch()
+    const listed: FindingListResponse = await response.json()
+    const items = listed.items.map(item => ({
+      ...item,
+      rows: item.rows.filter(row => row.key !== 'description'),
+      retired: [...item.retired, ['description', notes]],
+    }))
+    await route.fulfill({ response, json: { ...listed, items } })
   })
 
   await page.goto(`/operations/${operation.id}`)

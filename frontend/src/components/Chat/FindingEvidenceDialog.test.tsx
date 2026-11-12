@@ -22,7 +22,7 @@ jest.mock('@/hooks/useRuntime', () => ({ ...jest.requireActual('@/hooks/useRunti
 
 const FINDING: FindingListItem = {
   id: 'finding', operation_id: 'saved', title: 'Proof', severity: 'low', field_values: {},
-  created_at: '2026-10-08T12:00:00Z', evidence_count: 0,
+  created_at: '2026-10-08T12:00:00Z', evidence_count: 0, rows: [], retired: [],
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const SAVED = { id: 'saved', name: 'Exact', created_at: '2026-10-08T12:00:00Z' }

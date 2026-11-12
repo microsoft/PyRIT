@@ -6,9 +6,9 @@ import {
 } from '@fluentui/react-components'
 
 import { type FieldError, toApiError } from '@/services/errors'
-import type { FindingCreate, FindingField, FindingFields } from '@/types'
+import type { FindingCreate, FindingField, FindingFields, FindingListItem } from '@/types'
 import { generateClientId } from '@/utils/clientId'
-import { firstMissingRequired, type RetiredValue, SEVERITY_KEY, splitRetiredValues } from '@/utils/findingFields'
+import { SEVERITY_KEY } from '@/utils/findingFields'
 
 import { useFindingDialogStyles } from './FindingDialog.styles'
 import FindingFieldInput from './FindingFieldInput'
@@ -30,7 +30,8 @@ export interface FindingDraft extends FindingCreate {
 interface FindingDialogProps {
   /** Read once, when the dialog opens. A reload while it's open doesn't change its inputs or retired values. */
   fields: FindingFields
-  initialValues?: FindingCreate
+  /** An edit's finding, with the retired values the findings list sets apart. */
+  initialValues?: FindingCreate & Pick<FindingListItem, 'retired'>
   editing?: boolean
   context?: React.ReactNode
   /** Shows an optional attack ID to link as evidence. */
@@ -40,9 +41,14 @@ interface FindingDialogProps {
   onClose: () => void
 }
 
+interface RetiredValue {
+  key: string
+  value: string
+}
+
 /** A new finding starts from the field defaults. An edit starts from its values, with retired ones set apart. */
 function openingState(
-  fields: FindingFields, initialValues: FindingCreate | undefined,
+  fields: FindingFields, initialValues: FindingDialogProps['initialValues'],
 ): { draft: FindingCreate; retired: RetiredValue[] } {
   if (initialValues === undefined) {
     const defaults: Record<string, string> = {}
@@ -51,8 +57,12 @@ function openingState(
     }
     return { draft: { title: '', severity: fields.severity.default ?? '', field_values: defaults }, retired: [] }
   }
-  const { current, retired } = splitRetiredValues(fields, initialValues.field_values)
-  return { draft: { title: initialValues.title, severity: initialValues.severity, field_values: current }, retired }
+  const retiredKeys = new Set(initialValues.retired.map(([key]: [string, string]) => key))
+  const current = Object.entries(initialValues.field_values).filter(([key]: [string, string]) => !retiredKeys.has(key))
+  return {
+    draft: { title: initialValues.title, severity: initialValues.severity, field_values: Object.fromEntries(current) },
+    retired: initialValues.retired.map(([key, value]: [string, string]) => ({ key, value })),
+  }
 }
 
 /** The draft as the backend stores it, which drops blank values. */
@@ -99,8 +109,9 @@ export default function FindingDialog({
   const attempt = useRef<{ signature: string; id: string } | null>(null)
   const slots = [openFields.severity, ...openFields.fields]
   const values = { ...draft.field_values, [SEVERITY_KEY]: draft.severity }
-  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim())
-    && firstMissingRequired(openFields, draft.severity, draft.field_values) === null
+  // Title and severity are part of every finding. The server checks the configured required values and names a
+  // missing one; only blank Other text, which it never sees, is held here.
+  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim()) && Boolean(draft.severity.trim())
     && !Object.values(blankOther).some(Boolean)
   const changed = !sameFinding(draft, opening.draft) || removed.size > 0 || attackResultId !== ''
 

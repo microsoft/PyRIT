@@ -11,7 +11,6 @@ import { toApiError } from '@/services/errors'
 import type { FindingExportFormat, FindingFields, FindingListItem, Operation } from '@/types'
 import { downloadFile } from '@/utils/downloadFile'
 import { findingExportFilename } from '@/utils/findingExportFilename'
-import { splitRetiredValues } from '@/utils/findingFields'
 
 import { useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
@@ -49,13 +48,13 @@ function retiredNotice(count: number): string {
 
 interface FindingExportDialogProps {
   operation: Operation
-  /** The active finding fields, which decide the severity badges and which stored values are retired. */
+  /** The active finding fields, which decide the severity badges. */
   fields: FindingFields
-  /** Changes when the severity ranking changes, which loads every page again. */
-  orderRevision: number
+  /** Changes when the active fields change, which loads every page again with the new labels and retired values. */
+  fieldsRevision: number
 }
 
-export default function FindingExportDialog({ operation, fields, orderRevision }: FindingExportDialogProps) {
+export default function FindingExportDialog({ operation, fields, fieldsRevision }: FindingExportDialogProps) {
   const styles = useFindingExportDialogStyles()
   const [open, setOpen] = useState(false)
   const [loadRevision, setLoadRevision] = useState(0)
@@ -79,8 +78,7 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
   const selectedIds = findings.filter(finding => selected.has(finding.id)).map(finding => finding.id)
   const allSelected = selectedIds.length === findings.length
   const selectAllChecked = allSelected ? true : selectedIds.length === 0 ? false : 'mixed'
-  const selectedWithRetired = findings.filter(finding => selected.has(finding.id)
-    && splitRetiredValues(fields, finding.field_values).retired.length > 0).length
+  const selectedWithRetired = findings.filter(finding => selected.has(finding.id) && finding.retired.length > 0).length
   const tooMany = selectedIds.length > MAX_EXPORT_FINDINGS
   // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
   // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
@@ -144,7 +142,7 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
       setRecovering(false)
     })
     return () => { ignore = true }
-  }, [open, loadRevision, operation.id, orderRevision])
+  }, [open, loadRevision, operation.id, fieldsRevision])
 
   const start = (): void => {
     submitting.current = false

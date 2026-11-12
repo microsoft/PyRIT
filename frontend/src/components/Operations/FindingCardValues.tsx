@@ -1,21 +1,19 @@
 import { useId } from 'react'
 import { mergeClasses, Text } from '@fluentui/react-components'
 
-import type { FindingFields, FindingListItem } from '@/types'
-import { describeFindingValues, type FindingValueRow } from '@/utils/findingFields'
+import type { FindingListItem, FindingValueRow } from '@/types'
 
 import { useOperationsStyles } from './Operations.styles'
 
 interface FindingCardValuesProps {
-  fields: FindingFields
-  finding: Pick<FindingListItem, 'severity' | 'field_values'>
+  finding: Pick<FindingListItem, 'rows' | 'retired'>
 }
 
 /** A finding card's filled values, then the values of fields that are no longer configured under their raw keys. */
-export default function FindingCardValues({ fields, finding }: FindingCardValuesProps) {
+export default function FindingCardValues({ finding }: FindingCardValuesProps) {
   const styles = useOperationsStyles()
   const retiredHeadingId = useId()
-  const { rows, retired } = describeFindingValues(fields, finding.severity, finding.field_values)
+  const { rows, retired } = finding
   if (rows.length === 0 && retired.length === 0) return null
 
   return (
@@ -29,7 +27,7 @@ export default function FindingCardValues({ fields, finding }: FindingCardValues
       {retired.length > 0 && <div role="group" aria-labelledby={retiredHeadingId} className={styles.retired}>
         <Text id={retiredHeadingId} size={200} weight="semibold" className={styles.muted}>Retired fields</Text>
         <ul className={styles.retiredList}>
-          {retired.map(({ key, value }: { key: string; value: string }) => (
+          {retired.map(([key, value]: [string, string]) => (
             <li key={key}>
               <code className={styles.retiredKey} translate="no">{key}</code>
               <p className={styles.retiredValue}>{value}</p>

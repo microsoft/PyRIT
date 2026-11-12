@@ -51,25 +51,30 @@ describe('useFindingFields', () => {
     expect(result.current.error).toBe('')
   })
 
-  it('changes orderRevision only when a reload brings a different severity order', async () => {
+  it('changes fieldsRevision only when a reload brings different fields', async () => {
+    const relabeled = {
+      ...DEFAULT_FINDING_FIELDS_FIXTURE,
+      fields: DEFAULT_FINDING_FIELDS_FIXTURE.fields.map(field => ({ ...field, label: `${field.label} (Contoso)` })),
+    }
     mockGetFindingFields
       .mockResolvedValueOnce(DEFAULT_FINDING_FIELDS_FIXTURE)
       .mockResolvedValueOnce({ ...DEFAULT_FINDING_FIELDS_FIXTURE })
-      .mockResolvedValueOnce(CONTOSO_FINDING_FIELDS)
+      .mockResolvedValueOnce(relabeled)
 
     const { result, rerender } = renderHook(() => useFindingFields())
     await waitFor(() => expect(result.current.fields).toBe(DEFAULT_FINDING_FIELDS_FIXTURE))
-    const loaded = result.current.orderRevision
+    const loaded = result.current.fieldsRevision
 
     mockRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'two' })
     rerender()
     await waitFor(() => expect(result.current.fields).not.toBe(DEFAULT_FINDING_FIELDS_FIXTURE))
-    expect(result.current.orderRevision).toBe(loaded)
+    expect(result.current.fieldsRevision).toBe(loaded)
 
+    // Only labels change here, with the same severity order; the findings list still has to load them again.
     mockRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'three' })
     rerender()
-    await waitFor(() => expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS))
-    expect(result.current.orderRevision).not.toBe(loaded)
+    await waitFor(() => expect(result.current.fields).toBe(relabeled))
+    expect(result.current.fieldsRevision).not.toBe(loaded)
   })
 
   it('reports a load failure and retries', async () => {

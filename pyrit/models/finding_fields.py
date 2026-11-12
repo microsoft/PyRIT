@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from pyrit.models.finding import FindingCreate
 from pyrit.models.harm_category import HarmCategory
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 
 
 class FindingFieldType(StrEnum):
@@ -117,16 +118,22 @@ class FindingField(BaseModel):
 
     def _check_key(self, key: str) -> None:
         """
-        Require a key of lowercase letters, digits and underscores, other than ``__proto__``.
+        Require a key of lowercase letters, digits and underscores, other than ``__proto__``, that a save request
+        accepts.
 
         Raises:
-            ValueError: If the key uses any other character, is empty, or is ``__proto__``.
+            ValueError: If the key uses any other character, is empty, is ``__proto__``, or is longer than
+                ``MAX_IDENTIFIER_LENGTH``.
         """
         if not self._KEY_PATTERN.fullmatch(key):
             raise ValueError(f"Key '{key}' must use only lowercase letters, digits and underscores.")
         # JavaScript objects treat this name as their prototype, so CoPyRIT couldn't keep a value under it.
         if key == "__proto__":
             raise ValueError("Key '__proto__' is reserved.")
+        if len(key) > MAX_IDENTIFIER_LENGTH:
+            raise ValueError(
+                f"A key of {len(key)} characters is longer than the {MAX_IDENTIFIER_LENGTH} a save request accepts."
+            )
 
     def _check_not_blank(self) -> None:
         """
@@ -284,8 +291,8 @@ class FindingFields(BaseModel):
             Self: The validated fields.
 
         Raises:
-            ValueError: If a field other than severity sets colors, a key is used more than once,
-                or a key is ``title``.
+            ValueError: If a field other than severity sets colors, a key is used more than once, a key is
+                ``title``, or the fields and levels use more keys besides ``severity`` than a save request accepts.
         """
         colored = next((field.key for field in self.fields if field.colors), None)
         if colored is not None:
@@ -296,6 +303,11 @@ class FindingFields(BaseModel):
             raise ValueError(f"The key '{repeated}' is used more than once across fields and levels.")
         if "title" in keys:
             raise ValueError("The key 'title' is reserved for the finding title.")
+        if len(self.field_keys) > MAX_ITEMS:
+            raise ValueError(
+                f"The fields and levels use {len(self.field_keys)} keys besides 'severity', more than the "
+                f"{MAX_ITEMS} a save request accepts."
+            )
         return self
 
     def check_values(

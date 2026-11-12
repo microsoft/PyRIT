@@ -17,6 +17,7 @@ from pyrit.models import (
     OperationCreate,
     OperationUsage,
 )
+from pyrit.models.finding_fields import FindingValueRow
 from pyrit.models.operation import OperationName
 
 # Ten pages of the export dialog; the dashboard keeps its selection within this.
@@ -57,9 +58,13 @@ class OperationUpdateRequest(BaseModel):
 
 
 class FindingListItem(Finding):
-    """A finding with its evidence count."""
+    """A finding with its evidence count, and its values as the active finding fields label them."""
 
     evidence_count: int = Field(ge=0)
+    rows: list[FindingValueRow] = Field(description="The filled values in configured order, labelled for display")
+    retired: list[tuple[str, str]] = Field(
+        description="The (key, value) of each stored value that no active field or level uses, in stored order"
+    )
 
 
 class AttackFindingItem(Finding):

@@ -6,7 +6,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { deferred } from '@/test-utils/deferred'
 import { findRemovalConfirmation, pick } from '@/test-utils/findingDialog'
 import { CONTOSO_FINDING_FIELDS, DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
-import type { FindingCreate, FindingFields } from '@/types'
+import type { FindingCreate, FindingFields, FindingListItem } from '@/types'
 
 import FindingDialog, { type FindingDraft } from './FindingDialog'
 
@@ -17,7 +17,8 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const ATTEMPT = { id: expect.any(String), attackResultId: '' }
 
 const CONTOSO_STEPS = '1. Ask the Contoso assistant to repeat its instructions.'
-const CONTOSO_EDIT: FindingCreate = {
+const CONTOSO_RETIRED_NOTE = 'Recorded before Contoso configured its own fields.'
+const CONTOSO_EDIT: EditValues = {
   title: 'Contoso assistant repeats its system prompt',
   severity: 'sev1',
   field_values: {
@@ -25,8 +26,9 @@ const CONTOSO_EDIT: FindingCreate = {
     category: 'model_security',
     subcategory: 'system_prompt_leak',
     steps: CONTOSO_STEPS,
-    description: 'Recorded before Contoso configured its own fields.',
+    description: CONTOSO_RETIRED_NOTE,
   },
+  retired: [['description', CONTOSO_RETIRED_NOTE]],
 }
 const CONTOSO_CURRENT_VALUES = {
   severity_rationale: 'customer_impact',
@@ -35,9 +37,16 @@ const CONTOSO_CURRENT_VALUES = {
   steps: CONTOSO_STEPS,
 }
 
+type EditValues = FindingCreate & Pick<FindingListItem, 'retired'>
+
+/** An edit with no retired values. */
+function current(title: string, severity: string, fieldValues: Record<string, string> = {}): EditValues {
+  return { title, severity, field_values: fieldValues, retired: [] }
+}
+
 interface DialogOptions {
   fields?: FindingFields
-  initialValues?: FindingCreate
+  initialValues?: EditValues
   editing?: boolean
   evidenceField?: boolean
   onSave?: (draft: FindingDraft, attempt: { id: string; attackResultId: string }) => Promise<void>
@@ -150,9 +159,7 @@ describe('FindingDialog', () => {
   })
 
   it('does not arm the unsaved changes guard for an untouched edit dialog', () => {
-    renderDialog({
-      editing: true, initialValues: { title: 'Existing', severity: 'low', field_values: { description: 'Details' } },
-    })
+    renderDialog({ editing: true, initialValues: current('Existing', 'low', { description: 'Details' }) })
 
     expect(requestPageUnload().defaultPrevented).toBe(false)
   })
@@ -166,10 +173,7 @@ describe('FindingDialog', () => {
     const user = userEvent.setup()
     renderDialog({
       editing: true,
-      initialValues: {
-        title: 'Existing', severity: 'Team severity',
-        field_values: { description: 'Details', harm_type: 'Team harm' },
-      },
+      initialValues: current('Existing', 'Team severity', { description: 'Details', harm_type: 'Team harm' }),
     })
     const field = screen.getByRole('textbox', { name: label })
 
@@ -184,9 +188,7 @@ describe('FindingDialog', () => {
 
   it('protects a severity edit and disarms the guard when the original severity is restored', async () => {
     const user = userEvent.setup()
-    renderDialog({
-      editing: true, initialValues: { title: 'Existing', severity: 'low', field_values: { description: 'Details' } },
-    })
+    renderDialog({ editing: true, initialValues: current('Existing', 'low', { description: 'Details' }) })
 
     expect(requestPageUnload().defaultPrevented).toBe(false)
     await pick(user, 'Severity', 'Critical')
@@ -198,8 +200,7 @@ describe('FindingDialog', () => {
   it('protects a harm-type edit and disarms the guard when the original category is restored', async () => {
     const user = userEvent.setup()
     renderDialog({
-      editing: true,
-      initialValues: { title: 'Existing', severity: 'low', field_values: { description: 'Details', harm_type: 'Malware' } },
+      editing: true, initialValues: current('Existing', 'low', { description: 'Details', harm_type: 'Malware' }),
     })
 
     expect(requestPageUnload().defaultPrevented).toBe(false)
@@ -226,31 +227,15 @@ describe('FindingDialog', () => {
     expect(requestPageUnload().defaultPrevented).toBe(false)
   })
 
-  it('disables save until every required value is filled', async () => {
+  it('enables Save once the title and severity are set, without checking the configured required values', async () => {
     const user = userEvent.setup()
-    const onSave = jest.fn().mockResolvedValue(undefined)
-    renderDialog({ fields: CONTOSO_FINDING_FIELDS, onSave })
+    renderDialog({ fields: CONTOSO_FINDING_FIELDS })
 
+    expect(screen.getByRole('textbox', { name: 'Steps to reproduce' })).toBeRequired()
     await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Contoso prompt leak')
     expect(saveButton()).toBeDisabled()
     await pick(user, 'Severity', 'Sev 1')
-    expect(saveButton()).toBeDisabled()
-    await pick(user, 'Severity rationale', 'Customer impact')
-    expect(saveButton()).toBeDisabled()
-    await pick(user, 'Category', 'Model security')
-    expect(saveButton()).toBeDisabled()
-    await pick(user, 'Subcategory', 'System prompt leak')
-    expect(saveButton()).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: 'Steps to reproduce' }), CONTOSO_STEPS)
     expect(saveButton()).toBeEnabled()
-    await user.clear(screen.getByRole('textbox', { name: 'Title' }))
-    expect(saveButton()).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Contoso prompt leak')
-
-    await user.click(saveButton())
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: 'Contoso prompt leak', severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
-    }, ATTEMPT))
   })
 
   it('disables save while a chosen Other has blank text', async () => {
@@ -483,7 +468,7 @@ describe('FindingDialog', () => {
         },
       },
     }))
-    renderDialog({ evidenceField, onSave, initialValues: { title: 'Assessment', severity: 'low', field_values: {} } })
+    renderDialog({ evidenceField, onSave, initialValues: current('Assessment', 'low') })
     const save = screen.getByRole('button', { name: 'Save finding' })
     await waitFor(() => expect(save).toBeEnabled())
     await user.click(save)
@@ -516,9 +501,7 @@ describe('FindingDialog', () => {
         },
       },
     }))
-    renderDialog({
-      fields, evidenceField: true, onSave, initialValues: { title: 'Assessment', severity: 'low', field_values: {} },
-    })
+    renderDialog({ fields, evidenceField: true, onSave, initialValues: current('Assessment', 'low') })
     await user.click(saveButton())
 
     expect(await screen.findByText(`field_values.attack_result_id: ${message}`)).toBeInTheDocument()

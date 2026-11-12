@@ -2613,8 +2613,22 @@ export interface FindingListResponse {
   next_offset: number | null
 }
 
+/** One filled value of a finding, labelled by the active finding fields. */
+export interface FindingValueRow {
+  key: string
+  label: string
+  /** The option label of a matching choice value, otherwise the stored text. */
+  value: string
+  multiline: boolean
+  internal: boolean
+}
+
 export interface FindingListItem extends Finding {
   evidence_count: number
+  /** The filled values in configured order, labelled by the active finding fields. */
+  rows: FindingValueRow[]
+  /** The `[key, value]` of each stored value that no active field or level uses, in stored order. */
+  retired: Array<[string, string]>
 }
 
 /** A finding that links an attack as evidence. */

@@ -24,7 +24,7 @@ function syntheticFinding(index: number, overrides: Partial<FindingListItem> = {
   return {
     id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, operation_id: OPERATION.id,
     title: `Synthetic finding ${index}`, severity: 'moderate', field_values: {},
-    created_at: '2026-10-21T12:00:00Z', evidence_count: 0, ...overrides,
+    created_at: '2026-10-21T12:00:00Z', evidence_count: 0, rows: [], retired: [], ...overrides,
   }
 }
 
@@ -50,7 +50,7 @@ function renderDialog(operation: Operation = OPERATION): ReturnType<typeof rende
   return render(
     <FluentProvider theme={webLightTheme}>
       <FindingExportDialog key={operation.id} operation={operation} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
-        orderRevision={0} />
+        fieldsRevision={0} />
     </FluentProvider>,
   )
 }
@@ -534,7 +534,7 @@ describe('FindingExportDialog', () => {
     view.rerender(
       <FluentProvider theme={webLightTheme}>
         <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION}
-          fields={DEFAULT_FINDING_FIELDS_FIXTURE} orderRevision={0} />
+          fields={DEFAULT_FINDING_FIELDS_FIXTURE} fieldsRevision={0} />
       </FluentProvider>,
     )
     expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][2]?.aborted).toBe(true)
@@ -556,7 +556,7 @@ describe('FindingExportDialog', () => {
     view.rerender(
       <FluentProvider theme={webLightTheme}>
         <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION}
-          fields={DEFAULT_FINDING_FIELDS_FIXTURE} orderRevision={0} />
+          fields={DEFAULT_FINDING_FIELDS_FIXTURE} fieldsRevision={0} />
       </FluentProvider>,
     )
     const dialog = await openDialog(user)
@@ -568,7 +568,7 @@ describe('FindingExportDialog', () => {
     expect(within(dialog).getByRole('checkbox', { name: other.title })).toBeChecked()
   })
 
-  it('loads every page again when the severity order changes, keeping the selection', async () => {
+  it('loads every page again when the finding fields change, keeping the selection', async () => {
     const user = userEvent.setup()
     const delta = syntheticFinding(4, { title: 'Delta', severity: 'critical' })
     const view = renderDialog(OPERATION)
@@ -580,7 +580,7 @@ describe('FindingExportDialog', () => {
     view.rerender(
       <FluentProvider theme={webLightTheme}>
         <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
-          orderRevision={1} />
+          fieldsRevision={1} />
       </FluentProvider>,
     )
     expect(await within(dialog).findByRole('checkbox', { name: delta.title })).not.toBeChecked()
@@ -591,7 +591,7 @@ describe('FindingExportDialog', () => {
     expect(within(dialog).getByRole('checkbox', { name: GAMMA.title })).toBeChecked()
   })
 
-  it('selects every finding again after the severity order changes when every finding was selected', async () => {
+  it('selects every finding again after the finding fields change when every finding was selected', async () => {
     const user = userEvent.setup()
     jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([ALPHA, BETA]))
     const view = renderDialog(OPERATION)
@@ -602,7 +602,7 @@ describe('FindingExportDialog', () => {
     view.rerender(
       <FluentProvider theme={webLightTheme}>
         <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
-          orderRevision={1} />
+          fieldsRevision={1} />
       </FluentProvider>,
     )
     expect(await within(dialog).findByRole('checkbox', { name: GAMMA.title })).toBeChecked()
@@ -611,8 +611,11 @@ describe('FindingExportDialog', () => {
 
   it('warns when selected findings have retired values', async () => {
     const user = userEvent.setup()
-    const legacyAlpha = { ...ALPHA, field_values: { harm_type: 'Malware', contoso_ticket: 'CONTOSO-42' } }
-    const legacyBeta = { ...BETA, field_values: { description: 'Kept from the earlier form.', retired_owner: 'Contoso' } }
+    const legacyAlpha = { ...ALPHA, retired: [['contoso_ticket', 'CONTOSO-42']] as Array<[string, string]> }
+    const legacyBeta = {
+      ...BETA,
+      retired: [['description', 'Kept from the earlier form.'], ['retired_owner', 'Contoso']] as Array<[string, string]>,
+    }
     const singular = 'Retired fields aren\'t included in the export. 1 selected finding has retired values.'
     const plural = 'Retired fields aren\'t included in the export. 2 selected findings have retired values.'
     jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([legacyAlpha, legacyBeta, GAMMA]))

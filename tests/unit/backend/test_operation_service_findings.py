@@ -9,6 +9,7 @@ from pyrit.backend.models.operations import FindingUpdateRequest
 from pyrit.backend.services.operation_service import OperationService
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Finding, FindingValuesError
+from pyrit.models.finding_fields import FindingValueRow
 from unit.backend.mocks import read_finding_async
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -41,6 +42,17 @@ async def test_list_filters_titles_and_pages_in_configured_severity_order(
     assert [page.items[0].title for page in pages] == ["Leak", "Leak followup"]
     assert [page.has_more for page in pages] == [True, False]
     assert [page.next_offset for page in pages] == [1, None]
+
+
+async def test_list_labels_current_values_and_sets_retired_values_apart(
+    retired_value_finding_async: Finding,
+) -> None:
+    finding = retired_value_finding_async
+    page = await OperationService().list_findings_async(operation_id=finding.operation_id, limit=1, offset=0)
+    assert page.items[0].rows == [
+        FindingValueRow(key="steps", label="Steps to reproduce", value="1. Open", multiline=True, internal=False)
+    ]
+    assert page.items[0].retired == [("description", "Old text")]
 
 
 async def _update_async(

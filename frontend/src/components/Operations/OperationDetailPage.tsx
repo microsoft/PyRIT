@@ -40,7 +40,7 @@ export default function OperationDetailPage({ onOperationChanged }: OperationDet
 function OperationDetailContent({ operationId, onOperationChanged }: { operationId: string } & OperationDetailPageProps) {
   const styles = useOperationsStyles()
   const navigate = useNavigate()
-  const { fields, error: fieldsError, retry: retryFields, orderRevision } = useFindingFields()
+  const { fields, error: fieldsError, retry: retryFields, fieldsRevision } = useFindingFields()
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
@@ -53,10 +53,10 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   const [evidenceRevision, setEvidenceRevision] = useState(0)
   const [settledKey, setSettledKey] = useState('')
   const [error, setError] = useState('')
-  const requestKey = JSON.stringify([operationId, offset, revision, orderRevision])
+  const requestKey = JSON.stringify([operationId, offset, revision, fieldsRevision])
   const [notice, setNotice] = useState('')
   const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState<Finding | null>(null)
+  const [editing, setEditing] = useState<FindingListItem | null>(null)
   const [deleting, setDeleting] = useState<Finding | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [removing, setRemoving] = useState(false)
@@ -176,7 +176,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
         <FindingSeverityBadge fields={findingFields} severity={finding.severity} />
         <time dateTime={finding.created_at}>{new Date(finding.created_at).toLocaleString()}</time>
       </div>
-      <FindingCardValues fields={findingFields} finding={finding} />
+      <FindingCardValues finding={finding} />
       <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
         onDetached={() => { setEvidenceRevision(value => value + 1) }} actions={<>
           <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`} onClick={event => {
@@ -213,7 +213,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
               void navigate('/operations')
             }} />
           {fields !== null && <FindingExportDialog key={current.operation.id} operation={current.operation}
-            fields={fields} orderRevision={orderRevision} />}
+            fields={fields} fieldsRevision={fieldsRevision} />}
           <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />}
             disabled={fields === null} onClick={event => {
               returnFocusRef.current = event.currentTarget
@@ -225,6 +225,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           evidenceField={editing === null}
           initialValues={editing ? {
             title: editing.title, severity: editing.severity, field_values: editing.field_values,
+            retired: editing.retired,
           } : undefined}
           onSave={save} onClose={() => { setOpen(false); setEditing(null) }} />}
       </header>

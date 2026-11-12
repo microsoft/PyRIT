@@ -207,12 +207,13 @@ class OperationService:
             FindingListResponse: The page and the offset of the next one, if any.
         """
         await self.get_async(operation_id)
+        fields = get_active_finding_fields()
         findings = await CentralMemory.get_memory_instance().get_findings_async(
             operation_id=operation_id,
             limit=limit + 1,
             offset=offset,
             title_query=title_query,
-            severity_order=get_active_finding_fields().severity_order,
+            severity_order=fields.severity_order,
             title_pattern=title_pattern,
         )
         has_more = len(findings) > limit
@@ -220,8 +221,19 @@ class OperationService:
         counts = await CentralMemory.get_memory_instance().get_finding_evidence_counts_async(
             finding_ids=[finding.id for finding in page]
         )
+        items = []
+        for finding in page:
+            described = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
+            items.append(
+                FindingListItem(
+                    **finding.model_dump(),
+                    evidence_count=counts.get(finding.id, 0),
+                    rows=described.rows,
+                    retired=described.retired,
+                )
+            )
         return FindingListResponse(
-            items=[FindingListItem(**f.model_dump(), evidence_count=counts.get(f.id, 0)) for f in page],
+            items=items,
             has_more=has_more,
             next_offset=offset + limit if has_more else None,
         )
