@@ -5,7 +5,6 @@ Choose the installation method that best fits your use case.
 ## For Users
 
 :::::{grid} 1 1 2 2
-:gutter: 3
 
 ::::{card} 🐋 User Docker Installation
 :link: ./install_docker
@@ -26,7 +25,6 @@ Install with pip, uv, or conda. Best if you need to integrate PyRIT into existin
 ## For Contributors
 
 :::::{grid} 1 1 2 2
-:gutter: 3
 
 ::::{card} 🐋 Contributor Docker Installation
 :link: ./install_devcontainers
