@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
+from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, data_serializer_factory
 from pyrit.models import MEDIA_PATH_DATA_TYPES
 
@@ -40,6 +41,7 @@ class MediaOrigin(str, Enum):
     LOCAL_PATH = "local_path"
     DATA_URI = "data_uri"
     RAW_BASE64 = "raw_base64"
+    STAGED_UPLOAD = "staged_upload"
 
 
 @dataclass(frozen=True)
@@ -196,9 +198,11 @@ def _is_raw_base64(value: str) -> bool:
 
 
 def _data_uri_parts(value: str) -> tuple[str | None, str]:
-    """Return the optional MIME type and payload from a data URI."""
+    """Return the optional MIME type and payload from a data URI, whatever the scheme's case."""
     header, _, payload = value.partition(",")
-    media_type = header.removeprefix("data:").split(";", 1)[0] or None
+    if header.lower().startswith("data:"):
+        header = header[len("data:") :]
+    media_type = header.split(";", 1)[0] or None
     return media_type, payload
 
 
@@ -246,7 +250,7 @@ async def persist_media_value_async(
     Returns:
         A typed result containing the resolved value and persistence metadata.
     """
-    if value.startswith(("http://", "https://")):
+    if value.lower().startswith(("http://", "https://")):
         container_url = results_container_url()
         return MediaPersistenceResult(
             value=validate_blob_media_url(url=value, container_url=container_url) if container_url else value,
@@ -270,10 +274,15 @@ async def persist_media_value_async(
                 mime_type=mime_type,
             )
 
+    staged_upload = value.startswith(staged_media_store.PREFIX)
+    if staged_upload:
+        data = await staged_media_store.read_async(value)
+        value = await asyncio.to_thread(lambda: base64.b64encode(data).decode("ascii"))
+
     data_uri_mime_type: str | None = None
     payload = value
-    origin = MediaOrigin.RAW_BASE64
-    if value.startswith("data:"):
+    origin = MediaOrigin.STAGED_UPLOAD if staged_upload else MediaOrigin.RAW_BASE64
+    if value.lower().startswith("data:"):
         data_uri_mime_type, payload = _data_uri_parts(value)
         origin = MediaOrigin.DATA_URI
     else:

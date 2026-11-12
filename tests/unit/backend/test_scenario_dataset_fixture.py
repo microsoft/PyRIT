@@ -10,7 +10,7 @@ import pytest
 
 from frontend.e2e.fixtures.scenario_dataset_backend import _configure_preset_storage
 from pyrit.models import ScenarioPreset
-from pyrit.registry import ScenarioPresetRegistry, ScenarioPresetStorage
+from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetRegistry, ScenarioPresetStorage
 
 
 @pytest.fixture
@@ -35,9 +35,12 @@ def test_preset_guard_delegates_real_save_and_delete(
     document = root / "scenario_presets" / "guarded.json"
     assert saved.preset == preset
     assert document.is_file()
-    assert registry.delete_preset(name=preset.name)
+    with pytest.raises(ScenarioPresetConflictError, match="changed by someone else"):
+        registry.delete_preset(name=preset.name, expected_version="stale")
+    assert document.is_file()
+    assert registry.delete_preset(name=preset.name, expected_version=saved.version)
     assert not document.exists()
-    assert [mutation["action"] for mutation in mutations] == ["save", "delete"]
+    assert [mutation["action"] for mutation in mutations] == ["save", "delete", "delete"]
     for mutation in mutations:
         assert all(Path(mutation[field]).is_relative_to(root) for field in ("source", "document", "lock"))
 

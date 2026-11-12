@@ -445,7 +445,19 @@ export function useConversationMessages({
     // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
-    if (!force && (
+    // A send in flight owns this conversation's optimistic transcript, but only
+    // while the hook still holds it, and #3818 also defers a mount into a
+    // sending conversation until the send ends. Returning after the hook has
+    // loaded another conversation is the one case that must not skip: the
+    // optimistic copy is gone, and keeping the skip would render the held
+    // view under this URL with no loading state. The send pipeline layers its
+    // pending messages on the loaded transcript, so the view stays correct
+    // while the send runs.
+    const holdsAnotherConversation = (
+      loadedConversationIdRef.current !== null
+      && loadedConversationIdRef.current !== activeConversationId
+    )
+    if (!force && !holdsAnotherConversation && (
       isActiveConversationSending
       || sendCallbacksRef.current.isSendInFlight(activeConversationId)
       || (
@@ -481,11 +493,14 @@ export function useConversationMessages({
   // conversation whose messages we've loaded, we're in a transition gap.
   // This avoids the 1-frame flash between useEffect fire and render.
   // Reads `sendingConversations` (state) rather than a send ref so the
-  // computation stays render-safe.
+  // computation stays render-safe. A sending conversation is only exempt from
+  // the gap flag while the hook holds it: once another conversation is held,
+  // returning to the sending one re-fetches and must show the gap, not the
+  // held transcript unflagged.
   const awaitingConversationLoad = Boolean(
     activeConversationId && (activeConversationId !== loadedConversationId
       || (loadedAttackResultId !== null && loadedAttackResultId !== attackResultId))
-    && !sendingConversations.has(activeConversationId)
+    && (loadedConversationId !== null || !sendingConversations.has(activeConversationId))
   )
 
   const requestForcedLoad = useCallback((): void => { forceLoadRef.current = true }, [])

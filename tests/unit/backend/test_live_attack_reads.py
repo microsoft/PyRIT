@@ -28,6 +28,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     ConversationType,
     Finding,
     FindingEvidence,
@@ -208,6 +209,34 @@ async def test_attack_service_saved_result_wins_over_running_attack_async(sqlite
     assert summary.scenario_result_id is None
     assert (metadata.in_progress, metadata.conversation_id) == (False, "saved-main")
     assert [item.conversation_id for item in conversations.conversations] == ["saved-main"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_saved_conversation_lookup_excludes_running_attack_until_saved_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    await sqlite_instance.add_conversation_to_memory_async(
+        conversation=Conversation(conversation_id=conversation_id, attack_result_id=ATTACK_ID)
+    )
+    service = _attack_service(
+        memory=sqlite_instance,
+        live=_live_attack(conversation_ids=(conversation_id,), current=conversation_id),
+    )
+
+    assert await service.get_saved_conversation_async(conversation_id=conversation_id) is None
+    live_summary = await service.get_attack_async(attack_result_id=ATTACK_ID)
+    assert live_summary is not None and live_summary.in_progress
+
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(attack_result_id=ATTACK_ID, conversation_id=conversation_id, objective="Saved objective")
+        ]
+    )
+    saved = await service.get_saved_conversation_async(conversation_id=conversation_id)
+    assert saved is not None and not saved.attack.in_progress
+    assert saved.attack.objective == "Saved objective"
+    assert saved.messages.conversation_id == conversation_id
 
 
 @pytest.mark.usefixtures("patch_central_database")

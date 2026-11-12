@@ -30,6 +30,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     find_objective_metrics_by_eval_hash,
     replace_evaluation_results,
 )
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -83,7 +84,12 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             scorer (Scorer): The scorer to evaluate.
+
+        Raises:
+            ValueError: If a multi-label scorer has no explicit single-label projection.
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Select a label with TrueFalseScoreSelector before evaluating a multi-label scorer.")
         self.scorer = scorer
 
     @classmethod
@@ -887,10 +893,21 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         num_responses = all_human_scores.shape[1]
         num_human_raters = all_human_scores.shape[0]
 
+        # A scorer that ignored the response would do best on accuracy by always returning the more
+        # common gold label, and best on F1 by always answering true (always-false has an F1 of 0).
+        baseline_accuracy: float | None = None
+        baseline_f1_score: float | None = None
+        if gold_scores.size:
+            num_gold_true = int(np.sum(gold_scores == 1))
+            baseline_accuracy = max(num_gold_true, gold_scores.size - num_gold_true) / gold_scores.size
+            baseline_f1_score = 2 * num_gold_true / (gold_scores.size + num_gold_true)
+
         return ObjectiveScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
             accuracy=accuracy,
+            baseline_accuracy=baseline_accuracy,
+            baseline_f1_score=baseline_f1_score,
             accuracy_standard_error=np.sqrt(accuracy * (1 - accuracy) / gold_scores.size),
             precision=precision,
             recall=recall,

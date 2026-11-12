@@ -735,6 +735,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    ADVERSARIAL_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
     #: A fixed execution-input contract for attacks that do not expose ``params_type``.
     FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 

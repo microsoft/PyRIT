@@ -22,6 +22,7 @@ jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
 jest.mock('@/services/api', () => ({ attacksApi: { getAttackFindings: jest.fn() }, scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
+  getPairedOutcomes: jest.fn(), getPairedOutcomeDetails: jest.fn(),
 } }))
 
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
@@ -132,6 +133,56 @@ beforeEach(() => {
 })
 
 describe('ScenarioRunPage', () => {
+  it('keeps comparison optional on completed scans and cancels it when collapsed', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'COMPLETED' },
+      plan: { ...PLAN, atomic_groups: [
+        { ...PLAN.atomic_groups[0], id: 'baseline', kind: 'baseline' },
+        { ...PLAN.atomic_groups[0], id: 'attack', kind: 'attack' },
+      ] },
+    })
+    jest.mocked(scenariosApi.getPairedOutcomes).mockReturnValue(new Promise(() => {}))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const disclosure = screen.getByRole('button', { name: 'Compare baseline and attack' })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('region', { name: 'Paired outcomes', exact: true })).not.toBeInTheDocument()
+    expect(scenariosApi.getPairedOutcomes).not.toHaveBeenCalled()
+    disclosure.focus()
+    await user.keyboard('{Enter}')
+    await user.selectOptions(screen.getByLabelText('Baseline group'), 'baseline')
+    await user.selectOptions(screen.getByLabelText('Attack group'), 'attack')
+    await user.click(screen.getByRole('button', { name: 'Compare outcomes' }))
+    expect(scenariosApi.getPairedOutcomes).toHaveBeenCalledWith(
+      RUN_ID, { baseline_group_id: 'baseline', attack_group_id: 'attack' }, expect.any(AbortSignal),
+    )
+    const signal = jest.mocked(scenariosApi.getPairedOutcomes).mock.calls[0][2]
+    await user.click(disclosure)
+    expect(signal?.aborted).toBe(true)
+    expect(screen.queryByRole('region', { name: 'Paired outcomes', exact: true })).not.toBeInTheDocument()
+    await user.click(disclosure)
+    expect(screen.getByRole('button', { name: 'Compare outcomes' })).toBeDisabled()
+  })
+
+  it('does not use a synthesized legacy plan for comparison', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'COMPLETED' },
+      planComplete: false,
+      plan: { ...PLAN, atomic_groups: [
+        { ...PLAN.atomic_groups[0], id: 'baseline', kind: 'baseline' },
+        { ...PLAN.atomic_groups[0], id: 'attack', kind: 'attack' },
+      ] },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Compare baseline and attack' }))
+    expect(screen.getByRole('region', { name: 'Paired outcomes', exact: true })).toHaveTextContent(
+      'Paired outcomes require a saved execution plan.',
+    )
+    expect(screen.queryByLabelText('Baseline group')).not.toBeInTheDocument()
+    expect(scenariosApi.getPairedOutcomes).not.toHaveBeenCalled()
+  })
+
   it('puts conversations and compact results before the saved scenario identity', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)

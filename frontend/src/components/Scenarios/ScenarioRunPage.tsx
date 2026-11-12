@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { Button, MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
+import {
+  Accordion, AccordionHeader, AccordionItem, AccordionPanel, Button, MessageBar, MessageBarBody, Text,
+} from '@fluentui/react-components'
 import { ArrowLeftRegular } from '@fluentui/react-icons'
 import { Link, useLocation, useParams } from 'react-router'
 
@@ -16,6 +18,7 @@ import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 import AtomicAttackGroupsSection from './AtomicAttackGroupsSection'
 import AttackActivity from './AttackActivity'
 import AttackDetailsDialog from './AttackDetailsDialog'
+import PairedOutcomes from './PairedOutcomes'
 import ScenarioAttackDetails, { type ScenarioRunDetailsContext } from './ScenarioAttackDetails'
 import ScenarioRunConfigurationSection from './ScenarioRunConfigurationSection'
 import { CancelScanDialog, ObjectiveDetailsDialog } from './ScenarioRunDialogs'
@@ -59,6 +62,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const headerRef = useRef<HTMLElement | null>(null)
   const groupsToggleRef = useRef<HTMLButtonElement | null>(null)
   const objectiveTrigger = useRef<HTMLElement | null>(null)
+  const [pairedExpanded, setPairedExpanded] = useState(false)
   const [objective, setObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
   const attackDetails = useScenarioRunAttackDetails({
     scenarioResultId,
@@ -171,8 +175,24 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
               setObjective(seed)
             }}
           />
-          <ScenarioRunConfigurationSection run={run} />
         </>}
+        {run.status === 'COMPLETED' && (
+          <Accordion collapsible onToggle={(_, data) => { setPairedExpanded(data.openItems.includes('paired')) }}>
+            <AccordionItem value="paired">
+              <AccordionHeader>Compare baseline and attack</AccordionHeader>
+              <AccordionPanel>
+                {pairedExpanded && (
+                  <PairedOutcomes
+                    scenarioResultId={scenarioResultId}
+                    status={run.status}
+                    plan={state.planComplete ? state.plan : null}
+                  />
+                )}
+              </AccordionPanel>
+            </AccordionItem>
+          </Accordion>
+        )}
+        {!singleGroupId && <ScenarioRunConfigurationSection run={run} />}
       </div>
       <CancelScanDialog open={controls.cancelOpen} cancelling={controls.cancelling} error={controls.cancelError}
         onOpenChange={controls.setCancelOpen} onConfirm={controls.cancel} />

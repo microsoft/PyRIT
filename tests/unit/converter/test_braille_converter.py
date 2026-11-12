@@ -13,6 +13,7 @@ UEB_SYMBOL_CELLS = {
     "&": "\u2808\u282f",  # dot 4, dots 12346
     "*": "\u2810\u2814",  # dot 5, dots 35
     "+": "\u2810\u2816",  # dot 5, dots 235
+    "/": "\u2838\u280c",  # dots 456, dots 34
     "<": "\u2808\u2823",  # dot 4, dots 126
     "=": "\u2810\u2836",  # dot 5, dots 2356
     ">": "\u2808\u281c",  # dot 4, dots 345
@@ -272,6 +273,26 @@ async def test_braille_converter_dollar_resets_number_mode(prompt, expected):
 async def test_braille_converter_hyphen_resets_number_mode(prompt, expected):
     """A hyphen ends numeric mode (UEB rule 6.3.1), so digits after it get a fresh
     number indicator and a letter after it is written as it is after a space."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("and/or", "\u2801\u281d\u2819\u2838\u280c\u2815\u2817"),
+        ("./run", "\u2832\u2838\u280c\u2817\u2825\u281d"),
+        ("3/8", "\u283c\u2809\u2838\u280c\u283c\u2813"),
+        ("1/a", "\u283c\u2801\u2838\u280c\u2801"),
+    ],
+    ids=["between-words", "path", "linear-fraction", "number-before-letter"],
+)
+async def test_braille_converter_slash_is_solidus(prompt, expected):
+    """A printed slash is the UEB solidus (dots 456, 34; rule 7.4), also between digits
+    (rule 11.3.3: "3/8" is written with the solidus), and it ends numeric mode. The single
+    cell dots 34 is the numeric fraction line, which reads as "st" outside a number."""
     converter = BrailleConverter()
 
     result = await converter.convert_async(prompt=prompt, input_type="text")
