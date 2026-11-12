@@ -27,6 +27,7 @@ from pyrit.models.catalog import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RecipeBuilder, RecipeRejectedError, RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RecipeListing, RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
@@ -188,6 +189,49 @@ class TestRestoreOrderAndRebuild:
         factory = AttackTechniqueRegistry.get_registry_singleton().instances.get("formal_red_team")
         assert factory is not None
         assert factory.technique_tags == ["custom"]
+
+    async def test_marks_each_restored_entry_with_its_kind(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "formal_red_team", _TECHNIQUE)
+        _save(
+            tmp_path,
+            RegistryRecipeKind.SCORERS,
+            "refusal",
+            {
+                "class_module": "pyrit.score.true_false.self_ask_refusal_scorer",
+                "class_name": "SelfAskRefusalScorer",
+                "params": {"chat_target": "contoso_gpt4o"},
+            },
+        )
+        _save(
+            tmp_path,
+            RegistryRecipeKind.CONVERTERS,
+            "tone_formal",
+            {
+                "class_module": "pyrit.converter.tone_converter",
+                "class_name": "ToneConverter",
+                "params": {"converter_target": "contoso_gpt4o", "tone": "formal"},
+            },
+        )
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        ConverterRegistry.get_registry_singleton().instances.register(Base64Converter(), name="startup_encoder")
+
+        report = await _restore(tmp_path)
+
+        assert report.failures == []
+        entries = {
+            "contoso_gpt4o": TargetRegistry.get_registry_singleton().instances.get_entry("contoso_gpt4o"),
+            "tone_formal": ConverterRegistry.get_registry_singleton().instances.get_entry("tone_formal"),
+            "refusal": ScorerRegistry.get_registry_singleton().instances.get_entry("refusal"),
+            "formal_red_team": AttackTechniqueRegistry.get_registry_singleton().instances.get_entry("formal_red_team"),
+            "startup_encoder": ConverterRegistry.get_registry_singleton().instances.get_entry("startup_encoder"),
+        }
+        assert {name: entry.metadata.get(SAVED_ENTRY_METADATA_KEY) for name, entry in entries.items() if entry} == {
+            "contoso_gpt4o": "targets",
+            "tone_formal": "converters",
+            "refusal": "scorers",
+            "formal_red_team": "techniques",
+            "startup_encoder": None,
+        }
 
     async def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
         registry = TargetRegistry.get_registry_singleton()
