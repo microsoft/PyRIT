@@ -33,6 +33,8 @@ const METRIC_LABELS: Record<string, string> = {
   mae_standard_error: 'MAE std error',
   krippendorff_alpha_combined: 'Agreement (Krippendorff alpha)',
   average_score_time_seconds: 'Average score time',
+  num_responses: 'Evaluated responses',
+  num_input_responses: 'Total responses',
 }
 
 // Shown as percentages. F1 stays on its 0-to-1 scale, like the other scores, and
@@ -46,6 +48,8 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
   mean_absolute_error: 'The average absolute difference from human ratings. Lower is better.',
   krippendorff_alpha_combined: "Krippendorff's alpha for agreement between human and model ratings.",
   average_score_time_seconds: 'The average seconds per scored item during the recorded evaluation.',
+  num_responses: 'The number of responses that received an evaluation verdict.',
+  num_input_responses: 'The total number of responses supplied to the evaluator before exclusions.',
 }
 
 export function scorerMetricLabel(name: string): string {

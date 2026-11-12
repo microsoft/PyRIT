@@ -27,7 +27,19 @@ export default function ObjectiveScorerDetails({ scorer }: ObjectiveScorerDetail
       <div className={styles.section}>
         <Text weight="semibold">Accuracy Metrics</Text>
         {scorer.metrics ? (
-          <ScorerMetricsDetails metrics={{ ...scorer.metrics }} fallback="Unavailable" />
+          <>
+            <ScorerMetricsDetails metrics={{ ...scorer.metrics }} fallback="Unavailable" />
+            {typeof scorer.metrics.num_responses === 'number' &&
+              typeof scorer.metrics.num_input_responses === 'number' &&
+              scorer.metrics.num_input_responses > 0 &&
+              scorer.metrics.num_responses < scorer.metrics.num_input_responses && (
+                <Text size={200} className={styles.hint}>
+                  Coverage: {scorer.metrics.num_responses} / {scorer.metrics.num_input_responses} (
+                  {((scorer.metrics.num_responses / scorer.metrics.num_input_responses) * 100).toFixed(1)}%)
+                  — responses without a verdict were excluded from accuracy.
+                </Text>
+              )}
+          </>
         ) : (
           <Text className={styles.hint}>
             Official evaluation has not been run for this scorer configuration.
