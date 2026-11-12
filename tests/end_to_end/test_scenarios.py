@@ -74,6 +74,7 @@ SCENARIO_TARGETS: dict[str, str] = {
 SCENARIO_MAX_TOTAL: dict[str, int] = {
     "airt.psychosocial": 2,  # One objective per sub-harm.
     "garak.latent_injection": 23,  # One objective per family/trigger pair.
+    "garak.leak_replay": 8,  # One objective per technique and corpus.
     "garak.prompt_inject": 3,  # One objective per goal text.
     "garak.web_injection": 6,  # One objective per technique-specific population.
 }

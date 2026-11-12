@@ -246,6 +246,12 @@ class TestAssertGenerator:
         group = result.seed_groups[0]
         assert len([prompt for prompt in group.prompts if prompt.role == "user"]) == int(include_user)
         assert bool(group.adversarial_prompts) == include_adversarial
+        metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
+        assert metadata.tester_instructions == (
+            "You are a customer returning a purchase. Ask about the return period, then clarify."
+            if include_adversarial
+            else None
+        )
         if group.adversarial_prompts is not None:
             prompt = group.adversarial_prompts.system_prompt
             assert prompt is not None
