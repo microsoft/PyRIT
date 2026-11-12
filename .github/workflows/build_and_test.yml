@@ -23,6 +23,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sqlserver-migrations:
+    name: SQL Server migrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_PID: Developer
+          # Disposable authentication for this job's container only.
+          MSSQL_SA_PASSWORD: Pyrit_CI_only!4829
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Pyrit_CI_only!4829' -C -b -l 3 -Q 'SELECT 1'"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=24
+          --health-start-period=10s
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: uv.lock
+      - name: Install ODBC driver and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+          uv sync --frozen
+      - name: Exercise SQL Server migrations
+        env:
+          RUN_ALL_TESTS: 'true'
+          PYRIT_TEST_SQLSERVER_URL: mssql+pyodbc://sa:Pyrit_CI_only!4829@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+        run: uv run --frozen pytest tests/integration/memory/test_sqlserver_migrations_integration.py -v --timeout=300
+      - name: SQL Server diagnostics
+        if: failure()
+        env:
+          SQLSERVER_CONTAINER: ${{ job.services.sqlserver.id }}
+        run: |
+          docker inspect "$SQLSERVER_CONTAINER"
+          docker logs "$SQLSERVER_CONTAINER"
+
   pre-commit:
     strategy:
       fail-fast: true
