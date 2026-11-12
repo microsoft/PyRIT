@@ -156,10 +156,10 @@ class TestTemporaryComponents:
         request_loop = asyncio.get_running_loop()
         constructed: list[HuggingFaceChatTarget] = []
         registry = TargetRegistry.get_registry_singleton()
-        factory = registry.create_instance_from_external_input
+        factory = registry.create_instance_async
 
-        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
-            target = factory(name, params=params, allowed_path_params=allowed_path_params)
+        async def create(**kwargs: Any) -> HuggingFaceChatTarget:
+            target = await factory(**kwargs)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
             return target
@@ -167,7 +167,7 @@ class TestTemporaryComponents:
         with (
             patch.dict("sys.modules", {"torch": ModuleType("torch")}),
             patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock) as load,
-            patch.object(registry, "create_instance_from_external_input", side_effect=create),
+            patch.object(registry, "create_instance_async", side_effect=create),
         ):
             response = await TargetService().create_target_async(
                 request=CreateTargetRequest(
