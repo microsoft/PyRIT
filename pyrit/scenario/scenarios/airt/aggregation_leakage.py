@@ -232,6 +232,7 @@ class AggregationLeakage(Scenario):
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
+            adversarial_target=adversarial_chat,
         )
 
     @property
@@ -333,7 +334,11 @@ class AggregationLeakage(Scenario):
                 policy=context.incompatible_technique_policy,
             ):
                 continue
-            adversarial_chat = (self._adversarial_chat or get_default_adversarial_target()) if is_red_teaming else None
+            adversarial_chat = (
+                (self._adversarial_chat or self._resolved_adversarial_target or get_default_adversarial_target())
+                if is_red_teaming
+                else None
+            )
             for dataset_name, groups in context.seed_groups_by_dataset.items():
                 compatible = filter_seed_groups(
                     seed_groups=groups,

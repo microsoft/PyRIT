@@ -14,7 +14,7 @@ from pyrit.converter import ROT13Converter
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
@@ -191,9 +191,11 @@ class TestAggregationLeakageInitialization:
 
     async def test_default_scorer_is_resolved_when_initializing(self, groups_by_dataset) -> None:
         scenario = AggregationLeakage()
-        assert scenario._objective_scorer is None
+        # Construction must not build the provider-backed default scorer (catalog discovery).
+        assert scenario._configured_objective_scorer is None
 
-        await _initialize_async(scenario=scenario, groups_by_dataset=groups_by_dataset, args={})
+        with patch("pyrit.scenario.core.scenario.get_default_scorer_target", return_value=MockPromptTarget()):
+            await _initialize_async(scenario=scenario, groups_by_dataset=groups_by_dataset, args={})
 
         assert isinstance(scenario._objective_scorer, TrueFalseCompositeScorer)
 
