@@ -612,7 +612,7 @@ class RealtimeTarget(OpenAITarget):
         logger.info(f"Connecting to Realtime API: {self._endpoint} (conversation_id={conversation_id})")
 
         client = self._get_openai_client()
-        connection = await client.realtime.connect(model=self._model_name).__aenter__()
+        connection = await client.realtime.connect(model=self._model_name, extra_headers=self._headers).__aenter__()
 
         logger.info("Successfully connected to AzureOpenAI Realtime API")
         return connection
