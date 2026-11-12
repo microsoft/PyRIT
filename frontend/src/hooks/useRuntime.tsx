@@ -48,8 +48,8 @@ export function RuntimeBanner() {
       <MessageBar intent="warning" layout="multiline">
         <MessageBarBody>
           Some saved entries couldn&apos;t be restored, so new runs and sends are unavailable. An administrator has to
-          view the failures in Configuration, fix or delete the files in registry_recipes_source, then reinitialize
-          PyRIT or restart the backend. Drafts are preserved.
+          delete them in Configuration or fix their files in registry_recipes_source, then reinitialize PyRIT or
+          restart the backend. Drafts are preserved.
         </MessageBarBody>
       </MessageBar>
     )
@@ -57,7 +57,7 @@ export function RuntimeBanner() {
   if (runtime.state === 'failed') {
     // Deleting every entry that couldn't be restored leaves the runtime failed until it restores again.
     return (
-      <MessageBar intent="warning">
+      <MessageBar intent="warning" layout="multiline">
         <MessageBarBody>
           PyRIT isn&apos;t ready, so new runs and sends are unavailable. Drafts are preserved. An administrator can
           reinitialize PyRIT or restart the backend.
