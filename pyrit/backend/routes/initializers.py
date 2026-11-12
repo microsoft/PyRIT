@@ -14,7 +14,6 @@ Route structure:
     DELETE /api/initializers/{name}         — unregister an initializer
 """
 
-from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from pyrit.backend.middleware.auth import require_admin
@@ -33,19 +32,6 @@ from pyrit.backend.services import get_initializer_service
 from pyrit.models.catalog import RegisteredInitializer
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
-
-
-def _custom_storage_unavailable() -> HTTPException:
-    """
-    Create a sanitized response for unavailable custom initializer storage.
-
-    Returns:
-        HTTPException: A service-unavailable response without SDK details.
-    """
-    return HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Custom initializer storage is temporarily unavailable",
-    )
 
 
 def _configured_initializers(request: Request) -> list[ConfiguredInitializerSetting]:
@@ -138,10 +124,7 @@ async def list_custom_initializers(request: Request) -> CustomInitializerListRes
         CustomInitializerListResponse: The configured source and stored scripts.
     """
     _check_custom_initializers_allowed(request)
-    try:
-        return await get_initializer_service().list_custom_initializers_async()
-    except AzureError as exc:
-        raise _custom_storage_unavailable() from exc
+    return await get_initializer_service().list_custom_initializers_async()
 
 
 @router.get(
@@ -205,8 +188,6 @@ async def register_initializer(  # pyrit-async-suffix-exempt
 
     try:
         return await service.register_initializer_async(name=body.name, script_content=body.script_content)
-    except AzureError as exc:
-        raise _custom_storage_unavailable() from exc
     except ValueError as e:
         detail = str(e)
         if "already registered" in detail:
@@ -243,8 +224,6 @@ async def unregister_initializer(  # pyrit-async-suffix-exempt
 
     try:
         await service.unregister_initializer_async(initializer_name=initializer_name)
-    except AzureError as exc:
-        raise _custom_storage_unavailable() from exc
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
