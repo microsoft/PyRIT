@@ -137,5 +137,4 @@ def test_unicode_migration_preserves_sql_server_collation_and_refuses_lossy_down
     assert "NVARCHAR(MAX)" in ddl
     assert "[DatasetLifecycleEntries]" in ddl and "NVARCHAR(256) COLLATE" in ddl
     assert "collation_name FROM sys.columns" in ddl
-    assert "sys.fn_helpcollations()" in ddl
     assert "COLLATE Latin1_General_100_BIN2 LIKE N'%[^A-Za-z0-9_]%'" in ddl

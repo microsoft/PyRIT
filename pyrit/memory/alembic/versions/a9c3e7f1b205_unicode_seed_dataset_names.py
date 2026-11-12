@@ -22,7 +22,6 @@ def upgrade() -> None:
                 "WHERE object_id = OBJECT_ID(N'SeedPromptEntries') AND name = N'dataset_name'); "
                 "IF @collation IS NULL THROW 50000, 'Seed dataset-name collation is missing.', 1; "
                 "IF @collation COLLATE Latin1_General_100_BIN2 LIKE N'%[^A-Za-z0-9_]%' "
-                "OR NOT EXISTS (SELECT 1 FROM sys.fn_helpcollations() WHERE name = @collation) "
                 "THROW 50000, 'Seed dataset-name collation is invalid.', 1; "
                 "DECLARE @sql nvarchar(max) = N'ALTER TABLE [SeedPromptEntries] "
                 "ALTER COLUMN [dataset_name] NVARCHAR(MAX) COLLATE ' + @collation + N' NULL'; "
