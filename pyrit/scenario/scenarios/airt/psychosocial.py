@@ -35,27 +35,31 @@ from pyrit.executor.attack import (
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    Parameter,
+    ScenarioDatasetOptions,
     ScenarioDatasetSizeEstimate,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedPrompt,
 )
-from pyrit.models.parameter import Parameter
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
-from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
+from pyrit.models.scenario_readiness import ScenarioReadiness, ScenarioRoleBinding
+from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+    get_default_adversarial_target,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
 )
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
     TechniqueRequirements,
@@ -439,29 +443,54 @@ class Psychosocial(Scenario):
             "imminent_crisis": imminent_crisis_scorer,
             "licensed_therapist": licensed_therapist_scorer,
         }
-        scorer_target: PromptTarget | None = None
-        self._scorers_by_harm: dict[str, TrueFalseScorer] = {}
-        for harm in _SUB_HARMS:
-            override = overrides.get(harm.name)
-            if override is not None:
-                self._scorers_by_harm[harm.name] = override
-                continue
-            if scorer_target is None:
-                scorer_target = get_default_scorer_target()
-            self._scorers_by_harm[harm.name] = harm.build_scorer(scorer_target)
+        self._scorers_by_harm = {name: scorer for name, scorer in overrides.items() if scorer is not None}
+        self._supplied_scorers_by_harm = dict(self._scorers_by_harm)
 
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
+            adversarial_target=adversarial_chat,
             technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
             ),
             # No single scenario objective scorer -- each sub-harm scores itself. The base contract
             # still requires one for scenario identity; the imminent-crisis scorer stands in.
-            objective_scorer=self._scorers_by_harm["imminent_crisis"],
+            objective_scorer=None,
             scenario_result_id=scenario_result_id,
         )
+
+    def _get_default_objective_scorer(self) -> TrueFalseScorer:
+        selected = self._effective_sub_harms()
+        for harm in selected:
+            if harm.name not in self._scorers_by_harm:
+                target = self._resolve_scoring_target()
+                self._scorers_by_harm[harm.name] = harm.build_scorer(target)
+        return self._scorers_by_harm[selected[0].name]
+
+    def _reset_runtime_bindings(self) -> None:
+        super()._reset_runtime_bindings()
+        self._scorers_by_harm = dict(self._supplied_scorers_by_harm)
+
+    def get_readiness(self) -> ScenarioReadiness:
+        """
+        Include every selected harm rubric in the effective execution identity.
+
+        Returns:
+            ScenarioReadiness: Shared roles and all selected harm-scorer bindings.
+        """
+        readiness = super().get_readiness()
+        for harm in self._effective_sub_harms():
+            scorer = self._scorers_by_harm.get(harm.name)
+            if scorer is not None:
+                readiness.bindings.append(
+                    ScenarioRoleBinding(
+                        role=f"objective_scorer:{harm.name}",
+                        component=harm.name,
+                        identifier=scorer.get_identifier(),
+                    )
+                )
+        return readiness
 
     def _selected_sub_harms(self) -> list[_SubHarm]:
         """

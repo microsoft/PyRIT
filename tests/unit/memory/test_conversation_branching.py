@@ -17,10 +17,12 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from pyrit.memory import MemoryInterface, SQLiteMemory
-from pyrit.memory.memory_models import (
+from pyrit.memory import (
     AttackResultEntry,
-    Base,
+    MemoryInterface,
+    SQLiteMemory,
+)
+from pyrit.memory.memory_models import (
     ConversationEntry,
     ConverterIdentifierEntry,
     PromptConverterIdentifierEntry,
@@ -43,9 +45,9 @@ from unit.mocks import run_memory_session_async
 @pytest.fixture
 async def file_memory(*, tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
     memory = SQLiteMemory.__new__(SQLiteMemory)
-    memory.__init__(db_path=tmp_path / "branching.db", skip_schema_migration=True)
+    memory.__init__(db_path=tmp_path / "branching.db", _defer_initialization=True)
     try:
-        Base.metadata.create_all(memory.engine)
+        await memory.initialize_async()
         yield memory
     finally:
         await memory.dispose_engine_async()

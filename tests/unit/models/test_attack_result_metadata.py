@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import json
-from typing import Any
+from typing import Any, assert_type
 
 import pytest
 
@@ -32,6 +32,19 @@ def test_metadata_round_trip(*, result_role: AttackResultRole, attempt_index: in
     assert AttackResultMetadata.from_metadata(metadata=metadata) == value
 
 
+class DerivedAttackResultMetadata(AttackResultMetadata):
+    """Subclass used to verify that from_metadata preserves the calling class."""
+
+
+def test_from_metadata_preserves_subclass_type() -> None:
+    value = DerivedAttackResultMetadata.from_metadata(metadata={"result_role": "target_facing", "attempt_index": 2})
+
+    assert_type(value, DerivedAttackResultMetadata)
+    assert type(value) is DerivedAttackResultMetadata
+    assert value.result_role is AttackResultRole.TARGET_FACING
+    assert value.attempt_index == 2
+
+
 @pytest.mark.parametrize("metadata", [None, {}, {"parent_collection": "legacy"}])
 def test_from_metadata_without_semantic_fields(metadata: dict[str, Any] | None) -> None:
     assert AttackResultMetadata.from_metadata(metadata=metadata) == AttackResultMetadata()
@@ -56,7 +69,11 @@ def test_from_metadata_invalid_position_stays_absent(attempt_index: object) -> N
 
 
 def test_metadata_fragment_keeps_parent_linkage_separate() -> None:
-    parent = {"parent_collection": "adaptive", "parent_eval_hash": "eval", "seed_group_id": "seed"}
+    parent = {
+        "parent_collection": "adaptive",
+        "parent_eval_hash": "eval",
+        "seed_group_id": "seed",
+    }
     stored = {
         **parent,
         **AttackResultMetadata(result_role=AttackResultRole.ORCHESTRATION, attempt_index=2).to_metadata(),
@@ -90,7 +107,9 @@ def test_metadata_fragment_keeps_parent_linkage_separate() -> None:
         ),
     ],
 )
-def test_future_scoring_inputs_round_trip_without_a_success_result_record(inputs: AttackScoringInputs | None) -> None:
+def test_future_scoring_inputs_round_trip_without_a_success_result_record(
+    inputs: AttackScoringInputs | None,
+) -> None:
     attack = AttackResult(
         conversation_id="conversation",
         objective="Goal",

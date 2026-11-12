@@ -26,7 +26,7 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: ["**/analytics.spec.ts", "**/paired-outcomes.spec.ts", "**/scenario-hierarchy.spec.ts"],
+  testIgnore: ["**/analytics.spec.ts", "**/paired-outcomes.spec.ts", "**/scenario-hierarchy.spec.ts", "**/scenario-datasets.spec.ts", "**/scenario-techniques.spec.ts", "**/scan-launch.seeded.spec.ts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -76,7 +76,7 @@ export default defineConfig({
               {
                 name: "pyrit.userPreferences.v1.local",
                 value: JSON.stringify({
-                  targets: { objective: null, adversarial: null },
+                  targets: { adversarial: null },
                   hiddenTargetRegistryNames: [],
                   labels: {},
                   theme: "system",

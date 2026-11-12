@@ -5,9 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.score import SQLInjectionOutputScorer
+from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
+from pyrit.score import SQLInjectionOutputScorer, TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
 
 @pytest.mark.parametrize(
@@ -301,6 +300,59 @@ async def test_sqli_quote_aware_scores_persist(
     assert persisted[0].score_category == ["security"]
     assert persisted[0].score_rationale == ("Matched: Comment Bypass" if expected else "")
     assert persisted[0].scorer_class_identifier == score.scorer_class_identifier
+
+
+@pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
+async def test_sqli_distinct_quote_filter_policy_cannot_reuse_persisted_score(
+    *, aggregator: TrueFalseAggregatorFunc, patch_central_database: MagicMock, sqlite_instance: SQLiteMemory
+) -> None:
+    default_patterns = SQLInjectionOutputScorer._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    default = SQLInjectionOutputScorer(score_aggregator=aggregator)
+    explicit = SQLInjectionOutputScorer(patterns=dict(default_patterns), score_aggregator=aggregator)
+    text = "name = 'Alice' # display name"
+    default_score = (await default.score_text_async(text=text))[0]
+    explicit_score = (await explicit.score_text_async(text=text))[0]
+    persisted = await sqlite_instance.get_scores_async(score_ids=[str(default_score.id), str(explicit_score.id)])
+    saved = {str(score.id): score for score in persisted}
+
+    assert saved[str(default_score.id)].get_value() is False
+    assert saved[str(default_score.id)].score_rationale == ""
+    assert saved[str(explicit_score.id)].get_value() is True
+    assert saved[str(explicit_score.id)].score_rationale == "Matched: Comment Bypass"
+    default_identifier = default.get_identifier()
+    explicit_identifier = explicit.get_identifier()
+    assert default_identifier.hash != explicit_identifier.hash
+    assert default_identifier.eval_hash != explicit_identifier.eval_hash
+    expected_aggregator = "OR_" if aggregator is TrueFalseScoreAggregator.OR else "AND_"
+    assert default_identifier.params["score_aggregator"] == explicit_identifier.params["score_aggregator"]
+    assert default_identifier.params["score_aggregator"] == expected_aggregator
+    assert (
+        await explicit.find_matching_scores_async(
+            scores=[saved[str(default_score.id)]],
+            scorable=default_score.scorable,
+            expectation=default_score.scored_expectation,
+        )
+        == []
+    )
+    assert (
+        await default.find_matching_scores_async(
+            scores=[saved[str(explicit_score.id)]],
+            scorable=explicit_score.scorable,
+            expectation=explicit_score.scored_expectation,
+        )
+        == []
+    )
+    assert await default.find_matching_scores_async(
+        scores=[saved[str(default_score.id)]],
+        scorable=default_score.scorable,
+        expectation=default_score.scored_expectation,
+    ) == [saved[str(default_score.id)]]
+    assert await explicit.find_matching_scores_async(
+        scores=[saved[str(explicit_score.id)]],
+        scorable=explicit_score.scorable,
+        expectation=explicit_score.scored_expectation,
+    ) == [saved[str(explicit_score.id)]]
 
 
 async def test_sqli_scorer_rationale_includes_pattern_name(patch_central_database):

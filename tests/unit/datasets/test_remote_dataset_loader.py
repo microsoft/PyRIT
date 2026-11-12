@@ -12,10 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+from pyrit.datasets import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.remote import (
     _RemoteDatasetLoader,
 )
-from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.models import SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
 
 
@@ -266,6 +266,59 @@ class TestRemoteDatasetLoader:
         with patch("requests.get", return_value=mock_response):
             result = loader._fetch_from_public_url(source="https://example.com/data.csv", file_type="csv")
         assert result == [{"header1": "value1", "header2": "value2"}]
+
+    @pytest.mark.parametrize(
+        ("file_type", "text", "expected"),
+        [
+            (
+                "jsonl",
+                '{"prompt": "first second"}\n{"prompt": "third\x85fourth"}\n',
+                [{"prompt": "first second"}, {"prompt": "third\x85fourth"}],
+            ),
+            (
+                "csv",
+                "prompt,category\nfirst second,a\nthird,b\n",
+                [{"prompt": "first second", "category": "a"}, {"prompt": "third", "category": "b"}],
+            ),
+            (
+                "txt",
+                "page one\x0cpage two\nnext\x0bline\n",
+                [{"prompt": "page one\x0cpage two"}, {"prompt": "next\x0bline"}],
+            ),
+        ],
+        ids=["jsonl", "csv", "txt"],
+    )
+    def test_fetch_from_public_url_keeps_non_newline_line_separators(self, file_type, text, expected):
+        loader = ConcreteRemoteLoader()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = text
+        with patch("requests.get", return_value=mock_response):
+            result = loader._fetch_from_public_url(source=f"https://example.com/data.{file_type}", file_type=file_type)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        ("file_type", "text"),
+        [
+            ("csv", 'prompt,category\r\n"multi\r\nline",a\rfirst second,b\n'),
+            ("jsonl", '{"prompt": "first second"}\r\n{"prompt": "third"}\r'),
+            ("txt", "one\r\ntwo three\rfour\x1cfive\n"),
+        ],
+        ids=["csv", "jsonl", "txt"],
+    )
+    def test_fetch_from_public_url_matches_local_file(self, tmp_path, file_type, text):
+        source = tmp_path / f"data.{file_type}"
+        source.write_bytes(text.encode("utf-8"))
+        loader = ConcreteRemoteLoader()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = text
+        with patch("requests.get", return_value=mock_response):
+            from_url = loader._fetch_from_public_url(
+                source=f"https://example.com/data.{file_type}", file_type=file_type
+            )
+
+        assert from_url == loader._fetch_from_file(source=str(source), file_type=file_type)
 
     def test_fetch_from_public_url_passes_request_timeout(self):
         loader = ConcreteRemoteLoader()

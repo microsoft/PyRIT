@@ -15,11 +15,13 @@ import pytest
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import (
+    ServerVadConfig,
+)
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
     CommittedEvent,
     RealtimeTargetResult,
-    ServerVadConfig,
 )
 from pyrit.prompt_target.openai import _openai_realtime_streaming_session as streaming_session_module
 from pyrit.prompt_target.openai._openai_realtime_streaming_session import (

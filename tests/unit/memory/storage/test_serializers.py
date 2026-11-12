@@ -14,8 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 from PIL import Image
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.storage import (
+from pyrit.memory import (
     AllowedCategories,
     AzureBlobStorageIO,
     BinaryPathDataTypeSerializer,
@@ -23,6 +22,7 @@ from pyrit.memory.storage import (
     DiskStorageIO,
     ErrorDataTypeSerializer,
     ImagePathDataTypeSerializer,
+    MemoryInterface,
     StorageIO,
     TextDataTypeSerializer,
     data_serializer_factory,
@@ -274,6 +274,45 @@ async def test_get_sha256_from_text(sqlite_instance):
     sha256_hash = await serializer.get_sha256_async()
     expected_hash = hashlib.sha256(b"test_string").hexdigest()
     assert sha256_hash == expected_hash
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "HTTPS://example.invalid/é?q=☃",
+        "HtTp://example.invalid/é?q=☃",
+        "HTTP://example.invalid/é?q=☃",
+        "https://example.invalid/é?q=☃",
+    ],
+)
+async def test_url_serializer_mixed_case_scheme_is_not_on_disk(sqlite_instance, url: str) -> None:
+    """Regression test for #3861: mixed-case http(s) schemes are URLs, not local files."""
+    serializer = data_serializer_factory(category="seed-prompt-entries", data_type="url", value=url)
+
+    assert serializer.data_on_disk() is False
+    assert serializer.value == url
+
+    # Hashing must use the original UTF-8 bytes without touching storage: any
+    # storage access raises, so a misclassified URL would fail here instead of
+    # raising FileNotFoundError or hashing a lowercased value.
+    with patch.object(serializer, "_get_storage_io", side_effect=AssertionError("storage must not be accessed")):
+        sha256_hash = await serializer.get_sha256_async()
+
+    assert sha256_hash == hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+async def test_url_serializer_local_path_is_on_disk(sqlite_instance, tmp_path) -> None:
+    """A non-URL value keeps on-disk behavior: hashing a missing file raises."""
+    local_path = tmp_path / "seed.txt"
+    serializer = data_serializer_factory(category="seed-prompt-entries", data_type="url", value=str(local_path))
+
+    assert serializer.data_on_disk() is True
+    assert serializer.value == str(local_path)
+    with pytest.raises(FileNotFoundError):
+        await serializer.get_sha256_async()
+
+    local_path.write_bytes(b"seed-content")
+    assert await serializer.get_sha256_async() == hashlib.sha256(b"seed-content").hexdigest()
 
 
 async def test_get_sha256_from_image_file(sqlite_instance):
@@ -569,7 +608,7 @@ async def test_save_b64_image_raises_when_results_storage_io_none():
 
 
 async def test_save_formatted_audio_raises_when_results_storage_io_none():
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     mock_memory = MagicMock(spec=MemoryInterface)
@@ -592,7 +631,7 @@ async def test_save_formatted_audio_writes_local_wav_via_to_thread(sqlite_instan
     """save_formatted_audio (local-disk path) should produce a readable WAV via _write_wav_sync."""
     import wave
 
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     output_path = tmp_path / "out.wav"
@@ -673,7 +712,7 @@ async def test_save_formatted_audio_writes_azure_wav_via_storage_io(sqlite_insta
     import wave
 
     from pyrit.common import path as common_path
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     captured: dict[str, bytes] = {}
 
@@ -747,7 +786,7 @@ async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
 
 async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
     """save_formatted_audio_async cleans up the local temp WAV after writing to Azure storage."""
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     mock_memory = MagicMock(spec=MemoryInterface)
@@ -812,3 +851,42 @@ async def test_save_formatted_audio_async_cleans_up_temp_file_on_azure_upload_fa
     # Check no NEW wav files leaked after test
     leaked_files = set(tmp_path.glob("*.wav")) - existing_wav_files
     assert leaked_files == set(), f"Temp files leaked: {leaked_files}"
+
+
+@pytest.mark.asyncio
+async def test_save_formatted_audio_rejects_reserved_non_wav_path(sqlite_instance, tmp_path):
+    """A non-WAV path reserved earlier must be rejected before anything is written."""
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock) as memory_prop:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = str(tmp_path)
+        memory.results_storage_io = DiskStorageIO()
+        memory_prop.return_value = memory
+
+        reserved = await serializer.get_data_filename_async(file_name="sample.mp3")
+        with pytest.raises(ValueError, match="non-WAV"):
+            await serializer.save_formatted_audio_async(data=b"\x01\x00\x02\x00", output_filename="sample.mp3")
+
+    assert serializer.file_extension == "mp3"
+    assert not os.path.exists(str(reserved))
+
+
+@pytest.mark.asyncio
+async def test_save_formatted_audio_without_reservation_still_saves_wav(sqlite_instance, tmp_path):
+    import wave
+
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
+    pcm = b"\x01\x00\x02\x00\x03\x00\x04\x00"
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock) as memory_prop:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = str(tmp_path)
+        memory.results_storage_io = DiskStorageIO()
+        memory_prop.return_value = memory
+
+        await serializer.save_formatted_audio_async(data=pcm, output_filename="sample.mp3")
+
+    assert serializer.value.endswith("sample.wav")
+    with wave.open(serializer.value, "rb") as wav_file:
+        assert wav_file.readframes(wav_file.getnframes()) == pcm

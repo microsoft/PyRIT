@@ -17,17 +17,26 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
+let mockPendingCreate: ((converterId: string, isCurrentOpening: boolean) => void) | undefined
+
 jest.mock('@/components/Registry/CreateConverterDialog', () => ({
   __esModule: true,
   default: ({
     open,
     onCreated,
+    onClose,
   }: {
     open: boolean
-    onCreated: (converterId: string) => void
-  }) => open
-    ? <button onClick={() => onCreated('new-converter')}>Complete converter creation</button>
-    : null,
+    onCreated: (converterId: string, isCurrentOpening: boolean) => void
+    onClose: () => void
+  }) => {
+    if (!open) return null
+    mockPendingCreate = onCreated
+    return <>
+      <button onClick={() => onCreated('new-converter', true)}>Complete converter creation</button>
+      <button onClick={onClose}>Dismiss converter creation</button>
+    </>
+  },
 }))
 
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>
@@ -111,6 +120,15 @@ async function selectConverter(converterId: string) {
   await user.click(await screen.findByTestId(`converter-option-${converterId}`))
 }
 
+async function withAvailablePanelWidth(width: number, test: () => Promise<void>): Promise<void> {
+  const measurement = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width)
+  try {
+    await test()
+  } finally {
+    measurement.mockRestore()
+  }
+}
+
 function makePreviewResponse(
   converterIds: string[],
   outputs: string[],
@@ -136,6 +154,7 @@ function makePreviewResponse(
 describe('ConverterPanel', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockPendingCreate = undefined
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter] })
   })
 
@@ -364,6 +383,31 @@ describe('ConverterPanel', () => {
 
     expect(await screen.findByTestId('converter-item-new-converter')).toBeInTheDocument()
     expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes a dismissed creation without appending it to a replacement pipeline', async () => {
+    const replacement = makeConverter('replacement', 'Rot13Converter')
+    const created = makeConverter('new-converter', 'CaesarConverter')
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [replacement] })
+      .mockResolvedValueOnce({ items: [replacement, created] })
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    const completeCreate = mockPendingCreate
+    expect(completeCreate).toBeDefined()
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss converter creation' }))
+    await selectConverter('replacement')
+
+    await act(async () => { completeCreate?.('new-converter', false) })
+
+    await waitFor(() => expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('converter-item-replacement')).toBeInTheDocument()
+    expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
   })
 
   it('returns the selected registry ID with the converted value', async () => {
@@ -614,6 +658,101 @@ describe('ConverterPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Close converters' }))
 
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes the resize handle as a focusable separator with the current width', async () => {
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+
+    const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+    expect(handle).toHaveAttribute('tabindex', '0')
+    expect(handle).toHaveAttribute('aria-orientation', 'vertical')
+    expect(handle).toHaveAttribute('aria-valuenow', '560')
+    expect(handle).toHaveAttribute('aria-valuemin', '480')
+    expect(handle).toHaveAttribute('aria-valuemax', '1200')
+  })
+
+  it('resizes the panel with the keyboard within its bounds', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+    const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+    const container = screen.getByTestId('converter-panel').parentElement
+
+    handle.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(container).toHaveStyle({ width: '576px' })
+    expect(handle).toHaveAttribute('aria-valuenow', '576')
+
+    await user.keyboard('{ArrowLeft}{ArrowLeft}')
+    expect(container).toHaveStyle({ width: '544px' })
+
+    await user.keyboard('{Home}')
+    expect(container).toHaveStyle({ width: '480px' })
+    await user.keyboard('{ArrowLeft}')
+    expect(container).toHaveStyle({ width: '480px' })
+
+    await user.keyboard('{End}')
+    expect(container).toHaveStyle({ width: '1200px' })
+    await user.keyboard('{ArrowRight}')
+    expect(container).toHaveStyle({ width: '1200px' })
+  })
+
+  it('should shrink immediately after End when the available width is below the maximum', async () => {
+    const user = userEvent.setup()
+    await withAvailablePanelWidth(744, async () => {
+      renderPanel()
+      await screen.findByTestId('converter-panel-list')
+      const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+      handle.focus()
+      await user.keyboard('{End}')
+      expect(handle).toHaveAttribute('aria-valuenow', '744')
+      expect(handle).toHaveAttribute('aria-valuemax', '744')
+      await user.keyboard('{ArrowRight}')
+      expect(handle).toHaveAttribute('aria-valuenow', '744')
+      await user.keyboard('{ArrowLeft}')
+      expect(handle).toHaveAttribute('aria-valuenow', '728')
+      expect(screen.getByTestId('converter-panel').parentElement).toHaveStyle({ width: '728px' })
+      expect(handle).toHaveFocus()
+    })
+  })
+
+  it.each([390, 744, 1400])('should keep the announced bounds valid with %s pixels available', async (width: number) => {
+    const user = userEvent.setup()
+    await withAvailablePanelWidth(width, async () => {
+      renderPanel()
+      await screen.findByTestId('converter-panel-list')
+      const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+      const maximum = Math.min(1200, width)
+      const minimum = Math.min(480, maximum)
+
+      expect(handle).toHaveAttribute('aria-valuemin', String(minimum))
+      expect(handle).toHaveAttribute('aria-valuemax', String(maximum))
+      handle.focus()
+      await user.keyboard('{Home}{ArrowLeft}')
+      expect(handle).toHaveAttribute('aria-valuenow', String(minimum))
+      await user.keyboard('{End}{ArrowRight}')
+      expect(handle).toHaveAttribute('aria-valuenow', String(maximum))
+    })
+  })
+
+  it('should keep mouse resizing within the same available-width bounds', async () => {
+    const user = userEvent.setup()
+    await withAvailablePanelWidth(744, async () => {
+      renderPanel()
+      await screen.findByTestId('converter-panel-list')
+      const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+      fireEvent.mouseDown(handle)
+      fireEvent.mouseMove(document, { clientX: 1200 })
+      expect(handle).toHaveAttribute('aria-valuenow', '744')
+      fireEvent.mouseUp(document)
+      handle.focus()
+      await user.keyboard('{ArrowLeft}')
+      expect(handle).toHaveAttribute('aria-valuenow', '728')
+    })
   })
 
   it('keeps the pipeline, outputs, and applied selection when the panel is reopened', async () => {
