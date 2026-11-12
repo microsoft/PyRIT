@@ -94,3 +94,10 @@ print(f"Replay: {replayed.get_value()} - {replayed.score_rationale}")
 # %% [markdown]
 # Real execution and fault coverage is in `tests/integration/score/test_program_execution_scorer_integration.py`.
 # Opt in with `RUN_ALL_TESTS=true`; the tests require the daemon and pinned image above.
+
+# %% [markdown]
+# ## Check what a model's code did
+#
+# `ProgramExecutionScorer` runs the program a response contains. To score a response by what the model's
+# code did in a sandbox instead, `SandboxCheckScorer` runs a fixed check program in that sandbox after the
+# turn, and never runs the response itself. See [Sandboxed tool calls](../targets/12_sandboxed_tool_calls.md).

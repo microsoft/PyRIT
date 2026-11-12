@@ -64,6 +64,7 @@ def validate_reinitialization_memory(*, memory_db_type: str, environment: dict[s
 
 def reset_setup_registries() -> None:
     """Discard only PyRIT's setup-owned registries, not persistence singletons."""
+    from pyrit._code_execution import SandboxRegistry
     from pyrit.registry import (
         AttackRegistry,
         AttackTechniqueRegistry,
@@ -89,6 +90,7 @@ def reset_setup_registries() -> None:
         ScorerRegistry,
         SourceRegistry,
         TargetRegistry,
+        SandboxRegistry,
     ):
         registry.reset_registry_singleton()
 

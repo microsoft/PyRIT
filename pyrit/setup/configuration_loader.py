@@ -778,7 +778,9 @@ class ConfigurationLoader(YamlLoadable):
 
         Raises:
             RuntimeError: If no live memory instance exists.
+            SandboxExecutionError: If registered sandbox cleanup is unconfirmed; the registries are retained.
         """
+        from pyrit._code_execution import SandboxRegistry
         from pyrit.registry import InitializerRegistry
         from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
 
@@ -788,6 +790,8 @@ class ConfigurationLoader(YamlLoadable):
         )
         if memory is None:
             raise RuntimeError("Live reinitialization requires initialized memory.")
+        # Initializers register new objects for the same sandboxes, so the old ones must not keep sessions.
+        await SandboxRegistry.get_registry_singleton().close_all_async()
         reset_setup_registries()
         InitializerRegistry.set_registry_singleton(prepared.initializer_registry)
         await reinitialize_pyrit_async(
