@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
+from azure.core.exceptions import ServiceRequestError
 
 from pyrit.backend.services import ScenarioSuiteService, get_scenario_suite_service
 from pyrit.models import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
@@ -149,6 +150,25 @@ async def test_preset_storage_failure_is_advisory_after_committed_save(
     assert response.entry_statuses[0].origin is None
     assert response.entry_statuses[0].preset_version is None
     assert "preset storage is temporarily unavailable" in response.entry_statuses[0].issues[0].message
+
+
+async def test_preset_storage_failure_log_leaves_out_a_sas_url_from_the_error_behind_it(
+    service: ScenarioSuiteService,
+    preset_registry: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that the warning names the storage without the credentials the error behind it carries."""
+    error = DocumentStorageUnavailableError(
+        label="Scenario preset", source="https://account.blob.core.windows.net/presets", reason="ServiceRequestError"
+    )
+    error.__cause__ = ServiceRequestError(message="https://account.blob.core.windows.net/presets?sp=r&sig=secret-sig")
+    preset_registry.get_preset.side_effect = error
+
+    with caplog.at_level("DEBUG", logger="pyrit.backend.services.scenario_suite_service"):
+        await service.save_suite_async(suite=_suite(preset_names=("nightly",)), expected_version=None)
+
+    assert f"Could not project scenario preset 'nightly': {error}" in caplog.messages
+    assert "secret-sig" not in caplog.text
 
 
 async def test_current_preset_origin_version_and_issues_are_projected(
