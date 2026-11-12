@@ -18,8 +18,14 @@ from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions import ScenarioRunInProgressException
-from pyrit.executor.attack import AttackExecutorResult, AttackStrategy, PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
+from pyrit.executor.attack import (
+    AttackExecutorResult,
+    AttackStrategy,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
+)
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
