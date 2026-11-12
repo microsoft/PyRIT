@@ -40,6 +40,7 @@ from pyrit.models import (
 from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 from pyrit.registry import (
     ScenarioPresetRegistry,
+    ScenarioPresetStorage,
     ScenarioSuiteConflictError,
     ScenarioSuiteExecutionNotFoundError,
     ScenarioSuiteLaunchConflictError,
@@ -441,6 +442,38 @@ def test_get_succeeds_when_preset_storage_is_unavailable(
     assert response.status_code == 200
     assert response.json()["suite"]["name"] == SUITE_NAME
     assert "preset storage is temporarily unavailable" in response.json()["entry_statuses"][0]["issues"][0]["message"]
+
+
+def test_unreadable_preset_gets_repair_advice_instead_of_a_retry(*, client: TestClient, tmp_path: Path) -> None:
+    """Test a preset stored as a folder is reported as that preset needing repair, and the suite still saves."""
+    (tmp_path / "presets" / "nightly.json").mkdir(parents=True)
+    presets = ScenarioPresetRegistry(storage=ScenarioPresetStorage(source=str(tmp_path / "presets")))
+    storage = ScenarioSuiteStorage(source=str(tmp_path / "suites"))
+    expected = [
+        {
+            "field": "preset_name",
+            "message": "Scenario preset 'nightly' can't be read: Not a regular file; "
+            "repair or replace the preset before running this suite.",
+        }
+    ]
+
+    with (
+        patch.object(ScenarioPresetRegistry, "get_registry_singleton", return_value=presets),
+        patch(
+            "pyrit.backend.routes.scenario_suites.get_scenario_suite_service",
+            return_value=ScenarioSuiteService(registry=ScenarioSuiteRegistry(storage=storage)),
+        ),
+    ):
+        created = client.post("/api/scenario-suites", json=_suite().model_dump(mode="json"))
+        listed = client.get("/api/scenario-suites")
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert storage.load_suite(SUITE_NAME) is not None
+    for entry_status in (created.json()["entry_statuses"][0], listed.json()["items"][0]["entry_statuses"][0]):
+        assert entry_status["origin"] is None
+        assert entry_status["preset_version"] is None
+        assert entry_status["issues"] == expected
 
 
 def test_create_requires_admin(anonymous_client: TestClient, service: MagicMock) -> None:
