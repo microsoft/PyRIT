@@ -297,6 +297,13 @@ const TARGET_TYPES: TargetTypeListResponse = {
           default: "True",
           description: "Whether to use TLS.",
         },
+        {
+          name: "max_requests_per_minute",
+          type_name: "int",
+          required: false,
+          default: null,
+          description: "Maximum requests per minute.",
+        },
       ],
       supported_auth_modes: ["api_key"],
       description: "Sends prompts through a raw HTTP request template.",
@@ -948,6 +955,179 @@ describe("CreateTargetDialog", () => {
     await waitFor(() => {
       expect(screen.getByText("Invalid API key")).toBeInTheDocument();
     });
+  });
+
+  it("announces an invalid HTTP request and associates the error with its field", async () => {
+    const user = userEvent.setup();
+    const createTargetError = Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    );
+    let rejectCreateTarget: (error: unknown) => void = () => undefined;
+    mockedTargetsApi.createTarget.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectCreateTarget = reject;
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    const requestField = screen.getByTestId('target-param-http_request') as HTMLTextAreaElement;
+    fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
+
+    const createButton = getSubmitButton();
+    await act(async () => createButton.focus());
+    await user.keyboard(" ");
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Target Type" })).toBeDisabled();
+      expect(requestField).toBeDisabled();
+    });
+    await act(async () => rejectCreateTarget(createTargetError));
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(requestField).toHaveFocus();
+      expect(requestField).toHaveAttribute("aria-invalid", "true");
+      expect(error).toHaveTextContent("Invalid HTTP request line");
+      expect(requestField.getAttribute("aria-describedby")?.split(/\s+/)).toContain(error.id);
+    });
+
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(expect.objectContaining({
+      type: "HTTPTarget",
+      params: { http_request: "not an HTTP request" },
+    }));
+
+    fireEvent.change(requestField, {
+      target: { value: "POST /chat HTTP/1.1\nHost: example.com" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
+      new Error("Target service unavailable"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 500,
+          data: { detail: "Target service unavailable" },
+        },
+      },
+    ));
+    await user.click(createButton);
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(error).toHaveTextContent("Target service unavailable");
+      expect(error).toHaveFocus();
+      expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    });
+  });
+
+  it("should preserve the HTTP error destination when Escape is pressed during submission", async () => {
+    const user = userEvent.setup();
+    let rejectCreateTarget: (error: unknown) => void = () => undefined;
+    mockedTargetsApi.createTarget.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectCreateTarget = reject;
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+    const requestField = screen.getByRole("textbox", { name: /http request/i });
+    await user.type(requestField, "not an HTTP request");
+    await user.click(getSubmitButton());
+    await waitFor(() => expect(requestField).toBeDisabled());
+
+    await user.click(screen.getByText("Advanced settings", { exact: true }));
+    await user.keyboard("{Escape}");
+
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+    expect(requestField).toHaveValue("not an HTTP request");
+    expect(screen.getByRole("combobox", { name: "Target Type" })).toHaveTextContent("HTTPTarget");
+
+    await act(async () => rejectCreateTarget(Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    )));
+
+    await waitFor(() => {
+      expect(requestField).toHaveFocus();
+      expect(requestField).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent("Invalid HTTP request line");
+    });
+
+    await user.keyboard("{Escape}");
+    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("announces metadata validation errors after a prior HTTP request error", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    ));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    const requestField = screen.getByTestId('target-param-http_request') as HTMLTextAreaElement;
+    fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
+    const createButton = getSubmitButton();
+    await user.click(createButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Invalid HTTP request line");
+      expect(requestField).toHaveFocus();
+    });
+
+    const maxRequestsPerMinute = screen.getByRole('spinbutton', { name: 'Max Requests Per Minute' });
+    fireEvent.change(maxRequestsPerMinute, { target: { value: "1.5" } });
+    await user.click(createButton);
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(error).toHaveTextContent("max_requests_per_minute must be an integer.");
+      expect(error).toHaveFocus();
+      expect(requestField).not.toHaveFocus();
+    });
+
+    expect(requestField).toHaveValue("not an HTTP request");
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
   });
 
   it("should include API key in params when provided", async () => {
