@@ -7,12 +7,15 @@ Dataset service for listing seed datasets and browsing their stored seed example
 Wraps ``SeedDatasetProvider`` discovery and memory to list available datasets.
 """
 
+import asyncio
 import logging
 import ntpath
 import posixpath
 import re
 from collections.abc import Sequence
+from fnmatch import translate
 from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pyrit.backend.mappers import format_last_message_preview
@@ -23,6 +26,7 @@ from pyrit.backend.models import (
     PaginationInfo,
 )
 from pyrit.backend.models.datasets import (
+    DatasetDeletionResponse,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
     SeedExampleSummary,
@@ -32,10 +36,13 @@ from pyrit.backend.services.dataset_example_fingerprint import (
     dataset_example_fingerprint,
     parse_dataset_selection_key,
 )
-from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
+from pyrit.common.pagination import DecodedKeysetCursor, decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
+from pyrit.common.text_search import compile_like_pattern, validate_text_search
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.exceptions.dataset_exception import DatasetAPIException
 from pyrit.memory import CentralMemory
-from pyrit.memory.analytics_sql import validate_text_search
+from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+from pyrit.memory.dataset_mutation import editable_seed
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
     ConversationStats,
@@ -47,6 +54,9 @@ from pyrit.models import (
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from pyrit.memory.dataset_mutation import DatasetEditingSnapshot
+
 
 class DatasetService:
     """Service for listing seed datasets."""
@@ -54,6 +64,51 @@ class DatasetService:
     def __init__(self) -> None:
         """Initialize the dataset service."""
         self._memory = CentralMemory.get_memory_instance()
+
+    async def delete_dataset_async(self, *, selection_key: str) -> DatasetDeletionResponse:
+        """
+        Permanently remove exact-name stored seeds and clean up their unshared owned media.
+
+        Returns:
+            DatasetDeletionResponse: Durable deletion and media-cleanup status.
+
+        Raises:
+            DatasetAPIException: If the selection is unnamed or has no stored seeds.
+        """
+        name = self._parse_selection_key(selection_key)
+        if name is None:
+            raise DatasetAPIException(status_code=400, message="The unnamed aggregate cannot be deleted.")
+        try:
+            deletion_id = await self._memory.delete_dataset_async(dataset_name=name)
+        except LookupError as exc:
+            raise DatasetAPIException(status_code=404, message="No stored dataset has this exact name.") from exc
+        try:
+            return await self.get_dataset_deletion_async(deletion_id)
+        except Exception as exc:
+            logger.exception("Dataset deletion cleanup interrupted: %s", deletion_id)
+            raise DatasetAPIException(
+                status_code=503,
+                message="Seeds were deleted; cleanup requires a retry. Inspect the resource in Location.",
+                cleanup_id=deletion_id,
+            ) from exc
+
+    async def get_dataset_deletion_async(self, deletion_id: UUID) -> DatasetDeletionResponse:
+        """
+        Read durable cleanup status and retry pending owned-media cleanup.
+
+        Returns:
+            DatasetDeletionResponse: The current cleanup outcome.
+
+        Raises:
+            DatasetAPIException: If the deletion identifier does not exist.
+        """
+        try:
+            result = await self._memory.cleanup_dataset_media_async(operation_id=deletion_id)
+        except DatasetNameConflictError as exc:
+            raise DatasetAPIException(status_code=409, message="The upload is still active.") from exc
+        except LookupError as exc:
+            raise DatasetAPIException(status_code=404, message="Dataset deletion not found.") from exc
+        return DatasetDeletionResponse.model_validate(result)
 
     async def list_datasets_async(self, *, loaded_only: bool = False) -> DatasetListResponse:
         """
@@ -133,6 +188,7 @@ class DatasetService:
         data_types: Sequence[PromptDataType] | None = None,
         harm_categories: Sequence[str] | None = None,
         seed_types: Sequence[SeedType] | None = None,
+        editable: bool = False,
     ) -> SeedExampleListResponse:
         """
         List one page of the stored logical seed examples of a dataset.
@@ -151,6 +207,7 @@ class DatasetService:
             data_types (Sequence[PromptDataType] | None): Match examples with a member of any of these data types.
             harm_categories (Sequence[str] | None): Match examples with a member in any of these harm categories.
             seed_types (Sequence[SeedType] | None): Match examples with a member of any of these seed types.
+            editable (bool): Include replacements and version from one exact-name stored snapshot.
 
         Returns:
             SeedExampleListResponse: The page, its pagination data, and the number of matching examples.
@@ -174,16 +231,31 @@ class DatasetService:
         if cursor and after is None:
             raise ValueError("The cursor is not valid for this dataset and these filters")
 
-        examples, total, next_after = await self._memory.get_seed_examples_async(
-            dataset_name=dataset_name,
-            limit=limit,
-            after=after,
-            data_types=data_types,
-            harm_categories=harm_categories,
-            seed_types=seed_types,
-            value_search=search,
-            value_pattern=value_pattern,
-        )
+        version = None
+        if editable:
+            snapshot = await self._editing_snapshot_async(dataset_name)
+            version = snapshot.version
+            examples, total, next_after = self._editing_page(
+                records=snapshot.records,
+                limit=limit,
+                after=after,
+                data_types=data_types,
+                harm_categories=harm_categories,
+                seed_types=seed_types,
+                search=search,
+                value_pattern=value_pattern,
+            )
+        else:
+            examples, total, next_after = await self._memory.get_seed_examples_async(
+                dataset_name=dataset_name,
+                limit=limit,
+                after=after,
+                data_types=data_types,
+                harm_categories=harm_categories,
+                seed_types=seed_types,
+                value_search=search,
+                value_pattern=value_pattern,
+            )
         next_cursor = (
             encode_keyset_cursor(
                 timestamp=next_after.timestamp, identifier=next_after.identifier, fingerprint=fingerprint
@@ -191,24 +263,34 @@ class DatasetService:
             if next_after
             else None
         )
+        items = [
+            self._summarize(selection_key=selection_key, example_id=example_id, seeds=seeds)
+            for example_id, seeds in examples.items()
+        ]
+        if version is not None:
+            for item in items:
+                item.editable_seeds = await asyncio.to_thread(
+                    self._editable_seeds, records=examples[item.example_id], version=version
+                )
         return SeedExampleListResponse(
-            items=[
-                self._summarize(selection_key=selection_key, example_id=example_id, seeds=seeds)
-                for example_id, seeds in examples.items()
-            ],
+            items=items,
+            version=version,
             pagination=PaginationInfo(
                 limit=limit, has_more=next_after is not None, next_cursor=next_cursor, prev_cursor=cursor
             ),
             total=total,
         )
 
-    async def get_seed_example_async(self, *, selection_key: str, example_id: UUID) -> SeedExampleDetailResponse | None:
+    async def get_seed_example_async(
+        self, *, selection_key: str, example_id: UUID, editable: bool = False
+    ) -> SeedExampleDetailResponse | None:
         """
         Get one stored logical seed example of a dataset with all of its members.
 
         Args:
             selection_key (str): The ``selection_key`` of a dataset from ``list_datasets_async``.
             example_id (UUID): The ``example_id`` from the list response.
+            editable (bool): Include replacements and version from one exact-name stored snapshot.
 
         Returns:
             SeedExampleDetailResponse | None: The example, or None if the dataset does not contain it.
@@ -216,14 +298,137 @@ class DatasetService:
         Raises:
             ValueError: If the selection key is not valid.
         """
-        seeds = await self._memory.get_seed_example_async(
-            dataset_name=self._parse_selection_key(selection_key), example_id=example_id
-        )
+        name = self._parse_selection_key(selection_key)
+        version = None
+        if editable:
+            snapshot = await self._editing_snapshot_async(name)
+            version = snapshot.version
+            seeds = sorted(
+                [record for record in snapshot.records if (record.prompt_group_id or record.id) == example_id],
+                key=lambda record: (
+                    record.seed_type != "objective",
+                    record.sequence is not None,
+                    record.sequence or 0,
+                    str(record.id),
+                ),
+            )
+        else:
+            seeds = await self._memory.get_seed_example_async(dataset_name=name, example_id=example_id)
         if not seeds:
             return None
         summary = self._summarize(selection_key=selection_key, example_id=example_id, seeds=seeds)
         members = [await self._seed_member_view_async(seed) for seed in seeds]
-        return SeedExampleDetailResponse(**summary.model_dump(), members=members)
+        if version is not None:
+            summary.editable_seeds = await asyncio.to_thread(self._editable_seeds, records=seeds, version=version)
+        return SeedExampleDetailResponse(**summary.model_dump(), members=members, version=version)
+
+    async def _editing_snapshot_async(self, dataset_name: str | None) -> "DatasetEditingSnapshot":
+        if dataset_name is None:
+            raise DatasetAPIException(status_code=400, message="The unnamed aggregate cannot be edited.")
+        try:
+            return await self._memory.get_dataset_editing_snapshot_async(dataset_name)
+        except LookupError as exc:
+            raise DatasetAPIException(status_code=404, message="No stored dataset has this exact name.") from exc
+        except (ValueError, TypeError) as exc:
+            raise DatasetAPIException(status_code=422, message="A stored seed is not safely submit-ready.") from exc
+
+    @staticmethod
+    def _editable_seeds(*, records: Sequence[SeedRecord], version: str) -> list[dict[str, Any]]:
+        try:
+            return [editable_seed(record=record, version=version) for record in records]
+        except (ValueError, TypeError) as exc:
+            raise DatasetAPIException(
+                status_code=422, message="A stored seed is not submit-ready; repair its configuration."
+            ) from exc
+
+    @staticmethod
+    def _editing_pattern(pattern: str | None) -> re.Pattern[str] | None:
+        if pattern is None:
+            return None
+        characters = iter(compile_like_pattern(pattern).lower())
+        glob = ""
+        for character in characters:
+            if character == "/":
+                character = next(characters)
+            elif character == "%":
+                glob += "*"
+                continue
+            elif character == "_":
+                glob += "?"
+                continue
+            glob += f"[{character}]" if character in "*?[" else character
+        return re.compile(translate(glob))
+
+    @staticmethod
+    def _editing_page(
+        *,
+        records: Sequence[SeedRecord],
+        limit: int,
+        after: DecodedKeysetCursor | None,
+        data_types: Sequence[PromptDataType] | None,
+        harm_categories: Sequence[str] | None,
+        seed_types: Sequence[SeedType] | None,
+        search: str | None,
+        value_pattern: str | None,
+    ) -> tuple[dict[UUID, list[SeedRecord]], int, DecodedKeysetCursor | None]:
+        pattern = DatasetService._editing_pattern(value_pattern)
+        groups: dict[UUID, list[SeedRecord]] = {}
+        for record in records:
+            groups.setdefault(record.prompt_group_id or record.id, []).append(record)
+        matched = {
+            identifier: members
+            for identifier, members in groups.items()
+            if (not data_types or any(seed.data_type in data_types for seed in members))
+            and (not seed_types or any(seed.seed_type in seed_types for seed in members))
+            and (
+                not harm_categories
+                or any(
+                    category.lower() in {value.lower() for value in harm_categories}
+                    for seed in members
+                    for category in seed.harm_categories or []
+                )
+            )
+            and (
+                not search
+                or any(
+                    seed.data_type == "text"
+                    and seed.seed_type != "simulated_conversation"
+                    and search.casefold() in seed.value.casefold()
+                    for seed in members
+                )
+            )
+            and (
+                pattern is None
+                or any(
+                    seed.data_type == "text"
+                    and seed.seed_type != "simulated_conversation"
+                    and pattern.fullmatch(seed.value.lower()) is not None
+                    for seed in members
+                )
+            )
+        }
+        keys = {
+            identifier: (min(seed.date_added for seed in members), str(identifier))
+            for identifier, members in matched.items()
+        }
+        ordered = sorted(matched, key=lambda identifier: keys[identifier], reverse=True)
+        if after is not None:
+            ordered = [identifier for identifier in ordered if keys[identifier] < (after.timestamp, after.identifier)]
+        page = {
+            identifier: sorted(
+                matched[identifier],
+                key=lambda seed: (
+                    seed.seed_type != "objective",
+                    seed.sequence is not None,
+                    seed.sequence or 0,
+                    str(seed.id),
+                ),
+            )
+            for identifier in ordered[:limit]
+        }
+        last = ordered[limit - 1] if len(ordered) > limit else None
+        next_after = DecodedKeysetCursor(timestamp=keys[last][0], identifier=str(last)) if last is not None else None
+        return page, len(matched), next_after
 
     @staticmethod
     async def _seed_member_view_async(seed: SeedRecord) -> SeedMemberView:

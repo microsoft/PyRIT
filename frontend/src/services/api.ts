@@ -7,6 +7,7 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AttackFindingListResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -59,7 +60,6 @@ import type {
   ScenarioPresetResponse,
   ScenarioSuite,
   LaunchScenarioSuiteRequest,
-  ScenarioSuiteReadinessRequest,
   ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
@@ -67,7 +67,6 @@ import type {
   UpdateScenarioSuiteRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
-  ScenarioReadiness,
   ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
@@ -385,6 +384,14 @@ export const runtimeApi = {
 }
 
 export const targetsApi = {
+  detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
+    const response = await apiClient.post<TargetInstance>(
+      `/targets/${encodeURIComponent(target.target_registry_name)}/detect-capabilities`,
+      { expected_hash: target.identifier.hash },
+    )
+    return response.data
+  },
+
   listTargetTypes: async (): Promise<TargetTypeListResponse> => {
     const response = await apiClient.get('/targets/types')
     return response.data
@@ -515,6 +522,12 @@ export const attacksApi = {
     return response.data
   },
 
+  /** Findings in any Operation that link this attack as evidence; empty for an unsaved running attack. */
+  getAttackFindings: async (attackResultId: string): Promise<AttackFindingListResponse> => {
+    const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}/findings`)
+    return response.data
+  },
+
   updateAttack: async (attackResultId: string, request: UpdateAttackRequest): Promise<AttackSummary> => {
     const response = await apiClient.patch(`/attacks/${encodeURIComponent(attackResultId)}`, request)
     return response.data
@@ -641,10 +654,6 @@ export const scoresApi = {
 }
 
 export const scorersApi = {
-  listTypes: async (): Promise<{ items: Array<{ scorer_type: string; parameters: import('@/types').Parameter[]; supports_objective_scoring: boolean }> }> =>
-    (await apiClient.get('/scorers/types')).data,
-  createScorer: async (request: { name: string; type: string; params: Record<string, unknown> }): Promise<import('@/types').ScorerInstance> =>
-    (await apiClient.post('/scorers', request)).data,
   listScorers: async (limit = 200, cursor?: string): Promise<{
     items: import('@/types').ScorerInstance[]
     pagination: { has_more: boolean; next_cursor: string | null }
@@ -725,12 +734,6 @@ export const scenariosApi = {
     )
     return response.data
   },
-
-  readiness: async (
-    scenarioName: string, request: ScenarioRunSizeEstimateRequest, signal?: AbortSignal,
-  ): Promise<ScenarioReadiness> => (await apiClient.post(
-    `/scenarios/catalog/${encodeURIComponent(scenarioName)}/readiness`, request, { signal },
-  )).data,
 
   getRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}`)
@@ -890,14 +893,18 @@ export const scenarioPresetsApi = {
     return response.data
   },
 
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
+  /**
+   * Deletes a stored preset. With `expectedVersion`, a preset that changed after that
+   * read fails with 409 instead of being deleted.
+   */
+  remove: async (name: string, expectedVersion?: string): Promise<void> => {
+    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`, {
+      params: { expected_version: expectedVersion },
+    })
   },
 }
 
 export const scenarioSuitesApi = {
-  readiness: async (name: string, request: ScenarioSuiteReadinessRequest, signal?: AbortSignal): Promise<ScenarioReadiness> =>
-    (await apiClient.post(`/scenario-suites/${encodeURIComponent(name)}/readiness`, request, { signal })).data,
   list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
     const response = await apiClient.get('/scenario-suites', { signal })
     return response.data
@@ -928,8 +935,14 @@ export const scenarioSuitesApi = {
     return response.data
   },
 
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  /**
+   * Deletes a stored suite. With `expectedVersion`, a suite that changed after that
+   * read fails with 409 instead of being deleted.
+   */
+  remove: async (name: string, expectedVersion?: string): Promise<void> => {
+    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`, {
+      params: { expected_version: expectedVersion },
+    })
   },
 
   launch: async (

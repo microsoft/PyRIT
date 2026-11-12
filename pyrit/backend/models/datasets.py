@@ -9,9 +9,12 @@ Datasets are seed prompt/objective collections provided by
 listing available datasets and browsing their stored seed examples.
 """
 
+import os
+from dataclasses import dataclass
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
@@ -49,6 +52,114 @@ class DatasetListResponse(BaseModel):
     items: list[DatasetInfo] = Field(..., description="List of available datasets")
 
 
+@dataclass(frozen=True)
+class DatasetUploadLimits:
+    """Positive environment-configured limits, in bytes except for prompt count."""
+
+    request_bytes: int = 100 * 1024 * 1024
+    manifest_bytes: int = 10 * 1024 * 1024
+    prompts: int = 10_000
+
+    @classmethod
+    def from_environment(cls) -> "DatasetUploadLimits":
+        """
+        Read explicit limits without silently accepting invalid configuration.
+
+        Returns:
+            DatasetUploadLimits: The positive configured limits.
+        """
+        values = {
+            field: int(os.environ.get(variable, default))
+            for field, variable, default in (
+                ("request_bytes", "PYRIT_DATASET_MAX_REQUEST_BYTES", cls.request_bytes),
+                ("manifest_bytes", "PYRIT_DATASET_MAX_MANIFEST_BYTES", cls.manifest_bytes),
+                ("prompts", "PYRIT_DATASET_MAX_PROMPTS", cls.prompts),
+            )
+        }
+        if any(value <= 0 for value in values.values()):
+            raise ValueError("Dataset upload limits must be positive integers.")
+        return cls(**values)
+
+
+class DatasetUploadManifest(BaseModel):
+    """Untrusted JSON; canonical seed construction follows trust and reference checks."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str = Field(min_length=1, max_length=256)
+    mode: Literal["create", "update"] = "create"
+    expected_version: str | None = Field(None, min_length=64, max_length=64)
+    seeds: list[dict[str, Any]]
+    delete_seed_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_operations(self) -> "DatasetUploadManifest":
+        if self.mode == "create":
+            if not self.seeds or self.delete_seed_ids or self.expected_version is not None:
+                raise ValueError("Create requires seeds and forbids deletions and expected_version.")
+        elif not self.expected_version or not (self.seeds or self.delete_seed_ids):
+            raise ValueError("Update requires expected_version and at least one operation.")
+        ids = [str(UUID(value)) for value in self.delete_seed_ids]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Duplicate delete record IDs.")
+        self.delete_seed_ids = ids
+        return self
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        if value != value.strip() or any(ord(char) < 32 for char in value) or len(value.encode("utf-16-le")) > 512:
+            raise ValueError("Use a nonempty dataset name of at most 256 UTF-16 code units without outer whitespace.")
+        return value
+
+
+class DatasetDeletionResponse(BaseModel):
+    """Durable status of exact dataset removal and its owned-media cleanup."""
+
+    deletion_id: UUID
+    status: Literal["pending", "completed"]
+    deleted_seeds: int
+    pending_media: int | None = Field(..., description="Unknown only if committed cleanup status could not be read")
+    error: str | None = None
+
+
+class _DatasetPopulationResponse(BaseModel):
+    """Counts and selection identity shared by committed create and update results."""
+
+    name: str
+    selection_key: str
+    seed_pieces: int
+    logical_examples: int
+
+
+class DatasetUploadResponse(_DatasetPopulationResponse):
+    """The actual committed population, immediately available through existing browsing."""
+
+    cleanup: DatasetDeletionResponse | None = Field(default=None, exclude_if=lambda value: value is None)
+    cleanup_location: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class DatasetSeedResult(BaseModel):
+    """Exact persisted record identity correlated to the manifest's seed index."""
+
+    index: int
+    id: UUID
+    operation: Literal["added", "updated"]
+
+
+class DatasetMutationResponse(_DatasetPopulationResponse):
+    """A committed batch, even when physical cleanup still needs retrying."""
+
+    dataset_exists: bool
+    version: str | None
+    added: int
+    updated: int
+    deleted: int
+    seeds: list[DatasetSeedResult]
+    delete_seed_ids: list[UUID]
+    cleanup: DatasetDeletionResponse
+    cleanup_location: str
+
+
 class ScenarioDatasetLoadResponse(BaseModel):
     """Selected dataset settings and metadata after an explicit load."""
 
@@ -78,6 +189,7 @@ class SeedExampleSummary(BaseModel):
         min_length=64,
         max_length=64,
     )
+    editable_seeds: list[dict[str, Any]] | None = Field(None, description="Opt-in submit-ready seed replacements")
 
 
 class SeedExampleListResponse(BaseModel):
@@ -86,6 +198,7 @@ class SeedExampleListResponse(BaseModel):
     items: list[SeedExampleSummary]
     pagination: PaginationInfo
     total: int = Field(..., description="Number of logical examples that match the filters")
+    version: str | None = Field(None, description="Opt-in token from the same snapshot as editable_seeds")
 
 
 class SeedMemberView(SeedRecord):
@@ -110,3 +223,4 @@ class SeedExampleDetailResponse(SeedExampleSummary):
             "Media members include value_url for display; value is the stored reference."
         ),
     )
+    version: str | None = Field(None, description="Opt-in token from the same snapshot as editable_seeds")

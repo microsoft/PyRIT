@@ -40,6 +40,7 @@ from pyrit.backend.models import (
     ScenarioRunListResponse,
     filter_sensitive_fields,
 )
+from pyrit.backend.services.live_attack_reader import LiveAttack
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -104,6 +105,7 @@ from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTarge
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
+from pyrit.registry.instance_registry import SavedEntryReplacementError, record_saved_entry_refusals
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
@@ -193,6 +195,10 @@ _STARTED_AT_ADAPTER = TypeAdapter(datetime)
 
 class ScenarioRunConflictError(ValueError):
     """A saved run cannot be admitted to the scheduler in its current state."""
+
+
+class SavedEntryLaunchConflictError(ScenarioRunConflictError):
+    """A launch script would replace an entry rebuilt from a saved recipe."""
 
 
 class ScenarioRunNotFoundError(ValueError):
@@ -1695,6 +1701,7 @@ class ScenarioRunService:
 
         Raises:
             ValueError: If an initializer name is not found in the registry.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
         if not request.initializers:
             return
@@ -1708,7 +1715,42 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            await instance.initialize_async()
+            # The registries refuse to replace a saved entry; the record also catches a refusal
+            # that the script itself caught, which would leave the saved entry in its place.
+            with record_saved_entry_refusals() as refusals:
+                try:
+                    await instance.initialize_async()
+                except SavedEntryReplacementError as error:
+                    refusals.append((error.kind, error.name))
+                except Exception as error:
+                    # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
+                    if refusals:
+                        raise self._saved_entry_conflict(
+                            initializer_name=initializer_name, refusals=refusals
+                        ) from error
+                    raise
+            if refusals:
+                raise self._saved_entry_conflict(initializer_name=initializer_name, refusals=refusals)
+
+    @staticmethod
+    def _saved_entry_conflict(
+        *, initializer_name: str, refusals: list[tuple[str, str]]
+    ) -> SavedEntryLaunchConflictError:
+        """
+        Describe the saved entries a launch script would have replaced.
+
+        Args:
+            initializer_name (str): The launch script's name.
+            refusals (list[tuple[str, str]]): The kind and name of each saved entry that was refused.
+
+        Returns:
+            SavedEntryLaunchConflictError: The error to raise.
+        """
+        entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
+        return SavedEntryLaunchConflictError(
+            f"The launch script '{initializer_name}' would replace the saved {entries}. "
+            "Leave that script out of the launch."
+        )
 
     async def _initialize_scenario_async(
         self,
@@ -2674,6 +2716,21 @@ class ScenarioRunService:
             active_scenario_result_id=active_scenario_result_id,
         )
 
+    def find_live_attack(self, *, attack_result_id: str) -> LiveAttack | None:
+        """
+        Find an attack that an active scan is still running.
+
+        Returns:
+            LiveAttack | None: The running attack and its scan, or None when no active scan is running it
+                or it has not started an objective conversation yet.
+        """
+        for scenario_result_id in list(self._active_tasks):
+            snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+            for execution in snapshot.executions:
+                if execution.attack_result_id == attack_result_id:
+                    return LiveAttack.from_execution(scenario_result_id=scenario_result_id, execution=execution)
+        return None
+
     def _load_run_plan(self, *, scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
         """
         Load a validated plan from scenario metadata.
@@ -2813,6 +2870,7 @@ class ScenarioRunService:
                 ScenarioActiveConversation(
                     attack_result_id=execution.attack_result_id,
                     conversation_id=conversation_id,
+                    conversation_ids=list(execution.conversation_ids),
                     atomic_attack_name=attribution.parent_collection,
                     seed_group_id=attribution.seed_group_id,
                     objective=execution.objective,
@@ -3368,6 +3426,19 @@ _service_instance: ScenarioRunService | None = None
 def peek_scenario_run_service() -> ScenarioRunService | None:
     """Return the existing service without constructing one for lifecycle inspection."""
     return _service_instance
+
+
+def find_live_attack(attack_result_id: str) -> LiveAttack | None:
+    """
+    Find a running scan attack in the current service, without constructing one.
+
+    Resolves the service on every call, so the lookup stays valid across service resets.
+
+    Returns:
+        LiveAttack | None: The running attack, or None when no active scan is running it.
+    """
+    service = peek_scenario_run_service()
+    return service.find_live_attack(attack_result_id=attack_result_id) if service is not None else None
 
 
 async def reset_scenario_run_service_async() -> None:
