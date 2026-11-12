@@ -27,6 +27,7 @@ if TYPE_CHECKING:
         ProgramResult,
         ToolCallRequirement,
         ToolsCalled,
+        ToolsCalledInOrder,
     )
     from pyrit.models.score.expectation import (
         ScoringExpectation,
@@ -116,6 +117,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ToolEventsObservationPayload": "pyrit.models.score.observation",
     "ToolExecution": "pyrit.models.score.trace",
     "ToolsCalled": "pyrit.models.score.condition",
+    "ToolsCalledInOrder": "pyrit.models.score.condition",
     "TraceCoverage": "pyrit.models.score.trace",
     "TraceQuery": "pyrit.models.score.trace",
     "TraceQueryResult": "pyrit.models.score.trace",

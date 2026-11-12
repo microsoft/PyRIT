@@ -303,7 +303,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Trace sources acquire and normalize execution evidence for
   `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`
   matches tool names against the saved snapshot; incomplete absence is
-  undetermined, not false. For a `MessageScorable`, the scoring layer resolves
+  undetermined, not false. `OtelToolCallOrderScorer` matches their relative order
+  in the same snapshot; overlapping spans give no order.
+  For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
