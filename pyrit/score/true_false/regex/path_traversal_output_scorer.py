@@ -36,7 +36,7 @@ class PathTraversalOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
             rf"(?i)(?:{_DOT}{{2}}{_SEPARATOR}){{2,}}"
             rf"(?:windows{_SEPARATOR}system32|proc{_SEPARATOR}self|"
             rf"(?:windows{_SEPARATOR}win{_DOT}ini|web{_DOT}config|"
-            rf"etc{_SEPARATOR}(?:passwd|shadow)|{_DOT}ssh{_SEPARATOR}id_rsa|"
+            rf"etc{_SEPARATOR}(?:passwd|shadow)|{_DOT}ssh{_SEPARATOR}id_(?:rsa|dsa|(?:ecdsa|ed25519)(?:_sk)?)|"
             rf"{_DOT}aws{_SEPARATOR}credentials|{_DOT}env){_FILE_END})"
         ),
     }
