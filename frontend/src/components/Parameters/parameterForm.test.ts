@@ -4,6 +4,7 @@ import {
   buildParametersFromForm,
   getInitialFormValues,
   getParameterControlKind,
+  nonNullableTypeName,
   UNSET_BOOLEAN_VALUE,
 } from './parameterForm'
 
@@ -20,6 +21,27 @@ function makeParameter(overrides: Partial<Parameter> & { name: string }): Parame
 }
 
 describe('getParameterControlKind', () => {
+  it.each([
+    ['bool | None', 'boolean'],
+    ['int | None', 'number'],
+    ['float | None', 'number'],
+    ['str | None', 'text'],
+    ['dict[str, typing.Any] | None', 'json'],
+  ])('keeps the existing control for %s', (typeName, kind) => {
+    expect(getParameterControlKind(makeParameter({ name: 'setting', type_name: typeName }))).toBe(kind)
+  })
+
+  it('keeps nullable prompt fields multiline', () => {
+    expect(getParameterControlKind(
+      makeParameter({ name: 'prompt', type_name: 'str | None', multiline: true }),
+    )).toBe('multiline')
+  })
+
+  it('does not strip nullability from list elements when unwrapping the list', () => {
+    expect(nonNullableTypeName('list[int | None] | None')).toBe('list[int | None]')
+    expect(nonNullableTypeName('list[int | None]')).toBe('list[int | None]')
+  })
+
   it('returns boolean for bool parameters', () => {
     expect(getParameterControlKind(makeParameter({ name: 'flag', type_name: 'bool' }))).toBe('boolean')
   })
@@ -161,6 +183,40 @@ describe('getInitialFormValues', () => {
 })
 
 describe('buildParametersFromForm', () => {
+  it.each(['int', 'int | None', 'float | None'])('coerces %s values as numbers', (typeName) => {
+    expect(buildParametersFromForm(
+      [makeParameter({ name: 'amount', type_name: typeName })], { amount: '7' },
+    )).toEqual({ ok: true, parameters: { amount: 7 } })
+  })
+
+  it.each(['list[int]', 'list[int] | None', 'list[int | None] | None'])(
+    'coerces numeric elements in %s',
+    (typeName) => {
+      expect(buildParametersFromForm(
+        [makeParameter({ name: 'counts', type_name: typeName, is_list: true })], { counts: '1, 2' },
+      )).toEqual({ ok: true, parameters: { counts: [1, 2] } })
+    },
+  )
+
+  it('preserves nullable boolean and numeric choice values', () => {
+    const params = [
+      makeParameter({ name: 'flag', type_name: 'bool | None' }),
+      makeParameter({ name: 'count', type_name: 'int | None', choices: ['1', '2'] }),
+      makeParameter({ name: 'counts', type_name: 'list[int] | None', is_list: true, choices: ['1', '2'] }),
+    ]
+    expect(buildParametersFromForm(params, { flag: 'false', count: '2', counts: ['1', '2'] })).toEqual({
+      ok: true, parameters: { flag: false, count: 2, counts: [1, 2] },
+    })
+  })
+
+  it('keeps omitted nullable values separate from required inputs', () => {
+    const param = makeParameter({ name: 'count', type_name: 'int | None' })
+    expect(buildParametersFromForm([param], { count: '' })).toEqual({ ok: true, parameters: null })
+    expect(buildParametersFromForm([{ ...param, required: true }], { count: '' })).toEqual({
+      ok: false, error: 'count is required.',
+    })
+  })
+
   it('returns null when nothing is provided', () => {
     const params = [makeParameter({ name: 'label' })]
     const result = buildParametersFromForm(params, { label: '  ' })
@@ -220,6 +276,30 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'days', type_name: 'int' })]
     const result = buildParametersFromForm(params, { days: '1.5' })
     expect(result).toEqual({ ok: false, error: 'days must be an integer.' })
+  })
+
+  it('rejects an unsafe integer for an int parameter', () => {
+    const params = [makeParameter({ name: 'seed', type_name: 'int' })]
+    expect(buildParametersFromForm(params, { seed: '9007199254740993' })).toEqual({
+      ok: false,
+      error: 'seed must be a safe integer.',
+    })
+    expect(buildParametersFromForm(params, { seed: '-9007199254740993' })).toEqual({
+      ok: false,
+      error: 'seed must be a safe integer.',
+    })
+  })
+
+  it('accepts safe integer boundary values for an int parameter', () => {
+    const params = [makeParameter({ name: 'seed', type_name: 'int' })]
+    expect(buildParametersFromForm(params, { seed: '9007199254740991' })).toEqual({
+      ok: true,
+      parameters: { seed: 9007199254740991 },
+    })
+    expect(buildParametersFromForm(params, { seed: '-9007199254740991' })).toEqual({
+      ok: true,
+      parameters: { seed: -9007199254740991 },
+    })
   })
 
   it('coerces a valid float', () => {
@@ -296,6 +376,12 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'days', type_name: 'list[int]', is_list: true })]
     const result = buildParametersFromForm(params, { days: '1, x' })
     expect(result).toEqual({ ok: false, error: 'days must be a number.' })
+  })
+
+  it('rejects an unsafe integer list element for a list[int] parameter', () => {
+    const params = [makeParameter({ name: 'days', type_name: 'list[int]', is_list: true })]
+    const result = buildParametersFromForm(params, { days: '1, 9007199254740993' })
+    expect(result).toEqual({ ok: false, error: 'days must be a safe integer.' })
   })
 
   it('keeps selected multiselect choices', () => {

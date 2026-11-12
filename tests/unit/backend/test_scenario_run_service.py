@@ -11,6 +11,7 @@ import threading
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -19,11 +20,9 @@ import pytest
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
+from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
-from pyrit.backend.services.scenario_run_service import (
-    ScenarioRunConflictError,
-    ScenarioRunService,
-)
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Converter
 from pyrit.memory import (
@@ -47,6 +46,9 @@ from pyrit.models import (
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioIdentifier,
     ScenarioObjectiveScorerMetrics,
     ScenarioProgressResult,
     ScenarioProgressScore,
@@ -55,24 +57,22 @@ from pyrit.models import (
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
+    ScenarioTechniqueSummary,
     ScoreStatus,
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
-from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.models.catalog import RunScenarioRequest
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import ConverterRegistry, ScenarioMetadata, ScenarioRegistry
-from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
+from pyrit.scenario import IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
     get_default_adversarial_target,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
-from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.scenarios.airt import Jailbreak, Scam
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
@@ -291,6 +291,242 @@ def _make_request(
     )
 
 
+def test_capture_launch_references_skips_unused_shared_adversarial_target() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    scorer = SimpleNamespace(hash="launch-scorer")
+    metadata = SimpleNamespace(
+        default_objective_scorer_identifier=scorer,
+        technique_class=_StubTechnique,
+        default_techniques=("role_play",),
+        uses_default_adversarial_target=True,
+    )
+    registry = MagicMock()
+    registry.get_class_metadata.return_value = metadata
+    technique_registry = MagicMock()
+    technique_registry.get_factories.return_value = {
+        "role_play": SimpleNamespace(uses_default_adversarial_target=False),
+    }
+    request = RunScenarioRequest(scenario_name="test", target_name=None, techniques=["role_play"])
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch(
+            "pyrit.registry.components.attack_technique_registry.AttackTechniqueRegistry.get_registry_singleton",
+            return_value=technique_registry,
+        ),
+        patch.object(_svc_mod, "get_default_adversarial_target", side_effect=AssertionError("unused target resolved")),
+        patch.object(service._configuration_resolver, "resolve_adversarial_target") as resolve_target,
+    ):
+        references = service._capture_launch_references(
+            request=request,
+            scenario_class=MagicMock(),
+            init_kwargs={"scenario_techniques": [_StubTechnique.ROLE_PLAY]},
+        )
+
+    assert references == {"objective_scorer_hash": "launch-scorer"}
+    resolve_target.assert_not_called()
+
+
+def test_capture_launch_references_includes_run_local_simulation_target() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(
+        default_objective_scorer_identifier=SimpleNamespace(hash="launch-scorer"),
+        technique_class=_StubTechnique,
+        default_techniques=("role_play",),
+        uses_default_adversarial_target=False,
+    )
+    registry = MagicMock()
+    registry.get_class_metadata.return_value = metadata
+    technique_registry = MagicMock()
+    technique_registry.get_factories.return_value = {}
+    local_factory = SimpleNamespace(name="role_play", uses_default_adversarial_target=True)
+    target = SimpleNamespace(get_identifier=lambda: SimpleNamespace(hash="adversarial-target"))
+    request = RunScenarioRequest(scenario_name="test", target_name=None, techniques=["role_play"])
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch(
+            "pyrit.registry.components.attack_technique_registry.AttackTechniqueRegistry.get_registry_singleton",
+            return_value=technique_registry,
+        ),
+        patch.object(service._configuration_resolver, "resolve_adversarial_target", return_value=None),
+        patch.object(_svc_mod, "get_default_adversarial_target", return_value=target) as get_default,
+    ):
+        references = service._capture_launch_references(
+            request=request,
+            scenario_class=MagicMock(),
+            init_kwargs={
+                "scenario_techniques": [_StubTechnique.ROLE_PLAY],
+                "local_technique_factory": local_factory,
+            },
+        )
+
+    assert references == {
+        "objective_scorer_hash": "launch-scorer",
+        "adversarial_target_hash": "adversarial-target",
+    }
+    get_default.assert_called_once()
+
+
+@pytest.mark.parametrize("current_hash", ["launch-scorer", "changed-scorer"])
+def test_targetless_rerun_validates_all_modern_role_references(current_hash: str) -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = SimpleNamespace(scenario_version=1)
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+    )
+    request = RunScenarioRequest(scenario_name="test")
+    readiness = SimpleNamespace(
+        issues=[],
+        bindings=[SimpleNamespace(role="objective_scorer", identifier=SimpleNamespace(hash=current_hash))],
+    )
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service._configuration_resolver, "resolve_readiness", return_value=readiness) as resolve,
+    ):
+        if current_hash == "launch-scorer":
+            service._validate_rerun_references(stored=stored, request=request)
+        else:
+            with pytest.raises(ScenarioRunConflictError, match="dependencies changed"):
+                service._validate_rerun_references(stored=stored, request=request)
+    resolve.assert_called_once_with(scenario_name="test", request=request)
+    registry.create_and_initialize_async.assert_not_called()
+
+
+def test_rerun_validation_uses_saved_launch_scorer_not_effective_scorer() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(
+        scenario_version=1,
+        default_objective_scorer_identifier=SimpleNamespace(hash="launch-scorer"),
+    )
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(scenario_name="test", target_name=None)
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+    scenario_class.assert_not_called()
+    registry.create_and_initialize_async.assert_not_called()
+
+
+def test_rerun_validation_uses_explicit_scorer_hash_without_resolving_provider() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(scenario_version=1, default_objective_scorer_identifier=None)
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(
+        scenario_name="test",
+        target_name=None,
+        objective_scorer={"registry_name": "scorer", "identifier_hash": "explicit-launch-scorer"},
+    )
+    scorer = MagicMock()
+    scorer.get_identifier.return_value = SimpleNamespace(hash="explicit-launch-scorer")
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+        patch.object(
+            service._configuration_resolver,
+            "resolve_constructor_kwargs",
+            return_value={"objective_scorer": scorer},
+        ) as resolve_scorer,
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+    resolve_scorer.assert_called_once_with(scenario_class=scenario_class, objective_scorer=request.objective_scorer)
+    scorer.score_async.assert_not_called()
+
+
+def test_rerun_validation_rejects_changed_explicit_scorer_source() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(scenario_version=1, default_objective_scorer_identifier=None)
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(
+        scenario_name="test",
+        target_name=None,
+        objective_scorer={"registry_name": "scorer", "identifier_hash": "explicit-launch-scorer"},
+    )
+    scorer = MagicMock()
+    scorer.get_identifier.return_value = SimpleNamespace(hash="changed-scorer")
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+        patch.object(
+            service._configuration_resolver,
+            "resolve_constructor_kwargs",
+            return_value={"objective_scorer": scorer},
+        ),
+        pytest.raises(ScenarioRunConflictError, match="objective scorer changed"),
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+    scorer.score_async.assert_not_called()
+
+
+def test_rerun_validation_rejects_changed_launch_scorer() -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    metadata = SimpleNamespace(
+        scenario_version=1,
+        default_objective_scorer_identifier=SimpleNamespace(hash="changed-launch-scorer"),
+    )
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = metadata
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "saved-launch-scorer"}},
+        objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
+        scenario_identifier=SimpleNamespace(objective_target=None),
+    )
+    request = RunScenarioRequest(scenario_name="test", target_name=None)
+
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_launch_uses_default_adversarial_target", return_value=False),
+        pytest.raises(ScenarioRunConflictError, match="objective scorer changed"),
+    ):
+        service._validate_rerun_references(stored=stored, request=request)
+
+
 @pytest.mark.parametrize("supports_common_inputs", [True, False])
 async def test_prepare_and_restore_preserve_common_input_support_async(
     patch_central_database: MagicMock, supports_common_inputs: bool
@@ -308,7 +544,7 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
         patch.object(Scam, "supported_parameters", return_value=declared),
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target") as resolve_target,
+        patch.object(type(service._configuration_resolver), "resolve_target") as resolve_target,
     ):
         await service._prepare_run_async(request=request)
         kwargs = registry.create_and_initialize_async.call_args.kwargs
@@ -322,7 +558,7 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
         )
         restored = service._restore_launch_request(stored=stored)
         if supports_common_inputs:
-            resolve_target.assert_called_once()
+            assert resolve_target.call_count == 2
             assert kwargs["max_concurrency"] == restored.max_concurrency == 10
             assert kwargs["max_retries"] == restored.max_retries == 0
             assert restored.target_name == "my_target"
@@ -357,7 +593,7 @@ async def test_prepare_persists_internal_initial_metadata_with_run_service_field
     with (
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target"),
+        patch.object(type(service._configuration_resolver), "resolve_target"),
     ):
         await service._prepare_run_async(
             request=RunScenarioRequest(scenario_name="test.support", target_name="my_target"),
@@ -389,15 +625,12 @@ async def test_start_rejects_caller_metadata_that_overwrites_run_service_fields(
 async def test_prepare_requires_target_for_scenarios_that_declare_it_async(
     patch_central_database: MagicMock,
 ) -> None:
-    registry = MagicMock(spec=ScenarioRegistry)
-    registry.get_class.return_value = Scam
     service = ScenarioRunService()
     with (
-        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        pytest.raises(ValueError, match="requires an objective target"),
+        pytest.raises(ValueError, match="objective_target"),
     ):
-        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="test.support"))
+        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="airt.scam"))
     await service.close_async()
 
 
@@ -459,7 +692,11 @@ def _make_db_scenario_result(
     sr.scenario_version = 1
     sr.pyrit_version = "0.10.0"
     sr.scenario_run_state = run_state
-    sr.scenario_identifier = None
+    sr.scenario_identifier = ScenarioIdentifier(
+        class_name=scenario_name, class_module="tests", version=1, pyrit_version="0.10.0"
+    )
+    sr.scenario_description = "A stored scenario description."
+    sr.metadata = {}
     sr.get_techniques_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
@@ -968,6 +1205,7 @@ class TestScenarioRunServiceStartRun:
             scenario_params=scenario_params,
             scenario_result_id=None,
             constructor_kwargs={},
+            configuration_metadata=ANY,
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
@@ -2592,9 +2830,41 @@ class TestScenarioRunServiceListRuns:
             statuses=[],
             labels=None,
             operation_ids=None,
+            reference_id=None,
             cursor=None,
             limit=10,
+            sort_by="created_at",
         )
+
+    async def test_activity_history_cursor_uses_updated_at_and_is_mode_bound(self, mock_memory) -> None:
+        record = _make_history_record(result_id=str(uuid.UUID(int=42)), run_state=ScenarioRunState.IN_PROGRESS)
+        activity_timestamp = record.created_at + timedelta(days=1)
+        aggregate = replace(
+            ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
+            latest_attempt_timestamp=activity_timestamp,
+        )
+        mock_memory.get_scenario_run_history_page_async = AsyncMock(
+            return_value=([record], {record.scenario_result_id: aggregate}, True)
+        )
+        service = ScenarioRunService()
+
+        activity_page = await service.list_runs_async(limit=1, sort_by="activity")
+        assert activity_page.items[0].updated_at == activity_timestamp
+        activity_cursor = activity_page.pagination.next_cursor
+        await service.list_runs_async(limit=1, sort_by="activity", cursor=activity_cursor)
+        memory_cursor = mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"]
+        assert memory_cursor.timestamp == activity_timestamp
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["sort_by"] == "activity"
+
+        await service.list_runs_async(limit=1, cursor=activity_cursor)
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["sort_by"] == "created_at"
+
+        default_page = await service.list_runs_async(limit=1)
+        default_cursor = default_page.pagination.next_cursor
+        await service.list_runs_async(limit=1, cursor=default_cursor)
+        memory_cursor = mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"]
+        assert memory_cursor.timestamp == record.created_at
 
     async def test_history_cursor_is_filter_bound_and_invalid_values_restart_pagination(self, mock_memory) -> None:
         record = _make_history_record(result_id=str(uuid.uuid4()), run_state=ScenarioRunState.COMPLETED)
@@ -2608,6 +2878,18 @@ class TestScenarioRunServiceListRuns:
         (await service.list_runs_async(scenario_names=["second"], cursor=first_page.pagination.next_cursor))
         assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
         (await service.list_runs_async(cursor="not-a-cursor"))
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
+
+    async def test_history_cursor_is_bound_to_the_id_lookup(self, mock_memory) -> None:
+        record = _make_history_record(result_id=str(uuid.uuid4()), run_state=ScenarioRunState.COMPLETED)
+        mock_memory.get_scenario_run_history_page_async.return_value = ([record], {}, True)
+        service = ScenarioRunService()
+        reference_id = uuid.uuid4()
+        first = await service.list_runs_async(reference_id=reference_id, limit=1)
+        await service.list_runs_async(reference_id=reference_id, cursor=first.pagination.next_cursor, limit=1)
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is not None
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["reference_id"] == reference_id
+        await service.list_runs_async(reference_id=uuid.uuid4(), cursor=first.pagination.next_cursor, limit=1)
         assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
 
     async def test_history_uses_plan_and_latest_non_error_attempt_per_unit(self, mock_memory) -> None:
@@ -3103,6 +3385,125 @@ class TestScenarioRunServiceCancelRun:
             call.kwargs["scenario_result_id"] for call in mock_memory.get_scenario_result_header_async.await_args_list
         ] == ["skipped-run", "next-run"]
         mock_memory.get_scenario_results_async.assert_not_awaited()
+
+    @staticmethod
+    def _fail_handoff_after_saving_start(*, mock_memory: MagicMock, next_run_id: str) -> MagicMock:
+        """
+        Make the next run's IN_PROGRESS update reach the database but report a failure to the caller.
+
+        Returns:
+            MagicMock: The persisted row for the next run.
+        """
+        row = _make_db_scenario_result(result_id=next_run_id, run_state=ScenarioRunState.QUEUED)
+
+        async def save_then_raise_async(
+            *, scenario_run_state: ScenarioRunState, metadata_fields: dict[str, Any], **_: object
+        ) -> None:
+            row.scenario_run_state = scenario_run_state
+            row.metadata.update(metadata_fields)
+            raise ConnectionError("connection lost after commit")
+
+        mock_memory.get_scenario_result_header_async.return_value = row
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.side_effect = save_then_raise_async
+        return row
+
+    async def test_handoff_retry_starts_run_when_failed_attempt_saved_its_start_async(
+        self, *, mock_memory: MagicMock
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        next_run = _svc_mod._ActiveTask(scenario_result_id="next-run")
+        service._queued_runs.append(next_run)
+        row = self._fail_handoff_after_saving_start(mock_memory=mock_memory, next_run_id="next-run")
+
+        with patch.object(service, "_execute_run_async", new_callable=AsyncMock) as execute:
+            with pytest.raises(ConnectionError):
+                await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert list(service._queued_runs) == [next_run]
+
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert next_run.task is not None
+            await next_run.task
+
+        execute.assert_awaited_once_with(scenario_result_id="next-run")
+        assert not service._queued_runs
+        assert service._active_scenario_result_id == "next-run"
+        assert service._active_tasks["next-run"] is next_run
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.assert_awaited_once()
+        assert next_run.started_at is not None
+        assert row.metadata[_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY] == next_run.started_at.isoformat()
+
+    @pytest.mark.parametrize(
+        "persisted_started_at",
+        [
+            pytest.param("2026-01-02T03:04:05.123456Z", id="z-suffix"),
+            pytest.param(datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC), id="datetime"),
+        ],
+    )
+    async def test_handoff_retry_matches_start_time_saved_in_another_format_async(
+        self, *, mock_memory: MagicMock, persisted_started_at: object
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        next_run = _svc_mod._ActiveTask(
+            scenario_result_id="next-run", started_at=datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC)
+        )
+        service._queued_runs.append(next_run)
+        row = _make_db_scenario_result(result_id="next-run", run_state=ScenarioRunState.IN_PROGRESS)
+        row.metadata = {_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY: persisted_started_at}
+        mock_memory.get_scenario_result_header_async.return_value = row
+
+        with patch.object(service, "_execute_run_async", new_callable=AsyncMock) as execute:
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert next_run.task is not None
+            await next_run.task
+
+        execute.assert_awaited_once_with(scenario_result_id="next-run")
+        assert not service._queued_runs
+        assert service._active_scenario_result_id == "next-run"
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.assert_not_awaited()
+
+    async def test_handoff_skips_in_progress_run_with_a_different_start_time_async(
+        self, *, mock_memory: MagicMock
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        service._queued_runs.append(_svc_mod._ActiveTask(scenario_result_id="next-run", started_at=datetime.now(UTC)))
+        row = _make_db_scenario_result(result_id="next-run", run_state=ScenarioRunState.IN_PROGRESS)
+        row.metadata = {_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY: "2020-01-01T00:00:00+00:00"}
+        mock_memory.get_scenario_result_header_async.return_value = row
+
+        await service._handoff_scheduler_async(scenario_result_id="finished-run")
+
+        assert not service._queued_runs
+        assert "next-run" not in service._active_tasks
+        assert service._active_scenario_result_id is None
+
+    async def test_cancel_during_handoff_retry_cancels_run_saved_as_in_progress_async(
+        self, *, mock_memory: MagicMock
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        service._queued_runs.append(_svc_mod._ActiveTask(scenario_result_id="next-run"))
+        row = self._fail_handoff_after_saving_start(mock_memory=mock_memory, next_run_id="next-run")
+        with pytest.raises(ConnectionError):
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+
+        async def try_update_async(
+            *, expected_states: set[ScenarioRunState], scenario_run_state: ScenarioRunState, **_: object
+        ) -> bool:
+            if row.scenario_run_state not in expected_states:
+                return False
+            row.scenario_run_state = scenario_run_state
+            return True
+
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=try_update_async)
+        mock_memory.get_scenario_results_async.return_value = [row]
+
+        await service.cancel_run_async(scenario_result_id="next-run")
+
+        assert row.scenario_run_state == ScenarioRunState.CANCELLED
+        assert not service._queued_runs
 
     async def test_cancel_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that cancel returns None for non-existent run."""
@@ -3624,6 +4025,35 @@ class TestScenarioRunServiceExecution:
         assert fetched is not None
         assert fetched.error == "scenario exploded"
 
+    async def test_execute_run_reports_every_failure_in_an_exception_group(self, mock_all_registries) -> None:
+        service = ScenarioRunService()
+        mock_instance = mock_all_registries["scenario_instance"]
+        release_execution = asyncio.Event()
+
+        async def _run() -> None:
+            await release_execution.wait()
+            raise ExceptionGroup("Multiple failed", [ValueError("first boom"), RuntimeError("second boom")])
+
+        mock_instance.run_async = AsyncMock(side_effect=_run)
+        response = await service.start_run_async(request=_make_request())
+        active = service._active_tasks.get(response.scenario_result_id)
+        assert active is not None
+        assert active.task is not None
+        release_execution.set()
+        await active.task
+
+        expected = "Multiple failed (2 sub-exceptions): [ValueError: first boom; RuntimeError: second boom]"
+        assert active.error == expected
+        assert active.cancellation_reason == expected
+        assert active.cancellation_error_type == "ExceptionGroup"
+        mock_all_registries["memory"].try_update_scenario_run_state_async.assert_awaited_with(
+            scenario_result_id=response.scenario_result_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message=expected,
+            error_type="ExceptionGroup",
+        )
+
     async def test_execute_run_retains_richer_terminal_error_from_scenario(self, mock_all_registries) -> None:
         service = ScenarioRunService()
         mock_instance = mock_all_registries["scenario_instance"]
@@ -3901,8 +4331,7 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert fetched.attack_retries == []
 
     async def test_retry_events_surface_per_attack(self, mock_memory) -> None:
-        from pyrit.models import AttackOutcome
-        from pyrit.models.retry_event import RetryEvent
+        from pyrit.models import AttackOutcome, RetryEvent
 
         attack = MagicMock()
         attack.outcome = AttackOutcome.SUCCESS

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
     from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
+    from pyrit.score.float_scale.secret_disclosure_scorer import SecretDisclosureScorer, SecretDisclosureView
     from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
     from pyrit.score.float_scale.self_ask_likert_scorer import (
         LikertScaleEvalFiles,
@@ -85,6 +86,12 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.true_false.assert_policy_scorer import (
+        AssertJudgmentMode,
+        AssertScoringDimension,
+        build_assert_policy_scorer,
+        get_assert_failure_criterion,
+    )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
@@ -100,8 +107,13 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.local_refusal_classifier_scorer import LocalRefusalClassifierScorer
     from pyrit.score.true_false.manual_scorer import ManualScorer
     from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
+    from pyrit.score.true_false.multi_label_true_false_scorer import (
+        MessageMultiLabelTrueFalseScorer,
+        MultiLabelTrueFalseScorer,
+    )
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
+    from pyrit.score.true_false.physics_consistency_scorer import PhysicsConsistencyScorer
     from pyrit.score.true_false.program_execution_scorer import ProgramExecutionScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
@@ -157,12 +169,18 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.true_false_fallback_scorer import TrueFalseFallbackScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
+    from pyrit.score.true_false.true_false_score_selector import TrueFalseScoreSelector
     from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
     from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
+    "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
+    "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
+    "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
+    "PhysicsConsistencyScorer": "pyrit.score.true_false.physics_consistency_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
@@ -194,6 +212,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
+    "MultiLabelTrueFalseScorer": "pyrit.score.true_false.multi_label_true_false_scorer",
+    "MessageMultiLabelTrueFalseScorer": "pyrit.score.true_false.multi_label_true_false_scorer",
+    "TrueFalseScoreSelector": "pyrit.score.true_false.true_false_score_selector",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GarakExploitationDetector": "pyrit.score.true_false.garak_exploitation_scorer",
     "GarakExploitationScorer": "pyrit.score.true_false.garak_exploitation_scorer",
@@ -268,6 +289,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
     "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
     "Scorer": "pyrit.score.scorer",
+    "SecretDisclosureScorer": "pyrit.score.float_scale.secret_disclosure_scorer",
+    "SecretDisclosureView": "pyrit.score.float_scale.secret_disclosure_scorer",
     "Scorable": "pyrit.score.scorable",
     "ScorerEvalDatasetFiles": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "ScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",

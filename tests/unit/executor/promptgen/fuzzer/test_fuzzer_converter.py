@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.promptgen.fuzzer import (
     FuzzerCrossOverConverter,
     FuzzerExpandConverter,

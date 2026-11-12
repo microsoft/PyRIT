@@ -14,8 +14,10 @@ from unit.mocks import MockPromptTarget
 from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
+    AsciiSmugglerConverter,
     AtbashConverter,
     Base64Converter,
+    BinaryConverter,
     CaesarConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
@@ -33,22 +35,20 @@ from pyrit.converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
 )
-from pyrit.converter.binary_converter import BinaryConverter
-from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
 from pyrit.executor.attack import (
+    AttackScoringConfig,
+    AttackStrategy,
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, IncompatibleTechniqueError
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
     FoundryComposite,
@@ -210,7 +210,8 @@ def mock_runtime_env():
             "OPENAI_CHAT_MODEL": "gpt-4",
         },
     ):
-        yield
+        with override_default_adversarial_target(MockPromptTarget()):
+            yield
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
@@ -496,12 +497,10 @@ class TestFoundryInitialization:
         ):
             scenario = RedTeamAgent()
 
-            # Verify default scorer was used
+            mock_get_scorer.assert_not_called()
+            assert scenario._attack_scoring_config is None
+            assert scenario._objective_scorer is mock_scorer_instance
             mock_get_scorer.assert_called_once()
-            assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
-
-            # seed_groups are resolved lazily during initialize_async
-            assert scenario._attack_scoring_config.objective_scorer == mock_scorer_instance
 
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""
