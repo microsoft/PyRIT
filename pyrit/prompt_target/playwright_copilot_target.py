@@ -7,7 +7,9 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, construct_response_from_request
@@ -66,6 +68,7 @@ class PlaywrightCopilotTarget(PromptTarget):
     POLL_INTERVAL_MS: int = 2000
     RETRY_ATTEMPTS: int = 5
     RETRY_DELAY_MS: int = 500
+    ATTACHMENT_READY_TIMEOUT_MS: int = 60_000
 
     # Wait time constants for image loading
     MIN_IMAGE_WAIT_SECONDS: int = 3
@@ -113,6 +116,8 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     # URL identifiers
     M365_URL_IDENTIFIER: str = "m365"
+    UNIFIED_COPILOT_HOST: str = "copilot.cloud.microsoft"
+    UNIFIED_M365_HOST: str = "m365.cloud.microsoft"
 
     # Login requirement message
     LOGIN_REQUIRED_HEADER: str = "Sign in for the full experience"
@@ -148,10 +153,11 @@ class PlaywrightCopilotTarget(PromptTarget):
                 "Please pass a Page object when initializing PlaywrightCopilotTarget."
             )
 
-        if page and self.M365_URL_IDENTIFIER in page.url and copilot_type != CopilotType.M365:
-            raise ValueError("The provided page URL indicates M365 Copilot, but the type is set to consumer.")
-        if page and self.M365_URL_IDENTIFIER not in page.url and copilot_type == CopilotType.M365:
-            raise ValueError("The provided page URL does not indicate M365 Copilot, but the type is set to m365.")
+        if not self._is_unified_copilot_url(page.url):
+            if self.M365_URL_IDENTIFIER in page.url and copilot_type != CopilotType.M365:
+                raise ValueError("The provided page URL indicates M365 Copilot, but the type is set to consumer.")
+            if self.M365_URL_IDENTIFIER not in page.url and copilot_type == CopilotType.M365:
+                raise ValueError("The provided page URL does not indicate M365 Copilot, but the type is set to m365.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -173,28 +179,80 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             CopilotSelectors: The selectors for the Copilot interface.
         """
+        if self._is_unified_copilot_url(self._page.url):
+            return self._get_unified_selectors()
         if self._type == CopilotType.CONSUMER:
-            return CopilotSelectors(
-                input_selector="#userInput",
-                send_button_selector='button[data-testid="submit-button"]',
-                ai_messages_selector='div[data-content="ai-message"]',
-                ai_messages_group_selector=r'[data-content="ai-message"] > div > div.group\/ai-message-item',
-                text_content_selector="p > span",
-                plus_button_dropdown_selector='button[aria-label="Open"]',
-                file_picker_selector='button[aria-label="Add images or files"]',
-            )
-        # M365 Copilot
+            return self._get_legacy_consumer_selectors()
+        return self._get_m365_selectors()
+
+    def _get_unified_selectors(self) -> CopilotSelectors:
+        """
+        Get selectors for the unified Consumer and M365 Copilot interface.
+
+        Returns:
+            CopilotSelectors: The selectors for the unified Copilot interface.
+        """
         return CopilotSelectors(
             input_selector='span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]',
-            send_button_selector='button[type="submit"]',
-            ai_messages_selector='div[data-testid="copilot-message-div"]',
-            ai_messages_group_selector=(
-                'div[data-testid="copilot-message-div"] > div > div > div > div > div > div > div > div > div > div'
+            send_button_selector='button[aria-label="Send"]',
+            ai_messages_selector=(
+                'div[data-testid="copilot-message-div"], div[role="article"][aria-labelledby^="copilot-message-"]'
             ),
-            text_content_selector="div > p",
-            plus_button_dropdown_selector='button[aria-label="Add content"]',
+            ai_messages_group_selector=(
+                'div[data-testid="copilot-message-reply-div"], '
+                'div[role="article"][aria-labelledby^="copilot-message-"] > div[id^="copilot-message-"]'
+            ),
+            text_content_selector="p",
+            plus_button_dropdown_selector=(
+                'button[data-testid="PlusMenuButton"], '
+                'button[aria-label="Add and manage sources"], '
+                'button[aria-label="Add attachments"], '
+                'button[aria-label="Add content"]'
+            ),
             file_picker_selector='span.fui-MenuItem__content:has-text("Upload images and files")',
         )
+
+    def _get_legacy_consumer_selectors(self) -> CopilotSelectors:
+        """
+        Get selectors for the legacy Consumer Copilot interface.
+
+        Returns:
+            CopilotSelectors: The selectors for the legacy Consumer Copilot interface.
+        """
+        return CopilotSelectors(
+            input_selector="#userInput",
+            send_button_selector='button[data-testid="submit-button"]',
+            ai_messages_selector='div[data-content="ai-message"]',
+            ai_messages_group_selector=r'[data-content="ai-message"] > div > div.group\/ai-message-item',
+            text_content_selector="p > span",
+            plus_button_dropdown_selector='button[aria-label="Open"]',
+            file_picker_selector='button[aria-label="Add images or files"]',
+        )
+
+    def _get_m365_selectors(self) -> CopilotSelectors:
+        """
+        Get selectors for legacy and unified M365 Copilot interfaces.
+
+        Returns:
+            CopilotSelectors: The selectors for M365 Copilot interfaces.
+        """
+        unified_selectors = self._get_unified_selectors()
+        return CopilotSelectors(
+            input_selector=unified_selectors.input_selector,
+            send_button_selector=f'{unified_selectors.send_button_selector}, button[type="submit"]',
+            ai_messages_selector=unified_selectors.ai_messages_selector,
+            ai_messages_group_selector=(
+                f"{unified_selectors.ai_messages_group_selector}, "
+                'div[data-testid="copilot-message-div"] > div > div > div > div > div > div > div > div > div > div'
+            ),
+            text_content_selector=unified_selectors.text_content_selector,
+            plus_button_dropdown_selector=unified_selectors.plus_button_dropdown_selector,
+            file_picker_selector=unified_selectors.file_picker_selector,
+        )
+
+    def _is_unified_copilot_url(self, url: str) -> bool:
+        """Return whether the URL uses the unified Copilot host."""
+        return (urlparse(url).hostname or "").lower() == self.UNIFIED_COPILOT_HOST
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -829,6 +887,35 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         # Check for login requirement in Consumer Copilot
         await self._check_login_requirement_async()
+
+        if self._is_unified_attachment_host():
+            await self._wait_for_attachment_ready_async(image_path)
+
+    def _is_unified_attachment_host(self) -> bool:
+        """Return whether the current host uses unified attachment staging."""
+        hostname = (urlparse(self._page.url).hostname or "").lower()
+        return hostname in {self.UNIFIED_COPILOT_HOST, self.UNIFIED_M365_HOST}
+
+    async def _wait_for_attachment_ready_async(self, image_path: str) -> None:
+        """
+        Wait until the uploaded image is visibly staged and removable.
+
+        Args:
+            image_path (str): The uploaded image path.
+
+        Raises:
+            ValueError: If the image path does not include a filename.
+        """
+        filename = Path(image_path).name
+        if not filename:
+            raise ValueError(f"Image path must include a filename: {image_path}")
+
+        remove_button = self._page.get_by_role(
+            "button",
+            name=f"Remove attachment {filename}",
+            exact=True,
+        )
+        await remove_button.wait_for(state="visible", timeout=self.ATTACHMENT_READY_TIMEOUT_MS)
 
     async def _click_dropdown_button_async(self, selector: str) -> None:
         """
