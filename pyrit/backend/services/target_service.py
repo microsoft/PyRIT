@@ -870,10 +870,8 @@ class TargetService:
             bool: Whether the target asks for CUDA.
         """
         parameter = next((p for p in (metadata.parameters if metadata else ()) if p.name == "use_cuda"), None)
-        if parameter is None:
-            return False
         try:
-            return bool(parameter.coerce_value(params.get("use_cuda", parameter.default)))
+            return parameter is not None and bool(parameter.coerce_value(params.get("use_cuda", parameter.default)))
         except ValueError:
             return False
 

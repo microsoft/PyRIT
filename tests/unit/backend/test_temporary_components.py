@@ -212,6 +212,36 @@ class TestTemporaryComponents:
         assert threading.current_thread() not in torch.first_threads.values()
         assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
 
+    async def test_hugging_face_without_torch_reports_the_constructor_error_async(self) -> None:
+        with patch.dict("sys.modules", {"torch": None}), pytest.raises(RuntimeError, match="Could not import torch"):
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": True, "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert TargetRegistry.get_registry_singleton().instances.get_names() == []
+
+    async def test_hugging_face_use_cuda_that_is_not_a_boolean_is_refused_without_a_cuda_check_async(self) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            pytest.raises(ValueError, match="expects bool"),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": "maybe", "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert "cuda" not in torch.first_threads
+
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
         [
