@@ -201,14 +201,13 @@ def register_error_handlers(app: FastAPI) -> None:
         """
         Handle stored documents that can't be read or written as 503 Service Unavailable.
 
-        The log names the storage location, without credentials, and the reason, with the
-        traceback at debug level. The response never carries a path or URL.
+        The log names the storage location, without credentials, and the reason. It leaves out the traceback,
+        since the error behind it can carry a SAS URL. The response never carries a path or URL.
 
         Returns:
             JSONResponse: RFC 7807 problem detail response with 503 status.
         """
         logger.warning(f"{exc} ({request.method} {request.url.path})")
-        logger.debug("Storage error details", exc_info=exc)
         if isinstance(exc, DocumentUnreadableError):
             detail = f"{exc.label} '{exc.name}' can't be read: {exc.reason}"
         else:

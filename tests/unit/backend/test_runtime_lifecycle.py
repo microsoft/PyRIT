@@ -1549,6 +1549,48 @@ async def test_apply_from_failed_without_live_apply_says_to_restart_async(
     lifecycle_module.close_services_async.assert_not_awaited()
 
 
+@pytest.mark.parametrize("failing_step", ["close_services", "apply", "management"])
+async def test_a_failure_after_replacement_begins_drops_the_previous_restore_report_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, failing_step: str
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"})
+    _save_recipe(recipes, kind="converters", name="Not-A-Name", document={})
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    assert runtime.restore_failures
+    assert runtime.restore_ignored
+    config = await runtime._load_async()
+    failure = RuntimeError("replacement failed")
+    if failing_step == "close_services":
+        lifecycle_module.close_services_async.side_effect = failure
+    elif failing_step == "apply":
+        config.apply_prepared_reinitialization_async.side_effect = failure
+    else:
+        runtime._management_async.side_effect = failure  # type: ignore[attr-defined]
+
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("restart-required", "restart-required")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        status = (await client.get("/api/config/runtime")).json()
+    assert (status["restore_failures"], status["restore_ignored"]) == ([], [])
+
+
+async def test_a_failure_before_replacement_keeps_the_restore_report_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"})
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    config = await runtime._load_async()
+    config.preflight_reinitialization_async.side_effect = ValueError("bad configuration")
+
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("failed", "invalid-configuration")
+    assert [failure["name"] for failure in runtime.status()["restore_failures"]] == ["broken"]
+
+
 async def test_restore_cancellation_propagates_from_startup_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
     runtime.state = "initializing"
 
