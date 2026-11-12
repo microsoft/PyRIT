@@ -912,6 +912,16 @@ class PromptTarget(Identifiable):
         """
         return None
 
+    @property
+    def trace_config(self) -> TargetTraceConfig:
+        """
+        The request tracing configuration of this target instance.
+
+        Returns:
+            TargetTraceConfig: Whether and how each send records a trace context.
+        """
+        return self._trace_config
+
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """
         Replace this target's capabilities, preserving the existing handling policy.
