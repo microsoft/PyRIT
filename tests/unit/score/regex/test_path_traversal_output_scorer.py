@@ -39,6 +39,14 @@ from pyrit.score import PathTraversalOutputScorer
         "Fully encoded with null byte: ..%2f..%2fetc%2fpasswd%00.png",
         "Double-encoded null byte: ../../../etc/passwd%2500.jpg",
         "Environment file with null byte: ../../.env%00.txt",
+        "SSH DSA key: ../../.ssh/id_dsa",
+        "SSH ECDSA key: ..\\..\\.ssh\\id_ecdsa",
+        "SSH Ed25519 key: ../../.ssh/id_ed25519",
+        "SSH hardware ECDSA key: ../../.ssh/id_ecdsa_sk",
+        "SSH hardware Ed25519 key: ../../.ssh/id_ed25519_sk",
+        "SSH encoded Ed25519 key: %2e%2e/%2e%2e/%2essh/id_ed25519",
+        "SSH Ed25519 key with null byte: ../../.ssh/id_ed25519%00.txt",
+        "SSH hardware key with null byte: ../../.ssh/id_ed25519_sk%00.pub",
     ],
 )
 async def test_path_traversal_detected(text: str, patch_central_database):
@@ -59,6 +67,9 @@ async def test_path_traversal_detected(text: str, patch_central_database):
         "%252e%252e%252f%252e%252e%252fetc%252fshadow",
         "../../windows/win.ini",
         "../../web.config",
+        "../../.ssh/id_ed25519",
+        "../../.ssh/id_ecdsa",
+        "../../.ssh/id_ed25519_sk",
     ],
 )
 @pytest.mark.parametrize("ending", [".", ". Then continue.", ".\n", ".\r\n"])
@@ -109,6 +120,15 @@ async def test_path_traversal_scorer_sentence_period_async(*, path: str, ending:
         "Read ../../web.config.bak.",
         "The path ../../windows/win.initial is not win.ini.",
         "The path ../../web.configuration is not web.config.",
+        "A public key path ../../.ssh/id_ed25519.pub is not the private key.",
+        "A public key path ../../.ssh/id_ecdsa.pub is not the private key.",
+        "A public key path ../../.ssh/id_ed25519_sk.pub is not the private key.",
+        "A public key path ../../.ssh/id_ecdsa_sk.pub is not the private key.",
+        "Read ../../.ssh/id_ed25519.pub.",
+        "The backup path ../../.ssh/id_ed25519.bak is not a private key.",
+        "The path ../../.ssh/id_ed25519_custom is not a default private key.",
+        "The path ../../.ssh/id_rsa_bak is not the private key.",
+        "The path ../.ssh/id_ed25519 has only one parent segment.",
     ],
 )
 async def test_path_traversal_not_detected(text: str, patch_central_database):
