@@ -62,6 +62,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedRecord,
     SeedSimulatedConversation,
+    SeedSimulatedToolHistory,
     TargetIdentifier,
 )
 from unit.mocks import make_scenario_result
@@ -550,6 +551,10 @@ class TestSeedEntry:
         )
         entry = SeedEntry(entry=obj)
         assert entry.seed_type == "objective"
+
+    def test_simulated_tool_history_cannot_be_stored(self):
+        with pytest.raises(ValueError, match="SeedSimulatedToolHistory cannot be stored in memory"):
+            SeedEntry(entry=SeedSimulatedToolHistory())
 
     def test_roundtrip_seed_prompt(self):
         seed = _make_seed_prompt()

@@ -26,6 +26,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SeedSimulatedToolHistory,
     TargetIdentifier,
 )
 from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, TargetRequirements
@@ -1259,6 +1260,24 @@ class TestAtomicAttackSimulatedConversationIdentity:
         changed = _simulated_conversation_atomic_attack(
             attack=mock_attack, adversarial_chat=_adversarial_chat(temperature=0.2)
         )
+
+        assert baseline.simulated_conversation_adversarial_chat_eval_hash is not None
+        assert changed.technique_eval_hash != baseline.technique_eval_hash
+        assert changed.logical_group_id != baseline.logical_group_id
+
+    def test_tool_history_chat_settings_change_the_hash(self, mock_attack):
+        def build(temperature: float) -> AtomicAttack:
+            return AtomicAttack(
+                attack_technique=AttackTechnique(
+                    attack=mock_attack,
+                    seed_technique=AttackTechniqueSeedGroup(seeds=[SeedSimulatedToolHistory()]),
+                ),
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="objective")])],
+                atomic_attack_name="same",
+                adversarial_chat=_adversarial_chat(temperature=temperature),
+            )
+
+        baseline, changed = build(1.2), build(0.2)
 
         assert baseline.simulated_conversation_adversarial_chat_eval_hash is not None
         assert changed.technique_eval_hash != baseline.technique_eval_hash

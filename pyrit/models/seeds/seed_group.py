@@ -24,6 +24,7 @@ from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+from pyrit.models.seeds.seed_simulated_tool_history import SeedSimulatedToolHistory
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 # during validation. Exported so SeedDataset (and any future container) can reuse the same
 # tagged union for its own ``seeds`` field.
 SeedUnion = Annotated[
-    SeedPrompt | SeedObjective | SeedSimulatedConversation,
+    SeedPrompt | SeedObjective | SeedSimulatedConversation | SeedSimulatedToolHistory,
     Field(discriminator="seed_type"),
 ]
 
@@ -117,7 +118,7 @@ class SeedGroup(BaseModel):
         """
         Validate the group and reorder seeds into canonical order.
 
-        Canonical order is: objective, simulated_conversation, then prompts sorted by sequence.
+        Canonical order is: objective, the generated-history configuration, then prompts sorted by sequence.
 
         Returns:
             SeedGroup: The validated, reordered group.
@@ -125,14 +126,14 @@ class SeedGroup(BaseModel):
         self._check_invariants()
 
         objective = self._get_objective()
-        simulated_conv = self._get_simulated_conversation()
+        generated_history = self.generated_history_config
         sorted_prompts = sorted(self.prompts, key=lambda p: p.sequence)
 
         new_seeds: list[SeedUnion] = []
         if objective:
             new_seeds.append(objective)
-        if simulated_conv:
-            new_seeds.append(simulated_conv)
+        if generated_history:
+            new_seeds.append(generated_history)
         new_seeds.extend(sorted_prompts)
         self.seeds = new_seeds
         return self
@@ -174,14 +175,15 @@ class SeedGroup(BaseModel):
 
     def _enforce_max_one_simulated_conversation(self) -> None:
         """
-        Ensure at most one simulated conversation is present.
+        Ensure at most one generated history (simulated conversation or tool history) is present.
 
         Raises:
-            ValueError: If more than one SeedSimulatedConversation exists.
+            ValueError: If more than one generated-history seed exists.
 
         """
-        if len([s for s in self.seeds if isinstance(s, SeedSimulatedConversation)]) > 1:
-            raise ValueError("SeedGroup can only have one simulated conversation.")
+        generated = [s for s in self.seeds if isinstance(s, (SeedSimulatedConversation, SeedSimulatedToolHistory))]
+        if len(generated) > 1:
+            raise ValueError("SeedGroup can only have one simulated conversation or simulated tool history.")
 
     def _enforce_consistent_group_id(self) -> None:
         """
@@ -235,28 +237,28 @@ class SeedGroup(BaseModel):
 
     def _enforce_no_sequence_overlap_with_simulated(self) -> None:
         """
-        Ensure SeedPrompt sequences don't overlap with SeedSimulatedConversation range.
+        Ensure SeedPrompt sequences don't overlap with the generated history's sequence range.
 
-        When a SeedSimulatedConversation is present, it will generate turns that occupy
-        sequence numbers [config.sequence, config.sequence + config.num_turns * 2 - 1].
-        SeedPrompts must not have sequences that fall within this range.
+        A SeedSimulatedConversation or SeedSimulatedToolHistory generates messages that occupy
+        its ``sequence_range``. SeedPrompts must not have sequences that fall within this range.
 
         Raises:
-            ValueError: If any SeedPrompt sequence overlaps with the simulated range.
+            ValueError: If any SeedPrompt sequence overlaps with the generated range.
 
         """
-        simulated_config = self._get_simulated_conversation()
-        if simulated_config is None:
+        generated = self.generated_history_config
+        if generated is None:
             return
 
-        simulated_range = simulated_config.sequence_range
+        generated_range = generated.sequence_range
+        name = type(generated).__name__
 
         for prompt in self.prompts:
-            if prompt.sequence in simulated_range:
+            if prompt.sequence in generated_range:
                 raise ValueError(
-                    f"SeedPrompt sequence {prompt.sequence} overlaps with SeedSimulatedConversation "
-                    f"range {list(simulated_range)}. Adjust the SeedPrompt sequence or the "
-                    f"SeedSimulatedConversation sequence/num_turns to avoid overlap."
+                    f"SeedPrompt sequence {prompt.sequence} overlaps with {name} "
+                    f"range {list(generated_range)}. Adjust the SeedPrompt sequence or the "
+                    f"{name} sequence or length to avoid overlap."
                 )
 
     # =========================================================================
@@ -335,6 +337,16 @@ class SeedGroup(BaseModel):
     def has_simulated_conversation(self) -> bool:
         """Check if this group uses simulated conversation generation."""
         return self._get_simulated_conversation() is not None
+
+    @property
+    def simulated_tool_history_config(self) -> SeedSimulatedToolHistory | None:
+        """The simulated tool history configuration if set."""
+        return next((seed for seed in self.seeds if isinstance(seed, SeedSimulatedToolHistory)), None)
+
+    @property
+    def generated_history_config(self) -> SeedSimulatedConversation | SeedSimulatedToolHistory | None:
+        """The configuration of history generated at attack time, of either kind, if set."""
+        return self._get_simulated_conversation() or self.simulated_tool_history_config
 
     # =========================================================================
     # Message Extraction

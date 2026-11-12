@@ -60,6 +60,15 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             technique_tags=["single_turn"],
             requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
         ),
+        AttackTechniqueFactory.with_simulated_tool_history(
+            name="tool_call_priming",
+            description=(
+                "Primes a tool-using target with a fabricated history of its own tool calls and results, "
+                "written against the target's real tools, that make the objective look approved."
+            ),
+            technique_tags=["single_turn"],
+            max_attempts=5,
+        ),
         AttackTechniqueFactory(
             name="best_of_n",
             attack_class=PromptSendingAttack,

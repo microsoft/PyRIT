@@ -36,6 +36,7 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
+    ToolDefinition,
     ToolExecutionMetadata,
     ToolLoopStop,
     ToolLoopStopReason,
@@ -46,7 +47,11 @@ from pyrit.models import (
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
+from pyrit.prompt_target.common.tool_call_history import (
+    parse_function_call,
+    parse_function_call_output,
+    parse_function_tool_declarations,
+)
 from pyrit.prompt_target.common.tool_provider import (
     Tool,
     ToolInfrastructureError,
@@ -316,6 +321,22 @@ class OpenAIResponseTarget(OpenAITarget):
             tool.get("type") in self._WEB_SEARCH_TOOL_TYPES for tool in tools
         ):
             raise ValueError("Required web search needs a configured tool and supports_web_search=True.")
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition]:
+        """
+        Report the function tools advertised to the endpoint.
+
+        Includes function declarations in ``extra_body_parameters`` and the configured tools,
+        discovering provider tools first. Legacy ``custom_functions`` are dispatch callbacks, not
+        advertised tools, so they appear only through their declarations. Provider-hosted tools such
+        as web search are not function tools and are omitted. No tool executes.
+
+        Returns:
+            list[ToolDefinition]: The advertised function tools.
+        """
+        await self._initialize_tools_async()
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
+        return [*declared, *(tool.to_definition() for tool in self._tools)]
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

@@ -335,6 +335,8 @@ class AttackExecutor:
                 combined_overrides = dict(broadcast_fields)
                 if field_overrides is not None:
                     combined_overrides.update(field_overrides[i])
+                if sg.simulated_tool_history_config is not None:
+                    combined_overrides["objective_target"] = attack.get_objective_target()
                 return await params_type.from_seed_group_async(
                     seed_group=sg,
                     adversarial_chat=adversarial_chat,

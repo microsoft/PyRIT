@@ -31,6 +31,7 @@ from pyrit.models.seeds.seed_group import (  # runtime-required by Pydantic fiel
 from pyrit.models.seeds.seed_objective import SeedObjective, build_objective_decomposition_tree
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+from pyrit.models.seeds.seed_simulated_tool_history import SeedSimulatedToolHistory
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -504,7 +505,7 @@ class SeedDataset(BaseModel):
         # Group seeds by `prompt_group_id`
         grouped_seeds: dict[uuid.UUID, list[SeedUnion]] = defaultdict(list)
         for seed in seeds:
-            if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
+            if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation, SeedSimulatedToolHistory)):
                 raise ValueError(f"Unsupported seed type: {type(seed).__name__}")
             if seed.prompt_group_id:
                 grouped_seeds[seed.prompt_group_id].append(seed)

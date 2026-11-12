@@ -18,6 +18,7 @@ from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+from pyrit.models.seeds.seed_simulated_tool_history import SeedSimulatedToolHistory
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -124,9 +125,9 @@ class AttackSeedGroup(SeedGroup):
         """
         Check whether this seed group can be merged with the given technique.
 
-        A technique containing a ``SeedSimulatedConversation`` is incompatible
-        with seed groups that have ``SeedPrompt`` objects whose sequences fall
-        within the simulated conversation's range.
+        A technique that generates history (a ``SeedSimulatedConversation`` or
+        ``SeedSimulatedToolHistory``) is incompatible with seed groups that have
+        ``SeedPrompt`` objects whose sequences fall within the generated range.
 
         Args:
             technique: The technique group to check compatibility with.
@@ -135,11 +136,11 @@ class AttackSeedGroup(SeedGroup):
             True if the merge would succeed, False if it would cause a
             sequence overlap.
         """
-        sim = technique.simulated_conversation_config
-        if sim is None:
+        generated = technique.generated_history_config
+        if generated is None:
             return True
-        sim_range = sim.sequence_range
-        return not any(p.sequence in sim_range for p in self.prompts)
+        generated_range = generated.sequence_range
+        return not any(p.sequence in generated_range for p in self.prompts)
 
     @staticmethod
     def filter_compatible(
@@ -150,9 +151,9 @@ class AttackSeedGroup(SeedGroup):
         """
         Return only the seed groups compatible with the given technique.
 
-        A seed group is incompatible when the technique carries a
-        ``SeedSimulatedConversation`` whose sequence range overlaps with
-        the group's prompt sequences.
+        A seed group is incompatible when the technique generates history
+        (``SeedSimulatedConversation`` or ``SeedSimulatedToolHistory``) whose
+        sequence range overlaps with the group's prompt sequences.
 
         Args:
             seed_groups: Candidate seed groups.
@@ -179,21 +180,21 @@ class AttackSeedGroup(SeedGroup):
             A new AttackSeedGroup with the merged seeds.
 
         Raises:
-            ValueError: If the technique contains a SeedSimulatedConversation whose
-                sequence range overlaps with existing prompt sequences.
+            ValueError: If the technique generates history whose sequence range overlaps
+                with existing prompt sequences.
             ValueError: If preserving prompt placement combines conflicting roles at
                 the same sequence.
         """
         # Pre-merge compatibility check with a clear error message
         if not self.is_compatible_with_technique(technique=technique):
-            sim = technique.simulated_conversation_config
-            assert sim is not None  # guaranteed by is_compatible_with_technique
+            generated = technique.generated_history_config
+            assert generated is not None  # guaranteed by is_compatible_with_technique
             prompt_sequences = sorted({p.sequence for p in self.prompts})
             raise ValueError(
-                f"Cannot merge technique containing a SeedSimulatedConversation "
-                f"(sequence range {list(sim.sequence_range)}) with a seed group that has "
+                f"Cannot merge technique containing a {type(generated).__name__} "
+                f"(sequence range {list(generated.sequence_range)}) with a seed group that has "
                 f"SeedPrompts at sequences {prompt_sequences}. Seed groups with prompts "
-                f"overlapping the simulated conversation range are incompatible."
+                f"overlapping the generated history range are incompatible."
             )
 
         base_seeds = [copy.deepcopy(seed) for seed in self.seeds]
@@ -216,12 +217,13 @@ class AttackSeedGroup(SeedGroup):
         )
 
         if technique.append_objective_prompt:
+            generated_types = (SeedSimulatedConversation, SeedSimulatedToolHistory)
             next_seq = (
                 max(
                     (
-                        seed.sequence_range.stop - 1 if isinstance(seed, SeedSimulatedConversation) else seed.sequence
+                        seed.sequence_range.stop - 1 if isinstance(seed, generated_types) else seed.sequence
                         for seed in merged_seeds
-                        if isinstance(seed, (SeedPrompt, SeedSimulatedConversation))
+                        if isinstance(seed, (SeedPrompt, *generated_types))
                     ),
                     default=-1,
                 )
@@ -242,9 +244,9 @@ class AttackSeedGroup(SeedGroup):
     ) -> None:
         """Normalize merged prompt sequences while preserving source-relative order."""
         all_seeds = [*base_seeds, *technique_seeds]
-        # Simulated conversations reserve an absolute sequence range; renumbering only prompts
+        # Generated histories reserve an absolute sequence range; renumbering only prompts
         # could invalidate that range or create an overlap.
-        if any(isinstance(seed, SeedSimulatedConversation) for seed in all_seeds):
+        if any(isinstance(seed, (SeedSimulatedConversation, SeedSimulatedToolHistory)) for seed in all_seeds):
             return
 
         seed_groups = (technique_seeds, base_seeds) if prepend_technique else (all_seeds,)

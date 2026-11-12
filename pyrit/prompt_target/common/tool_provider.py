@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Protocol, get_type_hints, runtime_checkab
 
 from pydantic import BaseModel, ConfigDict, create_model
 
+from pyrit.models import ToolDefinition
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
     from contextlib import AbstractAsyncContextManager
@@ -79,6 +81,17 @@ class Tool(ABC):
             arguments: Arguments supplied by the model.
         """
         return
+
+    def to_definition(self) -> ToolDefinition:
+        """
+        Describe the advertised contract of this tool without its callback.
+
+        Returns:
+            ToolDefinition: The tool's name, description, and argument schema.
+        """
+        return ToolDefinition.model_validate(
+            {"name": self.name, "description": self.description, "parameters": self.parameters}
+        )
 
     @abstractmethod
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
