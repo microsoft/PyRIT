@@ -21,6 +21,7 @@ def upgrade() -> None:
                 "DECLARE @collation sysname = (SELECT collation_name FROM sys.columns "
                 "WHERE object_id = OBJECT_ID(N'SeedPromptEntries') AND name = N'dataset_name'); "
                 "IF @collation IS NULL THROW 50000, 'Seed dataset-name collation is missing.', 1; "
+                # BIN2 makes the ASCII allowlist exact; it does not change either column's collation.
                 "IF @collation COLLATE Latin1_General_100_BIN2 LIKE N'%[^A-Za-z0-9_]%' "
                 "THROW 50000, 'Seed dataset-name collation is invalid.', 1; "
                 "DECLARE @sql nvarchar(max) = N'ALTER TABLE [SeedPromptEntries] "
