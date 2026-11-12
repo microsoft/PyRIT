@@ -161,3 +161,38 @@ Reference: Tan, Hu, and Lee, "Structured Visual Narratives Undermine Safety
 Alignment in Multimodal Large Language Models", arXiv:2603.21697.
 
 ---------------------------------------------------------
+
+HarmBench classifier prompts - MIT
+https://github.com/centerforaisafety/HarmBench
+
+Copyright (c) 2024 centerforaisafety
+
+PyRIT includes the HarmBench behavior-classifier prompts (``LLAMA2_CLS_PROMPT``
+``prompt`` and ``prompt_contextual``) from eval_utils.py at revision
+c0423b952435fcc8467108d8f25962dbae5b7de2, in pyrit/datasets/score/harmbench/.
+The placeholders use Jinja syntax; the text is otherwise unchanged.
+
+Reference: Mazeika et al., "HarmBench: A Standardized Evaluation Framework for
+Automated Red Teaming and Robust Refusal", arXiv:2402.04249.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------

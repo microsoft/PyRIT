@@ -492,7 +492,7 @@ for mode in AssertJudgmentMode:
 # %% [markdown]
 # ## External classifier integrations
 #
-# Four true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Five true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
@@ -505,6 +505,17 @@ for mode in AssertJudgmentMode:
 #   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
 #   while the default response classification judges a model turn on its own so prompt content
 #   cannot bias the verdict.
+# - **`HarmBenchScorer`** sends a response and the behavior it is judged against to a
+#   `PromptTarget` serving the HarmBench classifier [@mazeika2024harmbench]
+#   (`cais/HarmBench-Llama-2-13b-cls`) and returns True when the classifier judges the response an
+#   instance of the behavior, which is how HarmBench measures attack success. The objective is the
+#   behavior; pass a contextual behavior the way PyRIT's HarmBench dataset builds it, with the context
+#   first. HarmBench's copyright behaviors are scored by hashing and are out of scope. The bundled
+#   prompts include the classifier's Llama 2 wrapper, so serve it through an OpenAI-compatible
+#   **completions** endpoint with `max_tokens=1` and `temperature=0`, as HarmBench does. Like
+#   HarmBench, the scorer clips each response to 512 classifier tokens; it downloads the classifier's
+#   tokenizer on first use, which needs `pip install pyrit[huggingface]`, and `clip_generations=False`
+#   sends full responses instead.
 # - **`WildGuardScorer`** — sends a prompt and response pair to a `PromptTarget` serving
 #   WildGuard, which judges in one call whether the request is harmful, whether the response is
 #   a refusal, and whether the response is harmful. `WildGuardLabel` selects which judgement
