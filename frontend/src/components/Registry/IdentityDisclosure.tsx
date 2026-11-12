@@ -1,6 +1,6 @@
-import { useCallback, useId, useState, type MouseEvent } from 'react'
+import { useCallback, type MouseEvent } from 'react'
 
-import { Button, Text, mergeClasses } from '@fluentui/react-components'
+import { Button, mergeClasses } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import { useIdentityDisclosureStyles } from './IdentityDisclosure.styles'
@@ -10,13 +10,12 @@ interface IdentityDisclosureButtonProps {
   readonly expanded: boolean
   readonly controlsId: string
   readonly onToggle: () => void
-  readonly chevronPosition?: 'before' | 'after'
   readonly className?: string
 }
 
 /** The component name that reveals its saved identity JSON. */
 export function IdentityDisclosureButton({
-  name, expanded, controlsId, onToggle, chevronPosition = 'before', className,
+  name, expanded, controlsId, onToggle, className,
 }: IdentityDisclosureButtonProps) {
   const styles = useIdentityDisclosureStyles()
   return (
@@ -24,7 +23,6 @@ export function IdentityDisclosureButton({
       appearance="transparent"
       className={mergeClasses(styles.toggle, className)}
       icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-      iconPosition={chevronPosition}
       aria-expanded={expanded}
       aria-controls={controlsId}
       aria-label={`Identity for ${name}`}
@@ -55,26 +53,6 @@ export function IdentityJson({ id, name, identity, className }: IdentityJsonProp
   return (
     <div ref={reveal} id={id} role="region" aria-label={`Identity for ${name}`} className={mergeClasses(styles.details, className)}>
       <pre className={styles.json}>{JSON.stringify(identity, null, 2)}</pre>
-    </div>
-  )
-}
-
-interface IdentityDisclosureProps {
-  readonly name: string
-  readonly identity?: object | null
-}
-
-/** A component name with a trailing chevron that expands its identity JSON in place; plain text without one. */
-export default function IdentityDisclosure({ name, identity }: IdentityDisclosureProps) {
-  const styles = useIdentityDisclosureStyles()
-  const detailsId = useId()
-  const [expanded, setExpanded] = useState(false)
-  if (!identity) return <Text>{name}</Text>
-  return (
-    <div className={styles.disclosure}>
-      <IdentityDisclosureButton name={name} expanded={expanded} controlsId={detailsId} chevronPosition="after"
-        className={styles.inlineToggle} onToggle={() => { setExpanded((current: boolean) => !current) }} />
-      {expanded && <IdentityJson id={detailsId} name={name} identity={identity} className={styles.inlineDetails} />}
     </div>
   )
 }

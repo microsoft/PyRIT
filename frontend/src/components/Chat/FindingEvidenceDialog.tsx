@@ -28,8 +28,6 @@ interface FindingEvidenceDialogProps {
   onOpenChange: (open: boolean) => void
   /** Receives focus when the dialog closes, such as the control that opened it. */
   returnFocusRef?: React.RefObject<HTMLElement | null>
-  /** Called after the attack is linked to a finding, new or existing. */
-  onAttached?: () => void
 }
 
 interface AttachmentSource {
@@ -38,7 +36,7 @@ interface AttachmentSource {
 }
 
 export default function FindingEvidenceDialog({
-  attackResultId, disabled, defaultOperationId = null, open, onOpenChange, returnFocusRef, onAttached,
+  attackResultId, disabled, defaultOperationId = null, open, onOpenChange, returnFocusRef,
 }: FindingEvidenceDialogProps) {
   const styles = useFindingEvidenceDialogStyles()
   const viewKey = attackResultId
@@ -146,7 +144,6 @@ export default function FindingEvidenceDialog({
     setCreating(false)
     onOpenChange(false)
     setNotice({ key: viewKey, text: `Finding created and attack attached: ${finding.title}` })
-    onAttached?.()
   }
 
   const attach = async (): Promise<void> => {
@@ -161,7 +158,6 @@ export default function FindingEvidenceDialog({
       })
       setNotice({ key: viewKey, text: response.created ? 'Attached' : 'Already attached' })
       onOpenChange(false)
-      onAttached?.()
     } catch (cause: unknown) {
       setAttachError(toApiError(cause).detail)
     } finally {

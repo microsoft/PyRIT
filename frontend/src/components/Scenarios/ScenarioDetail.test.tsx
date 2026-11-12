@@ -1926,6 +1926,23 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
+  it('reveals a recorded technique identity with the shared identity JSON', async () => {
+    const user = userEvent.setup()
+    const identifier = { class_name: 'CrescendoAttack', class_module: 'pyrit.executor.attack', hash: 'crescendo-hash' }
+    mockGetScenario.mockResolvedValue(makeScenario({ technique_summaries: [
+      { name: 'default_technique', description: null, tags: ['default'] },
+      { name: 'crescendo', description: null, tags: ['multi_turn'], identifier },
+    ] }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for crescendo' }))
+
+    const region = screen.getByRole('region', { name: 'Identity for crescendo' })
+    expect(JSON.parse(region.textContent ?? '')).toEqual(identifier)
+    expect(region.scrollIntoView).toHaveBeenCalled()
+  })
+
   it('includes the baseline when a shared tag selects or clears its members', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')

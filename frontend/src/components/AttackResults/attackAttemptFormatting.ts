@@ -76,22 +76,6 @@ export function formatDuration(milliseconds: number): string {
   return `${seconds}s`
 }
 
-export function formatRetries(retries: number): string {
-  if (retries === 0) return 'No retries'
-  return `${retries} ${retries === 1 ? 'retry' : 'retries'}`
-}
-
-/** One line of attempt timing, such as "4m 30s · No retries · Jan 1, 2026, 12:00:05 AM". */
-export function formatAttemptTiming(
-  attempt: Pick<ScenarioProgressResult, 'execution_time_ms' | 'total_retries' | 'timestamp'>,
-): string {
-  return [
-    formatDuration(attempt.execution_time_ms),
-    formatRetries(attempt.total_retries),
-    formatTimestamp(attempt.timestamp),
-  ].join(' · ')
-}
-
 export function objectivePreview(objective: string | null, fallbackId: string): string {
   if (!objective) {
     return `Objective unavailable (${fallbackId})`

@@ -842,9 +842,6 @@ export type AttackTargetResolutionStatus =
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
 
-/** An attack's saved outcome, or where it is before one exists. */
-export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
-
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
   | 'operation'

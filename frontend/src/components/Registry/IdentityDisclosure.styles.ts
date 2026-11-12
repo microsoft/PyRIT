@@ -13,12 +13,6 @@ export const useIdentityDisclosureStyles = makeStyles({
     fontWeight: tokens.fontWeightRegular,
     lineHeight: tokens.lineHeightBase300,
   },
-  inlineToggle: {
-    minWidth: 0,
-    minHeight: 0,
-    padding: 0,
-    color: tokens.colorNeutralForeground1,
-  },
   details: {
     paddingBlock: tokens.spacingVerticalM,
   },
@@ -31,14 +25,5 @@ export const useIdentityDisclosureStyles = makeStyles({
     lineHeight: tokens.lineHeightBase200,
     whiteSpace: 'pre-wrap',
     overflowWrap: 'anywhere',
-  },
-  disclosure: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    minWidth: 0,
-  },
-  inlineDetails: {
-    alignSelf: 'stretch',
   },
 })

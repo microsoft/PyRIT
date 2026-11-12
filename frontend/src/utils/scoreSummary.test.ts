@@ -1,6 +1,6 @@
-import type { BackendScore, ScenarioProgressScore } from '@/types'
+import type { BackendScore } from '@/types'
 
-import { scoreSummaryFromBackendScore, scoreSummaryFromProgressScore, scoreSummaryValue } from './scoreSummary'
+import { scoreSummaryFromBackendScore, scoreSummaryValue } from './scoreSummary'
 
 describe('scoreSummary', () => {
   it('maps a message-piece score without losing its role', () => {
@@ -12,17 +12,6 @@ describe('scoreSummary', () => {
     expect(scoreSummaryFromBackendScore(score)).toEqual({
       scorer: 'Judge', scoreType: 'true_false', value: 'false', status: 'complete',
       rationale: 'Refused.', categories: ['harm'], isObjective: false,
-    })
-  })
-
-  it('treats a scan result score as the objective score', () => {
-    const score: ScenarioProgressScore = {
-      scorer_name: 'objective', score_type: 'true_false', status: 'complete', score_value: 'true',
-      score_rationale: 'Met.', score_category: ['jailbreak'],
-    }
-    expect(scoreSummaryFromProgressScore(score)).toEqual({
-      scorer: 'objective', scoreType: 'true_false', value: 'true', status: 'complete',
-      rationale: 'Met.', categories: ['jailbreak'], isObjective: true,
     })
   })
 

@@ -5,6 +5,7 @@ import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
+import { IdentityJson } from '@/components/Registry/IdentityDisclosure'
 import { useIdentityDisclosureStyles } from '@/components/Registry/IdentityDisclosure.styles'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
@@ -187,11 +188,13 @@ export default function ScenarioTechniqueSection({
               icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
               aria-label={`Identity for ${technique.name}`} aria-expanded={expanded} aria-controls={regionId}
               onClick={() => toggleIdentity(technique.name)} />
-            {expanded && <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
-              className={mergeClasses(styles.identityRegion, identityStyles.details)}>
-              {technique.identifier ? <pre className={identityStyles.json}>{JSON.stringify(technique.identifier, null, 2)}</pre>
-                : <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>}
-            </div>}
+            {expanded && (technique.identifier
+              ? <IdentityJson id={regionId} name={technique.name} identity={technique.identifier}
+                className={styles.identityRegion} />
+              : <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
+                className={mergeClasses(styles.identityRegion, identityStyles.details)}>
+                <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>
+              </div>)}
           </div>
           )
         })}
