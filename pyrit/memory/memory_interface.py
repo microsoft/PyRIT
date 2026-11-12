@@ -525,6 +525,58 @@ class AttackConversationPage:
     reference_revision: str
     objective_score_id: str | None = None
 
+    @classmethod
+    def from_references(
+        cls,
+        *,
+        main_conversation_id: str,
+        pruned_conversation_ids: Sequence[str],
+        timestamp: datetime,
+        offset: int = 0,
+        limit: int = 50,
+        conversation_id: str | None = None,
+        objective_score_id: str | None = None,
+    ) -> "AttackConversationPage":
+        """
+        Page main and pruned references in stored order: main first, then pruned in their recorded order.
+
+        The revision fingerprints the full ordering, so continuation cursors detect reference changes.
+
+        Returns:
+            AttackConversationPage: The selected or paged references and their ordering revision.
+        """
+        references: dict[str, AttackConversationRecord] = {}
+        if main_conversation_id:
+            references[main_conversation_id] = AttackConversationRecord(conversation_id=main_conversation_id)
+        for identifier in pruned_conversation_ids:
+            if identifier:
+                references.setdefault(
+                    identifier,
+                    AttackConversationRecord(conversation_id=identifier, conversation_type=ConversationType.PRUNED),
+                )
+        ordered = tuple(references.values())
+        revision = hashlib.sha256(
+            json.dumps(
+                [
+                    (
+                        reference.conversation_id,
+                        reference.conversation_type.value if reference.conversation_type is not None else None,
+                    )
+                    for reference in ordered
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        if conversation_id is not None:
+            ordered = tuple(reference for reference in ordered if reference.conversation_id == conversation_id)
+        return cls(
+            main_conversation_id=main_conversation_id,
+            conversations=ordered[offset : offset + limit],
+            total_count=len(ordered),
+            timestamp=timestamp,
+            reference_revision=revision,
+            objective_score_id=objective_score_id,
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _AttackResultQuery:
@@ -1271,6 +1323,30 @@ class MemoryInterface(abc.ABC):
                 )
             )
             return entry.get_evidence() if entry else None
+
+    async def get_findings_for_attack_result_async(
+        self, *, attack_result_id: uuid.UUID, severity_order: Sequence[str] = ()
+    ) -> list[tuple[Finding, FindingEvidence]]:
+        """
+        Read every finding that links an attack result as evidence, in ``severity_order``, then newest first.
+
+        Args:
+            attack_result_id (uuid.UUID): The attack result the findings link as evidence.
+            severity_order (Sequence[str]): Severity keys from highest to lowest, as for
+                ``get_findings_async``. Defaults to an empty order, which sorts newest first.
+
+        Returns:
+            list[tuple[Finding, FindingEvidence]]: Each linked finding with the evidence that links it.
+        """
+        statement = (
+            select(FindingEntry, FindingEvidenceEntry)
+            .join(FindingEvidenceEntry, FindingEvidenceEntry.finding_id == FindingEntry.id)
+            .where(FindingEvidenceEntry.attack_result_id == attack_result_id)
+            .order_by(*self._finding_order(severity_order))
+        )
+        async with await self.get_session_async() as session:
+            rows = (await session.execute(statement)).all()
+            return [(finding.get_finding(), evidence.get_evidence()) for finding, evidence in rows]
 
     async def delete_finding_evidence_async(self, *, finding_id: uuid.UUID, evidence_id: uuid.UUID) -> None:
         """
@@ -4490,6 +4566,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -4503,6 +4580,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
             value_pattern (str | None): Full case-insensitive LIKE pattern.
@@ -4582,6 +4660,9 @@ class MemoryInterface(abc.ABC):
             conditions.append(SeedEntry.seed_type == "objective")
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
+
+        if is_general_technique is not None:
+            conditions.append(SeedEntry.is_general_technique == is_general_technique)
 
         self._add_list_conditions(
             field=SeedEntry.harm_categories,
@@ -4697,6 +4778,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -4707,6 +4789,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match by substring. If None, all values are returned.
             value_pattern (str | None): Full case-insensitive LIKE pattern.
                 '%' and '_' are wildcards; '/' escapes the next character.
@@ -4768,6 +4851,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -4804,6 +4888,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -4822,6 +4907,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -4894,6 +4980,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -4942,6 +5029,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -4969,6 +5057,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -5041,6 +5131,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -5373,8 +5464,8 @@ class MemoryInterface(abc.ABC):
         Insert a list of seeds into the memory storage.
 
         Seeds already present in storage are skipped by execution identity: value hash, dataset,
-        seed type, data type, role (``None`` counts as ``user``), response schema, and behavioral
-        inputs. Non-execution metadata such as harm categories or descriptions is not part of that
+        seed type, data type, role (``None`` counts as ``user``), general-technique flag, response schema,
+        and behavioral inputs. Non-execution metadata such as harm categories or descriptions is not part of that
         identity, so a metadata-only edit does not create a duplicate and sending a seed standalone
         or inside a singleton group deduplicates the same way. Retained multi-seed groups keep their
         complete membership; they are compared as complete groups by full member identity, including
@@ -5763,6 +5854,7 @@ class MemoryInterface(abc.ABC):
                 "authors": entry.authors or [],
                 "groups": entry.groups or [],
                 "source": entry.source,
+                "is_general_technique": entry.is_general_technique,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -5782,6 +5874,7 @@ class MemoryInterface(abc.ABC):
                 "seed_type": entry.seed_type,
                 "data_type": entry.data_type,
                 "role": entry.role or "user",
+                "is_general_technique": entry.is_general_technique,
                 "response_json_schema": getattr(seed, "response_json_schema", None),
                 "behavioral_parameters": SeedIdentifier.get_behavioral_parameters(seed),
             },
@@ -6404,6 +6497,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -6415,6 +6509,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None, Optional): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_pattern (str | None): Full case-insensitive LIKE pattern.
                 '%' and '_' are wildcards; '/' escapes the next character.
@@ -6473,6 +6569,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -8641,6 +8738,7 @@ class MemoryInterface(abc.ABC):
                 status=ScoreStatus(row["score_status"]),
                 score_value=row["score_value"],
                 score_rationale=row["score_rationale"],
+                score_category=list(row["score_category"] or []),
             )
         related_cids: list[str] = []
         for col in (
@@ -8699,6 +8797,7 @@ class MemoryInterface(abc.ABC):
             ScoreEntry.score_type,
             ScoreEntry.status.label("score_status"),
             ScoreEntry.score_rationale,
+            ScoreEntry.score_category,
             ScoreEntry.scorer_class_identifier,
         ).outerjoin(
             ScoreEntry,
@@ -9146,38 +9245,16 @@ class MemoryInterface(abc.ABC):
             row = session.execute(statement).mappings().one_or_none()
         if row is None:
             return None
-        references: dict[str, AttackConversationRecord] = {}
-        main_id = row["conversation_id"] or ""
-        if main_id:
-            references[main_id] = AttackConversationRecord(conversation_id=main_id)
         values = row["pruned_conversation_ids"]
-        if isinstance(values, list):
-            for identifier in values:
-                if isinstance(identifier, str) and identifier:
-                    references.setdefault(
-                        identifier,
-                        AttackConversationRecord(conversation_id=identifier, conversation_type=ConversationType.PRUNED),
-                    )
-        ordered = tuple(references.values())
-        revision = hashlib.sha256(
-            json.dumps(
-                [
-                    (
-                        reference.conversation_id,
-                        reference.conversation_type.value if reference.conversation_type is not None else None,
-                    )
-                    for reference in ordered
-                ]
-            ).encode("utf-8")
-        ).hexdigest()
-        if conversation_id is not None:
-            ordered = tuple(reference for reference in ordered if reference.conversation_id == conversation_id)
-        return AttackConversationPage(
-            main_conversation_id=main_id,
-            conversations=ordered[offset : offset + limit],
-            total_count=len(ordered),
+        return AttackConversationPage.from_references(
+            main_conversation_id=row["conversation_id"] or "",
+            pruned_conversation_ids=[value for value in values if isinstance(value, str)]
+            if isinstance(values, list)
+            else [],
             timestamp=row["timestamp"],
-            reference_revision=revision,
+            offset=offset,
+            limit=limit,
+            conversation_id=conversation_id,
             objective_score_id=str(row["objective_score_id"]) if row["objective_score_id"] is not None else None,
         )
 
@@ -11031,6 +11108,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11064,6 +11142,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11090,6 +11169,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11105,6 +11185,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match by substring. If None, all values are returned.
             value_pattern (str | None): Full case-insensitive LIKE pattern.
                 '%' and '_' are wildcards; '/' escapes the next character.
@@ -11167,6 +11248,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11214,6 +11296,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11250,6 +11333,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11277,6 +11361,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11298,6 +11383,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -11370,6 +11456,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11396,6 +11483,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11432,6 +11520,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11459,6 +11548,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11489,6 +11579,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -11561,6 +11653,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11717,6 +11810,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11753,6 +11847,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
@@ -11780,6 +11875,7 @@ class MemoryInterface(abc.ABC):
         source: str | None = None,
         seed_type: SeedType | None = None,
         origin: SeedOrigin | None = None,
+        is_general_technique: bool | None = None,
         parameters: Sequence[str] | None = None,
         parameters_patterns: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
@@ -11791,6 +11887,8 @@ class MemoryInterface(abc.ABC):
 
         Args:
             origin (SeedOrigin | None): Match origin before expanding to complete groups.
+            is_general_technique (bool | None, Optional): Match whether the seed represents a general attack technique
+                before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_pattern (str | None): Full case-insensitive LIKE pattern.
                 '%' and '_' are wildcards; '/' escapes the next character.
@@ -11848,6 +11946,7 @@ class MemoryInterface(abc.ABC):
             source=source,
             seed_type=seed_type,
             origin=origin,
+            is_general_technique=is_general_technique,
             parameters=parameters,
             parameters_patterns=parameters_patterns,
             metadata=metadata,
