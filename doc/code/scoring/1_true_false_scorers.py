@@ -52,6 +52,8 @@ print(f"[output match] {scores[0].get_value()}")
 # searches the candidate text. For literal equality, use
 # `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
 # `Contains` returns false for empty candidate text; `Equals` can match two empty values.
+# `StartsWith` compares a literal prefix using `lower()` for case-insensitive matching, not
+# Unicode regex case equivalence. It strips only candidate edges; the expected prefix is preserved.
 # Blank or invalid regex patterns fail before scoring.
 #
 # By default, `OutputMatchesScorer` matches each supported text piece independently and returns
@@ -59,6 +61,20 @@ print(f"[output match] {scores[0].get_value()}")
 #
 # Existing `SubStringScorer` and `DecodingScorer` behavior is unchanged. Decoding infers candidate
 # text from the paired request; `OutputMatchesScorer` is the explicit expected-output path.
+#
+# ### PhysicsConsistencyScorer
+#
+# `PhysicsConsistencyScorer` checks numeric physical claims locally, without a model or network call.
+# It returns True for detected speed, absolute-zero, negative-mass, or bounded-percentage violations.
+# For example, `await PhysicsConsistencyScorer().score_text_async(text="The probe travels at 1.5 c.")`
+# returns a score whose `get_value()` is True; ordinary text such as `"The car travels at 25 m/s."`
+# scores False. Import the scorer from `pyrit.score`.
+#
+# The default `fail_on="FAIL"` detects impossible claims; `fail_on="WARN"` also flags suspicious
+# free-fall timings and percentage shares above 100%. Metadata records `phm_verdict`,
+# `violation_count`, and `fail_on`. This is a narrow numeric heuristic, not a general physics or
+# factuality judge: context can make a numeric claim ambiguous, and negative energy is not itself
+# impossible. The scoring objective does not change the constructor-configured rules.
 #
 # ### RegexScorer
 #
@@ -630,3 +646,25 @@ print(type(wildguard_scorer).__name__)
 # scores = await video_and_audio_scorer.score_async(scorable=video)
 # print(scores[0])
 # ```
+
+# %% [markdown]
+# ## Selecting one label from a multi-label scorer
+#
+# `MultiLabelTrueFalseScorer` reports independent verdicts. When an attack or evaluator
+# expects one true/false result, use `TrueFalseScoreSelector` to choose a category
+# instead of combining unrelated labels.
+#
+# Given a configured `multi_label_scorer` that declares `harmful_response`:
+#
+# ```python
+# from pyrit.score import TrueFalseScoreSelector
+#
+# objective_scorer = TrueFalseScoreSelector(
+#     scorer=multi_label_scorer,
+#     label="harmful_response",
+# )
+# ```
+#
+# Use `objective_scorer` wherever a single `TrueFalseScorer` is expected. The label
+# must match one of the source scorer's `labels`; the other verdicts are retained
+# as intermediate scores.

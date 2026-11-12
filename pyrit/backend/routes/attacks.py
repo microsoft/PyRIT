@@ -308,6 +308,13 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
     except HistoryReplayError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
+        if "must be provided together" in str(e):
+            # A half provided branching spec is a request body problem, the
+            # same rejection the conversation endpoint answers with 400.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),

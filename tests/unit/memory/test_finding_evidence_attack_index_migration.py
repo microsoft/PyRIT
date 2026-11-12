@@ -22,6 +22,8 @@ PREVIOUS_REVISION = "e7c4a2d9f013"
 REVISION = "b5d7f9a1c3e6"
 HTTP_REVISION = "d6de1045cca4"
 MERGE_REVISION = "f8a6c2d4e901"
+MAIN_REVISION = "d9e4f6a8b201"
+INTEGRATION_REVISION = "a3f7c9e2b641"
 INDEX = "ix_FindingEvidenceEntries_attack_result_id"
 
 
@@ -43,7 +45,8 @@ def _evidence_indexes(connection: sa.Connection) -> dict[str, list[str]]:
 
 def test_migration_branches_have_one_merge_head_without_rewriting_history() -> None:
     scripts = ScriptDirectory.from_config(_config())
-    assert scripts.get_heads() == [MERGE_REVISION]
+    assert len(scripts.get_heads()) == 1
+    assert set(scripts.get_revision(INTEGRATION_REVISION).down_revision) == {MERGE_REVISION, MAIN_REVISION}
     assert set(scripts.get_revision(MERGE_REVISION).down_revision) == {REVISION, HTTP_REVISION}
     assert scripts.get_revision(REVISION).down_revision == PREVIOUS_REVISION
     assert scripts.get_revision(HTTP_REVISION).down_revision == PREVIOUS_REVISION
@@ -86,7 +89,7 @@ def test_model_declares_attack_result_index() -> None:
 
 def _assert_merged_schema(connection: sa.Connection) -> None:
     context = MigrationContext.configure(connection, opts={"version_table": "pyrit_memory_alembic_version"})
-    assert context.get_current_heads() == (MERGE_REVISION,)
+    assert set(context.get_current_heads()) == set(ScriptDirectory.from_config(_config()).get_heads())
     assert _evidence_indexes(connection)[INDEX] == ["attack_result_id"]
     columns = {column["name"]: column for column in sa.inspect(connection).get_columns("TargetIdentifiers")}
     assert columns["http_request_fingerprint"]["nullable"] is True
@@ -123,8 +126,15 @@ def _seed_upgrade_rows(connection: sa.Connection) -> None:
 
 @pytest.mark.parametrize(
     "revisions",
-    [(PREVIOUS_REVISION,), (REVISION,), (HTTP_REVISION,), (REVISION, HTTP_REVISION)],
-    ids=["common-parent", "finding-index", "http-fingerprint", "both-branches"],
+    [
+        (PREVIOUS_REVISION,),
+        (REVISION,),
+        (HTTP_REVISION,),
+        (REVISION, HTTP_REVISION),
+        (MAIN_REVISION,),
+        (MERGE_REVISION, MAIN_REVISION),
+    ],
+    ids=["common-parent", "finding-index", "http-fingerprint", "both-branches", "main", "both-heads"],
 )
 def test_startup_upgrades_either_migration_branch_without_losing_data(revisions: tuple[str, ...]) -> None:
     engine = sa.create_engine("sqlite:///:memory:")
@@ -138,7 +148,11 @@ def test_startup_upgrades_either_migration_branch_without_losing_data(revisions:
                 command.upgrade(config, revision)
             context = MigrationContext.configure(connection, opts={"version_table": "pyrit_memory_alembic_version"})
             assert set(context.get_current_heads()) == set(revisions)
-            fingerprint = "recorded-fingerprint" if HTTP_REVISION in revisions else None
+            fingerprint = (
+                "recorded-fingerprint"
+                if any(revision in revisions for revision in (HTTP_REVISION, MERGE_REVISION, MAIN_REVISION))
+                else None
+            )
             if fingerprint is not None:
                 connection.execute(
                     sa.text("UPDATE TargetIdentifiers SET http_request_fingerprint = :value"),

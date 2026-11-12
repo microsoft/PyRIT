@@ -14,8 +14,9 @@ instances" (``SupportsInstances``) or just "an instance registry"
 (``InstanceRegistry[T]``) without depending on a concrete class, and a registry
 that does not hold instances simply has no ``.instances`` attribute.
 
-Stored items must implement ``Identifiable`` so per-instance metadata can be
-derived from ``get_identifier()``. This module imports no ``pyrit.backend`` code,
+Stored items must provide ``get_identifier()`` (``SupportsIdentifier``), which
+``Identifiable`` components do and observation sources do structurally, so
+per-instance metadata can be derived from it. This module imports no ``pyrit.backend`` code,
 so it can be reused anywhere (forms, agents, attack strategies).
 """
 
@@ -25,14 +26,22 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.models import ComponentIdentifier, Identifiable
-
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from pyrit.models import ComponentIdentifier
     from pyrit.registry.tag_query import TagQuery
 
-T = TypeVar("T", bound=Identifiable)  # The type of items stored
+
+class SupportsIdentifier(Protocol):
+    """Anything that reports its behavioral identity, the one capability the instance container needs."""
+
+    def get_identifier(self) -> ComponentIdentifier:
+        """Return the component's identifier."""
+        ...
+
+
+T = TypeVar("T", bound=SupportsIdentifier)  # The type of items stored
 
 
 @dataclass
@@ -63,13 +72,13 @@ class InstanceRegistry(Protocol[T]):
     Typed instance-container capability a registry exposes as ``.instances``.
 
     Holds named, pre-configured instances that callers register and retrieve by
-    name, list, tag, and filter. Stored items must implement ``Identifiable``.
+    name, list, tag, and filter. Stored items must provide ``get_identifier()``.
     ``DefaultInstanceRegistry`` is the concrete default implementation; expressing
     the surface as a protocol lets callers depend on the capability rather than a
     concrete class.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     @property
@@ -167,7 +176,7 @@ class SupportsInstances(Protocol[T]):
         capability is part of the foundation rather than a later additive change.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     instances: InstanceRegistry[T]
@@ -182,7 +191,7 @@ class DefaultInstanceRegistry(Generic[T]):
     that.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     def __init__(
@@ -528,7 +537,7 @@ class DefaultInstanceRegistry(Generic[T]):
 
     def _build_metadata(self, instance: T) -> ComponentIdentifier:
         """
-        Build metadata for an item via its ``Identifiable`` interface.
+        Build metadata for an item via its ``get_identifier()``.
 
         Args:
             instance (T): The item.

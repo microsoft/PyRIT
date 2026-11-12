@@ -57,6 +57,8 @@ interface MessageListProps {
   autoScroll?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
   savedEvidence?: boolean
+  /** Only show temperature evidence when the viewed target supports runtime temperature. */
+  showGenerationInfo?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
@@ -409,7 +411,7 @@ export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, autoScroll = true, savedEvidence = false, globalMarkdown = false, onEditConversation,
+  isLoading, autoScroll = true, savedEvidence = false, showGenerationInfo = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -705,6 +707,19 @@ export default function MessageList({
                     </Tooltip>
                   )}
                   <Text className={styles.role}>{message.role}</Text>
+                  {showGenerationInfo && message.generationDescription && (message.generationDetails ? (
+                    <Popover positioning="above-end">
+                      <PopoverTrigger disableButtonEnhancement>
+                        <Button appearance="transparent" size="small" className={styles.messageActionButton}
+                          aria-label={`Generation details: ${message.generationDescription}`}>
+                          {message.generationDescription}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverSurface className={styles.generationDetails} role="dialog" aria-label="Saved generation details">
+                        <Text>{message.generationDetails}</Text>
+                      </PopoverSurface>
+                    </Popover>
+                  ) : <Text size={100}>{message.generationDescription}</Text>)}
                 </div>
               </div>
             </div>
