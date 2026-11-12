@@ -184,9 +184,11 @@ class TestTemporaryComponents:
             assert response.identifier.class_name == "HuggingFaceChatTarget"
             assert registry.instances.get_names() == (["local-model"] if register else [])
 
-    @pytest.mark.parametrize(("use_cuda", "steps"), [(False, ["import"]), (True, ["cuda", "import"])])
+    @pytest.mark.parametrize(
+        ("use_cuda", "steps"), [(False, ["import"]), ("false", ["import"]), (True, ["cuda", "import"])]
+    )
     async def test_hugging_face_imports_torch_off_the_request_loop_async(
-        self, use_cuda: bool, steps: list[str]
+        self, use_cuda: bool | str, steps: list[str]
     ) -> None:
         torch = _TorchStandIn()
         with (
