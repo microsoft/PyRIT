@@ -119,15 +119,27 @@ async def test_registered_suite_is_listed_with_nullable_version(
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "message"),
     [
-        DocumentStorageUnavailableError(label="Scenario preset", source="/srv/presets", reason="Permission denied"),
-        DocumentUnreadableError(
-            label="Scenario preset",
-            source="/srv/presets",
-            name="nightly",
-            file_name="nightly.json",
-            reason="Not a regular file",
+        (
+            DocumentStorageUnavailableError(label="Scenario preset", source="/srv/presets", reason="Permission denied"),
+            (
+                "Scenario preset 'nightly' could not be checked because preset storage is temporarily unavailable; "
+                "retry when storage is available."
+            ),
+        ),
+        (
+            DocumentUnreadableError(
+                label="Scenario preset",
+                source="/srv/presets",
+                name="nightly",
+                file_name="nightly.json",
+                reason="Not a regular file",
+            ),
+            (
+                "Scenario preset 'nightly' can't be read: Not a regular file; "
+                "repair or replace the preset before running this suite."
+            ),
         ),
     ],
     ids=["storage", "one_document"],
@@ -136,6 +148,7 @@ async def test_preset_storage_failure_is_advisory_after_committed_save(
     service: ScenarioSuiteService,
     preset_registry: MagicMock,
     error: Exception,
+    message: str,
 ) -> None:
     """Test that response projection cannot turn a committed write into a failure."""
     preset_registry.get_preset.side_effect = error
@@ -149,7 +162,7 @@ async def test_preset_storage_failure_is_advisory_after_committed_save(
     assert stored is not None
     assert response.entry_statuses[0].origin is None
     assert response.entry_statuses[0].preset_version is None
-    assert "preset storage is temporarily unavailable" in response.entry_statuses[0].issues[0].message
+    assert [issue.message for issue in response.entry_statuses[0].issues] == [message]
 
 
 async def test_preset_storage_failure_log_keeps_the_error_behind_it_without_its_sas_url(
