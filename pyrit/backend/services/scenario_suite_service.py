@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import traceback
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
@@ -14,6 +15,7 @@ from pyrit.backend.models import (
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
+from pyrit.common.azure_storage import redact_urls
 from pyrit.models import (
     PresetIssue,
     ScenarioSuite,
@@ -217,8 +219,9 @@ class ScenarioSuiteService:
 
             stored_version = registry.get_preset_version(name=preset_name)
         except DocumentStorageUnavailableError as error:
-            # The message leaves out credentials; the error behind it, which a traceback would show, may not.
-            logger.warning(f"Could not project scenario preset '{preset_name}': {error}")
+            # The error behind it can carry a SAS URL, so the traceback is logged with URL credentials removed.
+            details = redact_urls("".join(traceback.format_exception(error)).rstrip())
+            logger.warning(f"Could not project scenario preset '{preset_name}': {error}\n{details}")
             return _PresetProjection(
                 origin=None,
                 version=None,
