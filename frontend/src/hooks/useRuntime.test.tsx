@@ -69,8 +69,8 @@ describe('RuntimeBanner', () => {
 
     expect(await screen.findByText(new RegExp(
       "Some saved entries couldn't be restored, so new runs and sends are unavailable\\. An administrator has to "
-      + 'view the failures in Configuration, fix or delete the files in registry_recipes_source, then reinitialize '
-      + 'PyRIT or restart the backend\\. Drafts are preserved\\.',
+      + 'delete them in Configuration or fix their files in registry_recipes_source, then reinitialize PyRIT or '
+      + 'restart the backend\\. Drafts are preserved\\.',
     ))).toBeInTheDocument()
     expect(screen.queryByRole('region')).not.toBeInTheDocument()
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
