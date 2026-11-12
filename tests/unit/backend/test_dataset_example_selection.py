@@ -52,7 +52,7 @@ from pyrit.scenario import (
     ScenarioTechnique,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, SystemPromptExtraction
+from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, LeakReplay, SystemPromptExtraction
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
@@ -436,7 +436,7 @@ async def test_load_route_rejects_exact_selection_before_memory(sqlite_instance:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, Exploitation])
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, Exploitation, LeakReplay])
 async def test_named_only_scenarios_reject_exact_selection_before_resolution(scenario_class: type[Scenario]) -> None:
     assert scenario_supports_exact_example_selection(scenario_class) is False
     with (
