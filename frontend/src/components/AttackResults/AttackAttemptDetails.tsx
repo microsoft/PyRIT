@@ -94,8 +94,7 @@ export default function AttackAttemptDetails({
           <IdentityDisclosure name={objectiveScorer?.component_name ?? 'Not recorded'} identity={objectiveScorer} />
           <ScorerEvaluationDetails name={objectiveScorer?.component_name ?? 'Not recorded'}
             metrics={objectiveScorer?.metrics ? { ...objectiveScorer.metrics } : null}
-            scoreType={typeof objectiveScorer?.parameters.scorer_type === 'string' ? objectiveScorer.parameters.scorer_type : undefined}
-            recorded />
+            scoreType={typeof objectiveScorer?.parameters.scorer_type === 'string' ? objectiveScorer.parameters.scorer_type : undefined} />
         </DetailFact>
         <DetailFact label="Dataset">
           <IdentityDisclosure name={datasetNames.join(', ') || 'Not recorded'} identity={seeds.length > 0 ? seeds : null} />

@@ -181,12 +181,6 @@ longer in the registry. This is separate from the individual attack score in
 the outcome popover and the scan's attack-success rate. Missing evaluation
 metrics have an explicit unavailable state and a link to the scorer-metrics guide.
 
-The Scorer Registry keeps its compact comparison table; each scorer's
-**Evaluation metrics** opens the complete supplied metrics, including standard
-errors and sample counts. Runtime identity and behavioral evaluation identity
-remain separate. Registry names are not used to substitute metrics for a
-recorded run.
-
 ## Dataset catalog
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,

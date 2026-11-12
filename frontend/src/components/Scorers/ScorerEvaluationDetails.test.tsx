@@ -11,12 +11,11 @@ function TestWrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('ScorerEvaluationDetails', () => {
-  it('should disclose complete binary metrics and extra keys by keyboard without confusing identities', async () => {
+  it('should disclose complete binary metrics and extra keys by keyboard', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><ScorerEvaluationDetails name="configured judge" scoreType="true_false"
       metrics={{ accuracy: 0.93, accuracy_standard_error: 0.02, recall: 0, precision: 0.9, f1_score: 0.8,
-        num_responses: 100, num_human_raters: 0, custom_value: 'retained', average_score_time_seconds: 0 }}
-      evaluationIdentity={{ class_name: 'Judge', hash: 'behavioral-projection', eval_hash: 'evaluation-hash' }} /></TestWrapper>)
+        num_responses: 100, num_human_raters: 0, custom_value: 'retained', average_score_time_seconds: 0 }} /></TestWrapper>)
     expect(screen.queryByRole('group', { name: 'Num responses' })).not.toBeInTheDocument()
     const trigger = screen.getByRole('button', { name: 'Evaluation metrics for configured judge' })
     trigger.focus()
@@ -29,12 +28,12 @@ describe('ScorerEvaluationDetails', () => {
     expect(within(dialog).getByRole('group', { name: 'Num human raters' })).toHaveTextContent('0')
     expect(within(dialog).getByRole('group', { name: 'Custom value' })).toHaveTextContent('retained')
     expect(within(dialog).getByRole('group', { name: 'Average score time' })).toHaveTextContent('Unavailable')
-    expect(dialog).toHaveTextContent('not an individual attack score or the scan success rate')
+    expect(dialog).toHaveTextContent(
+      'Quality of the recorded scorer configuration, not an individual attack score or the scan success rate.',
+    )
     expect(within(dialog).getByRole('link', { name: 'About scorer metrics' })).toHaveAttribute(
       'href', 'https://microsoft.github.io/PyRIT/latest/code/scoring/scorer-metrics/',
     )
-    await user.click(within(dialog).getByRole('button', { name: 'Identity for Behavioral evaluation identity' }))
-    expect(within(dialog).getByRole('region', { name: 'Identity for Behavioral evaluation identity' })).toHaveTextContent('evaluation-hash')
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
