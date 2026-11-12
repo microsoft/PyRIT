@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import unicodedata
 from copy import deepcopy
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
@@ -73,6 +74,16 @@ class AssertJudgmentMode(str, Enum):
     CATEGORY_VALIDATED = "category_validated"
 
 
+def _category_name_key(name: str) -> str:
+    """
+    Fold a category name to its letters and digits for matching judge replies to the taxonomy.
+
+    Returns:
+        str: The casefolded letters and digits of the NFKC-normalized name.
+    """
+    return "".join(character for character in unicodedata.normalize("NFKC", name).casefold() if character.isalnum())
+
+
 class _AssertCategoryResponseHandler(JsonSchemaResponseHandler):
     """Validate taxonomy judgments and normalize the policy-violation flag."""
 
@@ -88,10 +99,43 @@ class _AssertCategoryResponseHandler(JsonSchemaResponseHandler):
         super().__init__(response_schema=schema)
         self._validator = Draft202012Validator(schema)
         self._dimension = dimension
+        self._category_names = frozenset(category_names)
+        keyed: dict[str, list[str]] = {}
+        for name in category_names:
+            key = _category_name_key(name)
+            if key:
+                keyed.setdefault(key, []).append(name)
+        self._canonical_names = {key: names[0] for key, names in keyed.items() if len(names) == 1}
 
     def _replay_identifier(self) -> dict[str, object]:
         """Return the schema, selected dimension, and normalization version."""
-        return {**super()._replay_identifier(), "dimension": self._dimension.value, "normalization_version": 1}
+        return {**super()._replay_identifier(), "dimension": self._dimension.value, "normalization_version": 2}
+
+    def _canonicalize_node_names(self, parsed_response: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        """
+        Restore taxonomy names that the judge echoed with altered punctuation, spacing, or case.
+
+        Judges sometimes mangle typographic characters, such as returning a control character in place of
+        a curly apostrophe. A name that isn't an exact match is replaced only when exactly one taxonomy
+        category has the same letters and digits; anything else is left for validation to reject.
+
+        Returns:
+            tuple[dict[str, Any], list[str]]: The response with restored names, and a warning per restored name.
+        """
+        judgments = parsed_response.get("node_judgments") if isinstance(parsed_response, dict) else None
+        if not isinstance(judgments, list):
+            return parsed_response, []
+        restored: list[Any] = []
+        warnings: list[str] = []
+        for judgment in judgments:
+            name = judgment.get("node_name") if isinstance(judgment, dict) else None
+            if isinstance(name, str) and name not in self._category_names:
+                canonical = self._canonical_names.get(_category_name_key(name))
+                if canonical is not None:
+                    judgment = {**judgment, "node_name": canonical}
+                    warnings.append(f"normalized_node_name:{canonical}")
+            restored.append(judgment)
+        return {**parsed_response, "node_judgments": restored}, warnings
 
     def _convert_response(self, parsed_response: dict[str, Any]) -> dict[str, Any]:
         """
@@ -103,13 +147,13 @@ class _AssertCategoryResponseHandler(JsonSchemaResponseHandler):
         Raises:
             InvalidJsonException: If category names or judgment fields are invalid.
         """
+        parsed_response, warnings = self._canonicalize_node_names(parsed_response)
         try:
             self._validator.validate(parsed_response)
         except ValidationError as error:
             raise InvalidJsonException(message=f"Invalid ASSERT category judgment: {error}") from error
 
         nodes: list[AssertNodeJudgment] = []
-        warnings: list[str] = []
         for raw_node in parsed_response["node_judgments"]:
             node = AssertNodeJudgment.model_validate(raw_node)
             if any(kept.node_name == node.node_name for kept in nodes):
