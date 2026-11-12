@@ -1131,7 +1131,7 @@ async def test_assert_package_gives_each_group_its_own_instructions_async(harnes
 
 
 async def test_assert_package_task_does_not_depend_on_display_description_async(harness: _Harness) -> None:
-    result = _result(group_count=1)
+    result = _result(group_count=1, include_user_prompt=False)
     group = result.seed_groups[0]
     instructions = AssertGroupMetadata.from_metadata(group.objective.metadata).tester_instructions
     assert instructions is not None
@@ -1141,6 +1141,7 @@ async def test_assert_package_task_does_not_depend_on_display_description_async(
     await _store_async(name="assert_a", result=result)
     await harness.run_async(harness.scenario(), include_baseline=False, max_turns=1, **_datasets("assert_a"))
 
+    assert harness.adversarial_systems
     assert all(instructions in system for system in harness.adversarial_systems)
     assert all("A description for the dataset browser." not in system for system in harness.adversarial_systems)
 
