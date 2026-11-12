@@ -21,6 +21,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ToolDefinition,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -45,7 +46,10 @@ from pyrit.prompt_target.common.target_capabilities import (
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
-from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.prompt_target.common.tool_call_history import (
+    TOOL_CALL_INPUT_MODALITIES,
+    parse_function_tool_declarations,
+)
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -376,6 +380,17 @@ class LiteLLMChatTarget(PromptTarget):
         super().validate_tool_history(messages)
         for message in messages:
             validate_chat_tool_message(message)
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition]:
+        """
+        Report the function tools declared in ``extra_body_parameters["tools"]``.
+
+        This target does not execute tools, so only declarations sent to the endpoint are reported.
+
+        Returns:
+            list[ToolDefinition]: The declared function tools.
+        """
+        return parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

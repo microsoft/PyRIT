@@ -18,10 +18,13 @@
 # unknown tools, invalid arguments, and unanswered calls, and the adversarial model revises the history
 # until it passes. The history is prepended natively, then the objective is sent.
 #
-# The objective target must report its function tools and accept tool-call history natively;
-# `OpenAIResponseTarget` does both. Targets are configured from environment variables: the objective
-# target uses `OPENAI_RESPONSES_*`, the scorer uses the default chat target, and `TargetInitializer`
-# registers the `adversarial_chat` target that writes the histories from `ADVERSARIAL_CHAT_*`.
+# The objective target must report its function tools and accept tool-call history natively.
+# `OpenAIResponseTarget` reports the tools it runs and declares; `OpenAIChatTarget` and `LiteLLMChatTarget`
+# report the tools declared in `extra_body_parameters["tools"]`, and accept tool-call history for models
+# PyRIT recognizes or when declared with `custom_configuration`. Targets are configured from environment
+# variables: the objective target uses `OPENAI_RESPONSES_*`, the scorer uses the default chat target, and
+# `TargetInitializer` registers the `adversarial_chat` target that writes the histories from
+# `ADVERSARIAL_CHAT_*`.
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, tool
@@ -54,7 +57,8 @@ victim = OpenAIResponseTarget(tools=TOOLS)
 #
 # Any scenario that exposes the technique catalog can run `tool_call_priming`. Here `RapidResponse`
 # runs it for one objective, next to its baseline, which sends the same objective without a history.
-# The tools are stubs, and a response counts as a success when it is not a refusal.
+# The tools are stubs, and a response counts as a success when it is not a refusal. Each history is
+# generated fresh, so outcomes vary by model and from run to run.
 
 # %%
 from pyrit.models import AttackSeedGroup, SeedObjective

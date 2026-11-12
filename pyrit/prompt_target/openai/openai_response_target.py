@@ -47,7 +47,11 @@ from pyrit.models import (
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
+from pyrit.prompt_target.common.tool_call_history import (
+    parse_function_call,
+    parse_function_call_output,
+    parse_function_tool_declarations,
+)
 from pyrit.prompt_target.common.tool_provider import (
     Tool,
     ToolInfrastructureError,
@@ -331,15 +335,7 @@ class OpenAIResponseTarget(OpenAITarget):
             list[ToolDefinition]: The advertised function tools.
         """
         await self._initialize_tools_async()
-        declared = [
-            ToolDefinition(
-                name=declaration["name"],
-                description=declaration.get("description") or "",
-                parameters=declaration.get("parameters") or {"type": "object", "properties": {}},
-            )
-            for declaration in (self._extra_body_parameters or {}).get("tools", [])
-            if declaration.get("type") == "function"
-        ]
+        declared = parse_function_tool_declarations((self._extra_body_parameters or {}).get("tools", []))
         return [*declared, *(tool.to_definition() for tool in self._tools)]
 
     def _build_identifier(self) -> ComponentIdentifier:

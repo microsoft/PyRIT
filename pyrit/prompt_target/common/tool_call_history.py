@@ -4,7 +4,8 @@
 """Parsing and validation for the function-call history shapes stored by PyRIT targets."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import referencing
 import referencing.exceptions
@@ -19,6 +20,35 @@ from pyrit.models.messages.tool_content import FunctionCallContent, FunctionOutp
 TOOL_CALL_INPUT_MODALITIES: frozenset[frozenset[PromptDataType]] = frozenset(
     {frozenset({"function_call"}), frozenset({"text", "function_call"}), frozenset({"function_call_output"})}
 )
+
+
+def parse_function_tool_declarations(declarations: Sequence[Mapping[str, Any]]) -> list[ToolDefinition]:
+    """
+    Read function tool declarations as they are sent to the endpoint.
+
+    Accepts the Responses form (``{"type": "function", "name": ...}``) and the Chat Completions
+    form (``{"type": "function", "function": {"name": ...}}``). Other tool types, such as hosted
+    web search, are not function tools and are skipped.
+
+    Args:
+        declarations: The ``tools`` request parameter.
+
+    Returns:
+        list[ToolDefinition]: The declared function tools.
+    """
+    definitions: list[ToolDefinition] = []
+    for declaration in declarations:
+        if declaration.get("type") != "function":
+            continue
+        function = declaration.get("function", declaration)
+        definitions.append(
+            ToolDefinition(
+                name=function["name"],
+                description=function.get("description") or "",
+                parameters=function.get("parameters") or {"type": "object", "properties": {}},
+            )
+        )
+    return definitions
 
 
 def parse_function_call(piece: MessagePiece) -> ToolCall:

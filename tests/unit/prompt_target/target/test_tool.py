@@ -14,7 +14,9 @@ from pyrit.exceptions import RateLimitException
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, ToolExecutionMetadata
 from pyrit.prompt_target import (
     FunctionTool,
+    LiteLLMChatTarget,
     MCPToolProvider,
+    OpenAIChatTarget,
     OpenAIResponseTarget,
     ToolProvider,
     collect_tools_async,
@@ -207,6 +209,32 @@ async def test_openai_response_target_reports_advertised_function_tools(patch_ce
         {"name": "add", "description": add.description, "parameters": add.parameters},
     ]
     provider.get_tools_async.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "build_target",
+    [
+        lambda body: OpenAIChatTarget(
+            model_name="gpt-4", endpoint="https://mock.azure.com", api_key="mock-key", extra_body_parameters=body
+        ),
+        lambda body: LiteLLMChatTarget(model_name="custom/model", extra_body_parameters=body),
+    ],
+    ids=["openai_chat", "litellm"],
+)
+async def test_chat_targets_report_declared_function_tools(build_target) -> None:
+    parameters = {"type": "object", "properties": {"to": {"type": "string"}}}
+    declaration = {
+        "type": "function",
+        "function": {"name": "send_email", "description": "Send.", "parameters": parameters},
+    }
+    target = build_target({"tools": [declaration, {"type": "web_search_preview"}]})
+
+    definitions = await target.get_tool_definitions_async()
+
+    assert [definition.model_dump() for definition in definitions] == [
+        {"name": "send_email", "description": "Send.", "parameters": parameters}
+    ]
 
 
 @pytest.mark.parametrize("from_provider", [False, True])
