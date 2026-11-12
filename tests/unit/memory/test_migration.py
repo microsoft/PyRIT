@@ -232,6 +232,30 @@ def test_quote_malformed_legacy_attack_identifiers_uses_mssql_json_escape() -> N
     assert """ISJSON(CONCAT(N'{"value":', [atomic_attack_identifier], N'}')) = 0""" in statement
 
 
+@pytest.mark.parametrize(
+    ("columns", "dialect"),
+    [
+        ([], "sqlite"),
+        ([{"name": "atomic_attack_identifier"}], "postgresql"),
+    ],
+)
+def test_quote_malformed_legacy_attack_identifiers_skips_inapplicable_schema(
+    columns: list[dict[str, str]], dialect: str
+) -> None:
+    connection = MagicMock(spec=["dialect", "execute"])
+    connection.dialect.name = dialect
+    inspector = MagicMock()
+    inspector.get_columns.return_value = columns
+
+    with patch("pyrit.memory.migration.inspect", return_value=inspector):
+        _quote_malformed_legacy_attack_identifiers(
+            connection=connection,
+            table_names={"AttackResultEntries"},
+        )
+
+    connection.execute.assert_not_called()
+
+
 @pytest.mark.parametrize("starting_revision", ["9b2d4f6a8c0e", "fcecd0617e61"])
 def test_seed_conditions_and_follow_up_template_migrations_merge(starting_revision: str) -> None:
     engine = create_engine("sqlite:///:memory:")
