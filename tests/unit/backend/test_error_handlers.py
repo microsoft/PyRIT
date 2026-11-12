@@ -8,6 +8,7 @@ Tests for backend error handler middleware.
 import logging
 
 import pytest
+from azure.core.exceptions import ServiceRequestError
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -154,7 +155,31 @@ class TestErrorHandlers:
         assert "Scenario preset storage at /srv/presets is unavailable: Permission denied (GET /test)" in (
             caplog.messages
         )
-        assert any(record.exc_info and record.exc_info[1] is error for record in caplog.records)
+        assert all(record.exc_info is None for record in caplog.records)
+
+    def test_storage_failure_log_leaves_out_a_sas_url_from_the_error_behind_it(
+        self, app: FastAPI, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that a SAS URL in the error behind a storage failure stays out of the log, even at debug level."""
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            cause = ServiceRequestError(message="https://account.blob.core.windows.net/presets?sp=r&sig=secret-sig")
+            raise DocumentStorageUnavailableError(
+                label="Scenario preset",
+                source="https://account.blob.core.windows.net/presets",
+                reason="ServiceRequestError",
+            ) from cause
+
+        with caplog.at_level(logging.DEBUG, logger="pyrit.backend.middleware.error_handlers"):
+            response = client.get("/test")
+
+        assert response.status_code == 503
+        assert (
+            "Scenario preset storage at https://account.blob.core.windows.net/presets is unavailable: "
+            "ServiceRequestError (GET /test)"
+        ) in caplog.messages
+        assert "secret-sig" not in caplog.text
 
     def test_unreadable_document_returns_503_with_the_reason(self, app: FastAPI, client: TestClient) -> None:
         """Test that one document that can't be read is named with its reason."""
