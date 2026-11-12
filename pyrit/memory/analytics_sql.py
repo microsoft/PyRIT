@@ -249,7 +249,8 @@ def _sqlite_resolved_hash(element: ResolvedAttackIdentifierHash, compiler: Any, 
         str: A COALESCE expression over the reference and the stored JSON hash.
     """
     reference, document = _arguments(element, compiler, **kwargs)
-    return f"coalesce({reference}, json_extract({document}, '$.hash'))"
+    safe_document = f"CASE WHEN json_valid({document}) THEN {document} END"
+    return f"coalesce({reference}, json_extract({safe_document}, '$.hash'))"
 
 
 @compiles(ResolvedAttackIdentifierHash, "mssql")
@@ -261,7 +262,8 @@ def _mssql_resolved_hash(element: ResolvedAttackIdentifierHash, compiler: Any, *
         str: A varchar(64) expression, rather than JSON_VALUE's wider inferred type.
     """
     reference, document = _arguments(element, compiler, **kwargs)
-    return f"CONVERT(varchar(64), coalesce({reference}, JSON_VALUE({document}, '$.hash')))"
+    safe_document = f"CASE WHEN ISJSON({document}) = 1 THEN {document} END"
+    return f"CONVERT(varchar(64), coalesce({reference}, JSON_VALUE({safe_document}, '$.hash')))"
 
 
 class JsonContainer(FunctionElement[str]):
