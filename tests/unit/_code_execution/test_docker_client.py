@@ -18,7 +18,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_event_async
 
-from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError, docker_client
+from pyrit._code_execution import (
+    DockerRuntimeProfile,
+    DockerSandboxClient,
+    Sandbox,
+    SandboxClient,
+    SandboxExecutionError,
+    SandboxInputError,
+    SandboxStateKind,
+    docker_client,
+)
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
 from pyrit.models.code_execution import _ProgramInvocation, _SandboxRun
 
@@ -102,9 +111,12 @@ def _control(
     return AsyncMock(side_effect=command_async)
 
 
-async def _run_async(client: DockerSandboxClient) -> _SandboxRun:
+async def _run_async(client: DockerSandboxClient, *, timeout_seconds: float | None = None) -> _SandboxRun:
     return await client.execute_async(
-        program="print('ok')", runtime_profile_name="python", invocations=(_ProgramInvocation(),)
+        program="print('ok')",
+        runtime_profile_name="python",
+        invocations=(_ProgramInvocation(),),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -172,6 +184,27 @@ async def test_preflight_failures_prevent_execution_async(
         pytest.raises(SandboxExecutionError, match=f"could not inspect.*{message}"),
     ):
         await _run_async(client)
+    launch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("backend_variable", ["DOCKER_HOST", "DOCKER_CONTEXT", None])
+async def test_backend_support_is_rechecked_before_each_execution_async(
+    *, client: DockerSandboxClient, backend_variable: str | None
+) -> None:
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=_process()),
+        patch.object(client, "_control_async", _control()),
+    ):
+        assert (await _run_async(client)).events[0].exit_code == 0
+    backend = patch.dict(os.environ, {backend_variable: "different-backend"}) if backend_variable else nullcontext()
+    with (
+        backend,
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+        patch.object(client, "_control_async", _control(capabilities="none true true true true true")) as control,
+        pytest.raises(SandboxExecutionError, match="must support cgroup"),
+    ):
+        await _run_async(client)
+    control.assert_awaited()
     launch.assert_not_awaited()
 
 
@@ -526,7 +559,7 @@ async def test_partial_workspace_is_removed_after_write_failure_async(
         patch.object(client, "_control_async", _control()),
         patch("pathlib.Path.write_bytes", side_effect=OSError("disk full")),
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
-        pytest.raises(OSError, match="disk full"),
+        pytest.raises(SandboxExecutionError, match="disk full"),
     ):
         await _run_async(client)
     launch.assert_not_awaited()
@@ -686,3 +719,33 @@ def test_profiles_are_explicit_trusted_configuration() -> None:
         DockerSandboxClient(profiles={})
     with pytest.raises(ValueError):
         DockerSandboxClient(profiles={"bad name": DockerRuntimeProfile(image=_IMAGE, command=("python3",))})
+
+
+def test_docker_is_a_call_sandbox_with_its_configured_limits(client: DockerSandboxClient) -> None:
+    capabilities = client.get_capabilities()
+    assert isinstance(client, Sandbox) and isinstance(client, SandboxClient)
+    assert capabilities.state_kind is SandboxStateKind.CALL
+    assert client.get_runtime_profile_names() == frozenset({"python"})
+    assert capabilities.default_timeout_seconds == capabilities.max_timeout_seconds == 10.0
+    assert capabilities.max_output_bytes == 64_000 and capabilities.file_runtime_profile_name is None
+
+
+def test_profile_names_that_differ_only_in_punctuation_are_allowed() -> None:
+    profile = DockerRuntimeProfile(image=_IMAGE, command=("python3",))
+    client = DockerSandboxClient(profiles={"py-3": profile, "py_3": profile})
+    assert client.get_runtime_profile_names() == frozenset({"py-3", "py_3"})
+
+
+async def test_long_arguments_are_rejected_before_a_container_starts_async(client: DockerSandboxClient) -> None:
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+        patch.object(client, "_control_async", _control()) as control,
+        pytest.raises(SandboxInputError, match="standard input"),
+    ):
+        await client.execute_async(
+            program="print(1)",
+            runtime_profile_name="python",
+            invocations=(_ProgramInvocation(arguments=("x" * 20_000,)),),
+        )
+    launch.assert_not_awaited()
+    control.assert_not_awaited()

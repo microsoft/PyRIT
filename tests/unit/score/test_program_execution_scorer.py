@@ -11,7 +11,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError
+from pyrit._code_execution import (
+    DockerRuntimeProfile,
+    DockerSandboxClient,
+    FakeSandbox,
+    ProcessResult,
+    RuntimeProfile,
+    SandboxCapabilities,
+    SandboxExecutionError,
+    SandboxStateKind,
+)
 from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
@@ -335,6 +344,67 @@ async def test_sandbox_failure_is_undetermined_not_false_async(sqlite_instance: 
     assert "service unavailable" in score.score_rationale
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert observation.acquisition is Acquisition.ERROR
+
+
+async def test_rejected_input_is_undetermined_with_persisted_unavailable_evidence_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    sandbox = DockerSandboxClient(
+        profiles={_PROFILE: DockerRuntimeProfile(image="python@" + _IMAGE_DIGEST, command=("python3", "-I"))}
+    )
+    scorer = ProgramExecutionScorer(source=ProgramExecutionSource(sandbox=sandbox))
+    expectation = _expectation(_case("x" * 16_385))
+    with (
+        patch.object(sandbox, "_control_async", new_callable=AsyncMock) as control,
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+    ):
+        score = (await scorer.score_async(scorable=ContentScorable(value="print(1)"), expectation=expectation))[0]
+    control.assert_not_awaited()
+    launch.assert_not_awaited()
+    assert score.status is ScoreStatus.UNDETERMINED and score.score_value is None
+    assert "the sandbox rejected it" in score.score_rationale
+    assert "standard input instead" in score.score_rationale
+    stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+    assert stored.status is ScoreStatus.UNDETERMINED and stored.score_value is None
+    assert stored.scored_expectation == expectation
+    assert stored.observation_ids == score.observation_ids
+    observation = (await sqlite_instance.get_observations_async(observation_ids=stored.observation_ids))[0]
+    assert observation.acquisition is Acquisition.UNAVAILABLE
+    assert isinstance(observation.payload, ProgramExecutionObservationPayload)
+    assert observation.payload.events == () and observation.payload.program_sha256 is None
+    assert len(observation.payload.reasons) == 1
+    assert "the sandbox rejected it" in observation.payload.reasons[0]
+
+
+async def test_unconfirmed_cleanup_is_retained_in_persisted_observation_metadata_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    sandbox = FakeSandbox(
+        capabilities=SandboxCapabilities(
+            runtime_profiles=(RuntimeProfile(name=_PROFILE),), state_kind=SandboxStateKind.CALL
+        ),
+        handler=lambda run: ProcessResult(exit_code=0, stdout="9", cleanup_confirmed=False),
+    )
+    scorer = ProgramExecutionScorer(source=ProgramExecutionSource(sandbox=sandbox))
+    expectation = _expectation(_case("3", stdout=Equals(value="9")))
+    score = (await scorer.score_async(scorable=ContentScorable(value="print(9)"), expectation=expectation))[0]
+    assert score.status is ScoreStatus.COMPLETE and score.get_value() is True
+    stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=stored.observation_ids))[0]
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert observation.metadata["sandbox_warnings"] == "cleanup was not confirmed"
+    assert isinstance(observation.payload, ProgramExecutionObservationPayload)
+    assert len(observation.payload.events) == 1 and observation.payload.events[0].stdout == "9"
+
+
+@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION])
+def test_program_execution_source_rejects_stateful_sandboxes_before_execution(state_kind: SandboxStateKind) -> None:
+    sandbox = FakeSandbox(
+        capabilities=SandboxCapabilities(runtime_profiles=(RuntimeProfile(name=_PROFILE),), state_kind=state_kind)
+    )
+    with pytest.raises(ValueError, match="fresh invocation environments"):
+        ProgramExecutionSource(sandbox=sandbox)
+    assert sandbox.runs == [] and sandbox.open_sessions == set()
 
 
 async def test_sandbox_stopping_early_leaves_passing_runs_undetermined_async() -> None:

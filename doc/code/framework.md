@@ -315,7 +315,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   runtime profile and invocations, never the expected results. A program that fails is observed
   evidence; a sandbox that cannot run it is an acquisition error, so the verdict is undetermined
   rather than false.
-  Each scoring call runs afresh; an observation identifies the run and supports explicit replay.
+  Each scoring invocation runs in a fresh environment; `ProgramExecutionSource` rejects known stateful
+  sandbox adapters. An observation identifies the run and supports explicit replay, not deterministic
+  execution.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
   root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
   its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A
@@ -394,13 +396,26 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 ## Code Execution (Experimental)
 
-**Responsibility**: Connect to caller-configured execution backends and return typed invocation results.
+**Responsibility**: Connect to caller-configured execution backends, run programs in them by the same
+rules whatever the backend, and return typed invocation results.
 
-- The client API is private and experimental in `pyrit._code_execution`; it may change without a deprecation cycle.
+- The API is private and experimental in `pyrit._code_execution`; it may change without a deprecation cycle.
 - Targets, converters, dataset generators, and scorers can inject the same `SandboxClient` contract
   from `pyrit._code_execution`. Execution inputs and results are private types in `pyrit.models.code_execution`.
 - `runtime_profile_name` selects a client-owned configuration by name, not by supplying an image or command.
   Clients advertise the available names through `get_runtime_profile_names()`.
+- `Sandbox` is the base class for backends. An adapter translates a few hooks into its infrastructure's
+  API; the base class owns the rules: validation against declared limits, one shared session per
+  `environment` sandbox (state persists, callers take turns), retries only when nothing ran, renewal,
+  idle close, cancellation, reset, quarantine and evidence. A `session` sandbox's state ends with its session:
+  no automatic idle eviction or renewal, and state loss is reported rather than silently replaced.
+  A `call` sandbox keeps nothing between calls.
+  `SandboxRegistry` names sandboxes so every caller shares one `Sandbox` object per sandbox.
+  Configuration replacement closes registered sandboxes first and retains their registry if cleanup
+  cannot be confirmed, so it can be retried without losing session ownership.
+- A sandbox may keep state between calls, so a program can see what earlier calls left.
+- `release_async` ends a session; it does not lift uncertain-process or reset quarantine. That requires a
+  confirmed reset or `recover_async` after an operator has verified backend recovery.
 - PyRIT does not own environments. The one-image Docker example is the only exception:
   `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
 - **Does not own**: interpreting results, scoring criteria, message or seed creation, memory

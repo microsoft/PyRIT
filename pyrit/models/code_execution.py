@@ -81,9 +81,11 @@ class _SandboxRun:
 
     ``events`` holds one event per invocation that ran, in invocation order. ``reasons`` explains
     why any invocations did not run. ``warnings`` reports cleanup problems that do not invalidate
-    the results already collected.
+    the results already collected. ``execution_ids`` holds the identifiers a sandbox reported for
+    the invocations that ran, so its own records can be found; it is empty when it reports none.
     """
 
     events: tuple[_ProgramExecutionEvent, ...] = ()
     reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    execution_ids: tuple[str, ...] = ()
