@@ -1,13 +1,21 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 
+import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { runtimeApi } from '@/services/api'
 
-import { RuntimeProvider, useRuntime } from './useRuntime'
+import { RuntimeBanner, RuntimeProvider, useRuntime } from './useRuntime'
 
-jest.mock('@/services/api', () => ({ runtimeApi: { getReadiness: jest.fn() } }))
+jest.mock('@/services/api', () => ({
+  runtimeApi: { getReadiness: jest.fn() },
+}))
+
+function TestWrapper({ children }: { children: ReactNode }) {
+  return <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+}
 
 function Consumer() {
   const runtime = useRuntime()
@@ -39,5 +47,61 @@ describe('RuntimeProvider', () => {
     await act(async () => { jest.advanceTimersByTime(2_000) })
     expect(screen.getByLabelText('Generation')).toHaveTextContent('second')
     expect(screen.getByRole('textbox', { name: 'Draft' })).toHaveValue('keep my draft')
+  })
+})
+
+function renderBanner() {
+  render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+}
+
+describe('RuntimeBanner', () => {
+  beforeEach(() => { jest.clearAllMocks() })
+
+  it('should tell everyone that an administrator has to fix saved entries that could not be restored', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: false,
+      state: 'failed',
+      generation: 'first',
+      restore_failures: 2,
+    })
+
+    renderBanner()
+
+    expect(await screen.findByText(new RegExp(
+      "Some saved entries couldn't be restored, so new runs and sends are unavailable\\. An administrator has to "
+      + 'view the failures in Configuration, fix or delete the files in registry_recipes_source, then reinitialize '
+      + 'PyRIT or restart the backend\\. Drafts are preserved\\.',
+    ))).toBeInTheDocument()
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByText(/PyRIT runtime: failed/)).not.toBeInTheDocument()
+  })
+
+  it('should show the general runtime bar while the runtime is not ready for another reason', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: false,
+      state: 'restart-required',
+      generation: '',
+      restore_failures: 1,
+    })
+
+    renderBanner()
+
+    expect(await screen.findByText(/PyRIT runtime: restart-required/)).toBeInTheDocument()
+    expect(screen.queryByText(/couldn't be restored/)).not.toBeInTheDocument()
+  })
+
+  it('should show nothing while the runtime is ready', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: true,
+      state: 'ready',
+      generation: 'first',
+      restore_failures: 0,
+    })
+
+    renderBanner()
+
+    await waitFor(() => expect(screen.queryByText(/PyRIT runtime/)).not.toBeInTheDocument())
+    expect(screen.queryByText(/couldn't be restored/)).not.toBeInTheDocument()
   })
 })
