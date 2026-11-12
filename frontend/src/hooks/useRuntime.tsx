@@ -42,11 +42,13 @@ export function RuntimeBanner() {
   const runtime = useRuntime()
   if (runtime.ready) return null
   if (runtime.state === 'failed' && (runtime.restore_failures ?? 0) > 0) {
+    // Multiline, since this longer text replaces the status after the bar first lays out and wouldn't wrap otherwise.
     return (
-      <MessageBar intent="warning">
+      <MessageBar intent="warning" layout="multiline">
         <MessageBarBody>
           Some saved entries couldn&apos;t be restored, so new runs and sends are unavailable. An administrator has to
-          fix or delete them in Configuration, then reinitialize PyRIT or restart the backend. Drafts are preserved.
+          view the failures in Configuration, fix or delete the files in registry_recipes_source, then reinitialize
+          PyRIT or restart the backend. Drafts are preserved.
         </MessageBarBody>
       </MessageBar>
     )
