@@ -2124,7 +2124,9 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
             await _cancel_tasks_async(request_task)
 
         add_conversation.assert_awaited_once()
-        add_message.assert_not_awaited()
+        # The cancelled send keeps its request as the record of the attempt, but no response.
+        [persisted] = [awaited.kwargs["request"] for awaited in add_message.await_args_list]
+        assert [piece.api_role for piece in persisted.message_pieces] == ["user"]
 
     assert request_task.done()
     assert request_task.cancelled()
