@@ -108,14 +108,16 @@ def text_match(
 
 
 @compiles(UnicodeLower, "sqlite")
-def _sqlite_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_unicode_lower(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UnicodeLower, compiler: Any, **kwargs: Any
+) -> str:
     """
     Keep ASCII text in SQLite and use the registered Unicode function otherwise.
 
     Returns:
         str: Exact Unicode-aware lowercasing without a Python/GIL callback for ASCII text.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return _sqlite_fold_case(value=value, fallback_function=UnicodeLower.SQLITE_FUNCTION_NAME)
 
 
@@ -136,38 +138,44 @@ class UnicodeCaseFold(FunctionElement[str]):
 
 
 @compiles(UnicodeCaseFold, "sqlite")
-def _sqlite_unicode_casefold(element: UnicodeCaseFold, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_unicode_casefold(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UnicodeCaseFold, compiler: Any, **kwargs: Any
+) -> str:
     """
     Reuse the shared SQLite fold expression with the registered casefold.
 
     Returns:
         str: The compiled per character fold expression.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return _sqlite_fold_case(value=value, fallback_function=UnicodeCaseFold.SQLITE_FUNCTION_NAME)
 
 
 @compiles(UnicodeCaseFold, "mssql")
-def _mssql_unicode_casefold(element: UnicodeCaseFold, compiler: Any, **kwargs: Any) -> str:
+def _mssql_unicode_casefold(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UnicodeCaseFold, compiler: Any, **kwargs: Any
+) -> str:
     """
     Compile the casefold for SQL Server, whose LOWER stays per character.
 
     Returns:
         str: The compiled per character fold expression.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return f"LOWER({value})"
 
 
 @compiles(UnicodeLower, "mssql")
-def _mssql_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -> str:
+def _mssql_unicode_lower(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UnicodeLower, compiler: Any, **kwargs: Any
+) -> str:
     """
     Use SQL Server's Unicode-aware LOWER operation.
 
     Returns:
         str: A native lowercase expression.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return f"LOWER({value})"
 
 
@@ -193,26 +201,30 @@ class UnicodeStrip(FunctionElement[str]):
 
 
 @compiles(UnicodeStrip, "sqlite")
-def _sqlite_unicode_strip(element: UnicodeStrip, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_unicode_strip(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UnicodeStrip, compiler: Any, **kwargs: Any
+) -> str:
     """
     Strip the explicit character set instead of SQLite's space-only default.
 
     Returns:
         str: A native trim expression preserving NULL.
     """
-    value, whitespace = _arguments(element, compiler, **kwargs)
+    value, whitespace = _arguments(element, compiler=compiler, **kwargs)
     return f"trim({value}, {whitespace})"
 
 
 @compiles(UnicodeStrip, "mssql")
-def _mssql_unicode_strip(element: UnicodeStrip, compiler: Any, **kwargs: Any) -> str:
+def _mssql_unicode_strip(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UnicodeStrip, compiler: Any, **kwargs: Any
+) -> str:
     """
     Strip exact whitespace code points independently of database collation.
 
     Returns:
         str: A native TRIM expression with a bounded Unicode character argument.
     """
-    value, whitespace = _arguments(element, compiler, **kwargs)
+    value, whitespace = _arguments(element, compiler=compiler, **kwargs)
     return f"TRIM({whitespace} FROM {value} COLLATE Latin1_General_100_BIN2)"
 
 
@@ -241,26 +253,30 @@ class ResolvedAttackIdentifierHash(FunctionElement[str]):
 
 
 @compiles(ResolvedAttackIdentifierHash, "sqlite")
-def _sqlite_resolved_hash(element: ResolvedAttackIdentifierHash, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_resolved_hash(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: ResolvedAttackIdentifierHash, compiler: Any, **kwargs: Any
+) -> str:
     """
     Prefer the normalized foreign key without losing legacy JSON-only references.
 
     Returns:
         str: A COALESCE expression over the reference and the stored JSON hash.
     """
-    reference, document = _arguments(element, compiler, **kwargs)
+    reference, document = _arguments(element, compiler=compiler, **kwargs)
     return f"coalesce({reference}, json_extract({document}, '$.hash'))"
 
 
 @compiles(ResolvedAttackIdentifierHash, "mssql")
-def _mssql_resolved_hash(element: ResolvedAttackIdentifierHash, compiler: Any, **kwargs: Any) -> str:
+def _mssql_resolved_hash(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: ResolvedAttackIdentifierHash, compiler: Any, **kwargs: Any
+) -> str:
     """
     Bound the resolved hash's SQL type so it can be used as an index key.
 
     Returns:
         str: A varchar(64) expression, rather than JSON_VALUE's wider inferred type.
     """
-    reference, document = _arguments(element, compiler, **kwargs)
+    reference, document = _arguments(element, compiler=compiler, **kwargs)
     return f"CONVERT(varchar(64), coalesce({reference}, JSON_VALUE({document}, '$.hash')))"
 
 
@@ -350,7 +366,7 @@ class JsonArrayJoin(Join):
     inherit_cache = False
 
 
-def _arguments(element: FunctionElement[Any], compiler: Any, **kwargs: Any) -> list[str]:
+def _arguments(element: FunctionElement[Any], *, compiler: Any, **kwargs: Any) -> list[str]:
     """
     Compile children in the current alias and parameter-binding context.
 
@@ -362,30 +378,36 @@ def _arguments(element: FunctionElement[Any], compiler: Any, **kwargs: Any) -> l
 
 @compiles(JsonScalar, "sqlite")
 @compiles(JsonContainer, "sqlite")
-def _sqlite_json_property(element: FunctionElement[str], compiler: Any, **kwargs: Any) -> str:
+def _sqlite_json_property(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: FunctionElement[str], compiler: Any, **kwargs: Any
+) -> str:
     """
     Use SQLite's shared extractor for scalar properties and serialized containers.
 
     Returns:
         str: JSON1 extraction SQL with a bound or compiler-rendered literal path.
     """
-    return f"json_extract({', '.join(_arguments(element, compiler, **kwargs))})"
+    return f"json_extract({', '.join(_arguments(element, compiler=compiler, **kwargs))})"
 
 
 @compiles(JsonClassNamePresent, "sqlite")
-def _sqlite_class_name_present(element: JsonClassNamePresent, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_class_name_present(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonClassNamePresent, compiler: Any, **kwargs: Any
+) -> str:
     """
     Distinguish an absent key from a JSON null without expanding the object.
 
     Returns:
         str: A scalar 0/1 expression, including for a missing parent object.
     """
-    document, object_path = _arguments(element, compiler, **kwargs)
+    document, object_path = _arguments(element, compiler=compiler, **kwargs)
     return f"CASE WHEN json_type({document}, {object_path} || '.class_name') IS NOT NULL THEN 1 ELSE 0 END"
 
 
 @compiles(JsonScalar, "mssql")
-def _mssql_json_scalar(element: JsonScalar, compiler: Any, **kwargs: Any) -> str:
+def _mssql_json_scalar(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonScalar, compiler: Any, **kwargs: Any
+) -> str:
     """
     Extract full-width scalar text without silently converting long values to NULL.
 
@@ -417,7 +439,9 @@ def _mssql_json_scalar(element: JsonScalar, compiler: Any, **kwargs: Any) -> str
 
 
 @compiles(JsonClassNamePresent, "mssql")
-def _mssql_class_name_present(element: JsonClassNamePresent, compiler: Any, **kwargs: Any) -> str:
+def _mssql_class_name_present(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonClassNamePresent, compiler: Any, **kwargs: Any
+) -> str:
     """
     Inspect OPENJSON's keys so an explicitly null canonical name blocks legacy fallback.
 
@@ -439,78 +463,92 @@ def _mssql_class_name_present(element: JsonClassNamePresent, compiler: Any, **kw
 
 
 @compiles(JsonContainer, "mssql")
-def _mssql_json_container(element: JsonContainer, compiler: Any, **kwargs: Any) -> str:
+def _mssql_json_container(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonContainer, compiler: Any, **kwargs: Any
+) -> str:
     """
     Keep objects and arrays as JSON text rather than JSON_VALUE's scalar result.
 
     Returns:
         str: JSON_QUERY SQL, yielding container text or NULL for an absent/non-container property.
     """
-    return f"JSON_QUERY({', '.join(_arguments(element, compiler, **kwargs))})"
+    return f"JSON_QUERY({', '.join(_arguments(element, compiler=compiler, **kwargs))})"
 
 
 @compiles(JsonArrayItems, "sqlite")
-def _sqlite_json_items(element: JsonArrayItems, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_json_items(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayItems, compiler: Any, **kwargs: Any
+) -> str:
     """
     Expose JSON1 members without adding an independent result-table reference.
 
     Returns:
         str: A json_each table-valued expression that can reference the outer source alias.
     """
-    return f"json_each({', '.join(_arguments(element, compiler, **kwargs))})"
+    return f"json_each({', '.join(_arguments(element, compiler=compiler, **kwargs))})"
 
 
 @compiles(JsonArrayItems, "mssql")
-def _mssql_json_items(element: JsonArrayItems, compiler: Any, **kwargs: Any) -> str:
+def _mssql_json_items(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayItems, compiler: Any, **kwargs: Any
+) -> str:
     """
     Expose OPENJSON's default key/value/type schema for lateral expansion.
 
     Returns:
         str: A table-valued expression to be joined with OUTER APPLY.
     """
-    return f"OPENJSON({', '.join(_arguments(element, compiler, **kwargs))})"
+    return f"OPENJSON({', '.join(_arguments(element, compiler=compiler, **kwargs))})"
 
 
 @compiles(JsonArrayValue, "sqlite")
-def _sqlite_json_array_value(element: JsonArrayValue, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_json_array_value(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayValue, compiler: Any, **kwargs: Any
+) -> str:
     """
     Check the saved property's shape before expanding it.
 
     Returns:
         str: A JSON array expression safe for JSON1 expansion.
     """
-    document, path = _arguments(element, compiler, **kwargs)
+    document, path = _arguments(element, compiler=compiler, **kwargs)
     return f"CASE WHEN json_type({document}, {path}) = 'array' THEN json_extract({document}, {path}) ELSE '[]' END"
 
 
 @compiles(JsonArrayValue, "mssql")
-def _mssql_json_array_value(element: JsonArrayValue, compiler: Any, **kwargs: Any) -> str:
+def _mssql_json_array_value(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayValue, compiler: Any, **kwargs: Any
+) -> str:
     """
     Keep only saved JSON arrays without truncating their contents.
 
     Returns:
         str: A JSON array expression safe for OPENJSON expansion.
     """
-    document, path = _arguments(element, compiler, **kwargs)
+    document, path = _arguments(element, compiler=compiler, **kwargs)
     value = f"JSON_QUERY({document}, {path})"
     normalized = _mssql_without_json_whitespace(value)
     return f"CASE WHEN LEFT({normalized}, 1) = N'[' THEN {value} ELSE N'[]' END"
 
 
 @compiles(UuidHex, "sqlite")
-def _sqlite_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_uuid_hex(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UuidHex, compiler: Any, **kwargs: Any
+) -> str:
     """
     Match Python's case-insensitive UUID normalization without interpreting invalid text as an ID.
 
     Returns:
         str: Lowercase UUID hex for canonical, undashed, braced, or URN string forms.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return f"replace(trim(replace(replace(lower({value}), 'urn:', ''), 'uuid:', ''), '{{}}'), '-', '')"
 
 
 @compiles(UuidHex, "mssql")
-def _mssql_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
+def _mssql_uuid_hex(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: UuidHex, compiler: Any, **kwargs: Any
+) -> str:
     """
     Normalize reference strings without SQL Server's truncating uniqueidentifier conversion.
 
@@ -519,20 +557,22 @@ def _mssql_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
     Returns:
         str: The same UUID-comparison expression as SQLite and the Python reader.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     normalized = f"replace(trim(N'{{}}' FROM replace(replace(lower({value}), N'urn:', N''), N'uuid:', N'')), N'-', N'')"
     return f"CASE WHEN DATALENGTH({normalized}) = 64 THEN {normalized} COLLATE Latin1_General_100_BIN2 END"
 
 
 @compiles(JsonArrayEmpty, "sqlite")
-def _sqlite_array_empty(element: JsonArrayEmpty, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_array_empty(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayEmpty, compiler: Any, **kwargs: Any
+) -> str:
     """
     Require array shape because SQLite also reports zero array length for non-arrays.
 
     Returns:
         str: A scalar CASE yielding 1 only for an empty JSON array.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return f"CASE WHEN json_type({value}) = 'array' AND json_array_length({value}) = 0 THEN 1 ELSE 0 END"
 
 
@@ -556,61 +596,71 @@ def _mssql_without_json_whitespace(value: str) -> str:
 
 
 @compiles(JsonArrayEmpty, "mssql")
-def _mssql_array_empty(element: JsonArrayEmpty, compiler: Any, **kwargs: Any) -> str:
+def _mssql_array_empty(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayEmpty, compiler: Any, **kwargs: Any
+) -> str:
     """
     Recognize [] without OPENJSON/EXISTS, which SQL Server forbids inside a GROUP BY expression.
 
     Returns:
         str: A scalar 0/1 CASE that accepts all legal JSON whitespace around the brackets.
     """
-    value = _mssql_without_json_whitespace(_arguments(element, compiler, **kwargs)[0])
+    value = _mssql_without_json_whitespace(_arguments(element, compiler=compiler, **kwargs)[0])
     return f"CASE WHEN {value} = N'[]' THEN 1 ELSE 0 END"
 
 
 @compiles(JsonIsArray, "sqlite")
-def _sqlite_is_array(element: JsonIsArray, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_is_array(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonIsArray, compiler: Any, **kwargs: Any
+) -> str:
     """
     Distinguish arrays from other JSON values before assigning membership keys.
 
     Returns:
         str: A scalar 0/1 JSON1 type check, also defined for SQL NULL.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     return f"CASE WHEN json_type({value}) = 'array' THEN 1 ELSE 0 END"
 
 
 @compiles(JsonIsArray, "mssql")
-def _mssql_is_array(element: JsonIsArray, compiler: Any, **kwargs: Any) -> str:
+def _mssql_is_array(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonIsArray, compiler: Any, **kwargs: Any
+) -> str:
     """
     Inspect the first non-whitespace character without treating [ as a LIKE character class.
 
     Returns:
         str: A scalar 0/1 shape check. OPENJSON performs actual JSON parsing when expanded.
     """
-    value = _mssql_without_json_whitespace(_arguments(element, compiler, **kwargs)[0])
+    value = _mssql_without_json_whitespace(_arguments(element, compiler=compiler, **kwargs)[0])
     return f"CASE WHEN LEFT({value}, 1) = N'[' THEN 1 ELSE 0 END"
 
 
 @compiles(JsonArrayAggregate, "sqlite")
-def _sqlite_json_array(element: JsonArrayAggregate, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_json_array(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayAggregate, compiler: Any, **kwargs: Any
+) -> str:
     """
     Retain JSON null members while collecting deduplicated converter names.
 
     Returns:
         str: JSON1 array aggregation SQL, without Python-side collection.
     """
-    return f"json_group_array({', '.join(_arguments(element, compiler, **kwargs))})"
+    return f"json_group_array({', '.join(_arguments(element, compiler=compiler, **kwargs))})"
 
 
 @compiles(JsonArrayAggregate, "mssql")
-def _mssql_json_array(element: JsonArrayAggregate, compiler: Any, **kwargs: Any) -> str:
+def _mssql_json_array(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayAggregate, compiler: Any, **kwargs: Any
+) -> str:
     """
     Escape members and preserve nulls, using nvarchar(max) to avoid STRING_AGG's short-string limit.
 
     Returns:
         str: Wide-string JSON array aggregation, including explicit null elements.
     """
-    value = _arguments(element, compiler, **kwargs)[0]
+    value = _arguments(element, compiler=compiler, **kwargs)[0]
     item = (
         f"CASE WHEN {value} IS NULL THEN N'null' "
         f"ELSE CONCAT(N'\"', STRING_ESCAPE(CAST({value} AS nvarchar(max)), 'json'), N'\"') END"
@@ -619,31 +669,37 @@ def _mssql_json_array(element: JsonArrayAggregate, compiler: Any, **kwargs: Any)
 
 
 @compiles(JsonObjectAggregate, "sqlite")
-def _sqlite_json_object(element: JsonObjectAggregate, compiler: Any, **kwargs: Any) -> str:
+def _sqlite_json_object(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonObjectAggregate, compiler: Any, **kwargs: Any
+) -> str:
     """
     Serialize raw outcome counts after SQL has grouped each outcome exactly once.
 
     Returns:
         str: JSON1 object aggregation SQL with one key per persisted outcome.
     """
-    return f"json_group_object({', '.join(_arguments(element, compiler, **kwargs))})"
+    return f"json_group_object({', '.join(_arguments(element, compiler=compiler, **kwargs))})"
 
 
 @compiles(JsonObjectAggregate, "mssql")
-def _mssql_json_object(element: JsonObjectAggregate, compiler: Any, **kwargs: Any) -> str:
+def _mssql_json_object(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonObjectAggregate, compiler: Any, **kwargs: Any
+) -> str:
     """
     Escape outcome keys and emit numeric counts with wide-string aggregation.
 
     Returns:
         str: JSON object construction SQL that leaves integer counts unquoted.
     """
-    key, value = _arguments(element, compiler, **kwargs)
+    key, value = _arguments(element, compiler=compiler, **kwargs)
     pair = f"CONCAT(N'\"', STRING_ESCAPE(CAST({key} AS nvarchar(max)), 'json'), N'\":', CAST({value} AS nvarchar(max)))"
     return f"CONCAT(N'{{', STRING_AGG({pair}, N','), N'}}')"
 
 
 @compiles(JsonArrayJoin, "sqlite")
-def _sqlite_array_join(element: JsonArrayJoin, compiler: SQLCompiler, **kwargs: Any) -> str:
+def _sqlite_array_join(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayJoin, compiler: SQLCompiler, **kwargs: Any
+) -> str:
     """
     Delegate to SQLite's ordinary LEFT JOIN rendering, including its ON condition.
 
@@ -660,7 +716,9 @@ def _sqlite_array_join(element: JsonArrayJoin, compiler: SQLCompiler, **kwargs: 
 
 
 @compiles(JsonArrayJoin, "mssql")
-def _mssql_array_join(element: JsonArrayJoin, compiler: Any, **kwargs: Any) -> str:
+def _mssql_array_join(  # pyrit-keyword-only-exempt SQLAlchemy @compiles callback
+    element: JsonArrayJoin, compiler: Any, **kwargs: Any
+) -> str:
     """
     Render the array function against each left-hand row, retaining rows with no members.
 
