@@ -59,10 +59,10 @@ jobs:
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
           uv sync --frozen
       - name: Exercise SQL Server migrations
+        timeout-minutes: 5
         env:
-          RUN_ALL_TESTS: 'true'
           PYRIT_TEST_SQLSERVER_URL: mssql+pyodbc://sa:Pyrit_CI_only!4829@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
-        run: uv run --frozen pytest tests/integration/memory/test_sqlserver_migrations_integration.py -v --timeout=300
+        run: uv run --frozen python -m build_scripts.check_sqlserver_migrations
       - name: SQL Server diagnostics
         if: failure()
         env:

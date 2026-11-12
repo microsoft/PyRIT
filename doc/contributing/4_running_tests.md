@@ -223,7 +223,7 @@ Set `PYRIT_TEST_SQLSERVER_URL` to a disposable server's `mssql+pyodbc://.../mast
 SQL-authentication URL with permission to create/drop test databases:
 
 ```bash
-RUN_ALL_TESTS=true uv run --frozen pytest tests/integration/memory/test_sqlserver_migrations_integration.py -v --timeout=300
+uv run --frozen python -m build_scripts.check_sqlserver_migrations
 ```
 
 ```{note}
