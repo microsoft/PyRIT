@@ -13,6 +13,11 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
+    from pyrit.score.assert_judge_presets import (
+        list_assert_judge_presets,
+        load_assert_judge_preset,
+        load_assert_judge_preset_file,
+    )
     from pyrit.score.batch_scorer import BatchScorer
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
@@ -177,6 +182,9 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
+    "list_assert_judge_presets": "pyrit.score.assert_judge_presets",
+    "load_assert_judge_preset": "pyrit.score.assert_judge_presets",
+    "load_assert_judge_preset_file": "pyrit.score.assert_judge_presets",
     "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
     "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
     "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
