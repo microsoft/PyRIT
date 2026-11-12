@@ -155,6 +155,7 @@ project:
                 - file: code/targets/10_2_playwright_target_copilot.ipynb
                 - file: code/targets/10_3_websocket_copilot_target.ipynb
             - file: code/targets/11_message_normalizer.ipynb
+            - file: code/targets/12_sandboxed_tool_calls.md
             - file: code/targets/hack_a_prompt_target.ipynb
             - file: code/targets/open_ai_completions.ipynb
             - file: code/targets/github_copilot_target.ipynb

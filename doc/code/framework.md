@@ -267,9 +267,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   links remain detectable on tool and assistant continuations.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
 - A target that runs tools itself bounds its tool loop. When a tool raises `ToolInfrastructureError`
-  because its own infrastructure failed, the target answers every pending call and ends the turn with
-  an error response whose metadata says why (`ToolLoopStop`), rather than asking the model to fix
-  infrastructure. `OpenAIResponseTarget` does this today.
+  because its own infrastructure failed, such as a `SandboxToolProvider` tool whose sandbox failed,
+  the target answers every pending call and ends the turn with an error response whose metadata says why
+  (`ToolLoopStop`), rather than asking the model to fix infrastructure. `OpenAIResponseTarget` does this today.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
 
@@ -401,6 +401,10 @@ The below talks about responsibilities of most modules in the PyRIT library
   from `pyrit._code_execution`. Execution inputs and results are private types in `pyrit.models.code_execution`.
 - `runtime_profile_name` selects a client-owned configuration by name, not by supplying an image or command.
   Clients advertise the available names through `get_runtime_profile_names()`.
+- Clients declare their runtimes and per-call limits (input and argument size, output size, default and
+  maximum timeout) in `get_capabilities()`. A request that does not fit raises `SandboxInputError` before
+  anything runs, so a caller or a model can correct it; `SandboxCapabilities.validate_request` performs the check.
+- Each invocation runs in a fresh environment; clients keep nothing between calls.
 - PyRIT does not own environments. The one-image Docker example is the only exception:
   `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
 - **Does not own**: interpreting results, scoring criteria, message or seed creation, memory
