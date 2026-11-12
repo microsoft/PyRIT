@@ -18,7 +18,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_event_async
 
-from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError, docker_client
+from pyrit._code_execution import (
+    DockerRuntimeProfile,
+    DockerSandboxClient,
+    SandboxClient,
+    SandboxExecutionError,
+    SandboxInputError,
+    docker_client,
+)
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
 from pyrit.models.code_execution import _ProgramInvocation, _SandboxRun
 
@@ -658,7 +665,7 @@ async def test_repeated_cancellation_drains_process_cleanup_async(client: Docker
 
 @pytest.mark.parametrize("case", ["empty", "unknown", "missing-client"])
 async def test_invalid_requests_fail_before_execution_async(client: DockerSandboxClient, case: str) -> None:
-    with pytest.raises(SandboxExecutionError if case == "missing-client" else ValueError):
+    with pytest.raises(SandboxExecutionError if case == "missing-client" else SandboxInputError):
         await client.execute_async(
             program="print(1)",
             runtime_profile_name="unknown" if case == "unknown" else "python",
@@ -686,3 +693,63 @@ def test_profiles_are_explicit_trusted_configuration() -> None:
         DockerSandboxClient(profiles={})
     with pytest.raises(ValueError):
         DockerSandboxClient(profiles={"bad name": DockerRuntimeProfile(image=_IMAGE, command=("python3",))})
+
+
+def test_capabilities_declare_the_configured_runtimes_and_limits(client: DockerSandboxClient) -> None:
+    capabilities = client.get_capabilities()
+    assert isinstance(client, SandboxClient)
+    assert capabilities.get_runtime_profile_names() == client.get_runtime_profile_names() == frozenset({"python"})
+    assert capabilities.default_timeout_seconds == capabilities.max_timeout_seconds == 10.0
+    assert capabilities.max_output_bytes == 64_000 and capabilities.max_arguments_bytes == 16_384
+
+
+def test_profile_names_that_differ_only_in_punctuation_are_allowed() -> None:
+    profile = DockerRuntimeProfile(image=_IMAGE, command=("python3",))
+    client = DockerSandboxClient(profiles={"py-3": profile, "py_3": profile})
+    assert client.get_runtime_profile_names() == frozenset({"py-3", "py_3"})
+
+
+@pytest.mark.parametrize(
+    ("invocation", "timeout_seconds", "message"),
+    [
+        (_ProgramInvocation(arguments=("x" * 20_000,)), None, "standard input"),
+        (_ProgramInvocation(stdin="\ud800"), None, "not valid UTF-8"),
+        (_ProgramInvocation(), 10.5, "at most 10"),
+        (_ProgramInvocation(), 0, "more than 0"),
+    ],
+)
+async def test_requests_over_the_limits_are_rejected_before_docker_is_called_async(
+    client: DockerSandboxClient, invocation: _ProgramInvocation, timeout_seconds: float | None, message: str
+) -> None:
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+        patch.object(client, "_control_async", _control()) as control,
+        pytest.raises(SandboxInputError, match=message),
+    ):
+        await client.execute_async(
+            program="print(1)",
+            runtime_profile_name="python",
+            invocations=(invocation,),
+            timeout_seconds=timeout_seconds,
+        )
+    launch.assert_not_awaited()
+    control.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("timeout_seconds", "expected"), [(None, 10.0), (2.5, 2.5)])
+async def test_each_invocation_gets_the_requested_timeout_async(
+    client: DockerSandboxClient, timeout_seconds: float | None, expected: float
+) -> None:
+    run = AsyncMock(side_effect=AssertionError("stop after recording the timeout"))
+    with (
+        patch.object(client, "_control_async", _control()),
+        patch.object(client, "_run_invocation_async", run),
+        pytest.raises(AssertionError, match="stop after"),
+    ):
+        await client.execute_async(
+            program="print(1)",
+            runtime_profile_name="python",
+            invocations=(_ProgramInvocation(),),
+            timeout_seconds=timeout_seconds,
+        )
+    assert run.await_args.kwargs["timeout_seconds"] == expected

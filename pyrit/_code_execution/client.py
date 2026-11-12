@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from pyrit._code_execution.capabilities import SandboxCapabilities
     from pyrit.models import ComponentIdentifier
     from pyrit.models.code_execution import _ProgramInvocation, _RuntimeProfileName, _SandboxRun
 
@@ -22,6 +23,10 @@ class SandboxExecutionError(Exception):
     """
 
 
+class SandboxInputError(ValueError):
+    """The request does not fit the sandbox, so nothing ran. The caller, or a model, can correct it."""
+
+
 @runtime_checkable
 class SandboxClient(Protocol):
     """
@@ -29,7 +34,8 @@ class SandboxClient(Protocol):
 
     Each invocation runs in a fresh environment. The client requests execution and cleanup,
     and waits for cleanup before a cancelled call returns. It does not set up the backend
-    service, build images, or retain environments between calls.
+    service, build images, or retain environments between calls. It declares its runtimes and
+    limits in ``get_capabilities`` and checks every request against them before anything runs.
     A runtime profile is a trusted name the client maps to its own configuration; the program
     cannot choose an image or a command. The caller supplies the running backend and trusted
     runtimes, and decides how to use the returned results.
@@ -43,8 +49,17 @@ class SandboxClient(Protocol):
         """Return the names that select this client's configured runtimes."""
         ...
 
+    def get_capabilities(self) -> SandboxCapabilities:
+        """Return the client's runtimes and the limits each call must fit."""
+        ...
+
     async def execute_async(
-        self, *, program: str, runtime_profile_name: _RuntimeProfileName, invocations: tuple[_ProgramInvocation, ...]
+        self,
+        *,
+        program: str,
+        runtime_profile_name: _RuntimeProfileName,
+        invocations: tuple[_ProgramInvocation, ...],
+        timeout_seconds: float | None = None,
     ) -> _SandboxRun:
         """
         Run each invocation of the program once, in order, in a fresh isolated environment.
@@ -54,12 +69,14 @@ class SandboxClient(Protocol):
             runtime_profile_name (_RuntimeProfileName): One of the names returned by
                 ``get_runtime_profile_names``. The client owns the configuration selected by this name.
             invocations (tuple[_ProgramInvocation, ...]): A nonempty sequence of arguments and input.
+            timeout_seconds (float | None): The time limit of each invocation, at most the declared
+                ``max_timeout_seconds``. Defaults to the declared ``default_timeout_seconds``.
 
         Returns:
             _SandboxRun: The invocation results and any execution gaps or cleanup warnings.
 
         Raises:
-            ValueError: If the runtime profile is unsupported or there are no invocations.
+            SandboxInputError: If the request does not fit the declared capabilities; nothing ran.
             SandboxExecutionError: If the sandbox could not run the program at all.
         """
         ...

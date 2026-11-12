@@ -13,12 +13,16 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
-    from pyrit._code_execution.client import SandboxClient, SandboxExecutionError
+    from pyrit._code_execution.capabilities import RuntimeProfile, SandboxCapabilities
+    from pyrit._code_execution.client import SandboxClient, SandboxExecutionError, SandboxInputError
     from pyrit._code_execution.docker_client import DockerRuntimeProfile, DockerSandboxClient
 
 _LAZY_EXPORTS: dict[str, str] = {
     "SandboxClient": "pyrit._code_execution.client",
     "SandboxExecutionError": "pyrit._code_execution.client",
+    "SandboxInputError": "pyrit._code_execution.client",
+    "RuntimeProfile": "pyrit._code_execution.capabilities",
+    "SandboxCapabilities": "pyrit._code_execution.capabilities",
     "DockerRuntimeProfile": "pyrit._code_execution.docker_client",
     "DockerSandboxClient": "pyrit._code_execution.docker_client",
 }

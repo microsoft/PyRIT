@@ -401,6 +401,10 @@ The below talks about responsibilities of most modules in the PyRIT library
   from `pyrit._code_execution`. Execution inputs and results are private types in `pyrit.models.code_execution`.
 - `runtime_profile_name` selects a client-owned configuration by name, not by supplying an image or command.
   Clients advertise the available names through `get_runtime_profile_names()`.
+- Clients declare their runtimes and per-call limits (input and argument size, output size, default and
+  maximum timeout) in `get_capabilities()`. A request that does not fit raises `SandboxInputError` before
+  anything runs, so a caller or a model can correct it; `SandboxCapabilities.validate_request` performs the check.
+- Each invocation runs in a fresh environment; clients keep nothing between calls.
 - PyRIT does not own environments. The one-image Docker example is the only exception:
   `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
 - **Does not own**: interpreting results, scoring criteria, message or seed creation, memory

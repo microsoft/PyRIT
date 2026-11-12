@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
+from pyrit._code_execution.capabilities import RuntimeProfile, SandboxCapabilities
 from pyrit._code_execution.client import SandboxExecutionError
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import ComponentIdentifier
@@ -163,6 +164,9 @@ class DockerSandboxClient:
 
     _READ_CHUNK_BYTES = 1 << 16
     _CONTROL_TIMEOUT_SECONDS = 30.0
+    # The program and its input travel through files and pipes; its arguments go on a command line.
+    _MAX_INPUT_BYTES = 64 << 20
+    _MAX_ARGUMENTS_BYTES = 16_384
 
     def __init__(
         self,
@@ -208,6 +212,14 @@ class DockerSandboxClient:
         self._pids_limit = pids_limit
         self._max_output_bytes = max_output_bytes
         self._temp_root = Path(tempfile.gettempdir())
+        self._capabilities = SandboxCapabilities(
+            runtime_profiles=tuple(RuntimeProfile(name=name) for name in sorted(self._profiles)),
+            max_input_bytes=self._MAX_INPUT_BYTES,
+            max_arguments_bytes=self._MAX_ARGUMENTS_BYTES,
+            max_output_bytes=self._max_output_bytes,
+            max_timeout_seconds=self._timeout_seconds,
+            default_timeout_seconds=self._timeout_seconds,
+        )
 
     def get_identifier(self) -> ComponentIdentifier:
         """
@@ -245,8 +257,23 @@ class DockerSandboxClient:
         """
         return frozenset(self._profiles)
 
+    def get_capabilities(self) -> SandboxCapabilities:
+        """
+        Return the configured runtimes and limits.
+
+        Returns:
+            SandboxCapabilities: One runtime per profile. The configured timeout is both the default and
+            the limit, and arguments are limited to 16 KiB because they go on a command line.
+        """
+        return self._capabilities
+
     async def execute_async(
-        self, *, program: str, runtime_profile_name: _RuntimeProfileName, invocations: tuple[_ProgramInvocation, ...]
+        self,
+        *,
+        program: str,
+        runtime_profile_name: _RuntimeProfileName,
+        invocations: tuple[_ProgramInvocation, ...],
+        timeout_seconds: float | None = None,
     ) -> _SandboxRun:
         """
         Run each invocation in a fresh container, in order.
@@ -256,21 +283,26 @@ class DockerSandboxClient:
             runtime_profile_name (_RuntimeProfileName): A key from ``profiles``, also returned by
                 ``get_runtime_profile_names``. The key selects a trusted image and command.
             invocations (tuple[_ProgramInvocation, ...]): The arguments and input of each run.
+            timeout_seconds (float | None): The time limit of each run, at most the configured
+                ``timeout_seconds``, which is also the default.
 
         Returns:
             _SandboxRun: One event per invocation that ran. If the sandbox fails after some
             invocations ran, the run holds those events and the reason it stopped.
 
         Raises:
-            ValueError: If the runtime profile is not configured or there are no invocations.
+            SandboxInputError: If the runtime profile is not configured, there are no invocations,
+                or the request exceeds a limit. Nothing runs.
             SandboxExecutionError: If the backend cannot enforce the limits, the image declares
                 volumes, or no invocation could be run.
         """
-        profile = self._profiles.get(runtime_profile_name)
-        if profile is None:
-            raise ValueError(f"Runtime profile name {runtime_profile_name!r} is not configured.")
-        if not invocations:
-            raise ValueError("At least one program invocation is required.")
+        timeout = self._capabilities.validate_request(
+            program=program,
+            runtime_profile_name=runtime_profile_name,
+            invocations=invocations,
+            timeout_seconds=timeout_seconds,
+        )
+        profile = self._profiles[runtime_profile_name]
         await self._validate_backend_async(profile=profile)
         workspace_dir = self._temp_root / f"pyrit-program-{uuid.uuid4().hex}"
         program_dir = workspace_dir / "program"
@@ -290,6 +322,7 @@ class DockerSandboxClient:
                         profile=profile,
                         program_dir=program_dir,
                         invocation=invocation,
+                        timeout_seconds=timeout,
                     )
                 except SandboxExecutionError as error:
                     if not events:
@@ -363,6 +396,7 @@ class DockerSandboxClient:
         profile: DockerRuntimeProfile,
         program_dir: Path,
         invocation: _ProgramInvocation,
+        timeout_seconds: float,
     ) -> tuple[_ProgramExecutionEvent, str | None]:
         """
         Run one invocation in a new container and remove the container afterwards.
@@ -381,7 +415,7 @@ class DockerSandboxClient:
             name=name, profile=profile, program_dir=program_dir, resolved_command=resolved_command
         )
         started = time.monotonic()
-        deadline = started + self._timeout_seconds
+        deadline = started + timeout_seconds
         startup = asyncio.create_task(self._start_client_async(argv=argv))
         cleanup_warning: str | None = None
         try:
