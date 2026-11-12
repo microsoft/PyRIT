@@ -227,9 +227,6 @@ SQL-authentication URL with permission to create/drop test databases:
 RUN_ALL_TESTS=true uv run --frozen pytest tests/integration/memory/test_sqlserver_migrations_integration.py -v --timeout=300
 ```
 
-Maintainers must require `SQL Server migrations` in branch protection/rulesets to
-make it merge-blocking; this workflow does not change repository settings.
-
 ```{note}
 Avoid `pytest tests`. It collects the integration, end-to-end, and partner-integration tiers
 alongside the unit tests. The end-to-end tier is not gated behind `RUN_ALL_TESTS`, and its
