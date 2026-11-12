@@ -106,7 +106,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support
-# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques assert_package red_teaming tap
+# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques assert_package red_teaming
 # ```
 #
 # By default each group runs twice:
@@ -119,6 +119,9 @@ await output_scenario_async(scenario_result)
 #   any, opens the conversation, and the tester gets no judge feedback. It's offered only by this
 #   scenario, and it skips groups without stored tester instructions.
 #
+# Tester tasks are stored explicitly in `AssertGroupMetadata.tester_instructions`, not a prompt's
+# display description. Regenerate older datasets to populate this field, or set it when authoring groups.
+#
 # Any registered attack technique can be selected with `--techniques`. For example, `red_teaming`
 # runs the same attack with the group's stored PyRIT tester prompt, a shorter prompt that states the
 # objective alongside the tester instructions. Groups with stored tester instructions run only with
@@ -130,6 +133,9 @@ await output_scenario_async(scenario_result)
 # ASSERT scenario case. Techniques that take a turn count need a target that natively keeps
 # multi-turn history, because the judges read the whole conversation; with other targets they're
 # skipped or rejected the same way. Results are grouped by technique. The scenario parameters are:
+#
+# Techniques with incompatible scoring configurations, such as TAP, are also skipped or rejected;
+# ASSERT never replaces its policy judges with a technique's default scorer.
 #
 # - `max_turns`: target turns for techniques that take a turn count. Defaults to 6, as in ASSERT.
 #   A registered technique that sets its own turn count, such as `goat`, keeps it.

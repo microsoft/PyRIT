@@ -220,25 +220,7 @@ class AssertJudgePreset(_AssertJudgeModel):
         try:
             return cls.model_validate(dict(loaded))
         except ValidationError as error:
-            raise ValueError(f"Invalid judge preset file {path}: {describe_validation_errors(error)}") from None
-
-
-def describe_validation_errors(error: ValidationError) -> str:
-    """
-    Describe validation errors by field location and reason, without the rejected values.
-
-    Values are omitted so that errors about externally supplied input can't echo file contents.
-
-    Args:
-        error (ValidationError): The validation error.
-
-    Returns:
-        str: One ``location: message`` entry per error, separated by semicolons.
-    """
-    return "; ".join(
-        f"{'.'.join(str(part) for part in item['loc']) or 'value'}: {item['msg']}"
-        for item in error.errors(include_input=False, include_url=False, include_context=False)
-    )
+            raise ValueError(f"Invalid judge preset file {path}: {error}") from error
 
 
 class AssertJudgeConfig(_AssertJudgeModel):

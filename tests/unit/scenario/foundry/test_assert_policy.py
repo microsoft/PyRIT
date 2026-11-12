@@ -13,13 +13,14 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import ValidationError
 from unit.assert_mocks import make_assert_config, make_assert_result, make_assert_taxonomy
 from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.converter import Base64Converter
 from pyrit.datasets import AssertProvider
-from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -42,6 +43,7 @@ from pyrit.models import (
     SeedObjective,
     construct_response_from_request,
 )
+from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry
 from pyrit.scenario import (
@@ -1128,6 +1130,36 @@ async def test_assert_package_gives_each_group_its_own_instructions_async(harnes
         assert sum(text in system for text in instructions) == 1
 
 
+async def test_assert_package_task_does_not_depend_on_display_description_async(harness: _Harness) -> None:
+    result = _result(group_count=1)
+    group = result.seed_groups[0]
+    instructions = AssertGroupMetadata.from_metadata(group.objective.metadata).tester_instructions
+    assert instructions is not None
+    assert group.adversarial_prompts is not None
+    assert group.adversarial_prompts.system_prompt is not None
+    group.adversarial_prompts.system_prompt.description = "A description for the dataset browser."
+    await _store_async(name="assert_a", result=result)
+    await harness.run_async(harness.scenario(), include_baseline=False, max_turns=1, **_datasets("assert_a"))
+
+    assert all(instructions in system for system in harness.adversarial_systems)
+    assert all("A description for the dataset browser." not in system for system in harness.adversarial_systems)
+
+
+async def test_legacy_descriptions_are_not_inferred_as_tester_tasks_async(harness: _Harness) -> None:
+    result = _result(group_count=1)
+    result.seed_groups[0].objective.metadata[AssertGroupMetadata.METADATA_KEY].pop("tester_instructions")
+    await _store_async(name="assert_a", result=result)
+    args = {
+        "scenario_techniques": [_technique("assert_package")],
+        "include_baseline": False,
+        **_datasets("assert_a"),
+    }
+    with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
+        await harness.initialize_async(harness.scenario(), **args)
+    with pytest.raises(IncompatibleTechniqueError, match="regenerate legacy groups"):
+        await harness.initialize_async(harness.scenario(), incompatible_technique_policy="raise", **args)
+
+
 async def test_assert_package_needs_tester_instructions_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))
     await _store_async(
@@ -1211,6 +1243,71 @@ async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harn
         **_datasets("assert_b"),
     )
     assert {attack.display_group for attack in scenario._atomic_attacks} == {"prompt_sending"}
+
+
+@pytest.mark.parametrize("technique", ["assert_package", "red_teaming"])
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+def test_readiness_uses_the_execution_history_requirements(harness: _Harness, technique: str, policy: str) -> None:
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    args = {
+        "objective_target": harness.objective,
+        "scenario_techniques": [_technique(technique)],
+        "incompatible_technique_policy": policy,
+    }
+    scenario = harness.scenario()
+    scenario.set_params_from_args(args=args)
+    assert any(issue.role == "objective_target" for issue in scenario.get_readiness().issues)
+
+    scenario.set_params_from_args(
+        args={**args, "scenario_techniques": [_technique("prompt_sending"), _technique(technique)]}
+    )
+    assert any(issue.role == "objective_target" for issue in scenario.get_readiness().issues) == (policy == "raise")
+
+
+@pytest.mark.parametrize("policy", ["skip", "raise"])
+async def test_incompatible_scoring_config_uses_scenario_policy_async(harness: _Harness, policy: str) -> None:
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [AttackTechniqueFactory(name="tap", attack_class=TreeOfAttacksWithPruningAttack)]
+    )
+    _build_assert_policy_technique.cache_clear()
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    args = {
+        "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
+        "incompatible_technique_policy": policy,
+        "include_baseline": False,
+        **_datasets("assert_a"),
+    }
+    if policy == "raise":
+        with pytest.raises(ScenarioConfigurationError, match="TAPAttackScoringConfig"):
+            await harness.initialize_async(harness.scenario(), **args)
+    else:
+        scenario = await harness.initialize_async(harness.scenario(), **args)
+        assert {attack.display_group for attack in scenario._atomic_attacks} == {"prompt_sending"}
+
+    scenario = harness.scenario()
+    scenario.set_params_from_args(
+        args={"objective_target": harness.objective, "scenario_techniques": [_technique("tap")]}
+    )
+    assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues)
+    scenario.set_params_from_args(
+        args={
+            "objective_target": harness.objective,
+            "scenario_techniques": [_technique("prompt_sending"), _technique("tap")],
+            "incompatible_technique_policy": policy,
+        }
+    )
+    assert any(issue.role == "objective_scorer" for issue in scenario.get_readiness().issues) == (policy == "raise")
+
+
+def test_invalid_judge_settings_preserve_validation_cause(harness: _Harness) -> None:
+    scenario = harness.scenario()
+    scenario.set_params_from_args(args={"judge_presets": ["Not A Preset"]})
+    with pytest.raises(ValueError, match="Invalid ASSERT judge settings") as error:
+        scenario.get_readiness()
+    assert isinstance(error.value.__cause__, ValidationError)
+    assert any(item["input"] == "Not A Preset" for item in error.value.__cause__.errors())
 
 
 async def test_turn_settings_a_technique_sets_itself_are_kept_async(harness: _Harness) -> None:

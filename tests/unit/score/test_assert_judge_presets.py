@@ -4,6 +4,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.models import AssertJudgeDimension
 from pyrit.models.score.assert_judge import AssertJudgeConfig
@@ -72,13 +73,17 @@ def test_load_preset_file_rejects_missing_files(tmp_path: Path) -> None:
         load_assert_judge_preset_file(tmp_path / "missing.yaml")
 
 
-def test_invalid_preset_file_errors_do_not_echo_its_contents(tmp_path: Path) -> None:
-    path = tmp_path / "deploy.yml"
-    path.write_text("trigger: secret-branch-name\nname: Not A Preset\n", encoding="utf-8")
+def test_invalid_preset_file_errors_preserve_validation_details(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(
+        "kind: judge_preset\nname: test\ndimensions:\n  quality:\n    description: 123\n    rubric: Good?\n",
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError, match="Invalid judge preset file") as error:
         load_assert_judge_preset_file(path)
-    assert "secret-branch-name" not in str(error.value)
-    assert "Not A Preset" not in str(error.value)
+    assert isinstance(error.value.__cause__, ValidationError)
+    assert any(item["input"] == 123 for item in error.value.__cause__.errors())
+    assert "123" in str(error.value)
 
 
 def test_default_config_resolves_to_built_ins() -> None:

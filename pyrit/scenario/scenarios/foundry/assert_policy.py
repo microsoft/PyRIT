@@ -35,7 +35,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
-from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
+from pyrit.models.score.assert_judge import AssertJudgeConfig
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
@@ -47,6 +47,7 @@ from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
     TechniqueRequirements,
     check_target_compatibility,
     filter_seed_groups,
@@ -374,6 +375,35 @@ class AssertPolicy(Scenario):
             ScenarioReadiness: Execution-role bindings and any missing judge target.
         """
         readiness = super().get_readiness()
+        factories = self._get_readiness_factories()
+        selected = {
+            technique.value: factories[technique.value]
+            for technique in self._scenario_techniques
+            if technique.value in factories
+        }
+        incompatible = {
+            name: reason for name, factory in selected.items() if (reason := self._get_scoring_incompatibility(factory))
+        }
+        usable = any(
+            name not in incompatible
+            and (
+                self._objective_target is None
+                or not self._get_target_requirements(factory).check_target(
+                    target=self._objective_target, attack_class=factory.attack_class
+                )
+            )
+            for name, factory in selected.items()
+        )
+        if incompatible and (self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE or not usable):
+            for name, reason in incompatible.items():
+                readiness.issues.append(
+                    ScenarioConfigurationIssue(
+                        role="objective_scorer",
+                        component=name,
+                        reason=reason,
+                        remediation="Select a technique that accepts ASSERT's scoring configuration.",
+                    )
+                )
         if self._assert_objective_scorer is not None:
             return readiness
         try:
@@ -546,7 +576,7 @@ class AssertPolicy(Scenario):
                 objective_dimension=self.params["objective_dimension"],
             )
         except ValidationError as error:
-            raise ValueError(f"Invalid ASSERT judge settings: {describe_validation_errors(error)}") from None
+            raise ValueError(f"Invalid ASSERT judge settings: {error}") from error
 
     def _has_no_datasets(self) -> bool:
         return self._dataset_config.source_kind is DatasetSourceKind.MEMORY and not self._dataset_config.dataset_names
@@ -761,6 +791,12 @@ class AssertPolicy(Scenario):
                 policy=context.incompatible_technique_policy,
             ):
                 continue
+            if reason := self._get_scoring_incompatibility(factory):
+                message = f"Technique '{name}' is incompatible: {reason}"
+                if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
+                    raise IncompatibleTechniqueError(message)
+                logger.warning("Skipping %s", message)
+                continue
             factory = self._apply_turn_limit(factory)
             for dataset_name, groups in context.seed_groups_by_dataset.items():
                 selected = filter_seed_groups(
@@ -801,6 +837,22 @@ class AssertPolicy(Scenario):
         target = requirements.objective_target
         native = target.native_required | {CapabilityName.MULTI_TURN}
         return replace(requirements, objective_target=replace(target, native_required=native))
+
+    @staticmethod
+    def _get_scoring_incompatibility(factory: AttackTechniqueFactory) -> str | None:
+        """
+        Describe a narrowed scoring contract that cannot accept ASSERT's configuration.
+
+        Args:
+            factory (AttackTechniqueFactory): The selected attack technique.
+
+        Returns:
+            str | None: The incompatibility reason, or None when ASSERT's scoring is accepted.
+        """
+        required = factory.scoring_config_type
+        if required is not None and not issubclass(AttackScoringConfig, required):
+            return f"{required.__name__} cannot accept ASSERT's objective and auxiliary scoring configuration."
+        return None
 
     def _apply_turn_limit(self, factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
         """
@@ -893,14 +945,13 @@ class AssertPolicy(Scenario):
         """
         if cls._get_tester_instructions(group) is None:
             raise IncompatibleTechniqueError(
-                "The group stores no tester instructions; generate groups with include_adversarial_prompt=True."
+                "The group stores no tester instructions in AssertGroupMetadata.tester_instructions; "
+                "regenerate legacy groups with include_adversarial_prompt=True or set that field explicitly."
             )
 
     @staticmethod
     def _get_tester_instructions(group: AttackSeedGroup) -> str | None:
-        prompts = group.adversarial_prompts
-        description = prompts.system_prompt.description if prompts and prompts.system_prompt else None
-        return description.strip() if description and description.strip() else None
+        return AssertGroupMetadata.from_metadata(group.objective.metadata).tester_instructions
 
     def _build_baselines(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
