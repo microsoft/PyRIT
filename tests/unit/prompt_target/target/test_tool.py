@@ -181,6 +181,35 @@ async def test_identifier_does_not_depend_on_tool_discovery(patch_central_databa
     assert "tools" not in targets[1].get_identifier().params
 
 
+async def test_openai_response_target_reports_advertised_function_tools(patch_central_database) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    provider.get_tools_async = AsyncMock(return_value=[add])
+    declaration = {
+        "type": "function",
+        "name": "send_email",
+        "description": "Send an email.",
+        "parameters": {"type": "object", "properties": {"to": {"type": "string"}}},
+    }
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tool_providers=[provider],
+        custom_functions={"legacy": AsyncMock()},
+        extra_body_parameters={"tools": [declaration, {"type": "web_search_preview"}]},
+    )
+
+    definitions = await target.get_tool_definitions_async()
+
+    assert [definition.model_dump() for definition in definitions] == [
+        {"name": "send_email", "description": "Send an email.", "parameters": declaration["parameters"]},
+        {"name": "add", "description": add.description, "parameters": add.parameters},
+        {"name": "legacy", "description": "", "parameters": {"type": "object"}},
+    ]
+    provider.get_tools_async.assert_awaited_once()
+
+
 @pytest.mark.parametrize("from_provider", [False, True])
 @pytest.mark.parametrize("legacy_registration", ["callback", "declaration"])
 async def test_send_rejects_conflicting_tool_registrations(

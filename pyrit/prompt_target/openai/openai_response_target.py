@@ -36,6 +36,7 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
+    ToolDefinition,
     ToolExecutionMetadata,
     ToolLoopStop,
     ToolLoopStopReason,
@@ -316,6 +317,34 @@ class OpenAIResponseTarget(OpenAITarget):
             tool.get("type") in self._WEB_SEARCH_TOOL_TYPES for tool in tools
         ):
             raise ValueError("Required web search needs a configured tool and supports_web_search=True.")
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition]:
+        """
+        Report the function tools advertised to the endpoint.
+
+        Includes function declarations in ``extra_body_parameters``, the configured tools
+        (discovering provider tools first), and legacy ``custom_functions``, which have no schema and
+        so accept any argument object. Provider-hosted tools such as web search are not function tools
+        and are omitted. No tool executes.
+
+        Returns:
+            list[ToolDefinition]: The advertised function tools.
+        """
+        await self._initialize_tools_async()
+        declared = [
+            ToolDefinition(
+                name=declaration["name"],
+                description=declaration.get("description") or "",
+                parameters=declaration.get("parameters") or {"type": "object", "properties": {}},
+            )
+            for declaration in (self._extra_body_parameters or {}).get("tools", [])
+            if declaration.get("type") == "function"
+        ]
+        return [
+            *declared,
+            *(tool.to_definition() for tool in self._tools),
+            *(ToolDefinition(name=name, parameters={"type": "object"}) for name in self._custom_functions),
+        ]
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

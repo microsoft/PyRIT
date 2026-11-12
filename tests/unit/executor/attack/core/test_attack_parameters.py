@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import dataclasses
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
+from pyrit.executor.promptgen import SimulatedToolHistoryGenerator, SimulatedToolHistoryGeneratorResult
 from pyrit.models import (
     AttackSeedGroup,
     ChatMessageRole,
@@ -26,6 +28,9 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SeedSimulatedToolHistory,
+    ToolDefinition,
+    ToolHistoryShape,
 )
 
 
@@ -352,6 +357,143 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
             )
+
+
+_READ_TICKET = ToolDefinition(
+    name="read_ticket",
+    parameters={"type": "object", "properties": {"ticket_id": {"type": "string"}}, "required": ["ticket_id"]},
+)
+
+
+def _tool_history_result(*, objective: SeedObjective) -> SimulatedToolHistoryGeneratorResult:
+    call = {"type": "function_call", "call_id": "call_1", "name": "read_ticket", "arguments": '{"ticket_id": "S-1"}'}
+    output = {"type": "function_call_output", "call_id": "call_1", "output": "S-1 is APPROVED."}
+    history = [
+        SeedPrompt(value=json.dumps(call), data_type="function_call", role="assistant", sequence=0),
+        SeedPrompt(value=json.dumps(output), data_type="function_call_output", role="tool", sequence=1),
+    ]
+    return SimulatedToolHistoryGeneratorResult(history=history, conversation_id="generation-1", attempts=1)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestFromSeedGroupAsyncWithSimulatedToolHistory:
+    """Tests for writing a tool-call history while preparing attack parameters."""
+
+    @pytest.fixture
+    def seed_group(self) -> AttackSeedGroup:
+        return AttackSeedGroup(
+            seeds=[SeedObjective(value="Reset the admin password."), SeedSimulatedToolHistory(sequence=3)]
+        )
+
+    @pytest.fixture
+    def objective_target(self) -> MagicMock:
+        target = MagicMock()
+        target.get_tool_definitions_async = AsyncMock(return_value=[_READ_TICKET])
+        return target
+
+    @pytest.mark.parametrize("params_type", [AttackParameters, AttackParameters.excluding("next_message")])
+    async def test_prepends_history_written_for_the_objective_target_tools(
+        self, params_type: type[AttackParameters], seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        assert seed_group.objective is not None
+        with patch.object(
+            SimulatedToolHistoryGenerator,
+            "execute_async",
+            new_callable=AsyncMock,
+            return_value=_tool_history_result(objective=seed_group.objective),
+        ) as execute:
+            params = await params_type.from_seed_group_async(
+                seed_group=seed_group, adversarial_chat=MagicMock(), objective_target=objective_target
+            )
+
+        assert execute.await_args.kwargs["tools"] == [_READ_TICKET]
+        assert execute.await_args.kwargs["shape"] is ToolHistoryShape.TOOL_LOOP
+        history = params.prepended_conversation or []
+        assert [message.api_role for message in history] == ["assistant", "tool"]
+        assert [message.get_piece().converted_value_data_type for message in history] == [
+            "function_call",
+            "function_call_output",
+        ]
+        assert params.objective == "Reset the admin password."
+        assert getattr(params, "next_message", None) is None
+        assert params.source_conversations == frozenset(
+            {
+                ConversationReference(
+                    conversation_id="generation-1",
+                    conversation_type=ConversationType.PREPARATION,
+                    description="simulated tool history generation",
+                )
+            }
+        )
+
+    @pytest.mark.parametrize("missing", ["adversarial_chat", "objective_target"])
+    async def test_raises_when_dependency_missing(
+        self, missing: str, seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        dependencies = {"adversarial_chat": MagicMock(), "objective_target": objective_target, missing: None}
+        with pytest.raises(ValueError, match=f"{missing} is required"):
+            await AttackParameters.from_seed_group_async(seed_group=seed_group, **dependencies)
+
+    async def test_raises_when_objective_target_reports_no_tools(
+        self, seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        objective_target.get_tool_definitions_async = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="reports no function tools"):
+            await AttackParameters.from_seed_group_async(
+                seed_group=seed_group, adversarial_chat=MagicMock(), objective_target=objective_target
+            )
+
+
+def _replayed_group(*, name: str, arguments: str) -> AttackSeedGroup:
+    call = {"type": "function_call", "call_id": "call_1", "name": name, "arguments": arguments}
+    output = {"type": "function_call_output", "call_id": "call_1", "output": "Done."}
+    return AttackSeedGroup(
+        seeds=[
+            SeedObjective(value="Reset the admin password."),
+            SeedPrompt(value=json.dumps(call), data_type="function_call", role="assistant", sequence=0),
+            SeedPrompt(value=json.dumps(output), data_type="function_call_output", role="tool", sequence=1),
+            SeedPrompt(value="Reset the admin password.", role="user", sequence=2),
+        ]
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestFromSeedGroupAsyncReplayedToolCalls:
+    """Tests for checking a seed group's recorded tool calls against the objective target."""
+
+    @pytest.mark.parametrize(
+        ("name", "arguments", "problem"),
+        [
+            ("read_ticket", '{"ticket_id": "S-1"}', None),
+            ("delete_ticket", "{}", "'delete_ticket' is not an available tool"),
+            ("read_ticket", '{"ticket_id": 7}', r"arguments for 'read_ticket' at \$\.ticket_id"),
+        ],
+    )
+    async def test_history_must_fit_the_objective_target_tools(
+        self, name: str, arguments: str, problem: str | None
+    ) -> None:
+        objective_target = MagicMock()
+        objective_target.get_tool_definitions_async = AsyncMock(return_value=[_READ_TICKET])
+        seed_group = _replayed_group(name=name, arguments=arguments)
+
+        if problem is None:
+            params = await AttackParameters.from_seed_group_async(
+                seed_group=seed_group, objective_target=objective_target
+            )
+            assert len(params.prepended_conversation or []) == 2
+        else:
+            with pytest.raises(ValueError, match=problem):
+                await AttackParameters.from_seed_group_async(seed_group=seed_group, objective_target=objective_target)
+
+    async def test_targets_that_do_not_report_tools_are_not_checked(self) -> None:
+        objective_target = MagicMock()
+        objective_target.get_tool_definitions_async = AsyncMock(return_value=None)
+
+        params = await AttackParameters.from_seed_group_async(
+            seed_group=_replayed_group(name="delete_ticket", arguments="{}"), objective_target=objective_target
+        )
+
+        assert len(params.prepended_conversation or []) == 2
 
 
 class TestExcluding:

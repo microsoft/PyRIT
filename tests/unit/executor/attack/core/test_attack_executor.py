@@ -35,6 +35,7 @@ from pyrit.models import (
     Message,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedToolHistory,
 )
 
 
@@ -622,6 +623,36 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
             assert captured_kwargs.get("adversarial_chat") is mock_adversarial_chat
             assert captured_kwargs.get("objective_scorer") is mock_objective_scorer
+
+    async def test_passes_objective_target_only_for_groups_with_tool_calls(self):
+        attack = create_mock_attack()
+        attack.execute_with_context_async.return_value = create_attack_result("Test")
+        attack.get_objective_target.return_value = objective_target = MagicMock()
+        call = '{"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{}"}'
+        plain = create_seed_group("Plain objective")
+        primed = AttackSeedGroup(seeds=[SeedObjective(value="Primed objective"), SeedSimulatedToolHistory()])
+        replayed = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Replayed objective"),
+                SeedPrompt(value=call, data_type="function_call", role="assistant", sequence=0),
+                SeedPrompt(value="Replayed objective", role="user", sequence=1),
+            ]
+        )
+        build_mock = AsyncMock(
+            side_effect=lambda **kwargs: AttackParameters(objective=kwargs["seed_group"].objective.value)
+        )
+
+        with patch.object(AttackParameters, "from_seed_group_async", new=build_mock):
+            await AttackExecutor().execute_attack_from_seed_groups_async(
+                attack=attack, seed_groups=[plain, primed, replayed]
+            )
+
+        kwargs_by_objective = {
+            build.kwargs["seed_group"].objective.value: build.kwargs for build in build_mock.call_args_list
+        }
+        assert "objective_target" not in kwargs_by_objective["Plain objective"]
+        assert kwargs_by_objective["Primed objective"]["objective_target"] is objective_target
+        assert kwargs_by_objective["Replayed objective"]["objective_target"] is objective_target
 
     async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
         """Test that explicit empty field_overrides still validate seed group length."""

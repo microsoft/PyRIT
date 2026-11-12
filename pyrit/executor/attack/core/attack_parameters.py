@@ -8,7 +8,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
-from pyrit.models import AttackSeedGroup, ConversationReference, Message, ScoringExpectation, SeedGroup
+from pyrit.models import (
+    AttackSeedGroup,
+    ConversationReference,
+    ConversationType,
+    Message,
+    ScoringExpectation,
+    SeedGroup,
+    SeedPrompt,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -97,6 +105,7 @@ class AttackParameters:
         seed_group: AttackSeedGroup,
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
+        objective_target: PromptTarget | None = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
@@ -105,13 +114,19 @@ class AttackParameters:
         Extracts standard fields from the seed group and applies any overrides.
         If the seed_group has a simulated conversation config,
         generates the simulated conversation using the provided adversarial_chat and scorer.
+        If it has a simulated tool history config, the adversarial_chat writes a tool-call
+        history against the tools the objective_target reports. When an objective_target that
+        reports its tools is given, every function call in the prepended history must use one
+        of those tools with arguments its schema accepts.
 
         Args:
             seed_group: The seed attack group to extract parameters from.
-            adversarial_chat: The adversarial chat target for generating simulated conversations.
-                Required if seed_group has a simulated conversation config.
+            adversarial_chat: The adversarial chat target for generating simulated history.
+                Required if seed_group has a simulated conversation or tool history config.
             objective_scorer: The scorer for evaluating simulated conversations.
                 Required if seed_group has a simulated conversation config.
+            objective_target: The target the attack sends to, whose tools the prepended history
+                must call. Required if seed_group has a simulated tool history config.
             **overrides: Field overrides to apply. Must be valid fields for this params type.
 
         Returns:
@@ -121,8 +136,10 @@ class AttackParameters:
             AdversarialChatResponseBlockedException: If simulated-conversation preparation was
                 blocked and this parameter type cannot represent a completed preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
-            ValueError: If overrides contain invalid fields, or if seed_group has simulated
-                conversation but adversarial_chat/scorer not provided.
+            ValueError: If overrides contain invalid fields, if seed_group has simulated
+                history but a required dependency is not provided, if the objective target
+                reports no tools for a simulated tool history, or if the prepended history calls
+                a tool the objective target does not offer.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import generate_simulated_conversation_async
@@ -205,6 +222,19 @@ class AttackParameters:
             # and will use the standard sequence-based logic for prepended_conversation/next_message
             if all_prompts:
                 extraction_group = SeedGroup(seeds=all_prompts)
+
+        if seed_group.simulated_tool_history_config is not None:
+            history, reference = await _generate_tool_history_async(
+                seed_group=seed_group, adversarial_chat=adversarial_chat, objective_target=objective_target
+            )
+            if "source_conversations" in valid_fields:
+                params["source_conversations"] = frozenset({reference})
+            extraction_group = SeedGroup(seeds=[*seed_group.prompts, *history])
+
+        if objective_target is not None:
+            await _check_prepended_tool_calls_async(
+                history=extraction_group.prepended_conversation or [], objective_target=objective_target
+            )
 
         # Use extraction_group properties for prepended_conversation/next_message
         if "next_message" in valid_fields:
@@ -299,12 +329,97 @@ class AttackParameters:
         original_method = _classmethod_descriptor.__func__
 
         async def from_seed_group_wrapper_async(
-            c: Any, /, *, seed_group: Any, adversarial_chat: Any = None, objective_scorer: Any = None, **ov: Any
+            c: Any,
+            /,
+            *,
+            seed_group: Any,
+            adversarial_chat: Any = None,
+            objective_scorer: Any = None,
+            objective_target: Any = None,
+            **ov: Any,
         ) -> Any:
             return await original_method(
-                c, seed_group=seed_group, adversarial_chat=adversarial_chat, objective_scorer=objective_scorer, **ov
+                c,
+                seed_group=seed_group,
+                adversarial_chat=adversarial_chat,
+                objective_scorer=objective_scorer,
+                objective_target=objective_target,
+                **ov,
             )
 
         new_cls.from_seed_group_async = classmethod(from_seed_group_wrapper_async)  # type: ignore[ty:unresolved-attribute]
 
         return new_cls  # type: ignore[ty:invalid-return-type]
+
+
+async def _generate_tool_history_async(
+    *,
+    seed_group: AttackSeedGroup,
+    adversarial_chat: PromptTarget | None,
+    objective_target: PromptTarget | None,
+) -> tuple[list[SeedPrompt], ConversationReference]:
+    """
+    Write a tool-call history for the seed group's objective against the objective target's tools.
+
+    Returns:
+        tuple[list[SeedPrompt], ConversationReference]: The history, placed at the configured
+            sequence, and the adversarial conversation that wrote it.
+
+    Raises:
+        ValueError: If a dependency is missing or the objective target reports no tools.
+    """
+    # Import here to avoid circular imports
+    from pyrit.executor.promptgen import SimulatedToolHistoryGenerator
+
+    config = seed_group.simulated_tool_history_config
+    assert config is not None and seed_group.objective is not None
+    if adversarial_chat is None:
+        raise ValueError("adversarial_chat is required when seed_group has a simulated tool history config")
+    if objective_target is None:
+        raise ValueError("objective_target is required when seed_group has a simulated tool history config")
+    tools = await objective_target.get_tool_definitions_async()
+    if not tools:
+        raise ValueError(
+            f"{type(objective_target).__name__} reports no function tools, so no tool history can be written for it. "
+            "Use a target that advertises function tools."
+        )
+    result = await SimulatedToolHistoryGenerator(
+        adversarial_chat=adversarial_chat,
+        system_prompt=config.adversarial_chat_system_prompt,
+        max_attempts=config.max_attempts,
+        max_messages=config.max_messages,
+    ).execute_async(objective=seed_group.objective, tools=tools, shape=config.shape)
+    history = [
+        prompt.model_copy(update={"sequence": config.sequence + index}) for index, prompt in enumerate(result.history)
+    ]
+    reference = ConversationReference(
+        conversation_id=result.conversation_id,
+        conversation_type=ConversationType.PREPARATION,
+        description="simulated tool history generation",
+    )
+    return history, reference
+
+
+async def _check_prepended_tool_calls_async(*, history: list[Message], objective_target: PromptTarget) -> None:
+    """
+    Reject a replayed history whose function calls the objective target could not have made.
+
+    Raises:
+        ValueError: If a call names a tool the target does not report, or passes arguments its
+            schema rejects. Targets that do not report their tools are not checked.
+    """
+    # Import here to avoid circular imports
+    from pyrit.prompt_target.common.tool_call_history import check_tool_calls
+
+    if not any(
+        piece.converted_value_data_type == "function_call" for message in history for piece in message.message_pieces
+    ):
+        return
+    tools = await objective_target.get_tool_definitions_async()
+    if tools is None:
+        return
+    issues = check_tool_calls(messages=history, tools=tools)
+    if issues:
+        raise ValueError(
+            f"The history calls tools that {type(objective_target).__name__} cannot use: " + " ".join(issues)
+        )

@@ -13,6 +13,7 @@ This module provides the core seed types used throughout PyRIT:
 - AttackSeedGroup: Attack-specific seed group with objectives and prepended conversations
 - AttackTechniqueSeedGroup: Technique-specific seed group where all seeds must be general strategies
 - SeedSimulatedConversation: Configuration for generating simulated conversations
+- SeedSimulatedToolHistory: Configuration for generating simulated tool-call histories
 - SeedDataset: Container for managing collections of seeds
 - SeedDatasetSummary: Aggregate statistics and metadata for stored seeds
 """
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         resolve_prompt_source,
         warn_prompt_path_deprecated,
     )
+    from pyrit.models.seeds.seed_simulated_tool_history import SeedSimulatedToolHistory, ToolHistoryShape
     from pyrit.models.seeds.yaml_seed_loader import (
         load_seed_dataset_from_yaml,
         load_seed_from_yaml,
@@ -74,8 +76,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedPrompt": "pyrit.models.seeds.seed_prompt",
     "SeedRecord": "pyrit.models.seeds.seed_record",
     "SeedSimulatedConversation": "pyrit.models.seeds.seed_simulated_conversation",
+    "SeedSimulatedToolHistory": "pyrit.models.seeds.seed_simulated_tool_history",
     "SeedUnion": "pyrit.models.seeds.seed_group",
     "SimulatedTargetSystemPromptPaths": "pyrit.models.seeds.seed_simulated_conversation",
+    "ToolHistoryShape": "pyrit.models.seeds.seed_simulated_tool_history",
 }
 
 __all__ = list(_LAZY_EXPORTS)

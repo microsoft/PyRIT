@@ -24,6 +24,7 @@ from pyrit.models import (
     RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
+    ToolDefinition,
     WebSearchConfig,
     WebSearchMode,
 )
@@ -233,6 +234,17 @@ class PromptTarget(Identifiable):
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
+
+    async def get_tool_definitions_async(self) -> list[ToolDefinition] | None:
+        """
+        Report the function tools this target advertises to its model.
+
+        Targets that advertise function tools override this. Reporting a tool never executes it.
+
+        Returns:
+            list[ToolDefinition] | None: The advertised tools, or None when this target cannot report them.
+        """
+        return None
 
     def validate_history(self, messages: Sequence[Message]) -> None:
         """

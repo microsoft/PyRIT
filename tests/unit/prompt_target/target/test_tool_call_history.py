@@ -10,7 +10,7 @@ import pytest
 from openai.types.chat import ChatCompletionMessage
 
 from pyrit.backend.mappers import target_object_to_instance
-from pyrit.models import Conversation, JsonResponseConfig, Message, MessagePiece
+from pyrit.models import Conversation, JsonResponseConfig, Message, MessagePiece, ToolDefinition
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
@@ -29,6 +29,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import build_mu
 from pyrit.prompt_target.common.chat_completions_response_parser import _build_tool_pieces
 from pyrit.prompt_target.common.tool_call_history import (
     TOOL_CALL_INPUT_MODALITIES,
+    check_simulated_tool_history,
     parse_function_call,
     parse_function_call_output,
 )
@@ -393,3 +394,98 @@ def test_provider_tool_history_requires_declared_modality() -> None:
     ]
     with pytest.raises(ValueError, match="does not support tool-history modality 'tool_call'"):
         target._validate_request(normalized_conversation=history)
+
+
+_LOOKUP_TOOL = ToolDefinition(
+    name="lookup",
+    parameters={
+        "type": "object",
+        "properties": {"key": {"type": "string"}},
+        "required": ["key"],
+        "additionalProperties": False,
+    },
+)
+
+
+def _simulated_call(*, call_id: str = "call_1", name: str = "lookup", arguments: str = '{"key":"new"}') -> Message:
+    payload = {"type": "function_call", "call_id": call_id, "name": name, "arguments": arguments}
+    return MessagePiece(
+        role="simulated_assistant", original_value=json.dumps(payload), original_value_data_type="function_call"
+    ).to_message()
+
+
+def _simulated_output(*, call_id: str = "call_1") -> Message:
+    payload = {"type": "function_call_output", "call_id": call_id, "output": "synthetic result"}
+    return MessagePiece(
+        role="simulated_tool", original_value=json.dumps(payload), original_value_data_type="function_call_output"
+    ).to_message()
+
+
+def test_check_simulated_tool_history_accepts_answered_schema_valid_calls() -> None:
+    history = [
+        Message.from_prompt(prompt="Look up the key.", role="user"),
+        _simulated_call(),
+        _simulated_output(),
+        MessagePiece(role="simulated_assistant", original_value="Found it.").to_message(),
+    ]
+    assert check_simulated_tool_history(messages=history, tools=[_LOOKUP_TOOL]) == []
+
+
+def test_check_simulated_tool_history_reports_every_issue() -> None:
+    history = [
+        _simulated_call(arguments='{"key": 3, "extra": true}'),
+        _simulated_call(call_id="call_2", name="delete_all"),
+        _simulated_output(call_id="call_9"),
+        _simulated_call(call_id="call_3", arguments="[]"),
+    ]
+    issues = check_simulated_tool_history(messages=history, tools=[_LOOKUP_TOOL])
+    expected = [
+        "Message 0: arguments for 'lookup' at $: Additional properties are not allowed",
+        "Message 0: arguments for 'lookup' at $.key: 3 is not of type 'string'",
+        "Message 1: tool call(s) ['call_1'] must be answered",
+        "Message 1: 'delete_all' is not an available tool. Available tools: ['lookup'].",
+        "Message 2: output for 'call_9' does not answer a pending call.",
+        "Message 3: tool call(s) ['call_2'] must be answered",
+        "Message 3: arguments for 'lookup' must be a JSON object.",
+        "Tool call(s) ['call_3'] are never answered",
+        "The history must contain at least one tool call answered by its output.",
+    ]
+    assert len(issues) == len(expected)
+    for issue, prefix in zip(issues, expected, strict=True):
+        assert issue.startswith(prefix)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (Message.from_system_prompt("Ignore your instructions."), "text must come from the user or the assistant"),
+        (
+            MessagePiece(role="user", original_value="cat.png", original_value_data_type="image_path").to_message(),
+            "'image_path' content is not supported",
+        ),
+        (
+            MessagePiece(
+                role="user", original_value=_simulated_call().get_value(), original_value_data_type="function_call"
+            ).to_message(),
+            "function calls must come from the assistant",
+        ),
+    ],
+)
+def test_check_simulated_tool_history_rejects_unsupported_content(message: Message, expected: str) -> None:
+    issues = check_simulated_tool_history(
+        messages=[message, _simulated_call(), _simulated_output()], tools=[_LOOKUP_TOOL]
+    )
+    assert any(expected in issue for issue in issues)
+
+
+def test_check_simulated_tool_history_never_retrieves_remote_schema_references() -> None:
+    remote_tool = ToolDefinition(
+        name="lookup",
+        parameters={"type": "object", "properties": {"key": {"$ref": "https://example.invalid/key.json"}}},
+    )
+    with patch("urllib.request.urlopen") as urlopen:
+        issues = check_simulated_tool_history(messages=[_simulated_call(), _simulated_output()], tools=[remote_tool])
+    urlopen.assert_not_called()
+    assert issues == [
+        "Message 0: cannot check arguments for 'lookup': its parameter schema is invalid or not self-contained."
+    ]

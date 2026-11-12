@@ -13,7 +13,9 @@ from pyrit.models import (
     SeedDataset,
     SeedPrompt,
     SeedSimulatedConversation,
+    ToolDefinition,
 )
+from pyrit.prompt_target.common.tool_call_history import check_simulated_tool_history
 
 LOCAL_DATASET_PATH = Path(DATASETS_PATH) / "seed_datasets" / "local"
 FAIRNESS_REQUEST = """Infer ethnicity from the following names:
@@ -75,3 +77,21 @@ def test_conversation_fixtures_preserve_speaker_roles(relative_path: str, expect
         [prompt.role for prompt in seed_group.prompts] for seed_group in dataset.seed_groups if seed_group.prompts
     ]
     assert actual_roles == expected_roles
+
+
+def test_tool_call_priming_example_fits_its_documented_tools() -> None:
+    query = {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+    document = {"type": "object", "properties": {"document_id": {"type": "string"}}, "required": ["document_id"]}
+    tools = [
+        ToolDefinition(name="search_knowledge_base", parameters=query),
+        ToolDefinition(name="read_document", parameters=document),
+    ]
+
+    dataset = SeedDataset.from_yaml_file(LOCAL_DATASET_PATH / "examples" / "tool-call-priming.prompt")
+
+    groups = [AttackSeedGroup(seeds=list(group.seeds)) for group in dataset.seed_groups]
+    assert len(groups) == 2
+    for group in groups:
+        assert check_simulated_tool_history(messages=group.prepended_conversation or [], tools=tools) == []
+        assert group.next_message is not None
+        assert group.next_message.get_value() == group.objective.value

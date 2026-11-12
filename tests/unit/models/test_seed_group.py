@@ -16,6 +16,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SeedSimulatedToolHistory,
 )
 
 # =============================================================================
@@ -915,6 +916,32 @@ class TestAttackSeedGroupWithTechnique:
 
         merged = base.with_technique(technique=technique)
         assert isinstance(merged, AttackSeedGroup)
+
+    def test_tool_history_reserves_its_message_budget_when_merging(self):
+        technique = AttackTechniqueSeedGroup(seeds=[SeedSimulatedToolHistory(max_messages=4)])
+        overlapping = AttackSeedGroup(
+            seeds=[SeedObjective(value="objective"), SeedPrompt(value="hello", role="user", sequence=3)]
+        )
+        clear = AttackSeedGroup(
+            seeds=[SeedObjective(value="objective"), SeedPrompt(value="hello", role="user", sequence=4)]
+        )
+
+        assert not overlapping.is_compatible_with_technique(technique=technique)
+        with pytest.raises(ValueError, match="Cannot merge technique containing a SeedSimulatedToolHistory"):
+            overlapping.with_technique(technique=technique)
+        merged = clear.with_technique(technique=technique)
+        assert merged.simulated_tool_history_config is not None
+        assert merged.generated_history_config is merged.simulated_tool_history_config
+
+    def test_group_cannot_generate_two_histories(self):
+        conversation = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            num_turns=1,
+        )
+        with pytest.raises(ValueError, match="only have one simulated conversation or simulated tool history"):
+            AttackSeedGroup(
+                seeds=[SeedObjective(value="objective"), conversation, SeedSimulatedToolHistory(sequence=10)]
+            )
 
     def test_is_compatible_returns_false_when_prompts_overlap_simulated_range(self):
         """is_compatible_with_technique returns False when prompt sequences overlap simulated range."""

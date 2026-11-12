@@ -23,6 +23,7 @@ from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
+from pyrit.models.seeds.seed_simulated_tool_history import SeedSimulatedToolHistory
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,7 +60,7 @@ def group_seeds_into_attack_groups(seeds: Sequence[Seed[Any]]) -> list[AttackSee
     """
     grouped_seeds: dict[uuid.UUID, list[SeedUnion]] = defaultdict(list)
     for seed in seeds:
-        if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
+        if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation, SeedSimulatedToolHistory)):
             raise ValueError(f"Unsupported seed type: {type(seed).__name__}")
         group_id = seed.prompt_group_id if seed.prompt_group_id is not None else uuid.uuid4()
         grouped_seeds[group_id].append(seed)

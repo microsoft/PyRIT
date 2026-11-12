@@ -306,8 +306,10 @@ if TYPE_CHECKING:
         SeedPrompt,
         SeedRecord,
         SeedSimulatedConversation,
+        SeedSimulatedToolHistory,
         SeedUnion,
         SimulatedTargetSystemPromptPaths,
+        ToolHistoryShape,
         build_objective_decomposition_tree,
         group_seeds_into_attack_groups,
         load_next_message_prompt,
@@ -360,6 +362,7 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_trace_context import RequestTraceContext
+    from pyrit.models.target.tool_definition import ToolDefinition
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
@@ -423,6 +426,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
+    "ToolDefinition": "pyrit.models.target.tool_definition",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStopReason": "pyrit.models.target.tool_execution_metadata",
@@ -655,9 +659,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedGroupRequirements": "pyrit.models.seeds",
     "SeedIdentifier": "pyrit.models.identifiers",
     "SeedSimulatedConversation": "pyrit.models.seeds",
+    "SeedSimulatedToolHistory": "pyrit.models.seeds",
     "SeedType": "pyrit.models.literals",
     "SeedUnion": "pyrit.models.seeds",
     "SimulatedTargetSystemPromptPaths": "pyrit.models.seeds",
+    "ToolHistoryShape": "pyrit.models.seeds",
     "load_next_message_prompt": "pyrit.models.seeds",
     "load_simulated_target_prompt": "pyrit.models.seeds",
     "resolve_prompt_source": "pyrit.models.seeds",
