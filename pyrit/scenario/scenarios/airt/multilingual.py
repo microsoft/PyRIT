@@ -62,7 +62,7 @@ _RANDOM_TRANSLATION = "random_translation"
 TranslationStrategy = Literal["translation", "random_translation"]
 
 
-def _normalize_languages(languages: list[str]) -> list[str]:
+def normalize_languages(languages: list[str]) -> list[str]:
     """
     Normalize and deduplicate language names while preserving their first spelling.
 
@@ -223,7 +223,7 @@ class Multilingual(Scenario):
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         self._adversarial_chat = adversarial_chat
-        self._default_languages = self._get_default_languages()
+        self._default_languages = self.get_default_languages()
         self._resolved_languages: list[str] = []
 
         technique_class = _build_multilingual_technique()
@@ -241,7 +241,7 @@ class Multilingual(Scenario):
         )
 
     @classmethod
-    def _get_default_languages(cls) -> list[str]:
+    def get_default_languages(cls) -> list[str]:
         """
         Load the default languages from the public PyRIT lexicon.
 
@@ -249,7 +249,7 @@ class Multilingual(Scenario):
             list[str]: The list of most-spoken languages.
         """
         dataset = SeedDataset.from_yaml_file(cls._DEFAULT_LANGUAGES_SEED_PROMPT_PATH)
-        return [str(seed.value) for seed in dataset.seeds]
+        return normalize_languages([str(seed.value) for seed in dataset.seeds])
 
     async def _resolve_languages_async(self) -> list[str]:
         """
@@ -272,12 +272,12 @@ class Multilingual(Scenario):
             if stored:
                 persisted = (stored[0].metadata or {}).get(_LANGUAGES_METADATA_KEY)
                 if persisted:
-                    return _normalize_languages(list(persisted))
+                    return normalize_languages(list(persisted))
 
         selection = self._get_language_selection()
         if isinstance(selection, list):
             return selection
-        return _normalize_languages(random.sample(self._default_languages, selection))
+        return normalize_languages(random.sample(self._default_languages, selection))
 
     def _get_language_selection(self) -> list[str] | int:
         """
@@ -301,7 +301,7 @@ class Multilingual(Scenario):
         if languages is not None:
             if not languages:
                 raise ValueError("languages must contain at least one language.")
-            return _normalize_languages(languages)
+            return normalize_languages(languages)
 
         count = int(num_languages) if num_languages is not None else _DEFAULT_NUM_LANGUAGES
         if count < 1 or count > len(self._default_languages):

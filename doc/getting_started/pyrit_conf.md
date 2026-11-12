@@ -154,6 +154,36 @@ initializers:
 
 Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
+#### Optional Scenario Suites
+
+The `scenario_suite` initializer registers read-only suites and their presets from
+a configurable catalog. The default `horizontal_techniques` suite applies jailbreak
+templates, translation, encodings, and obfuscations to the same `airt_harms`
+text objectives, with one baseline. Launch it under **Scenario suites** in the GUI Scanner.
+
+```yaml
+initializers:
+  - name: target
+  - name: scorer
+  - name: technique
+  - name: scenario_suite
+    args:
+      tags:
+        - default
+      suite_args:
+        horizontal_techniques:
+          num_jailbreaks: 5
+          languages: [French, Spanish]
+          encoding_techniques: [all]
+          num_obfuscations: 4
+          selection_seed: 42
+```
+
+`suite_args` supplies validated per-suite constructor overrides without modifying the catalog. Lists replace the defaults; `null` restores them. Technique names and sample counts are mutually exclusive per family. This suite is text-only and uses the existing scenario scoring behavior.
+
+See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for selector options,
+validation, text-objective selection, and running a suite.
+
 ### `custom_initializers_source`
 
 Stores custom initializer Python files in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:
