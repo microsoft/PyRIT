@@ -22,14 +22,18 @@ from pyrit.backend.models import (
     ScenarioSuiteResponse,
 )
 from pyrit.backend.services import (
+    ScenarioRunService,
     ScenarioSuiteExecutionService,
     ScenarioSuiteService,
 )
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
 )
+from pyrit.converter import Base64Converter
 from pyrit.models import (
+    PresetEntry,
     PresetIssue,
+    ScenarioPreset,
     ScenarioSuite,
     ScenarioSuiteEntry,
     ScenarioSuiteExecutionEntrySummary,
@@ -39,6 +43,8 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 from pyrit.registry import (
+    ConverterRegistry,
+    InitializerRegistry,
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,
     ScenarioSuiteExecutionNotFoundError,
@@ -49,6 +55,8 @@ from pyrit.registry import (
     ScenarioSuiteStorage,
 )
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.setup.initializers import ConverterInitializer
 
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -207,6 +215,14 @@ def signed_in_user() -> Iterator[None]:
         app.dependency_overrides.pop(current_user_name, None)
 
 
+@pytest.fixture
+def converter_registry() -> Iterator[ConverterRegistry]:
+    """Give the test a fresh converter registry and drop what launch scripts registered."""
+    ConverterRegistry.reset_registry_singleton()
+    yield ConverterRegistry.get_registry_singleton()
+    ConverterRegistry.reset_registry_singleton()
+
+
 def test_list_is_open_and_returns_entry_issues(anonymous_client: TestClient, service: MagicMock) -> None:
     """Test open reads with entry-scoped advisory issues."""
     issue = PresetIssue(field="preset_name", message="Preset is missing.")
@@ -283,6 +299,49 @@ def test_launch_maps_preflight_failures(
         assert response.json()["detail"] == "Scenario suite storage is unavailable"
     if isinstance(error, ScenarioSuiteExecutionCapacityError):
         assert response.json()["detail"] == "wait for an active suite"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_launch_refuses_a_launch_script_that_would_replace_a_saved_entry(
+    *, anonymous_client: TestClient, converter_registry: ConverterRegistry, tmp_path: Path
+) -> None:
+    """Test a launch script that would replace a saved entry is a conflict before any suite execution or scan."""
+    saved = Base64Converter()
+    converter_registry.instances.register(saved, name="rot13", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+    suite_registry = ScenarioSuiteRegistry(storage=ScenarioSuiteStorage(source=str(tmp_path)))
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    preset_registry = MagicMock(spec=ScenarioPresetRegistry)
+    preset_registry.get_preset.return_value = PresetEntry(
+        preset=ScenarioPreset(name="nightly", scenario_name="scenario.nightly"), origin="stored", version="preset-v1"
+    )
+    preset_registry.check_preset.return_value = []
+    run_service = ScenarioRunService()
+    execution_service = ScenarioSuiteExecutionService(
+        suite_registry=suite_registry, preset_registry=preset_registry, run_service=run_service
+    )
+    initializers = MagicMock(spec=InitializerRegistry)
+    initializers.create_and_configure.return_value = ConverterInitializer()
+
+    with (
+        patch(
+            "pyrit.backend.routes.scenario_suites.get_scenario_suite_execution_service",
+            return_value=execution_service,
+        ),
+        patch.object(InitializerRegistry, "get_registry_singleton", return_value=initializers),
+        patch.object(run_service, "start_run_async", new_callable=AsyncMock) as start_run,
+    ):
+        response = anonymous_client.post(
+            f"/api/scenario-suites/{SUITE_NAME}/launch",
+            json={**_launch_body(), "expected_version": stored.version, "initializers": ["converters"]},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "The launch script 'converters' would replace the saved converter 'rot13'. Leave that script out of the launch."
+    )
+    assert execution_service._executions == {}
+    start_run.assert_not_awaited()
+    assert converter_registry.instances.get("rot13") is saved
 
 
 def test_launch_limits_the_expected_version(anonymous_client: TestClient, execution_service: MagicMock) -> None:
