@@ -4,6 +4,7 @@
 import ast
 import json
 import os
+import sqlite3
 import tempfile
 import uuid
 from pathlib import Path
@@ -25,7 +26,7 @@ from pyrit.memory.migration import (
     _is_fresh_database,
     _make_config,
     _PrefixedTextStream,
-    _quote_malformed_legacy_attack_identifiers,
+    _repair_legacy_attack_identifiers,
     check_schema_migrations,
     generate_schema_migration,
     run_schema_migrations,
@@ -183,7 +184,8 @@ def test_run_schema_migrations_applies_head_revision():
 def test_run_schema_migrations_preserves_malformed_legacy_attack_identifier() -> None:
     engine = create_engine("sqlite:///:memory:")
     try:
-        result_id = str(uuid.uuid4())
+        malformed_id = str(uuid.uuid4())
+        scalar_id = str(uuid.uuid4())
         with engine.begin() as connection:
             command.upgrade(_make_config(connection=connection), "34a18645c7e9")
             connection.execute(
@@ -192,12 +194,60 @@ def test_run_schema_migrations_preserves_malformed_legacy_attack_identifier() ->
                     "(id, conversation_id, objective, outcome, timestamp, executed_turns, "
                     "execution_time_ms, atomic_attack_identifier) "
                     "VALUES (:id, 'legacy-conversation', 'Legacy objective', 'success', "
-                    "'2026-01-01', 0, 0, 'not-json')"
+                    "'2026-01-01', 0, 0, :identifier)"
                 ),
-                {"id": result_id},
+                [
+                    {"id": malformed_id, "identifier": "not-json"},
+                    {"id": scalar_id, "identifier": "123"},
+                ],
             )
 
         run_schema_migrations(engine=engine)
+        run_schema_migrations(engine=engine)
+
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT id, atomic_attack_identifier, resolved_atomic_attack_identifier_hash "
+                    'FROM "AttackResultEntries" WHERE id IN (:malformed_id, :scalar_id)'
+                ),
+                {"malformed_id": malformed_id, "scalar_id": scalar_id},
+            ).mappings()
+            identifiers = {
+                row["id"]: (
+                    json.loads(row["atomic_attack_identifier"]),
+                    row["resolved_atomic_attack_identifier_hash"],
+                )
+                for row in rows
+            }
+            assert identifiers == {
+                malformed_id: ({"legacy_value": "not-json"}, None),
+                scalar_id: ({"legacy_value": 123}, None),
+            }
+        check_schema_migrations(engine=engine)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.skipif(sqlite3.sqlite_version_info < (3, 42, 0), reason="SQLite JSON5 support requires 3.42+")
+def test_run_schema_migrations_preserves_sqlite_json5_object() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        result_id = str(uuid.uuid4())
+        identifier = '{"hash":"abc","t":NaN}'
+        with engine.begin() as connection:
+            command.upgrade(_make_config(connection=connection), "34a18645c7e9")
+            connection.execute(
+                text(
+                    'INSERT INTO "AttackResultEntries" '
+                    "(id, conversation_id, objective, outcome, timestamp, executed_turns, "
+                    "execution_time_ms, atomic_attack_identifier) "
+                    "VALUES (:id, 'legacy-conversation', 'Legacy objective', 'success', "
+                    "'2026-01-01', 0, 0, :identifier)"
+                ),
+                {"id": result_id, "identifier": identifier},
+            )
+
         run_schema_migrations(engine=engine)
 
         with engine.connect() as connection:
@@ -208,13 +258,12 @@ def test_run_schema_migrations_preserves_malformed_legacy_attack_identifier() ->
                 ),
                 {"id": result_id},
             ).one()
-            assert tuple(row) == (json.dumps("not-json"), None)
-        check_schema_migrations(engine=engine)
+            assert tuple(row) == (identifier, "abc")
     finally:
         engine.dispose()
 
 
-def test_quote_malformed_legacy_attack_identifiers_uses_mssql_json_escape() -> None:
+def test_repair_legacy_attack_identifiers_uses_mssql_object_wrapper() -> None:
     connection = MagicMock(spec=["dialect", "execute"])
     connection.dialect.name = "mssql"
     connection.execute.return_value.rowcount = 2
@@ -222,24 +271,32 @@ def test_quote_malformed_legacy_attack_identifiers_uses_mssql_json_escape() -> N
     inspector.get_columns.return_value = [{"name": "atomic_attack_identifier"}]
 
     with patch("pyrit.memory.migration.inspect", return_value=inspector):
-        _quote_malformed_legacy_attack_identifiers(
+        _repair_legacy_attack_identifiers(
             connection=connection,
             table_names={"AttackResultEntries"},
         )
 
     statement = str(connection.execute.call_args.args[0])
-    assert "STRING_ESCAPE([atomic_attack_identifier], 'json')" in statement
-    assert """ISJSON(CONCAT(N'{"value":', [atomic_attack_identifier], N'}')) = 0""" in statement
+    assert """N'{"legacy_value":"' + STRING_ESCAPE([atomic_attack_identifier], 'json') + N'"}'""" in statement
+    assert "ISJSON([atomic_attack_identifier]) = 0" in statement
+    assert "LEFT(LTRIM([atomic_attack_identifier]), 1) <> N'{'" in statement
 
 
 @pytest.mark.parametrize(
     ("columns", "dialect"),
     [
         ([], "sqlite"),
+        (
+            [
+                {"name": "atomic_attack_identifier"},
+                {"name": "resolved_atomic_attack_identifier_hash"},
+            ],
+            "mssql",
+        ),
         ([{"name": "atomic_attack_identifier"}], "postgresql"),
     ],
 )
-def test_quote_malformed_legacy_attack_identifiers_skips_inapplicable_schema(
+def test_repair_legacy_attack_identifiers_skips_inapplicable_schema(
     columns: list[dict[str, str]], dialect: str
 ) -> None:
     connection = MagicMock(spec=["dialect", "execute"])
@@ -248,7 +305,7 @@ def test_quote_malformed_legacy_attack_identifiers_skips_inapplicable_schema(
     inspector.get_columns.return_value = columns
 
     with patch("pyrit.memory.migration.inspect", return_value=inspector):
-        _quote_malformed_legacy_attack_identifiers(
+        _repair_legacy_attack_identifiers(
             connection=connection,
             table_names={"AttackResultEntries"},
         )

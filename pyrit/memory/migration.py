@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import io
+import json
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -170,9 +172,9 @@ def _validate_and_stamp_unversioned_memory_schema(
     command.stamp(config, _INITIAL_REVISION)
 
 
-def _quote_malformed_legacy_attack_identifiers(*, connection: Connection, table_names: set[str]) -> None:
+def _repair_legacy_attack_identifiers(*, connection: Connection, table_names: set[str]) -> None:
     """
-    Preserve malformed legacy identifier text as a valid JSON scalar before migration.
+    Preserve non-object legacy identifier text inside a valid JSON object before migration.
 
     Args:
         connection (Connection): The migration transaction's database connection.
@@ -180,9 +182,11 @@ def _quote_malformed_legacy_attack_identifiers(*, connection: Connection, table_
     """
     table_name = "AttackResultEntries"
     column_name = "atomic_attack_identifier"
+    migrated_column_name = "resolved_atomic_attack_identifier_hash"
     if table_name not in table_names:
         return
-    if column_name not in {column["name"] for column in inspect(connection).get_columns(table_name)}:
+    column_names = {column["name"] for column in inspect(connection).get_columns(table_name)}
+    if column_name not in column_names or migrated_column_name in column_names:
         return
 
     dialect = connection.dialect.name
@@ -190,23 +194,66 @@ def _quote_malformed_legacy_attack_identifiers(*, connection: Connection, table_
         statement = """
             UPDATE [AttackResultEntries]
             SET [atomic_attack_identifier] =
-                N'"' + STRING_ESCAPE([atomic_attack_identifier], 'json') + N'"'
+                N'{"legacy_value":"' + STRING_ESCAPE([atomic_attack_identifier], 'json') + N'"}'
             WHERE [atomic_attack_identifier] IS NOT NULL
-                AND ISJSON(CONCAT(N'{"value":', [atomic_attack_identifier], N'}')) = 0
+                AND (
+                    ISJSON([atomic_attack_identifier]) = 0
+                    OR LEFT(LTRIM([atomic_attack_identifier]), 1) <> N'{'
+                )
         """
-    elif dialect == "sqlite":
-        statement = """
-            UPDATE "AttackResultEntries"
-            SET atomic_attack_identifier = json_quote(atomic_attack_identifier)
-            WHERE atomic_attack_identifier IS NOT NULL
-                AND json_valid(atomic_attack_identifier) = 0
-        """
-    else:
+        result = connection.execute(text(statement))
+        repaired_count = result.rowcount if result.rowcount > 0 else 0
+    elif dialect != "sqlite":
         return
+    else:
+        malformed_rows = connection.execute(
+            text(
+                """
+                SELECT id, atomic_attack_identifier
+                FROM "AttackResultEntries"
+                WHERE atomic_attack_identifier IS NOT NULL
+                    AND json_valid(atomic_attack_identifier) = 0
+                """
+            )
+        ).mappings()
+        malformed_updates: list[dict[str, Any]] = []
+        for row in malformed_rows:
+            raw_identifier = row["atomic_attack_identifier"]
+            try:
+                parsed_identifier = json.loads(raw_identifier)
+            except json.JSONDecodeError:
+                parsed_identifier = None
+            if sqlite3.sqlite_version_info < (3, 42, 0) or not isinstance(parsed_identifier, dict):
+                malformed_updates.append({"id": row["id"], "legacy_value": raw_identifier})
 
-    result = connection.execute(text(statement))
-    if result.rowcount and result.rowcount > 0:
-        logger.warning("Preserved %d malformed legacy attack identifier(s) as JSON strings.", result.rowcount)
+        valid_non_object_result = connection.execute(
+            text(
+                """
+                UPDATE "AttackResultEntries"
+                SET atomic_attack_identifier = json_object('legacy_value', atomic_attack_identifier)
+                WHERE atomic_attack_identifier IS NOT NULL
+                    AND json_valid(atomic_attack_identifier) = 1
+                    AND json_type(atomic_attack_identifier) <> 'object'
+                """
+            )
+        )
+        repaired_count = valid_non_object_result.rowcount if valid_non_object_result.rowcount > 0 else 0
+        if malformed_updates:
+            malformed_result = connection.execute(
+                text(
+                    """
+                    UPDATE "AttackResultEntries"
+                    SET atomic_attack_identifier = json_object('legacy_value', :legacy_value)
+                    WHERE id = :id
+                    """
+                ),
+                malformed_updates,
+            )
+            if malformed_result.rowcount > 0:
+                repaired_count += malformed_result.rowcount
+
+    if repaired_count > 0:
+        logger.warning("Preserved %d non-object legacy attack identifier(s) inside JSON objects.", repaired_count)
 
 
 class _PrefixedTextStream:
@@ -310,7 +357,7 @@ def run_schema_migrations(*, engine: Engine, silent: bool = False) -> None:
         quiet = silent or _is_fresh_database(table_names=table_names)
         config = _make_config(connection=connection, stdout=_migration_stdout(silent=quiet))
         _validate_and_stamp_unversioned_memory_schema(config=config, connection=connection, table_names=table_names)
-        _quote_malformed_legacy_attack_identifiers(connection=connection, table_names=table_names)
+        _repair_legacy_attack_identifiers(connection=connection, table_names=table_names)
         command.upgrade(config, _HEAD_REVISION)
 
 
