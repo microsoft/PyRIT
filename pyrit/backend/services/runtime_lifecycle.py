@@ -274,6 +274,8 @@ class RuntimeLifecycle:
                     return
 
                 mutated = True
+                # The restore report describes the runtime being replaced.
+                self.restore_failures, self.restore_ignored = [], []
                 await close_services_async()
                 await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
