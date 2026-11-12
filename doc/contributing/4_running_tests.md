@@ -213,32 +213,22 @@ background accessibility.
 
 ### SQL Server migration check
 
-The `SQL Server migrations` job in `build_and_test` runs on GitHub-hosted Linux
-for PRs, merge groups, main/release pushes, and manual runs. It starts a disposable
-SQL Server 2022 Developer container with SQL authentication; no Azure subscription,
-corporate credentials, or repository secrets are used. Readiness is bounded by the
-container health check, the job has a 20-minute limit, and failures print container
-state and logs (GitHub also reports service startup failures).
+The `SQL Server migrations` CI job uses disposable SQL Server 2022 Developer on
+GitHub-hosted Linux, without Azure credentials. On PRs and merge groups, it migrates
+both a fresh database and a populated historical schema to the **checked-out
+branch's Alembic head**, then checks data preservation and schema agreement with
+models. It is not an exhaustive historical-version or production-scale test.
 
-The check replays all Alembic revisions on a fresh database and upgrades a populated
-schema at `9c8b7a6d5e4f` to the current head. It checks retained prompts, conversation
-and identifier backfills, long dataset names, Unicode writes, collation preservation,
-repeat startup, and schema agreement with models using `check_schema_migrations`.
-This is a small portability/regression check, not an exhaustive historical-version
-matrix, production-scale benchmark, downgrade test, or Azure SQL authentication test.
-
-To run locally, start a disposable SQL Server container, install ODBC Driver 18 and
-the normal `uv sync` dependencies, and set `PYRIT_TEST_SQLSERVER_URL` to a
-`mssql+pyodbc://.../master` SQL-authentication URL. The account must be able to create
-and drop databases. Each test creates and removes its own randomly named database:
+To run locally, install ODBC Driver 18 and the normal `uv sync` dependencies.
+Set `PYRIT_TEST_SQLSERVER_URL` to a disposable server's `mssql+pyodbc://.../master`
+SQL-authentication URL with permission to create/drop test databases:
 
 ```bash
 RUN_ALL_TESTS=true uv run --frozen pytest tests/integration/memory/test_sqlserver_migrations_integration.py -v --timeout=300
 ```
 
-Maintainers must add `SQL Server migrations` as a required check in branch protection
-or the repository ruleset to make it merge-blocking. The workflow does not modify
-repository settings or deployment availability behavior.
+Maintainers must require `SQL Server migrations` in branch protection/rulesets to
+make it merge-blocking; this workflow does not change repository settings.
 
 ```{note}
 Avoid `pytest tests`. It collects the integration, end-to-end, and partner-integration tiers
