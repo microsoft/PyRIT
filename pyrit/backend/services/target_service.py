@@ -39,7 +39,6 @@ from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
     GitHubCopilotTarget,
-    HuggingFaceChatTarget,
     PromptTarget,
     RoundRobinTarget,
     discover_target_capabilities_async,
@@ -49,7 +48,7 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
     CapabilityDiscoveryError,
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
-from pyrit.registry import TargetMetadata, TargetRegistry
+from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -64,24 +63,6 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
-
-
-def _import_torch(*, use_cuda: bool) -> None:
-    """
-    Import torch, and check for CUDA when asked, as a HuggingFaceChatTarget constructor does.
-
-    Either can take seconds the first time and is quick after it, so a worker thread does them before the
-    constructor runs on the event loop. A missing torch is left for the constructor to report.
-
-    Args:
-        use_cuda (bool): Whether the target asks for CUDA.
-    """
-    try:
-        import torch  # type: ignore[ty:unresolved-import]
-    except ModuleNotFoundError:
-        return
-    if use_cuda:
-        torch.cuda.is_available()
 
 
 class TargetService:
@@ -670,16 +651,14 @@ class TargetService:
             is not target_cls
         ):
             raise ValueError("The source target type does not match the requested type")
-        if issubclass(target_cls, HuggingFaceChatTarget):
-            # Its constructor imports torch and checks for CUDA, which can hold this loop for seconds the first time,
-            # then starts loading the model on this loop. Doing both first in a worker leaves the constructor quick.
-            use_cuda = self._requests_cuda(metadata=metadata, params=permission_params)
-            await asyncio.to_thread(_import_torch, use_cuda=use_cuda)
         target_obj = (
             await self.build_from_source_async(request.source)
             if request.source
-            else self._registry.create_instance_from_external_input(
-                request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
+            else await self._registry.create_instance_async(
+                name=request.type,
+                params=params,
+                external_input=True,
+                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
             )
         )
         if not request.register:
@@ -698,27 +677,6 @@ class TargetService:
         except Exception:
             await release_component_async(target_obj)
             raise
-
-    @staticmethod
-    def _requests_cuda(*, metadata: TargetMetadata | None, params: dict[str, Any]) -> bool:
-        """
-        Read ``use_cuda`` as the constructor will, through its registered parameter.
-
-        A textual boolean the catalog accepts, such as "false", is read the same way. A value the registry can't read
-        as a boolean counts as false here, since construction rejects it.
-
-        Args:
-            metadata (TargetMetadata | None): The target class's registered metadata.
-            params (dict[str, Any]): The constructor parameters.
-
-        Returns:
-            bool: Whether the target asks for CUDA.
-        """
-        parameter = next((p for p in (metadata.parameters if metadata else ()) if p.name == "use_cuda"), None)
-        try:
-            return parameter is not None and bool(parameter.coerce_value(params.get("use_cuda", parameter.default)))
-        except ValueError:
-            return False
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool

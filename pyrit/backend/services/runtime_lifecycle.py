@@ -146,7 +146,7 @@ class RuntimeLifecycle:
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
         # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, through
         # the API's create for each kind, because a constructor such as HuggingFaceChatTarget's starts a task
-        # on it; that create does the target's slow torch setup in a worker thread first.
+        # on it; the target's create_async does its slow setup, such as importing torch, in a worker thread first.
         saved = await asyncio.to_thread(restorer.read)
         report = await restorer.restore_async(
             saved=saved, build_async=partial(build_saved_entry_async, upload_directory=config.target_upload_directory)
