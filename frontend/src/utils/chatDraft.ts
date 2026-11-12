@@ -1,5 +1,6 @@
 import type {
-  ChatDraftContent, ChatDraftContextState, ConverterPipelineStage, MessageAttachment, PendingImportPayload,
+  BackendMessage, BackendMessagePiece, ChatDraftContent, ChatDraftContextState, ConverterPipelineStage,
+  MessageAttachment, PendingImportPayload,
 } from '@/types'
 
 export type { ChatDraftContent, ChatDraftContextState, ChatDraftHandoffContextValue, PendingImportPayload } from '@/types'
@@ -47,18 +48,23 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
 }
 
 /**
- * True when an accepted send's prompt is already present in saved conversation history.
- * Genuinely new edits keep their text because they have no accepted submission ID.
+ * True when this accepted send's request is already saved in conversation history.
+ * Matches the send's history position, not its text, so an identical earlier prompt or an
+ * attachment-only send cannot be mistaken for it. Genuinely new edits have no accepted submission ID.
  */
 export function historyContainsAcceptedDraft(
-  draft: Pick<ChatDraftContent, 'text' | 'acceptedSubmissionId'>,
-  userOriginalValues?: Iterable<string> | null,
+  draft: Pick<ChatDraftContent, 'acceptedSubmissionId' | 'acceptedSendHistory'>,
+  messages?: readonly BackendMessage[] | null,
 ): boolean {
-  if (!draft.acceptedSubmissionId || !draft.text || !userOriginalValues) return false
-  for (const value of userOriginalValues) {
-    if (value === draft.text) return true
+  const position = draft.acceptedSendHistory
+  if (!draft.acceptedSubmissionId || !position || !messages) return false
+  const userMessages = messages.filter((message: BackendMessage) => message.role === 'user')
+  if (position.requestTurnNumber !== undefined) {
+    return userMessages.some((message: BackendMessage) => message.turn_number === position.requestTurnNumber)
   }
-  return false
+  const prior = new Set(position.priorUserPieceIds)
+  return userMessages.some((message: BackendMessage) => message.message_pieces
+    .some((piece: BackendMessagePiece) => !prior.has(piece.id)))
 }
 
 /**

@@ -1472,6 +1472,66 @@ describe("ChatWindow Integration", () => {
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
     });
 
+    it("restores a repeated prompt whose send left history unchanged while Chat was unmounted", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt repeated from an earlier turn";
+      // The earlier identical prompt is already saved; the repeat fails in preparation, which leaves history unchanged.
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, request_turn_number: 2 });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await sendPrompt(user, prompt);
+
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+    });
+
+    it("does not restore a completed attachment-only send after navigating to Datasets", async () => {
+      const user = userEvent.setup();
+      const target = makeTarget({
+        ...mockTarget,
+        capabilities: {
+          ...mockTarget.capabilities,
+          supports_multi_message_pieces: true,
+          supported_input_modalities: ["text", "image_path"],
+        },
+      });
+      const attachmentProps = { ...props, activeTarget: target, availableTargets: [target] };
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat chatProps={attachmentProps} />);
+      await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      await user.upload(screen.getByTestId("file-input"), new File(["image"], "only-attachment.png", { type: "image/png" }));
+      expect(screen.getByText(/only-attachment.png/)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+      await user.click(screen.getByRole("button", { name: /send message/i }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
+
+      const history = completedHistoryFor("");
+      history.messages[0].message_pieces[0] = {
+        ...history.messages[0].message_pieces[0],
+        original_value_data_type: "image_path",
+        converted_value_data_type: "image_path",
+        original_value: "/media/only-attachment.png",
+        converted_value: "/media/only-attachment.png",
+      };
+      mockedAttacksApi.getMessages.mockResolvedValue(history);
+      rendered.rerender(<ChatOrDatasets showChat={false} chatProps={attachmentProps} />);
+      rendered.rerender(<ChatOrDatasets showChat chatProps={attachmentProps} />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.queryByText(/only-attachment.png/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
     it("does not duplicate a saved optimistic message when refreshing an active conversation", async () => {
       const user = userEvent.setup();
       mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));

@@ -145,6 +145,15 @@ export interface ChatDraftContent {
   conversation?: ConversationEditState
   /** Set when this snapshot was an accepted send; used to avoid restoring completed prompts as unsent. */
   acceptedSubmissionId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; any other saved user piece marks the request stored. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {

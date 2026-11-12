@@ -34,7 +34,7 @@ import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
 import FileDropZone from '@/components/Media/FileDropZone'
 import ObjectiveHeader from './ObjectiveHeader'
-import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft, ReadAttackConversationReferences } from '@/types'
+import type { AcceptedSendHistory, ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft, ReadAttackConversationReferences } from '@/types'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
@@ -440,6 +440,7 @@ export default function ChatWindow({
   // An accepted send restored before its prompt reached history; kept until the composer changes.
   const restoredAcceptedSendRef = useRef<{
     submissionId: string
+    history: AcceptedSendHistory
     conversationId: string | null
     draftRevision?: number
   } | null>(null)
@@ -721,22 +722,31 @@ export default function ChatWindow({
       if (shouldDiscard || !ownsDraftRef.current || isWaitingForRestore
         || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
       const operation = draftConversationId ? getPendingSend(draftConversationId) : undefined
-      const acceptedSubmissionId = operation?.progress
+      const acceptedSend: { submissionId: string, history: AcceptedSendHistory } | undefined = operation?.progress
         && operation.originalValue === savedDraft.text
         && getLatestSendId() === operation.submissionId
         && operation.draftRevision === composerRevision
-        ? operation.submissionId
+        ? {
+          submissionId: operation.submissionId,
+          history: {
+            ...(operation.progress.request_turn_number != null
+              ? { requestTurnNumber: operation.progress.request_turn_number } : {}),
+            priorUserPieceIds: [...operation.priorUserPieceIds],
+          },
+        }
         : restoredAcceptedSend
           && restoredAcceptedSend.conversationId === draftConversationId
           && restoredAcceptedSend.draftRevision === composerRevision
-          ? restoredAcceptedSend.submissionId
+          ? { submissionId: restoredAcceptedSend.submissionId, history: restoredAcceptedSend.history }
           : undefined
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
         originatingConversationId: draftConversationId,
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
-        draft: acceptedSubmissionId ? { ...savedDraft, acceptedSubmissionId } : savedDraft,
+        draft: acceptedSend
+          ? { ...savedDraft, acceptedSubmissionId: acceptedSend.submissionId, acceptedSendHistory: acceptedSend.history }
+          : savedDraft,
       }, draftHandoff.activeSequence, draftHandoff.pendingImport?.id)
     }
   })
@@ -822,19 +832,21 @@ export default function ChatWindow({
       handoffRestoredRef.current = preserved.sequence
       const completedAcceptedSend = historyContainsAcceptedDraft(
         consumed,
-        getLoadedBackendMessages(draftConversationId ?? '')
-          ?.filter((message: BackendMessage) => message.role === 'user')
-          .flatMap((message: BackendMessage) => message.message_pieces
-            .map((piece: BackendMessagePiece) => piece.original_value)
-            .filter((value: string | null | undefined): value is string => Boolean(value))),
+        getLoadedBackendMessages(draftConversationId ?? ''),
       )
-      restoredAcceptedSendRef.current = consumed.acceptedSubmissionId && !completedAcceptedSend
-        ? { submissionId: consumed.acceptedSubmissionId, conversationId: draftConversationId }
+      restoredAcceptedSendRef.current = consumed.acceptedSubmissionId && consumed.acceptedSendHistory
+        && !completedAcceptedSend
+        ? {
+          submissionId: consumed.acceptedSubmissionId,
+          history: consumed.acceptedSendHistory,
+          conversationId: draftConversationId,
+        }
         : null
       // Match a normal completed send: keep converter pipelines, clear only their working state.
       draft = completedAcceptedSend
         ? {
-          ...consumed, text: '', attachments: [], textMetadata: undefined, acceptedSubmissionId: undefined,
+          ...consumed, text: '', attachments: [], textMetadata: undefined,
+          acceptedSubmissionId: undefined, acceptedSendHistory: undefined,
           converters: consumed.converters && {
             ...consumed.converters, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
           },

@@ -17,7 +17,7 @@ import {
   type ChatDraftContent,
   type PendingImportPayload,
 } from '@/utils/chatDraft'
-import type { ChatConverterSnapshot, MessageAttachment } from '@/types'
+import type { BackendMessage, ChatConverterSnapshot, MessageAttachment } from '@/types'
 
 import { ChatDraftProvider, useChatDraftHandoff } from './useChatDraftHandoff'
 
@@ -193,19 +193,32 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
   })
 
   describe('historyContainsAcceptedDraft', () => {
-    it('returns true only for an accepted submission whose prompt is already saved', () => {
-      expect(historyContainsAcceptedDraft(
-        { text: 'ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE', acceptedSubmissionId: 'send-1' },
-        ['ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE'],
-      )).toBe(true)
-      expect(historyContainsAcceptedDraft(
-        { text: 'ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE' },
-        ['ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE'],
-      )).toBe(false)
-      expect(historyContainsAcceptedDraft(
-        { text: 'a later edit', acceptedSubmissionId: 'send-1' },
-        ['ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE'],
-      )).toBe(false)
+    const userTurn = (turn: number, pieceId: string, value: string): BackendMessage => ({
+      turn_number: turn,
+      role: 'user',
+      message_pieces: [{
+        id: pieceId, original_value_data_type: 'text', converted_value_data_type: 'text',
+        original_value: value, converted_value: value, scores: [], response_error: 'none',
+      }],
+      created_at: '2026-01-01T00:00:00Z',
+    })
+    const earlier = userTurn(0, 'piece-earlier', 'same prompt')
+
+    it('matches the accepted request turn, not an identical earlier prompt', () => {
+      const draft = {
+        acceptedSubmissionId: 'send-1',
+        acceptedSendHistory: { requestTurnNumber: 2, priorUserPieceIds: ['piece-earlier'] },
+      }
+      expect(historyContainsAcceptedDraft(draft, [earlier])).toBe(false)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-repeat', 'same prompt')])).toBe(true)
+      expect(historyContainsAcceptedDraft({ acceptedSendHistory: draft.acceptedSendHistory }, [earlier, userTurn(2, 'p', '')]))
+        .toBe(false)
+    })
+
+    it('uses user pieces saved after the send when the request turn was not yet known', () => {
+      const draft = { acceptedSubmissionId: 'send-1', acceptedSendHistory: { priorUserPieceIds: ['piece-earlier'] } }
+      expect(historyContainsAcceptedDraft(draft, [earlier])).toBe(false)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-attachment', '')])).toBe(true)
     })
   })
 
