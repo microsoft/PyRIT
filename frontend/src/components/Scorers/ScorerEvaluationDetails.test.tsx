@@ -23,7 +23,7 @@ describe('ScorerEvaluationDetails', () => {
     await user.keyboard('{Enter}')
     const dialog = screen.getByRole('dialog', { name: 'Scorer evaluation metrics' })
     expect(within(dialog).getByRole('group', { name: 'Accuracy' })).toHaveTextContent('93.00%')
-    expect(within(dialog).getByRole('group', { name: 'Recall' })).toHaveTextContent('0.0000')
+    expect(within(dialog).getByRole('group', { name: 'Recall' })).toHaveTextContent('0.00%')
     expect(within(dialog).getByRole('group', { name: 'Accuracy std error' })).toHaveTextContent('0.0200')
     expect(within(dialog).getByRole('group', { name: 'Num responses' })).toHaveTextContent('100')
     expect(within(dialog).getByRole('group', { name: 'Num human raters' })).toHaveTextContent('0')

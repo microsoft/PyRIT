@@ -100,7 +100,7 @@ describe('ScorerRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Evaluation metrics for wrapped-judge' }))
     const evaluation = screen.getByRole('dialog', { name: 'Scorer evaluation metrics' })
     expect(within(evaluation).getByRole('group', { name: 'Num responses' })).toHaveTextContent('100')
-    expect(within(evaluation).getByRole('group', { name: 'Recall' })).toHaveTextContent('0.0000')
+    expect(within(evaluation).getByRole('group', { name: 'Recall' })).toHaveTextContent('0.00%')
     await user.click(within(evaluation).getByRole('button', { name: 'Identity for Behavioral evaluation identity' }))
     const evaluationIdentity = within(evaluation).getByRole('region', { name: 'Identity for Behavioral evaluation identity' })
     expect(evaluationIdentity).toHaveTextContent('evaluation-hash')

@@ -3,44 +3,36 @@ import type {
   ScenarioHierarchyGroup,
   ScenarioHierarchyNode,
   ScenarioProgressResult,
-  ScenarioProgressSummary,
+  ScenarioRunPlan,
+  ScenarioRunPlanAtomicGroup,
 } from '@/types'
-import type { ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
+import { compareAttempts, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
-import { hasChildReferences, hierarchyDisplayGroups, runExecutionCount } from './scenarioHierarchy'
-
-/**
- * The atomic group of a run made of exactly one atomic attack: one planned attack, at most one execution,
- * one display group with one atomic group, and no compound children. Null for any other run.
- */
-export function singleAtomicGroupId(
-  summary: ScenarioProgressSummary,
-  hierarchyGroups: readonly ScenarioHierarchyGroup[],
-  loadedResults: number,
-): string | null {
-  const displayGroups = hierarchyDisplayGroups(summary.display_groups ?? summary.techniques, hierarchyGroups)
-  const roots = hierarchyGroups.flatMap((group) => group.roots)
-  const displayGroup = displayGroups[0]
-  const root = roots[0]
-  const single = summary.overall.planned === 1
-    && runExecutionCount(summary, loadedResults).count <= 1
-    && displayGroups.length === 1
-    && displayGroup?.atomic_group_ids.length === 1
-    && roots.length <= 1
-    && (!root || !hasChildReferences(root))
-  return single ? displayGroup?.atomic_group_ids[0] ?? null : null
+/** Stable eligibility comes from the saved plan, never the number of attempts saved so far. */
+export function singleAtomicGroupId(plan: ScenarioRunPlan | null): string | null {
+  const group = plan?.atomic_groups[0]
+  return plan?.atomic_groups.length === 1 && plan.seed_groups.length === 1
+    && group?.seed_group_ids.length === 1 && group.seed_group_ids[0] === plan.seed_groups[0]?.id
+    && group.is_compound === false ? group.id : null
 }
 
-/** The single attack's attempt: its saved result, otherwise its saved root, otherwise the running attack. */
+/** A matching live retry while active, otherwise the latest applicable saved attempt or hierarchy root. */
 export function singleAttackAttempt(
-  atomicGroupId: string,
+  group: ScenarioRunPlanAtomicGroup,
   results: readonly ScenarioProgressResult[],
   hierarchyGroups: readonly ScenarioHierarchyGroup[],
   activeConversations: readonly ScenarioActiveConversation[],
+  active: boolean,
 ): ScenarioProgressResult | ScenarioHierarchyNode | ScenarioActiveConversation | null {
-  return results.find((attempt) => attempt.atomic_group_id === atomicGroupId)
-    ?? hierarchyGroups.find((group) => group.atomic_group_id === atomicGroupId)?.roots[0]
-    ?? activeConversations[0]
+  const live = active ? activeConversations.find((conversation) =>
+    conversation.atomic_attack_name === group.atomic_attack_name
+    && conversation.seed_group_id !== null && conversation.seed_group_id !== undefined
+    && group.seed_group_ids.includes(conversation.seed_group_id)) : undefined
+  return live
+    ?? results.filter((attempt) => attempt.atomic_group_id === group.id
+      && group.seed_group_ids.includes(attempt.seed_group_id)).slice(-1)[0]
+    ?? hierarchyGroups.find((candidate) => candidate.atomic_group_id === group.id)?.roots
+      .filter((root) => group.seed_group_ids.includes(root.seed_group_id)).sort(compareAttempts).slice(-1)[0]
     ?? null
 }
 

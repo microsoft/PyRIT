@@ -33,13 +33,6 @@ export function formatAttackOutcome(outcome: ScenarioProgressResult['outcome']):
   return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
-export function formatScore(score: ScenarioProgressResult['score']): string {
-  if (!score || score.status === 'undetermined') {
-    return 'Undetermined'
-  }
-  return score.score_value ?? 'Unavailable'
-}
-
 export function formatScoreRationale(rationale: string | null | undefined): string {
   return rationale?.trim() || 'No rationale is available.'
 }

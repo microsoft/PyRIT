@@ -60,7 +60,7 @@ import type { ScenarioHistoryFilters } from './components/History/scenarioHistor
 import type { ViewName } from './components/Sidebar/Navigation'
 import type {
   AttackMetadata, AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetReference,
-  AttackConversationsResponse, ConversationMessagesResponse, ScenarioActiveConversation, UserPreferences,
+  AttackConversationReferencesView, ConversationMessagesResponse, ScenarioActiveConversation, UserPreferences,
 } from './types'
 import {
   resolveTargetReference,
@@ -857,7 +857,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }
     return scenariosApi.getRunConversation(recordedRunId, conversationId)
   }, [recordedRunId, recordedConversations])
-  const readRecordedReferences = useCallback(async (attackResultId: string): Promise<AttackConversationsResponse> => {
+  const readRecordedReferences = useCallback(async (attackResultId: string): Promise<AttackConversationReferencesView> => {
     if (attackResultId !== recordedAttackId || !recordedConversations) {
       throw new Error('This attack is not part of the recorded scan.')
     }

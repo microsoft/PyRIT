@@ -207,6 +207,7 @@ const plan = {
     technique_name: "prompt_sending",
     technique_eval_hash: "eval-1",
     seed_group_ids: ["seed-1"],
+    is_compound: false,
     description: "Sends the objective directly to the target.",
     tags: ["single_turn"],
   }],
@@ -1055,7 +1056,9 @@ test.describe("Scenario catalog, history, and live run routing", () => {
 
     await page.goto(`/scanner/history/${QUEUED_RUN_ID}`);
 
-    await expect(page.getByText("No saved results are available for this run yet.", { exact: true })).toBeVisible();
+    const savedResults = page.getByRole("region", { name: "Attack details", exact: true });
+    await expect(savedResults.getByText("Preparing", { exact: true })).toBeVisible();
+    await expect(savedResults.getByRole("link", { name: "Open conversation", exact: true })).toHaveCount(0);
     await expect(page.getByText("Could not load the result relationships", { exact: false })).toHaveCount(0);
     await expect(page.getByTestId("run-state-badge")).toHaveText("Queued");
     const progress = page.getByRole("region", { name: "Scan progress", exact: true });
@@ -1094,7 +1097,8 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page.getByTestId("scenario-run-page")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("run-state-badge")).toHaveText("Executing");
     expect(documentRequests).toBe(1);
-    await expect(page.getByText("No saved results are available for this run yet.", { exact: true })).toBeVisible();
+    await expect(savedResults.getByText("Preparing", { exact: true })).toBeVisible();
+    await expect(savedResults.getByRole("link", { name: "Open conversation", exact: true })).toHaveCount(0);
     await expect(page.getByText("Could not load the result relationships", { exact: false })).toHaveCount(0);
     await expect(progress).not.toContainText("Queued");
     const liveProgressRequests = progressRequests;
@@ -1103,7 +1107,6 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(progress).toHaveCount(0);
     expect(progressRequests).toBeGreaterThan(liveProgressRequests);
     await expect.poll(() => hierarchyStatuses).toContain("COMPLETED");
-    const savedResults = page.getByRole("region", { name: "Attack details", exact: true });
     await expect(savedResults.getByText(plan.seed_groups[0].objective, { exact: true })).toBeVisible();
     await expect(savedResults.getByLabel("Attack outcome", { exact: true })).toContainText("True");
     await expect(savedResults.getByRole("link", { name: "Open conversation", exact: true }))

@@ -23,7 +23,10 @@ export default function ScenarioRunTiming({ run, overall }: ScenarioRunTimingPro
   }, [active, run.started_at])
   if (overall) {
     const eta = getEtaMilliseconds(run, overall, now)
-    return <Text>{eta === null ? 'Estimating time remaining' : `About ${formatDuration(eta)} left`}</Text>
+    const pending = overall.planned !== null && overall.planned > 1
+    return <Text>{eta === null
+      ? pending ? 'Estimating time remaining' : 'Time remaining unavailable'
+      : `About ${formatDuration(eta)} left`}</Text>
   }
   const elapsed = run.started_at ? formatDuration(getElapsedMilliseconds(run, now))
     : run.status === 'CREATED' || run.status === 'QUEUED' ? 'Not started' : 'Not recorded'

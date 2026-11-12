@@ -4,7 +4,7 @@ import type {
   ScenarioHierarchyNode,
   ScenarioProgressCounts,
   ScenarioProgressResult,
-  ScenarioProgressSummary,
+  ScenarioRunPlan,
 } from '@/types'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
@@ -17,15 +17,20 @@ import {
 } from './scenarioRunLayout'
 
 const COUNTS: ScenarioProgressCounts = { completed: 0, planned: 1, succeeded: 0, success_percentage: null, errors: 0, retries: 0 }
-const GROUP = { ...COUNTS, id: 'direct', display_group: 'Direct', atomic_attack_names: ['PromptSendingAttack'], atomic_group_ids: ['group'] }
-const SUMMARY: ScenarioProgressSummary = {
-  overall: COUNTS, display_groups: [GROUP], techniques: [], seed_groups: [], atomic_groups: [],
-}
 const RESULT: ScenarioProgressResult = {
   attack_result_id: 'attack', conversation_id: 'main', related_conversation_ids: ['pruned'], atomic_group_id: 'group',
   atomic_attack_name: 'PromptSendingAttack', seed_group_id: 'seed', outcome: 'success', execution_time_ms: 1,
   timestamp: '2026-01-01T00:00:00Z', total_retries: 0, retries: [],
 }
+const PLAN: ScenarioRunPlan = {
+  version: 1,
+  atomic_groups: [{
+    id: 'group', atomic_attack_name: RESULT.atomic_attack_name, display_group: 'Direct', technique_eval_hash: 'hash',
+    seed_group_ids: ['seed'], tags: [], is_compound: false,
+  }],
+  seed_groups: [{ id: 'seed', objective_sha256: 'sha', objective: 'Objective', prompts: [] }],
+}
+const PLANNED_GROUP = PLAN.atomic_groups[0]
 const LIVE: ScenarioActiveConversation = {
   attack_result_id: 'live', conversation_id: 'live-main', conversation_ids: ['live-first', 'live-main'],
   atomic_attack_name: 'Crescendo', objective: 'Objective', started_at: '2026-01-01T00:00:00Z', seed_identifiers: [],
@@ -51,33 +56,46 @@ function state(overrides: Partial<ScenarioRunProgressState>): ScenarioRunProgres
 }
 
 describe('singleAtomicGroupId', () => {
+  it('keeps single-card eligibility across saved retry attempts', () => {
+    const attempts = [RESULT, { ...RESULT, attack_result_id: 'retry' }]
+    expect(singleAtomicGroupId(PLAN)).toBe('group')
+    expect(singleAttackAttempt(PLANNED_GROUP, attempts, [hierarchyGroup([root(), root({ attack_result_id: 'retry' })])], [], false))
+      .toBe(attempts[1])
+  })
   it('should find the only atomic group of a one-attack run', () => {
-    expect(singleAtomicGroupId(SUMMARY, [], 0)).toBe('group')
-    expect(singleAtomicGroupId(SUMMARY, [hierarchyGroup([root()])], 1)).toBe('group')
+    expect(singleAtomicGroupId(PLAN)).toBe('group')
   })
 
-  it.each([
-    ['more than one planned attack', { ...SUMMARY, overall: { ...COUNTS, planned: 2 } }, [], 0],
-    ['an unknown plan', { ...SUMMARY, overall: { ...COUNTS, planned: null } }, [], 0],
-    ['more than one execution', SUMMARY, [], 2],
-    ['no display groups', { ...SUMMARY, display_groups: [] }, [], 0],
-    ['no atomic group', { ...SUMMARY, display_groups: [{ ...GROUP, atomic_group_ids: [] }] }, [], 0],
-    ['two atomic groups', { ...SUMMARY, display_groups: [{ ...GROUP, atomic_group_ids: ['group', 'other'] }] }, [], 0],
-    ['two display groups', { ...SUMMARY, display_groups: [GROUP, { ...GROUP, id: 'other', atomic_group_ids: ['other'] }] }, [], 0],
-    ['two saved roots', SUMMARY, [hierarchyGroup([root(), root({ attack_result_id: 'other' })])], 1],
-    ['a compound root', SUMMARY, [hierarchyGroup([root({ child_attack_result_ids: ['child'] })])], 1],
-  ] as const)('should not treat a run with %s as a single attack', (_label, summary, groups, loaded) => {
-    expect(singleAtomicGroupId(summary, groups, loaded)).toBeNull()
+  it.each<[string, ScenarioRunPlan | null]>([
+    ['an unknown plan', null],
+    ['legacy unknown capability', { ...PLAN, atomic_groups: [{ ...PLANNED_GROUP, is_compound: undefined }] }],
+    ['a running compound before children exist', { ...PLAN, atomic_groups: [{ ...PLANNED_GROUP, is_compound: true }] }],
+    ['no atomic group', { ...PLAN, atomic_groups: [] }],
+    ['two atomic groups', { ...PLAN, atomic_groups: [PLANNED_GROUP, { ...PLANNED_GROUP, id: 'other' }] }],
+    ['two seeds', { ...PLAN, seed_groups: [...PLAN.seed_groups, { ...PLAN.seed_groups[0], id: 'other' }] }],
+  ])('should not treat a run with %s as a single attack', (_label, plan) => {
+    expect(singleAtomicGroupId(plan)).toBeNull()
   })
 })
 
 describe('singleAttackAttempt', () => {
-  it('should prefer the saved result, then the saved root, then the running attack', () => {
+  it('prefers a matching active retry over the previous saved result', () => {
+    const retry = { ...LIVE, atomic_attack_name: RESULT.atomic_attack_name, seed_group_id: RESULT.seed_group_id }
+    expect(singleAttackAttempt(PLANNED_GROUP, [RESULT], [], [retry], true)).toBe(retry)
+    expect(singleAttackAttempt(PLANNED_GROUP, [RESULT], [], [retry], false)).toBe(RESULT)
+  })
+  it('uses saved results and hierarchy fallback but never an unrelated active conversation', () => {
     const saved = root()
-    expect(singleAttackAttempt('group', [RESULT], [hierarchyGroup([saved])], [LIVE])).toBe(RESULT)
-    expect(singleAttackAttempt('group', [], [hierarchyGroup([saved])], [LIVE])).toBe(saved)
-    expect(singleAttackAttempt('group', [], [], [LIVE])).toBe(LIVE)
-    expect(singleAttackAttempt('group', [], [], [])).toBeNull()
+    expect(singleAttackAttempt(PLANNED_GROUP, [RESULT], [hierarchyGroup([saved])], [LIVE], true)).toBe(RESULT)
+    expect(singleAttackAttempt(PLANNED_GROUP, [], [hierarchyGroup([saved])], [LIVE], true)).toBe(saved)
+    expect(singleAttackAttempt(PLANNED_GROUP, [], [], [LIVE], true)).toBeNull()
+    expect(singleAttackAttempt(PLANNED_GROUP, [], [], [], false)).toBeNull()
+  })
+  it('chooses the latest saved retry and applies the same chronology to hierarchy roots', () => {
+    const latest = { ...RESULT, attack_result_id: 'retry', timestamp: '2026-01-02T00:00:00Z' }
+    expect(singleAttackAttempt(PLANNED_GROUP, [RESULT, latest], [], [], false)).toBe(latest)
+    const latestRoot = root({ attack_result_id: latest.attack_result_id, timestamp: latest.timestamp })
+    expect(singleAttackAttempt(PLANNED_GROUP, [], [hierarchyGroup([latestRoot, root()])], [], false)).toBe(latestRoot)
   })
 })
 

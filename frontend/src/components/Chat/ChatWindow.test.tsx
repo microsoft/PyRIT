@@ -573,7 +573,7 @@ describe("ChatWindow Integration", () => {
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
     mockedAttacksApi.getConversations.mockImplementation(async (attackId: string, params?: ConversationPageParams) => ({
-      attack_result_id: attackId, conversations: [], main_conversation_id: null,
+      attack_result_id: attackId, conversations: [], main_conversation_id: "main",
       ...(params ? { total_count: 0, pagination: { limit: params.limit ?? 50, has_more: false, next_cursor: null } } : {}),
     }));
     // Default: getMessages never resolves so loadConversation won't trigger
@@ -3884,13 +3884,14 @@ describe("ChatWindow Integration", () => {
     const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
     const { rerender } = render(
       <TestWrapper>
-        <ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />
+        <ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} inProgress attackScenarioResultId={scenarioResultId} />
       </TestWrapper>
     );
 
     expect(within(screen.getByRole("group", { name: "Conversation actions" })).getByRole("link", {
       name: "Back to scan",
     })).toHaveAttribute("href", `/scanner/history/${scenarioResultId}`);
+    expect(screen.getAllByRole("link", { name: "Back to scan" })).toHaveLength(1);
 
     rerender(
       <TestWrapper>
@@ -3920,7 +3921,7 @@ describe("ChatWindow Integration", () => {
           <Routes>
             <Route
               path="/attack/chat/:attackResultId"
-              element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />}
+              element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} inProgress />}
             />
             <Route
               path="/scanner/history/:scenarioResultId"
@@ -3942,6 +3943,17 @@ describe("ChatWindow Integration", () => {
     })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Originating scenario run" }))
       .toHaveAttribute("data-navigation-state", JSON.stringify(navigationState));
+  });
+
+  it("uses the only scan return link for the return callback while running", async () => {
+    const user = userEvent.setup();
+    const onReturnToScan = jest.fn();
+    render(<TestWrapper><ChatWindow {...defaultProps} inProgress scenarioResultId="scan"
+      attackScenarioResultId="scan" onReturnToScan={onReturnToScan} /></TestWrapper>);
+    await user.click(screen.getByRole("link", { name: "Back to scan" }));
+    expect(onReturnToScan).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByTestId("attack-in-progress-bar")).queryByRole("link", { name: "Back to scan" }))
+      .not.toBeInTheDocument();
   });
 
   it("should apply and persist the Markdown choice across remounts", async () => {

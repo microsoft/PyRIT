@@ -32,6 +32,19 @@ describe("ConversationPanel", () => {
     jest.clearAllMocks();
   });
 
+  it("preserves unknown recorded-only counts and main identity through the view reader", async () => {
+    const readConversations = jest.fn(async () => ({
+      attack_result_id: defaultProps.attackResultId, main_conversation_id: null,
+      conversations: [{ conversation_id: "recorded", message_count: null }],
+    }));
+    render(<TestWrapper><ConversationPanel {...defaultProps} readConversations={readConversations}
+      lockedReason="Recorded evidence is read-only." /></TestWrapper>);
+    const row = await screen.findByRole("button", { name: "Select conversation recorded" });
+    expect(within(row).getByText("Not counted")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Main conversation recorded" })).not.toBeInTheDocument();
+    expect(mockedAttacksApi.getConversations).not.toHaveBeenCalled();
+  });
+
   describe("live polling", () => {
     const conversation = (id: string, count: number): ConversationSummary => ({ conversation_id: id, message_count: count })
     beforeEach(() => { jest.useFakeTimers(); });
@@ -42,7 +55,7 @@ describe("ConversationPanel", () => {
       let finishNext: (response: AttackConversationsResponse) => void = () => { throw new Error("No next read"); };
       mockedAttacksApi.getConversations.mockReset();
       mockedAttacksApi.getConversations
-        .mockResolvedValue({ attack_result_id: "other", main_conversation_id: null, conversations: [] })
+        .mockResolvedValue({ attack_result_id: "other", main_conversation_id: "other-main", conversations: [] })
         .mockImplementationOnce(() => new Promise<AttackConversationsResponse>((resolve) => { finishFirst = resolve; }))
         .mockImplementationOnce(() => new Promise<AttackConversationsResponse>((resolve) => { finishNext = resolve; }));
       const rendered = render(<TestWrapper><ConversationPanel {...defaultProps} pollIntervalMs={2_500} /></TestWrapper>);

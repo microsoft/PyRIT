@@ -1414,19 +1414,32 @@ export interface AttackListResponse {
 export interface ConversationSummary {
   conversation_id: string
   conversation_type?: 'main' | 'pruned'
-  /** Null when a recorded-only scan reference has no counted attack-result projection. */
-  message_count: number | null
+  message_count: number
   last_message_preview?: string | null
   created_at?: string | null
 }
 
 export interface AttackConversationsResponse {
   attack_result_id: string
-  main_conversation_id: string | null
+  main_conversation_id: string
   conversations: ConversationSummary[]
   pagination?: PaginationInfo | null
   total_count?: number | null
 }
+
+/** Read-only display references may lack saved-result counts and a main conversation. */
+export interface ConversationReferenceView extends Omit<ConversationSummary, 'message_count'> {
+  message_count: number | null
+}
+
+export interface AttackConversationReferencesView extends Omit<AttackConversationsResponse, 'main_conversation_id' | 'conversations'> {
+  main_conversation_id: string | null
+  conversations: ConversationReferenceView[]
+}
+
+export type ReadAttackConversationReferences = (
+  attackResultId: string, params?: ConversationPageParams,
+) => Promise<AttackConversationReferencesView>
 
 
 export interface CreateConversationRequest {
@@ -2290,6 +2303,8 @@ export interface PairedOutcomeDetailPage {
 }
 
 export interface ScenarioRunPlanAtomicGroup {
+  /** Absent in legacy plans, whose topology is unknown. */
+  is_compound?: boolean | null
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
@@ -2460,7 +2475,7 @@ export interface ScenarioHierarchyProjection {
   truncated: boolean
 }
 
-export interface ScenarioObjectiveScorerMetrics extends ScorerEvaluationMetrics {
+export interface ScenarioObjectiveScorerMetrics {
   accuracy: number
   accuracy_standard_error?: number | null
   f1_score?: number | null

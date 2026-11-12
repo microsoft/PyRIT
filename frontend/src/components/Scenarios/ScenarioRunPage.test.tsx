@@ -52,6 +52,10 @@ const ATTEMPT: ScenarioProgressResult = {
   seed_identifiers: SEEDS,
   score: { scorer_name: 'objective', score_type: 'true_false', status: 'complete', score_value: 'true', score_rationale: 'The objective was met.' },
 }
+const SINGLE_PLAN: ScenarioRunPlan = {
+  ...PLAN, atomic_groups: [{ ...PLAN.atomic_groups[0], seed_group_ids: ['seed-1'], is_compound: false }],
+  seed_groups: [PLAN.seed_groups[0]],
+}
 const COUNTS = { completed: 2, planned: 2, succeeded: 1, success_percentage: 50, errors: 0, retries: 1 }
 const SUMMARY: ScenarioProgressSummary = {
   overall: COUNTS, objective_scorer: SCORER,
@@ -266,7 +270,76 @@ describe('ScenarioRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'True: View score for PromptSendingAttack: First objective' }))
     expect(await screen.findByText('Score details')).toBeInTheDocument()
     expect(screen.getByText('The objective was met.')).toBeInTheDocument()
+    await user.click(screen.getByText('The objective was met.'))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it.each([null, 1])('explains unavailable ETA for a plan of %s attacks', (planned: number | null) => {
+    state = makeState({ summary: { ...SUMMARY, overall: { ...COUNTS, completed: 0, planned } } })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('Time remaining unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('Estimating time remaining')).not.toBeInTheDocument()
+  })
+
+  it('keeps fallback score text outside the row details action', async () => {
+    const user = userEvent.setup()
+    state = makeState({ results: [{ ...ATTEMPT, score: null }] })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await expand(user)
+    await user.click(screen.getByRole('button', { name: 'True: View score for PromptSendingAttack: First objective' }))
+    await user.click(await screen.findByText('No score was saved for this result.'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps the single card mounted across an error, active retry and multiple saved retries', async () => {
+    const user = userEvent.setup()
+    const failed = { ...ATTEMPT, outcome: 'error' as const, score: null, error_message: 'Previous failure' }
+    state = makeState({ plan: SINGLE_PLAN, results: [failed] })
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const card = screen.getByRole('region', { name: 'Attack details' })
+    const retry: ScenarioActiveConversation = {
+      attack_result_id: 'retry', conversation_id: 'retry-main', atomic_attack_name: ATTEMPT.atomic_attack_name,
+      seed_group_id: ATTEMPT.seed_group_id, objective: 'First objective', started_at: RUN.started_at, seed_identifiers: [],
+    }
+    state = { ...state, activeConversations: [retry] }
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('region', { name: 'Attack details' })).toBe(card)
+    expect(within(card).getByText('In progress', { exact: true })).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Watch live conversation' })).toHaveAttribute(
+      'href', `/attack/chat/retry/conversations/retry-main?scenarioResultId=${RUN_ID}`,
+    )
+    await user.click(screen.getByRole('button', { name: 'View live attacks (1)' }))
+    expect(screen.getByRole('heading', { name: 'Live attacks' })).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: 'Watch live conversation' })).toHaveLength(2)
+    await user.keyboard('{Escape}')
+    state = { ...state, run: { ...RUN, status: 'COMPLETED' }, activeConversations: [],
+      results: [failed, { ...ATTEMPT, attack_result_id: 'retry', conversation_id: 'retry-main', timestamp: '2026-01-02T00:00:00Z' }] }
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('region', { name: 'Attack details' })).toBe(card)
+    expect(within(card).getByRole('link', { name: 'Open conversation' })).toHaveAttribute(
+      'href', `/attack/chat/retry/conversations/retry-main?scenarioResultId=${RUN_ID}`,
+    )
+  })
+
+  it.each([true, undefined])('keeps unknown or compound plans grouped before any result is saved (%s)', (isCompound) => {
+    state = makeState({ plan: { ...SINGLE_PLAN, atomic_groups: [{ ...SINGLE_PLAN.atomic_groups[0], is_compound: isCompound }] }, results: [] })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('heading', { name: 'Atomic attack groups' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Attack details' })).not.toBeInTheDocument()
+  })
+
+  it('retains live disclosure when no active conversation matches the single-card plan', async () => {
+    const user = userEvent.setup()
+    state = makeState({ plan: SINGLE_PLAN, results: [], activeConversations: [{
+      attack_result_id: 'unrelated', conversation_id: 'other', atomic_attack_name: 'OtherAttack',
+      seed_group_id: 'other-seed', objective: 'Other objective', started_at: RUN.started_at, seed_identifiers: [],
+    }] })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(within(screen.getByRole('region', { name: 'Attack details' })).getByText('Preparing', { exact: true })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'View live attacks (1)' }))
+    expect(screen.getByRole('link', { name: 'Watch live conversation' })).toHaveAttribute(
+      'href', `/attack/chat/unrelated/conversations/other?scenarioResultId=${RUN_ID}`,
+    )
   })
 
   it('shows findings linked to the attack only when there are some', async () => {
@@ -673,6 +746,7 @@ describe('ScenarioRunPage', () => {
 
   it('shows a single completed atomic attack as one framed card without group sections', () => {
     state = makeState({
+      plan: SINGLE_PLAN,
       run: { ...RUN, scenario_registry_name: 'technique.execute', status: 'COMPLETED' },
       summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1 } },
       results: [ATTEMPT],
@@ -698,7 +772,7 @@ describe('ScenarioRunPage', () => {
       seed_group_id: 'seed-1', objective: 'First objective', started_at: RUN.started_at, seed_identifiers: [],
     }
     const single = { ...SUMMARY, overall: { ...COUNTS, completed: 0, planned: 1 } }
-    state = makeState({ summary: single, results: [], activeConversations: [] })
+    state = makeState({ plan: SINGLE_PLAN, summary: single, results: [], activeConversations: [] })
     const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     const details = screen.getByRole('region', { name: 'Attack details' })
     const components = screen.getByLabelText('Attack components')
@@ -717,6 +791,7 @@ describe('ScenarioRunPage', () => {
     )
 
     state = makeState({
+      plan: SINGLE_PLAN,
       run: { ...RUN, status: 'COMPLETED' }, summary: { ...single, overall: { ...single.overall, completed: 1 } },
       results: [ATTEMPT], activeConversations: [],
     })
@@ -728,6 +803,7 @@ describe('ScenarioRunPage', () => {
 
   it('shows a completed single attack error once while keeping scan-level notices', () => {
     state = makeState({
+      plan: SINGLE_PLAN,
       run: { ...RUN, status: 'FAILED', error: 'The target timed out.', error_type: 'TimeoutError' },
       summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1, errors: 1 } },
       results: [{ ...ATTEMPT, outcome: 'error', score: null, error_type: 'TimeoutError', error_message: 'The target timed out.' }],
@@ -744,6 +820,7 @@ describe('ScenarioRunPage', () => {
   it('keeps a distinct run failure when the single attack has its own error', async () => {
     const user = userEvent.setup()
     state = makeState({
+      plan: SINGLE_PLAN,
       run: { ...RUN, status: 'FAILED', error: 'The worker stopped unexpectedly.', error_type: 'WorkerError' },
       summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1, errors: 1 } },
       results: [{ ...ATTEMPT, outcome: 'error', score: null, error_type: 'TimeoutError', error_message: 'The target timed out.' }],
@@ -758,6 +835,7 @@ describe('ScenarioRunPage', () => {
 
   it('does not present a finished single attack without details as still preparing', () => {
     state = makeState({
+      plan: SINGLE_PLAN,
       run: { ...RUN, status: 'COMPLETED' },
       summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1 } },
       results: [],

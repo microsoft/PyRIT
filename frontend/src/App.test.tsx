@@ -248,7 +248,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     relatedConversationCount?: number;
     lastResponseMessagePieceId?: string | null;
     readConversationById?: (id: string) => Promise<import("./types").ConversationMessagesResponse>;
-    readConversations?: typeof import("./services/api").attacksApi.getConversations;
+    readConversations?: import("./types").ReadAttackConversationReferences;
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();

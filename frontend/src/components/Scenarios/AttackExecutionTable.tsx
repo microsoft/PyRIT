@@ -167,6 +167,7 @@ function ResultRows({ nodeKey, result, objective, position, depth, ancestors, op
         tabIndex={0}
         aria-label={`View attack details for ${label}`}
         onClick={(event) => {
+          if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return
           if (event.target instanceof Element && event.target.closest('a, button')) return
           onOpenDetails(result, event.currentTarget)
         }}

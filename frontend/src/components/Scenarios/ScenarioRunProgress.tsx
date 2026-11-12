@@ -13,7 +13,7 @@ interface ScenarioRunProgressProps {
   readonly scenarioResultId: string
   readonly run: ScenarioProgressHeader
   readonly overall: ScenarioProgressCounts
-  /** Running attacks to offer from the progress area; omitted when the page shows its only attack inline. */
+  /** All running attacks remain available even when a matching attempt is shown inline. */
   readonly liveAttacks?: readonly LiveAttack[]
   /** Router state carried to a live conversation, so its back link returns here. */
   readonly conversationState: unknown

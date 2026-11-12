@@ -34,7 +34,7 @@ import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
 import FileDropZone from '@/components/Media/FileDropZone'
 import ObjectiveHeader from './ObjectiveHeader'
-import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft } from '@/types'
+import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft, ReadAttackConversationReferences } from '@/types'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
@@ -381,7 +381,7 @@ interface ChatWindowProps {
   findingEvidenceId?: string | null
   /** Verified scan-scoped readers for recorded evidence without a saved attack result. */
   readConversationById?: (conversationId: string) => Promise<ConversationMessagesResponse>
-  readConversations?: typeof attacksApi.getConversations
+  readConversations?: ReadAttackConversationReferences
 }
 
 export default function ChatWindow({
@@ -2945,7 +2945,8 @@ export default function ChatWindow({
             </MessageBarActions>
           </MessageBar>
         )}
-        {inProgress ? <AttackInProgressBar scanPath={liveScanId ? scenarioRunRoutePath(liveScanId) : null} scanState={location.state} />
+        {inProgress ? <AttackInProgressBar scanPath={!scenarioResultId && liveScanId ? scenarioRunRoutePath(liveScanId) : null}
+          scanState={location.state} onReturnToScan={onReturnToScan} />
           : <div hidden={editDraft !== null}>
         <ChatInputArea
           fileDropEnabled={false}

@@ -124,9 +124,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     conversationState: location.state,
   }
   // A run of one atomic attack shows that attack directly, from preparing through completion.
-  const singleGroupId = singleAtomicGroupId(summary, hierarchy.roots.groups, state.results.length)
-  const singleAttempt = singleGroupId
-    ? singleAttackAttempt(singleGroupId, state.results, hierarchy.roots.groups, state.activeConversations)
+  const singleGroupId = singleAtomicGroupId(state.plan)
+  const singleGroup = state.plan?.atomic_groups.find((group) => group.id === singleGroupId)
+  const singleAttempt = singleGroup
+    ? singleAttackAttempt(singleGroup, state.results, hierarchy.roots.groups, state.activeConversations, active)
     : null
   const openObjectiveAttempt = (attempt: ScenarioProgressResult): void => {
     attackDetails.open(attempt, objectiveTrigger.current)
@@ -144,7 +145,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         <ScenarioRunNotices run={run} summary={summary} state={state} onRetry={retry} onOpenAttempt={attackDetails.open}
           inlineAttempt={singleAttempt && 'outcome' in singleAttempt ? singleAttempt : null} />
         <ScenarioRunProgress scenarioResultId={scenarioResultId} run={run} overall={summary.overall}
-          liveAttacks={singleGroupId ? undefined : runningAttacks} conversationState={location.state}
+          liveAttacks={runningAttacks} conversationState={location.state}
           onOpenAttack={attackDetails.open} />
         <ScenarioRunSavedConversations scenarioResultId={scenarioResultId} conversations={savedConversations}
           conversationState={location.state} />
