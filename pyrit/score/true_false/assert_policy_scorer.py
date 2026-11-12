@@ -122,7 +122,7 @@ class _AssertCategoryResponseHandler(JsonSchemaResponseHandler):
         Returns:
             tuple[dict[str, Any], list[str]]: The response with restored names, and a warning per restored name.
         """
-        judgments = parsed_response.get("node_judgments") if isinstance(parsed_response, dict) else None
+        judgments = parsed_response.get("node_judgments")
         if not isinstance(judgments, list):
             return parsed_response, []
         restored: list[Any] = []
