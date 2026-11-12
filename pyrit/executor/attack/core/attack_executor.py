@@ -335,10 +335,7 @@ class AttackExecutor:
                 combined_overrides = dict(broadcast_fields)
                 if field_overrides is not None:
                     combined_overrides.update(field_overrides[i])
-                # Only seed groups that write or replay tool calls are checked against the objective target.
-                if sg.simulated_tool_history_config is not None or any(
-                    prompt.data_type == "function_call" for prompt in sg.prompts
-                ):
+                if sg.simulated_tool_history_config is not None:
                     combined_overrides["objective_target"] = attack.get_objective_target()
                 return await params_type.from_seed_group_async(
                     seed_group=sg,

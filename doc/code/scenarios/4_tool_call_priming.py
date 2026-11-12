@@ -16,7 +16,7 @@
 # adversarial model writes a fabricated history of tool calls and results against the tools the target
 # actually reports, for example a document that "approves" the request. A deterministic check rejects
 # unknown tools, invalid arguments, and unanswered calls, and the adversarial model revises the history
-# until it passes. The history is replayed natively, then the objective is sent.
+# until it passes. The history is prepended natively, then the objective is sent.
 #
 # The objective target must report its function tools and accept tool-call history natively;
 # `OpenAIResponseTarget` does both. Targets are configured from environment variables: the objective
@@ -102,44 +102,3 @@ primed = next(
 for message in await memory.get_conversation_messages_async(conversation_id=primed.conversation_id):  # type: ignore
     piece = message.get_piece()
     print(f"[{piece.role} / {piece.converted_value_data_type}] {piece.converted_value[:400]}\n")
-
-# %% [markdown]
-# ## Replay histories from a dataset
-#
-# A history can also be written by hand and stored as an ordinary dataset: tool calls and results are
-# seed prompts with the `function_call` and `function_call_output` data types. The
-# `pyrit_example_tool_call_priming` dataset holds two such cases, and any attack sends a seed group's
-# history before its final request. The cases call `search_knowledge_base` and `read_document`, so they
-# replay against any target that offers those tools.
-
-# %%
-from pyrit.datasets import SeedDatasetProvider
-from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
-
-datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["pyrit_example_tool_call_priming"])  # type: ignore
-await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="tool_call_priming")  # type: ignore
-cases = await memory.get_seed_groups_async(dataset_name="pyrit_example_tool_call_priming")  # type: ignore
-
-attack = PromptSendingAttack(
-    objective_target=victim, attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer)
-)
-replayed = await AttackExecutor().execute_attack_from_seed_groups_async(attack=attack, seed_groups=cases)  # type: ignore
-for attack_result in replayed.completed_results:
-    print(f"{attack_result.outcome.value:<8} {attack_result.objective[:80]}")
-
-# %% [markdown]
-# ## Incompatible targets reject the history
-#
-# When an attack is prepared from a seed group, every recorded call in its history must use a tool the
-# objective target offers, with arguments its schema accepts. Otherwise preparation fails before anything
-# is sent, instead of showing the model calls to tools it never had.
-
-# %%
-mismatched = OpenAIResponseTarget(tools=[search_knowledge_base])
-attack = PromptSendingAttack(
-    objective_target=mismatched, attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer)
-)
-try:
-    await AttackExecutor().execute_attack_from_seed_groups_async(attack=attack, seed_groups=cases[:1])  # type: ignore
-except ValueError as error:
-    print(error)

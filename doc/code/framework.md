@@ -271,8 +271,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   an error response whose metadata says why (`ToolLoopStop`), rather than asking the model to fix
   infrastructure. `OpenAIResponseTarget` does this today.
 - A target that advertises function tools reports them with `get_tool_definitions_async()` (`None` when it
-  reports none). Attacks prepared from a seed group use it to reject a prepended history whose function
-  calls name tools the objective target does not offer or pass arguments their schemas reject.
+  reports none), so a simulated tool history can be written against the tools the target really has.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
 

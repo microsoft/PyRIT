@@ -444,58 +444,6 @@ class TestFromSeedGroupAsyncWithSimulatedToolHistory:
             )
 
 
-def _replayed_group(*, name: str, arguments: str) -> AttackSeedGroup:
-    call = {"type": "function_call", "call_id": "call_1", "name": name, "arguments": arguments}
-    output = {"type": "function_call_output", "call_id": "call_1", "output": "Done."}
-    return AttackSeedGroup(
-        seeds=[
-            SeedObjective(value="Reset the admin password."),
-            SeedPrompt(value=json.dumps(call), data_type="function_call", role="assistant", sequence=0),
-            SeedPrompt(value=json.dumps(output), data_type="function_call_output", role="tool", sequence=1),
-            SeedPrompt(value="Reset the admin password.", role="user", sequence=2),
-        ]
-    )
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestFromSeedGroupAsyncReplayedToolCalls:
-    """Tests for checking a seed group's recorded tool calls against the objective target."""
-
-    @pytest.mark.parametrize(
-        ("name", "arguments", "problem"),
-        [
-            ("read_ticket", '{"ticket_id": "S-1"}', None),
-            ("delete_ticket", "{}", "'delete_ticket' is not an available tool"),
-            ("read_ticket", '{"ticket_id": 7}', r"arguments for 'read_ticket' at \$\.ticket_id"),
-        ],
-    )
-    async def test_history_must_fit_the_objective_target_tools(
-        self, name: str, arguments: str, problem: str | None
-    ) -> None:
-        objective_target = MagicMock()
-        objective_target.get_tool_definitions_async = AsyncMock(return_value=[_READ_TICKET])
-        seed_group = _replayed_group(name=name, arguments=arguments)
-
-        if problem is None:
-            params = await AttackParameters.from_seed_group_async(
-                seed_group=seed_group, objective_target=objective_target
-            )
-            assert len(params.prepended_conversation or []) == 2
-        else:
-            with pytest.raises(ValueError, match=problem):
-                await AttackParameters.from_seed_group_async(seed_group=seed_group, objective_target=objective_target)
-
-    async def test_targets_that_do_not_report_tools_are_not_checked(self) -> None:
-        objective_target = MagicMock()
-        objective_target.get_tool_definitions_async = AsyncMock(return_value=None)
-
-        params = await AttackParameters.from_seed_group_async(
-            seed_group=_replayed_group(name="delete_ticket", arguments="{}"), objective_target=objective_target
-        )
-
-        assert len(params.prepended_conversation or []) == 2
-
-
 class TestExcluding:
     """Tests for AttackParameters.excluding()."""
 

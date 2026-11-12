@@ -115,9 +115,7 @@ class AttackParameters:
         If the seed_group has a simulated conversation config,
         generates the simulated conversation using the provided adversarial_chat and scorer.
         If it has a simulated tool history config, the adversarial_chat writes a tool-call
-        history against the tools the objective_target reports. When an objective_target that
-        reports its tools is given, every function call in the prepended history must use one
-        of those tools with arguments its schema accepts.
+        history against the tools the objective_target reports.
 
         Args:
             seed_group: The seed attack group to extract parameters from.
@@ -125,8 +123,8 @@ class AttackParameters:
                 Required if seed_group has a simulated conversation or tool history config.
             objective_scorer: The scorer for evaluating simulated conversations.
                 Required if seed_group has a simulated conversation config.
-            objective_target: The target the attack sends to, whose tools the prepended history
-                must call. Required if seed_group has a simulated tool history config.
+            objective_target: The target the attack sends to, whose tools a simulated tool
+                history must call. Required if seed_group has a simulated tool history config.
             **overrides: Field overrides to apply. Must be valid fields for this params type.
 
         Returns:
@@ -137,9 +135,8 @@ class AttackParameters:
                 blocked and this parameter type cannot represent a completed preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, if seed_group has simulated
-                history but a required dependency is not provided, if the objective target
-                reports no tools for a simulated tool history, or if the prepended history calls
-                a tool the objective target does not offer.
+                history but a required dependency is not provided, or if the objective target
+                reports no tools for a simulated tool history.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import generate_simulated_conversation_async
@@ -230,11 +227,6 @@ class AttackParameters:
             if "source_conversations" in valid_fields:
                 params["source_conversations"] = frozenset({reference})
             extraction_group = SeedGroup(seeds=[*seed_group.prompts, *history])
-
-        if objective_target is not None:
-            await _check_prepended_tool_calls_async(
-                history=extraction_group.prepended_conversation or [], objective_target=objective_target
-            )
 
         # Use extraction_group properties for prepended_conversation/next_message
         if "next_message" in valid_fields:
@@ -398,28 +390,3 @@ async def _generate_tool_history_async(
         description="simulated tool history generation",
     )
     return history, reference
-
-
-async def _check_prepended_tool_calls_async(*, history: list[Message], objective_target: PromptTarget) -> None:
-    """
-    Reject a replayed history whose function calls the objective target could not have made.
-
-    Raises:
-        ValueError: If a call names a tool the target does not report, or passes arguments its
-            schema rejects. Targets that do not report their tools are not checked.
-    """
-    # Import here to avoid circular imports
-    from pyrit.prompt_target.common.tool_call_history import check_tool_calls
-
-    if not any(
-        piece.converted_value_data_type == "function_call" for message in history for piece in message.message_pieces
-    ):
-        return
-    tools = await objective_target.get_tool_definitions_async()
-    if tools is None:
-        return
-    issues = check_tool_calls(messages=history, tools=tools)
-    if issues:
-        raise ValueError(
-            f"The history calls tools that {type(objective_target).__name__} cannot use: " + " ".join(issues)
-        )

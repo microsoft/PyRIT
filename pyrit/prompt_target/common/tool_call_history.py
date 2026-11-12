@@ -64,39 +64,6 @@ def parse_function_call_output(piece: MessagePiece) -> tuple[str, str]:
     return payload.call_id, output if isinstance(output, str) else json.dumps(output, separators=(",", ":"))
 
 
-def check_tool_calls(*, messages: Sequence[Message], tools: Sequence[ToolDefinition]) -> list[str]:
-    """
-    List every recorded function call that names an unavailable tool or passes rejected arguments.
-
-    Only the calls are checked against the tool contracts; call and output links are checked by
-    ``PromptTarget.validate_tool_history``. Schemas resolve only their own references; remote
-    references are reported, never retrieved.
-
-    Args:
-        messages (Sequence[Message]): The ordered history to check.
-        tools (Sequence[ToolDefinition]): The tools the calls may use.
-
-    Returns:
-        list[str]: Human-readable issues, or an empty list when every call fits the tools.
-    """
-    available = {tool.name: tool for tool in tools}
-    issues: list[str] = []
-    for index, message in enumerate(messages):
-        for piece in message.message_pieces:
-            if piece.converted_value_data_type != "function_call":
-                continue
-            try:
-                function = FunctionCallContent.model_validate_json(piece.converted_value).validated_function()
-            except ValueError as error:
-                issues.append(f"Message {index}: invalid function call: {_describe(error)}")
-                continue
-            issues.extend(
-                f"Message {index}: {issue}"
-                for issue in _check_arguments(tools=available, name=function.name, arguments=function.arguments)
-            )
-    return issues
-
-
 def check_simulated_tool_history(*, messages: Sequence[Message], tools: Sequence[ToolDefinition]) -> list[str]:
     """
     List every way a fabricated tool history breaks the given tool contracts or call ordering.
