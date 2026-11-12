@@ -285,6 +285,39 @@ def test_analytics_migration_roundtrip_preserves_result_ids_and_generated_lookup
         engine.dispose()
 
 
+def test_analytics_migration_preserves_malformed_legacy_identifier(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'malformed-identifier.sqlite'}")
+    try:
+        with engine.begin() as connection:
+            config = configuration(connection)
+            command.upgrade(config, MAIN_REVISION)
+            result_id = str(uuid.uuid4())
+            connection.execute(
+                text(
+                    'INSERT INTO "AttackResultEntries" '
+                    "(id, conversation_id, objective, outcome, timestamp, executed_turns, "
+                    "execution_time_ms, atomic_attack_identifier) "
+                    "VALUES (:id, 'legacy-conversation', 'Legacy objective', 'success', "
+                    "'2026-01-01', 0, 0, 'not-json')"
+                ),
+                {"id": result_id},
+            )
+
+            command.upgrade(config, "head")
+
+            row = connection.execute(
+                text(
+                    "SELECT atomic_attack_identifier, resolved_atomic_attack_identifier_hash "
+                    'FROM "AttackResultEntries" WHERE id = :id'
+                ),
+                {"id": result_id},
+            ).one()
+            assert tuple(row) == ("not-json", None)
+            command.check(config)
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize("outcome", ["x" * 17, "unexpected-" * 3])
 def test_analytics_migration_rejects_oversized_outcomes_before_altering_rows(*, tmp_path: Path, outcome: str) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'invalid.sqlite'}")
@@ -328,6 +361,7 @@ def test_analytics_migration_preserves_outcome_at_the_index_key_limit(tmp_path: 
 def test_generated_lookup_and_index_ddl_are_dialect_specific(dialect: Dialect) -> None:
     sql = str(CreateTable(AttackResultEntry.__table__).compile(dialect=dialect))
     assert ("json_extract" if dialect.name == "sqlite" else "JSON_VALUE") in sql
+    assert ("json_valid" if dialect.name == "sqlite" else "ISJSON") in sql
     assert "resolved_atomic_attack_identifier_hash" in sql
     for index in AttackResultEntry.__table__.indexes:
         if index.info.get("dialect") != dialect.name:
@@ -356,6 +390,7 @@ def test_mssql_migration_uses_bounded_computed_key_and_included_json_columns() -
     assert computed.type.length == evaluation_column.type.length == 64
     assert "CONVERT(varchar(64)" in str(computed.computed.sqltext)
     assert "JSON_VALUE" in str(computed.computed.sqltext)
+    assert "ISJSON" in str(computed.computed.sqltext)
     assert "OPENJSON" not in str(computed.computed.sqltext)
     facts, labels, evaluation = operations.create_index.call_args_list
     assert facts.kwargs["mssql_include"] == ["targeted_harm_categories"]
