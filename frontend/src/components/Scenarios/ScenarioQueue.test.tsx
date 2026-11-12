@@ -1,6 +1,7 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
 
 import type { ScenarioQueueSnapshot } from '@/types'
 
@@ -47,13 +48,15 @@ function renderQueue(
 ) {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <ScenarioQueue
-        snapshot={snapshot}
-        loading={loading}
-        stale={stale}
-        error={error}
-        currentScenarioResultId={currentScenarioResultId}
-      />
+      <MemoryRouter>
+        <ScenarioQueue
+          snapshot={snapshot}
+          loading={loading}
+          stale={stale}
+          error={error}
+          currentScenarioResultId={currentScenarioResultId}
+        />
+      </MemoryRouter>
     </FluentProvider>,
   )
 }
@@ -96,6 +99,25 @@ describe('ScenarioQueue', () => {
     expect(screen.getByRole('link', { name: /active\.scenario/i })).toHaveFocus()
   })
 
+  it('navigates to a queued run within the router', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}>
+      <MemoryRouter initialEntries={['/scanner/queue']}>
+        <Routes>
+          <Route path="/scanner/queue" element={
+            <ScenarioQueue snapshot={SNAPSHOT} loading={false} stale={false} error={null} />
+          } />
+          <Route path="/scanner/history/run-waiting" element={<h1>Waiting run</h1>} />
+        </Routes>
+      </MemoryRouter>
+    </FluentProvider>)
+
+    await user.click(screen.getByRole('link', { name: /waiting\.scenario/i }))
+
+    expect(screen.getByRole('heading', { name: 'Waiting run' })).toBeVisible()
+    expect(screen.queryByRole('list', { name: 'Scenario queue order' })).not.toBeInTheDocument()
+  })
+
   it('renders initial loading and error states without an empty-state flash', () => {
     const { rerender } = renderQueue(null, { loading: true })
 
@@ -104,12 +126,14 @@ describe('ScenarioQueue', () => {
 
     rerender(
       <FluentProvider theme={webLightTheme}>
-        <ScenarioQueue
-          snapshot={null}
-          loading={false}
-          stale={false}
-          error="Queue unavailable."
-        />
+        <MemoryRouter>
+          <ScenarioQueue
+            snapshot={null}
+            loading={false}
+            stale={false}
+            error="Queue unavailable."
+          />
+        </MemoryRouter>
       </FluentProvider>,
     )
     expect(screen.getByText('Queue unavailable.')).toBeInTheDocument()

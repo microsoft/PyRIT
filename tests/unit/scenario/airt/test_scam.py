@@ -10,16 +10,15 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import (
     AdversarialPrompts,
     AttackSeedGroup,
     ComponentIdentifier,
+    DatasetFetchPolicy,
     SeedDataset,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import (
     CapabilityName,
     OpenAIChatTarget,
@@ -29,8 +28,9 @@ from pyrit.prompt_target import (
     TargetRequirements,
 )
 from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration, IncompatibleTechniqueError
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
+from pyrit.scenario.scenarios.airt import Scam, ScamTechnique
 from pyrit.score import SubStringScorer, TrueFalseCompositeScorer
 from tests.unit.mocks import MockPromptTarget
 
@@ -111,7 +111,11 @@ def mock_runtime_env():
             "OPENAI_CHAT_MODEL": "gpt-4",
         },
     ):
-        yield
+        with (
+            override_default_adversarial_target(MockPromptTarget()),
+            patch("pyrit.scenario.core.scenario.get_default_scorer_target", return_value=MockPromptTarget()),
+        ):
+            yield
 
 
 @pytest.fixture
@@ -316,7 +320,7 @@ class TestScamInitialization:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam()
-            assert scenario._objective_scorer_identifier
+            assert scenario._objective_scorer_identifier is None
 
     def test_init_with_custom_scorer(self, *, mock_memory_seed_groups: list[AttackSeedGroup]) -> None:
         """Test initialization with custom scorer."""
@@ -329,7 +333,7 @@ class TestScamInitialization:
             return_value={"memory": mock_memory_seed_groups},
         ):
             scenario = Scam(objective_scorer=scorer)
-            assert isinstance(scenario._scorer_config, AttackScoringConfig)
+            assert scenario._objective_scorer is scorer
 
     def test_init_default_adversarial_chat(
         self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[AttackSeedGroup]
@@ -342,8 +346,7 @@ class TestScamInitialization:
         ):
             scenario = Scam(objective_scorer=mock_objective_scorer)
 
-            assert isinstance(scenario._adversarial_chat, OpenAIChatTarget)
-            assert scenario._adversarial_chat._temperature == 1.2
+            assert scenario._adversarial_chat is None
             assert scenario.uses_default_adversarial_target is True
 
     def test_init_with_adversarial_chat(
@@ -363,14 +366,14 @@ class TestScamInitialization:
                 objective_scorer=mock_objective_scorer,
             )
             assert scenario._adversarial_chat == adversarial_chat
-            assert scenario._adversarial_config.target == adversarial_chat
+            assert scenario._adversarial_chat is adversarial_chat
             assert scenario.uses_default_adversarial_target is False
 
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer
     ):
         """Test that initialization raises DatasetConstraintError when datasets are not available in memory."""
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
         scenario = Scam(objective_scorer=mock_objective_scorer)

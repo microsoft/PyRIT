@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     BaselineAttackPolicy,
@@ -81,6 +81,10 @@ class _MetadataScenario:
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
         """Return default dataset settings."""
         return ScenarioDatasetSettings(max_total=4)
+
+    def get_default_dataset_names(self) -> list[str]:
+        """Return the datasets a default run loads."""
+        return ["sample"]
 
 
 class _MarkdownMetadataScenario(_MetadataScenario):

@@ -1,10 +1,11 @@
 import { Fragment, useState } from 'react'
 
-import { Button, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
+import { Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
 import {
   formatScorerComparisonMetric, scorerComparisonValue, scorerEvidenceLabel, scorerMetricDescription, scorerMetricLabel,
@@ -59,6 +60,7 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
       ) : (
         <Tooltip relationship="description"
           content={`${scorerMetricDescription(name)} Recorded value: ${String(value)}`}>
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the metric description tooltip */}
           <span className={styles.numeric} tabIndex={0}>{display}</span>
         </Tooltip>
       )}
@@ -108,7 +110,9 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               sortDirection={sort.column === 'name' ? sort.direction : undefined}
               button={{ className: scorerStyles.sortButton, onClick: () => toggleSort('name') }}>Name</TableHeaderCell>
             <TableHeaderCell className={scorerStyles.typeColumn}>Type</TableHeaderCell>
-            <TableHeaderCell className={scorerStyles.scorableColumn}>Scorable</TableHeaderCell>
+            <TableHeaderCell aria-label="Scorable" className={scorerStyles.scorableColumn}>
+              <ContextualHelpLabel term="Scorable">Evidence the scorer evaluates, such as a message, conversation, or trace.</ContextualHelpLabel>
+            </TableHeaderCell>
             {metrics.map((name: string) => (
               <TableHeaderCell key={name}
                 sortable sortDirection={sort.column === name ? sort.direction : undefined}
@@ -158,16 +162,17 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
   const { preferences, updatePreferences } = useUserPreferences()
+  useAutoRefresh(onRefresh, !loading)
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Scorer Registry</Text>
+          <Text as="h1" aria-label="Scorer Registry" size={600} weight="semibold">
+            <ContextualHelpLabel term="Scorer Registry" labelProps={{ weight: 'semibold' }}>
+              Components that evaluate evidence and return a score or verdict. The attack decides what to do with that result.
+            </ContextualHelpLabel>
+          </Text>
           <Text>Browse configured scorers.</Text>
-        </div>
-        <div className={styles.actions}>
-          <Button className={styles.action} appearance="subtle" icon={<ArrowSyncRegular />}
-            onClick={onRefresh} disabled={loading}>Refresh</Button>
         </div>
       </div>
       <div className={scorerStyles.defaultPicker}>

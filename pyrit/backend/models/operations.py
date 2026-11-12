@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models.common import TextStr
 from pyrit.models import (
     AttackOutcome,
     Finding,
@@ -14,10 +15,14 @@ from pyrit.models import (
     FindingEvidence,
     FindingSeverity,
     Operation,
+    OperationCreate,
     OperationUsage,
 )
 from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import OperationName
+
+# Ten pages of the export dialog; the dashboard keeps its selection within this.
+MAX_EXPORT_FINDINGS = 1_000
 
 
 class FindingOptionsResponse(BaseModel):
@@ -44,19 +49,41 @@ class OperationDetail(Operation):
     usage: OperationUsage
 
 
+class OperationCreateRequest(OperationCreate):
+    """An operation to create."""
+
+    description: TextStr = ""
+
+
 class OperationUpdateRequest(BaseModel):
     """The editable fields of an operation. Omitted fields are unchanged."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: OperationName | None = None
-    description: str | None = None
+    description: TextStr | None = None
 
 
 class FindingListItem(Finding):
     """A finding with its evidence count."""
 
     evidence_count: int = Field(ge=0)
+
+
+class AttackFindingItem(Finding):
+    """A finding that links an attack as evidence, with its Operation's current name and the evidence link."""
+
+    operation_name: str
+    evidence_id: UUID = Field(description="The evidence link, which unlinks the attack from the finding")
+
+
+class AttackFindingListResponse(BaseModel):
+    """Every finding that links an attack, highest severity first, then newest first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attack_result_id: UUID
+    items: list[AttackFindingItem]
 
 
 class FindingListResponse(BaseModel):
@@ -67,7 +94,16 @@ class FindingListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingCreateRequest(FindingCreate):
+class FindingUpdateRequest(FindingCreate):
+    """A finding's editable fields."""
+
+    title: TextStr
+    description: TextStr = ""
+    severity_other: TextStr | None = None
+    harm_type_other: TextStr | None = None
+
+
+class FindingCreateRequest(FindingUpdateRequest):
     """
     A finding to record, optionally with one saved attack result as evidence.
 
@@ -148,7 +184,9 @@ class FindingExportRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    finding_ids: list[UUID] = Field(min_length=1, description="Distinct findings of the operation to include")
+    finding_ids: list[UUID] = Field(
+        min_length=1, max_length=MAX_EXPORT_FINDINGS, description="Distinct findings of the operation to include"
+    )
     format: FindingExportFormat = FindingExportFormat.DOCX
     dashboard_origin: AnyHttpUrl = Field(description="The dashboard's origin, which evidence links open")
 

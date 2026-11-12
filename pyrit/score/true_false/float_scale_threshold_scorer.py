@@ -23,6 +23,7 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -68,6 +69,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         Raises:
             ValueError: If the threshold is non-finite or not in (0, 1].
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Multi-label true/false verdicts require TrueFalseScoreSelector, not a float threshold.")
         self._scorer = scorer
         self._threshold = threshold
         self._float_scale_aggregator = float_scale_aggregator
@@ -141,10 +144,10 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Check the wrapped float scorer's evidence freshness.
+        Validate the wrapped float scorer's evidence before reusing its threshold result.
 
         Returns:
-            Candidates with current child evidence.
+            list[Score]: The candidates linked to the wrapped scorer's current snapshot.
         """
         return await self._filter_matching_scores_by_children_async(
             scores=scores,
@@ -258,8 +261,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         score.scorable = scorable
         score.message_piece_id = message_piece_id
         score.score_type = "true_false"
-        score.score_value = str(threshold_result)
-        score.status = ScoreStatus.COMPLETE
+        score.set_value(bool(threshold_result))
         # Carry the aggregate's category, metadata and rationale rather than the first
         # constituent score's. The threshold decision is made on the aggregate, so
         # describing it with scores[0] mislabels the result whenever the wrapped scorer

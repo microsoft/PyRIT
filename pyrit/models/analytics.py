@@ -16,6 +16,7 @@ from typing import Annotated, Any, ClassVar, Self
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from pydantic.dataclasses import dataclass as validated_dataclass
 
+from pyrit.common.text_search import validate_text_search
 from pyrit.models.results.attack_result import AttackOutcome
 
 _OutcomeCount = Annotated[int, Field(strict=True, ge=0)]
@@ -550,14 +551,22 @@ class AttackAnalyticsFacetQuery(_AnalyticsModel):
 
     Other dimension predicates and outcome/date restrictions remain active.
     Predicates on this exact dimension are omitted so alternatives remain
-    discoverable. Search narrows option labels, not attack objectives.
+    discoverable. Search is a case-insensitive literal substring of option labels,
+    not attack objectives. ``search_pattern`` supplies a full LIKE pattern instead,
+    with '%' and '_' wildcards and '/' escaping.
     """
 
     filters: AttackAnalyticsFilters = Field(default_factory=AttackAnalyticsFilters)
     dimension: AttackAnalyticsDimension
-    search: str = Field(default="", max_length=128)
+    search: str | None = Field(default=None, max_length=128)
+    search_pattern: str | None = Field(default=None, max_length=128)
     offset: int = Field(default=0, ge=0, le=100_000)
     limit: int = Field(default=50, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def _validate_search(self) -> Self:
+        validate_text_search(value=self.search, pattern=self.search_pattern)
+        return self
 
 
 class AttackAnalyticsOption(_AnalyticsModel):

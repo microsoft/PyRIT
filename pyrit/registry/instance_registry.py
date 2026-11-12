@@ -14,8 +14,9 @@ instances" (``SupportsInstances``) or just "an instance registry"
 (``InstanceRegistry[T]``) without depending on a concrete class, and a registry
 that does not hold instances simply has no ``.instances`` attribute.
 
-Stored items must implement ``Identifiable`` so per-instance metadata can be
-derived from ``get_identifier()``. This module imports no ``pyrit.backend`` code,
+Stored items must provide ``get_identifier()`` (``SupportsIdentifier``), which
+``Identifiable`` components do and observation sources do structurally, so
+per-instance metadata can be derived from it. This module imports no ``pyrit.backend`` code,
 so it can be reused anywhere (forms, agents, attack strategies).
 """
 
@@ -25,14 +26,26 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.models import ComponentIdentifier, Identifiable
-
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from pyrit.models import ComponentIdentifier
     from pyrit.registry.tag_query import TagQuery
 
-T = TypeVar("T", bound=Identifiable)  # The type of items stored
+
+class SupportsIdentifier(Protocol):
+    """Anything that reports its behavioral identity, the one capability the instance container needs."""
+
+    def get_identifier(self) -> ComponentIdentifier:
+        """Return the component's identifier."""
+        ...
+
+
+T = TypeVar("T", bound=SupportsIdentifier)  # The type of items stored
+
+
+class RegistryNameTakenError(ValueError):
+    """A name is already registered, so another entry can't take it."""
 
 
 @dataclass
@@ -63,13 +76,13 @@ class InstanceRegistry(Protocol[T]):
     Typed instance-container capability a registry exposes as ``.instances``.
 
     Holds named, pre-configured instances that callers register and retrieve by
-    name, list, tag, and filter. Stored items must implement ``Identifiable``.
+    name, list, tag, and filter. Stored items must provide ``get_identifier()``.
     ``DefaultInstanceRegistry`` is the concrete default implementation; expressing
     the surface as a protocol lets callers depend on the capability rather than a
     concrete class.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     @property
@@ -167,7 +180,7 @@ class SupportsInstances(Protocol[T]):
         capability is part of the foundation rather than a later additive change.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     instances: InstanceRegistry[T]
@@ -182,7 +195,7 @@ class DefaultInstanceRegistry(Generic[T]):
     that.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     def __init__(
@@ -277,8 +290,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
-            ValueError: If the name is reserved or already registered and ``replace``
-                is False.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered and ``replace`` is False.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -325,13 +338,14 @@ class DefaultInstanceRegistry(Generic[T]):
             name (str): The proposed registry name.
 
         Raises:
-            ValueError: If the name is reserved or already registered.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered.
         """
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if name in self._registry_items:
-                raise ValueError(f"Instance '{name}' already exists")
+                raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """
@@ -528,7 +542,7 @@ class DefaultInstanceRegistry(Generic[T]):
 
     def _build_metadata(self, instance: T) -> ComponentIdentifier:
         """
-        Build metadata for an item via its ``Identifiable`` interface.
+        Build metadata for an item via its ``get_identifier()``.
 
         Args:
             instance (T): The item.

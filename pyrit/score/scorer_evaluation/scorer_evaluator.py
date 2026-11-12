@@ -7,7 +7,7 @@ import abc
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 import numpy as np
 from scipy.stats import ttest_1samp
@@ -30,6 +30,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     find_objective_metrics_by_eval_hash,
     replace_evaluation_results,
 )
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -83,7 +84,12 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             scorer (Scorer): The scorer to evaluate.
+
+        Raises:
+            ValueError: If a multi-label scorer has no explicit single-label projection.
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Select a label with TrueFalseScoreSelector before evaluating a multi-label scorer.")
         self.scorer = scorer
 
     @classmethod
@@ -103,9 +109,16 @@ class ScorerEvaluator(abc.ABC):
         if not metrics_type:
             metrics_type = MetricsType.OBJECTIVE if isinstance(scorer, TrueFalseScorer) else MetricsType.HARM
 
-        evaluator_map = {MetricsType.HARM: HarmScorerEvaluator, MetricsType.OBJECTIVE: ObjectiveScorerEvaluator}
-
-        evaluator = evaluator_map.get(metrics_type, HarmScorerEvaluator)
+        match metrics_type:
+            case MetricsType.HARM:
+                evaluator = HarmScorerEvaluator
+            case MetricsType.OBJECTIVE:
+                evaluator = ObjectiveScorerEvaluator
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(metrics_type)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                evaluator = HarmScorerEvaluator
         return evaluator(scorer=scorer)
 
     async def run_evaluation_async(
@@ -222,8 +235,21 @@ class ScorerEvaluator(abc.ABC):
             harm_definition_version=combined_harm_definition_version,
         )
 
+        match update_registry_behavior:
+            case RegistryUpdateBehavior.SKIP_IF_EXISTS:
+                reuse_existing_metrics, write_to_registry = True, True
+            case RegistryUpdateBehavior.ALWAYS_UPDATE:
+                reuse_existing_metrics, write_to_registry = False, True
+            case RegistryUpdateBehavior.NEVER_UPDATE:
+                reuse_existing_metrics, write_to_registry = False, False
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(update_registry_behavior)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                reuse_existing_metrics, write_to_registry = False, True
+
         # Check for existing metrics only in SKIP_IF_EXISTS mode
-        if update_registry_behavior == RegistryUpdateBehavior.SKIP_IF_EXISTS:
+        if reuse_existing_metrics:
             should_skip, existing_metrics = self._should_skip_evaluation(
                 dataset_version=combined_version,
                 harm_definition_version=combined_harm_definition_version,
@@ -246,7 +272,7 @@ class ScorerEvaluator(abc.ABC):
         )
 
         # Write to registry unless in NEVER_UPDATE mode
-        if update_registry_behavior != RegistryUpdateBehavior.NEVER_UPDATE:
+        if write_to_registry:
             self._write_metrics_to_registry(
                 metrics=metrics,
                 result_file_path=SCORER_EVALS_PATH / dataset_files.result_file,
@@ -870,10 +896,21 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         num_responses = all_human_scores.shape[1]
         num_human_raters = all_human_scores.shape[0]
 
+        # A scorer that ignored the response would do best on accuracy by always returning the more
+        # common gold label, and best on F1 by always answering true (always-false has an F1 of 0).
+        baseline_accuracy: float | None = None
+        baseline_f1_score: float | None = None
+        if gold_scores.size:
+            num_gold_true = int(np.sum(gold_scores == 1))
+            baseline_accuracy = max(num_gold_true, gold_scores.size - num_gold_true) / gold_scores.size
+            baseline_f1_score = 2 * num_gold_true / (gold_scores.size + num_gold_true)
+
         return ObjectiveScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
             accuracy=accuracy,
+            baseline_accuracy=baseline_accuracy,
+            baseline_f1_score=baseline_f1_score,
             accuracy_standard_error=np.sqrt(accuracy * (1 - accuracy) / gold_scores.size),
             precision=precision,
             recall=recall,

@@ -24,28 +24,32 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioDatasetRequest,
     ScenarioRunSizeEstimateStatus,
     SeedObjective,
     SeedPrompt,
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
-from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import IncompatibleTechniqueError
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import (
+from pyrit.scenario import (
+    AttackTechnique,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
+    IncompatibleTechniqueError,
+    Scenario,
 )
-from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.airt.psychosocial import (
-    _SUB_HARMS,
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
+from pyrit.scenario.scenarios.airt import (
     Psychosocial,
     PsychosocialTechnique,
+)
+from pyrit.scenario.scenarios.airt.psychosocial import (
+    _SUB_HARMS,
     _converter_for_technique,
 )
 from pyrit.score import TrueFalseScorer
@@ -555,19 +559,19 @@ class TestPsychosocialConstruction:
     def test_injected_scorers_skip_default_scorer_target(self):
         """Regression: injecting both sub-harm scorers must not resolve the default scorer target,
         so callers without scorer-target configuration can still construct the scenario."""
-        with patch("pyrit.scenario.scenarios.airt.psychosocial.get_default_scorer_target") as mock_target:
+        with patch("pyrit.scenario.core.scenario.get_default_scorer_target") as mock_target:
             Psychosocial(imminent_crisis_scorer=_mock_scorer(), licensed_therapist_scorer=_mock_scorer())
         mock_target.assert_not_called()
 
     def test_missing_scorer_resolves_default_scorer_target(self):
         """When a sub-harm scorer is omitted, the default scorer target is resolved once to build it."""
         with patch(
-            "pyrit.scenario.scenarios.airt.psychosocial.get_default_scorer_target",
+            "pyrit.scenario.core.scenario.get_default_scorer_target",
             return_value=MagicMock(spec=PromptTarget),
         ) as mock_target:
             scenario = Psychosocial(imminent_crisis_scorer=_mock_scorer())
-        mock_target.assert_called_once()
-        assert scenario._scorers_by_harm["licensed_therapist"] is not None
+        mock_target.assert_not_called()
+        assert "licensed_therapist" not in scenario._scorers_by_harm
 
     def test_supported_parameters_keeps_dataset_config(self):
         """dataset_config is retained so --max-dataset-size still works (names are hard-bound)."""

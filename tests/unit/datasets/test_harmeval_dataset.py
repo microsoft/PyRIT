@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.remote.harmeval_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     HarmEvalTopic,
     _HarmEvalDataset,
 )

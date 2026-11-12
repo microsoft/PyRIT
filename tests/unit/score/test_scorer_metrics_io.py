@@ -13,10 +13,13 @@ import pytest
 
 from pyrit.models import ComponentIdentifier
 from pyrit.models.harm_category import HarmCategory
-from pyrit.score.scorer_evaluation.scorer_metrics import (
+from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
     ScorerMetricsWithIdentity,
+    find_objective_metrics_by_eval_hash,
+    get_all_harm_metrics,
+    get_all_objective_metrics,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     _append_jsonl_entry,
@@ -25,9 +28,6 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     _rewrite_jsonl_atomically,
     add_evaluation_results,
     find_harm_metrics_by_eval_hash,
-    find_objective_metrics_by_eval_hash,
-    get_all_harm_metrics,
-    get_all_objective_metrics,
     replace_evaluation_results,
 )
 
@@ -196,6 +196,33 @@ def test_find_objective_metrics_by_eval_hash_found(tmp_path):
     result = find_objective_metrics_by_eval_hash(eval_hash="hash_abc", file_path=path)
     assert result is not None
     assert result.accuracy == 0.88
+
+
+def test_find_objective_metrics_reads_entries_recorded_before_the_baseline_fields(tmp_path):
+    identifier = _make_identifier()
+    entry = identifier.model_dump()
+    entry["eval_hash"] = "hash_abc"
+    metrics = _metrics_to_registry_dict(_make_objective_metrics(accuracy=0.88))
+    metrics.pop("baseline_accuracy", None)
+    metrics.pop("baseline_f1_score", None)
+    entry["metrics"] = metrics
+    path = tmp_path / "objective_achieved_metrics.jsonl"
+    _write_jsonl(path, [entry])
+
+    result = find_objective_metrics_by_eval_hash(eval_hash="hash_abc", file_path=path)
+    assert result is not None
+    assert result.baseline_accuracy is None
+    assert result.baseline_f1_score is None
+
+
+def test_objective_metrics_baselines_round_trip_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(_make_objective_metrics(baseline_accuracy=0.52, baseline_f1_score=0.65).to_json())
+
+    loaded = ObjectiveScorerMetrics.from_json_file(path)
+
+    assert loaded.baseline_accuracy == 0.52
+    assert loaded.baseline_f1_score == 0.65
 
 
 def test_find_objective_metrics_by_eval_hash_not_found(tmp_path):

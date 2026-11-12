@@ -3,6 +3,7 @@
 
 """Tests for scenario suite definition routes."""
 
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,28 +12,32 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from azure.core.exceptions import AzureError
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
     ScenarioSuiteEntryStatus,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
+from pyrit.backend.services import (
+    ScenarioSuiteExecutionService,
+    ScenarioSuiteService,
+)
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
-    ScenarioSuiteExecutionService,
 )
-from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService
 from pyrit.models import (
+    PresetIssue,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
     ScenarioSuiteExecutionEntrySummary,
     ScenarioSuiteExecutionStatus,
     ScenarioSuiteExecutionSummary,
     ScenarioSuiteSubmissionState,
 )
-from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, ScenarioSuiteRegistryEntry
+from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,
@@ -43,10 +48,12 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
 EXECUTION_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+OVER_LIMIT_NAME = "x" * 257
 
 
 def _suite(*, name: str = SUITE_NAME, author: str | None = None) -> ScenarioSuite:
@@ -175,7 +182,9 @@ def unavailable_preset_backend(
 ) -> Iterator[tuple[ScenarioSuiteService, ScenarioSuiteStorage]]:
     """Run routes against real suite storage and an unavailable preset registry."""
     registry = MagicMock(spec=ScenarioPresetRegistry)
-    registry.get_preset.side_effect = AzureError("expired preset container signature")
+    registry.get_preset.side_effect = DocumentStorageUnavailableError(
+        label="Scenario preset", source="/srv/presets", reason="Permission denied"
+    )
     storage = ScenarioSuiteStorage(source=str(tmp_path))
     scenario_service = ScenarioSuiteService(registry=ScenarioSuiteRegistry(storage=storage))
     with (
@@ -251,7 +260,10 @@ def test_launch_is_rejected_during_runtime_reinitialization(
         (ScenarioSuiteLaunchConflictError("changed"), 409),
         (ScenarioSuiteNotRunnableError("not runnable"), 400),
         (ScenarioSuiteExecutionCapacityError("wait for an active suite"), 429),
-        (AzureError("storage unavailable"), 503),
+        (
+            DocumentStorageUnavailableError(label="Scenario suite", source="/srv/suites", reason="Permission denied"),
+            503,
+        ),
         (RuntimeError("scheduling is stopping"), 503),
     ],
 )
@@ -267,10 +279,40 @@ def test_launch_maps_preflight_failures(
     response = anonymous_client.post(f"/api/scenario-suites/{SUITE_NAME}/launch", json=_launch_body())
 
     assert response.status_code == expected_status
-    if isinstance(error, AzureError):
-        assert "storage unavailable" not in response.text
+    if isinstance(error, DocumentStorageUnavailableError):
+        assert response.json()["detail"] == "Scenario suite storage is unavailable"
     if isinstance(error, ScenarioSuiteExecutionCapacityError):
         assert response.json()["detail"] == "wait for an active suite"
+
+
+def test_launch_limits_the_expected_version(anonymous_client: TestClient, execution_service: MagicMock) -> None:
+    """Test the reviewed suite version has the identifier limit."""
+    execution_service.launch_async = AsyncMock(return_value=_execution_summary())
+    path = f"/api/scenario-suites/{SUITE_NAME}/launch"
+
+    at_limit = anonymous_client.post(path, json={**_launch_body(), "expected_version": "v" * 256})
+    over_limit = anonymous_client.post(path, json={**_launch_body(), "expected_version": "v" * 257})
+
+    assert at_limit.status_code == 202
+    assert over_limit.status_code == 422
+    execution_service.launch_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("field", ["preset_name", "preset_version"])
+def test_launch_limits_the_entry_preset_name_and_version(
+    *, anonymous_client: TestClient, execution_service: MagicMock, field: str
+) -> None:
+    """Test each reviewed entry's preset name and version have the identifier limit."""
+    execution_service.launch_async = AsyncMock(return_value=_execution_summary())
+    path = f"/api/scenario-suites/{SUITE_NAME}/launch"
+    entry = {"entry_id": str(ENTRY_ID), "preset_name": "nightly", "origin": "stored", "preset_version": "preset-v1"}
+
+    at_limit = anonymous_client.post(path, json={**_launch_body(), "entries": [{**entry, field: "x" * 256}]})
+    over_limit = anonymous_client.post(path, json={**_launch_body(), "entries": [{**entry, field: "x" * 257}]})
+
+    assert at_limit.status_code == 202
+    assert over_limit.status_code == 422
+    execution_service.launch_async.assert_awaited_once()
 
 
 def test_get_and_cancel_transient_execution(
@@ -333,14 +375,25 @@ def test_get_registered_suite_returns_origin_and_null_version(client: TestClient
     assert response.json()["version"] is None
 
 
-def test_storage_failure_is_sanitized(client: TestClient, service: MagicMock) -> None:
-    """Test that Azure SDK details do not reach API callers."""
-    service.list_suites_async = AsyncMock(side_effect=AzureError("container key=secret"))
+def test_storage_failure_names_the_source_only_in_the_log(
+    client: TestClient, service: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test that the log names the storage location and the response doesn't."""
+    service.list_suites_async = AsyncMock(
+        side_effect=DocumentStorageUnavailableError(
+            label="Scenario suite",
+            source="https://account.blob.core.windows.net/suites",
+            reason="ClientAuthenticationError",
+        )
+    )
 
-    response = client.get("/api/scenario-suites")
+    with caplog.at_level(logging.WARNING, logger="pyrit.backend.middleware.error_handlers"):
+        response = client.get("/api/scenario-suites")
 
     assert response.status_code == 503
-    assert "secret" not in response.text
+    assert response.json()["detail"] == "Scenario suite storage is unavailable"
+    assert "account.blob.core.windows.net" not in response.text
+    assert "https://account.blob.core.windows.net/suites is unavailable: ClientAuthenticationError" in caplog.text
 
 
 def test_create_succeeds_when_preset_storage_is_unavailable(
@@ -441,6 +494,54 @@ def test_create_over_registered_name_is_actionable_conflict(client: TestClient, 
 
     assert response.status_code == 409
     assert response.json()["detail"] == f"Scenario suite '{SUITE_NAME}' is registered in code and cannot be stored"
+
+
+@pytest.mark.parametrize(("field", "limit"), [("description", 100_000), ("author", 256)])
+def test_create_limits_the_description_and_author(
+    *, client: TestClient, service: MagicMock, field: str, limit: int
+) -> None:
+    """Test the suite description and author limits."""
+    service.save_suite_async = AsyncMock(return_value=_response())
+    payload = _suite().model_dump(mode="json")
+
+    at_limit = client.post("/api/scenario-suites", json={**payload, field: "x" * limit})
+    over_limit = client.post("/api/scenario-suites", json={**payload, field: "x" * (limit + 1)})
+
+    assert at_limit.status_code == 201
+    assert over_limit.status_code == 422
+    service.save_suite_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"name": OVER_LIMIT_NAME}, {"entries": [{"entry_id": str(ENTRY_ID), "preset_name": OVER_LIMIT_NAME}]}],
+    ids=["suite_name", "preset_name"],
+)
+def test_create_limits_the_names_without_echoing_them(
+    *, client: TestClient, service: MagicMock, changes: dict[str, object]
+) -> None:
+    """Test over-limit suite and preset names are rejected without being echoed."""
+    service.save_suite_async = AsyncMock(return_value=_response())
+
+    response = client.post("/api/scenario-suites", json={**_suite().model_dump(mode="json"), **changes})
+
+    assert response.status_code == 422
+    assert OVER_LIMIT_NAME not in response.text
+    service.save_suite_async.assert_not_called()
+
+
+def test_update_limits_the_expected_version(client: TestClient, service: MagicMock) -> None:
+    """Test the version sent with an update has the identifier limit."""
+    service.save_suite_async = AsyncMock(return_value=_response(version="suite-v2"))
+    path = f"/api/scenario-suites/{SUITE_NAME}"
+    suite = _suite().model_dump(mode="json")
+
+    at_limit = client.put(path, json={"suite": suite, "expected_version": "v" * 256})
+    over_limit = client.put(path, json={"suite": suite, "expected_version": "v" * 257})
+
+    assert at_limit.status_code == 200
+    assert over_limit.status_code == 422
+    service.save_suite_async.assert_awaited_once()
 
 
 def test_update_passes_expected_version(client: TestClient, service: MagicMock) -> None:
@@ -562,9 +663,73 @@ def test_delete_requires_confirmation_from_storage(client: TestClient, service: 
     assert client.delete(f"/api/scenario-suites/{SUITE_NAME}").status_code == 404
 
 
+def test_delete_forwards_the_version_that_was_read(client: TestClient, service: MagicMock) -> None:
+    """Test that an optional version query reaches the service."""
+    service.delete_suite_async = AsyncMock(return_value=True)
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 204
+    service.delete_suite_async.assert_awaited_once_with(name=SUITE_NAME, expected_version="suite-v1")
+
+
+def test_delete_of_a_changed_suite_is_a_conflict(client: TestClient, service: MagicMock) -> None:
+    """Test that a stale delete maps to 409 rather than the generic invalid-input 400."""
+    service.delete_suite_async = AsyncMock(
+        side_effect=ScenarioSuiteConflictError(
+            name=SUITE_NAME, expected_version="suite-v1", actual_version="suite-v2", action="deleted"
+        )
+    )
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        f"Scenario suite '{SUITE_NAME}' changed since it was read; re-read it and retry"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        DocumentStorageUnavailableError(label="Scenario suite", source="https://secret.test/c", reason="AzureError"),
+        DocumentStorageUnavailableError(
+            label="Scenario suite", source="/srv/secret", reason="Timed out waiting to write '.secret.lock'"
+        ),
+    ],
+)
+def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock, error: Exception) -> None:
+    """Test that blob failures and local lock timeouts during delete map to a sanitized 503."""
+    service.delete_suite_async = AsyncMock(side_effect=error)
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 503
+    assert "secret" not in response.text
+
+
 def test_delete_requires_admin(anonymous_client: TestClient, service: MagicMock) -> None:
     """Test delete authorization."""
     response = anonymous_client.delete(f"/api/scenario-suites/{SUITE_NAME}")
 
     assert response.status_code == 403
     service.delete_suite_async.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "", None),
+        ("PUT", "", {"suite": _suite().model_dump(mode="json"), "expected_version": "v1"}),
+        ("DELETE", "", None),
+        ("POST", "/launch", _launch_body()),
+    ],
+    ids=["get", "update", "delete", "launch"],
+)
+@pytest.mark.usefixtures("service", "execution_service")
+def test_path_name_is_limited(*, client: TestClient, method: str, suffix: str, body: dict[str, object] | None) -> None:
+    """Test an over-limit suite name in the URL is rejected before the route runs."""
+    response = client.request(method, f"/api/scenario-suites/{OVER_LIMIT_NAME}{suffix}", json=body)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["path.name"]

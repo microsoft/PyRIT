@@ -3,7 +3,7 @@
 
 from unittest.mock import MagicMock
 
-from pyrit.executor.core.config import StrategyConverterConfig
+from pyrit.executor.core import StrategyConverterConfig
 from pyrit.prompt_normalizer import ConverterConfiguration
 
 

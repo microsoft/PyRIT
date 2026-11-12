@@ -11,16 +11,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import Parameter
-from pyrit.models.catalog.scenario_preset import ScenarioPreset
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scenario_preset_registry import (
+from pyrit.models import DatasetSourceInput, Parameter, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.registry import (
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,
     ScenarioPresetRegistry,
+    ScenarioPresetStorage,
+    ScenarioRegistry,
 )
-from pyrit.registry.components.scenario_registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
 from unit.mocks import make_technique_class
 
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -154,6 +154,16 @@ class TestPresetCrud:
         self, registry: ScenarioPresetRegistry
     ) -> None:
         assert registry.delete_preset(name="missing") is False
+
+    def test_delete_with_a_stale_version_conflicts_and_keeps_the_preset(self, registry: ScenarioPresetRegistry) -> None:
+        first = registry.save_preset(preset=_preset(description="first"), expected_version=None)
+        second = registry.save_preset(preset=_preset(description="second"), expected_version=first.version)
+
+        with pytest.raises(ScenarioPresetConflictError, match="could not be deleted"):
+            registry.delete_preset(name="quick_scan", expected_version=first.version)
+
+        assert registry.delete_preset(name="quick_scan", expected_version=second.version) is True
+        assert registry.get_preset(name="quick_scan") is None
 
     def test_only_the_delete_that_removed_the_preset_reports_that_it_did(
         self, registry: ScenarioPresetRegistry

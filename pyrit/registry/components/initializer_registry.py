@@ -39,8 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import ModuleType
 
-    from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier, Parameter
     from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -421,6 +420,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             ValueError: If the source cannot be compiled, does not
                 define a concrete ``PyRITInitializer`` subclass, or
                 *name* collides with an existing entry.
+            DocumentStorageUnavailableError: If the script storage can't be written.
         """
         self._ensure_discovered()
 
@@ -430,11 +430,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 
         discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
-        storage = self._get_custom_storage()
-        try:
-            storage.save_script(name=name, content=script_content)
-        except OSError as error:
-            raise ValueError(f"Failed to write initializer script: {error}") from error
+        self._get_custom_storage().save_script(name=name, content=script_content)
 
         self.register_class(discovered, name=name)
         logger.info(f"Registered custom initializer: {name} ({discovered.__name__})")
@@ -485,10 +481,12 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         Raises:
             KeyError: If no stored custom initializer has the requested name.
             ValueError: If the name refers to a built-in initializer.
+            DocumentStorageUnavailableError: If the script storage can't be used.
         """
         self._ensure_discovered()
         storage = self._get_custom_storage()
-        stored_names = storage.list_scripts().keys()
+        # A script that can't be read or decoded is still deleted, so the API can clean it up.
+        stored_names = sorted(storage.list_script_names())
         if name not in stored_names:
             if name in self._builtin_names:
                 raise ValueError(f"Cannot remove built-in initializer '{name}'.")
