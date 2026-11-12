@@ -214,10 +214,9 @@ background accessibility.
 ### SQL Server migration check
 
 The `SQL Server migrations` CI job uses disposable SQL Server 2022 Developer on
-GitHub-hosted Linux, without Azure credentials. On PRs and merge groups, it migrates
-both a fresh database and a populated historical schema to the **checked-out
-branch's Alembic head**, then checks data preservation and schema agreement with
-models. It is not an exhaustive historical-version or production-scale test.
+GitHub-hosted Linux, without Azure credentials. On PRs and merge groups, it runs
+migrations on a fresh database to the **checked-out branch's Alembic head**, then
+checks schema agreement with models. It does not test data-dependent backfills.
 
 To run locally, install ODBC Driver 18 and the normal `uv sync` dependencies.
 Set `PYRIT_TEST_SQLSERVER_URL` to a disposable server's `mssql+pyodbc://.../master`
