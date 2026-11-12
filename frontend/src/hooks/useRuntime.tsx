@@ -41,8 +41,9 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
 export function RuntimeBanner() {
   const runtime = useRuntime()
   if (runtime.ready) return null
+  // Multiline, since the text changes after the bar first lays out, and Fluent's automatic layout only rechecks
+  // on a resize.
   if (runtime.state === 'failed' && (runtime.restore_failures ?? 0) > 0) {
-    // Multiline, since this longer text replaces the status after the bar first lays out and wouldn't wrap otherwise.
     return (
       <MessageBar intent="warning" layout="multiline">
         <MessageBarBody>
@@ -65,7 +66,7 @@ export function RuntimeBanner() {
     )
   }
   return (
-    <MessageBar intent="warning">
+    <MessageBar intent="warning" layout="multiline">
       <MessageBarBody>
         PyRIT runtime: {runtime.state}. New runs and sends are unavailable.
         Administrators can repair saved sources and retry from Configuration. Drafts are preserved.
