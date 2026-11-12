@@ -10,6 +10,7 @@ from end_to_end import test_scenarios as scenario_tests
 
 from pyrit.cli.pyrit_scan import _build_run_request, parse_args
 from pyrit.registry import ScenarioRegistry
+from pyrit.scenario.garak import LeakReplay, LeakReplayDatasetConfiguration
 from pyrit.scenario.scenarios.airt import Psychosocial
 from pyrit.score import SubStringScorer
 
@@ -42,6 +43,27 @@ def test_e2e_launch_uses_bounded_supported_dataset_flags(
     else:
         assert request.datasets is not None
         assert request.datasets.max_total == expected_max_total
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_leak_replay_e2e_launch_covers_default_populations_async(capsys: pytest.CaptureFixture[str]) -> None:
+    scenario_name = "garak.leak_replay"
+    with patch.object(scenario_tests, "pyrit_scan_main", return_value=0) as run:
+        scenario_tests.test_scenario_with_pyrit_scan(scenario_name=scenario_name, capsys=capsys)
+    run.assert_called_once()
+    request = _build_run_request(parsed_args=parse_args(run.call_args.args[0]), scenario_name=scenario_name)
+    assert request.datasets is not None
+
+    scenario = LeakReplay()
+    scenario.set_params_from_args(args={"dataset_overrides": request.datasets.model_dump(exclude_none=True)})
+    await scenario.get_run_size_estimate_async()
+    assert isinstance(scenario._dataset_config, LeakReplayDatasetConfiguration)
+    populations = scenario._dataset_config.population_names()
+    assert set(populations) == {
+        f"{technique}_{corpus}"
+        for technique in ("cloze", "completion")
+        for corpus in ("literature", "potter", "nyt", "guardian")
+    }
 
 
 @pytest.mark.usefixtures("patch_central_database")
