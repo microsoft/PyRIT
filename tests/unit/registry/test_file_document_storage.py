@@ -520,6 +520,32 @@ class TestConditionalSave:
         assert not isinstance(raised.value, DocumentUnreadableError)
         client.upload_blob.assert_not_called()
 
+    @pytest.mark.parametrize("error_type", [ServiceRequestError, ClientAuthenticationError])
+    @pytest.mark.parametrize("updating", [False, True])
+    def test_blob_upload_failure_is_storage_unavailable(
+        self, error_type: type[ServiceRequestError | ClientAuthenticationError], updating: bool
+    ) -> None:
+        client = _blob_client(names=[])
+        client.download_blob.return_value.readall.return_value = b"old"
+        client.download_blob.return_value.properties.etag = "etag-1"
+        error = error_type(message=f"Upload failed: {_SAS_SOURCE}")
+        client.upload_blob.side_effect = error
+        expected_version = FileDocumentStorage._compute_version(b"old") if updating else None
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentStorageUnavailableError) as raised:
+                _blob_storage()._save_document_conditional(
+                    name="present", content=b"new", expected_version=expected_version
+                )
+
+        client.upload_blob.assert_called_once()
+        assert type(raised.value) is DocumentStorageUnavailableError
+        assert raised.value.__cause__ is error
+        assert str(raised.value) == (
+            "Test documents storage at https://account.blob.core.windows.net/documents/saved "
+            f"is unavailable: {error_type.__name__}"
+        )
+
 
 def test_a_listing_cannot_be_changed_by_its_reader(tmp_path: Path) -> None:
     (tmp_path / "first.json").write_bytes(b"one")
