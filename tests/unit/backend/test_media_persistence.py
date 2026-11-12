@@ -47,6 +47,9 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
     [
         ("https://example.test/media.png", MediaOrigin.REMOTE_URL, "https://example.test/media.png", True),
         ("http://example.test/media.png", MediaOrigin.REMOTE_URL, "http://example.test/media.png", True),
+        # RFC 3986 schemes are case-insensitive; the original spelling must be preserved.
+        ("HTTPS://example.test/media.png", MediaOrigin.REMOTE_URL, "HTTPS://example.test/media.png", True),
+        ("Http://example.test/media.png", MediaOrigin.REMOTE_URL, "Http://example.test/media.png", True),
     ],
 )
 async def test_existing_references_are_not_persisted_async(
@@ -433,6 +436,24 @@ async def test_data_uri_mime_policy_can_preserve_data_type_extension() -> None:
     )
 
     assert result.extension == ".wav"
+
+
+async def test_data_uri_scheme_is_case_insensitive() -> None:
+    # RFC 2397's "data" scheme is case-insensitive, like http(s); a mixed-case
+    # header must not be classified as raw base64.
+    serializer = _serializer(value="/saved/media.png")
+    factory = MagicMock(return_value=serializer)
+
+    result = await persist_media_value_async(
+        value="DATA:image/png;base64,UklGRg==",
+        data_type="image_path",
+        serializer_factory=factory,
+    )
+
+    assert result.origin is MediaOrigin.DATA_URI
+    assert result.mime_type == "image/png"
+    assert result.extension == ".png"
+    serializer.save_b64_image_async.assert_awaited_once_with(data="UklGRg==")
 
 
 async def test_malformed_data_uri_preserves_empty_payload_behavior() -> None:
