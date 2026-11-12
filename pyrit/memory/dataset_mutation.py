@@ -64,6 +64,7 @@ class _SeedProjection:
         "source",
         "metadata",
         "prompt_group_id",
+        "is_general_technique",
     )
     SYSTEM_PROMPTS = (
         "adversarial_chat_system_prompt",
