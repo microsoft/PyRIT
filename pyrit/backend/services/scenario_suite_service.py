@@ -216,12 +216,9 @@ class ScenarioSuiteService:
                 )
 
             stored_version = registry.get_preset_version(name=preset_name)
-        except DocumentStorageUnavailableError:
-            logger.warning(
-                "Could not project scenario preset '%s' because preset storage is unavailable.",
-                preset_name,
-                exc_info=True,
-            )
+        except DocumentStorageUnavailableError as error:
+            # The message leaves out credentials; the error behind it, which a traceback would show, may not.
+            logger.warning(f"Could not project scenario preset '{preset_name}': {error}")
             return _PresetProjection(
                 origin=None,
                 version=None,
