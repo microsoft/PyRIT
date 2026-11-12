@@ -9,7 +9,6 @@ Revises: 34a18645c7e9
 Create Date: 2026-10-03 04:46:09.282494
 """
 
-import json
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -49,12 +48,6 @@ def _historical_hash(*, row: RowMapping) -> str | None:
     ):
         if document is None:
             continue
-        if isinstance(document, str):
-            try:
-                document = json.loads(document)
-            except json.JSONDecodeError:
-                _LOGGER.warning("Attack result %s has invalid JSON in its %s target identifier.", row["id"], name)
-                continue
         if not isinstance(document, dict):
             _LOGGER.warning("Attack result %s has a non-object %s target identifier.", row["id"], name)
             continue
@@ -87,7 +80,7 @@ def _backfill(*, connection: Connection) -> None:
     result = sa.table(
         "AttackResultEntries",
         sa.column("id", CustomUUID()),
-        sa.column("atomic_attack_identifier", sa.UnicodeText()),
+        sa.column("atomic_attack_identifier", sa.JSON()),
         sa.column("resolved_atomic_attack_identifier_hash", sa.String(64)),
         sa.column("objective_target_eval_hash_v1", sa.String(64)),
     )
@@ -104,11 +97,7 @@ def _backfill(*, connection: Connection) -> None:
     attack = sa.table(
         "AttackIdentifiers", sa.column("hash", sa.String(64)), sa.column("objective_target_hash", sa.String(64))
     )
-    target = sa.table(
-        "TargetIdentifiers",
-        sa.column("hash", sa.String(64)),
-        sa.column("identifier_json", sa.UnicodeText()),
-    )
+    target = sa.table("TargetIdentifiers", sa.column("hash", sa.String(64)), sa.column("identifier_json", sa.JSON()))
     source = (
         result.outerjoin(atomic, atomic.c.hash == result.c.resolved_atomic_attack_identifier_hash)
         .outerjoin(technique, technique.c.hash == atomic.c.attack_technique_identifier_hash)
@@ -167,13 +156,11 @@ def upgrade() -> None:
         raise ValueError("Attack analytics migration requires outcome values of at most 16 characters.")
     with op.batch_alter_table("AttackResultEntries") as batch:
         batch.alter_column("outcome", existing_type=sa.String(), type_=sa.String(16), existing_nullable=False)
-    if dialect == "mssql":
-        safe_document = "CASE WHEN ISJSON(atomic_attack_identifier) = 1 THEN atomic_attack_identifier END"
-        json_hash = f"JSON_VALUE({safe_document}, '$.hash')"
-        expression = f"CONVERT(varchar(64), coalesce(atomic_attack_identifier_hash, {json_hash}))"
-    else:
-        safe_document = "CASE WHEN json_valid(atomic_attack_identifier) THEN atomic_attack_identifier END"
-        expression = f"coalesce(atomic_attack_identifier_hash, json_extract({safe_document}, '$.hash'))"
+    expression = (
+        "CONVERT(varchar(64), coalesce(atomic_attack_identifier_hash, JSON_VALUE(atomic_attack_identifier, '$.hash')))"
+        if dialect == "mssql"
+        else "coalesce(atomic_attack_identifier_hash, json_extract(atomic_attack_identifier, '$.hash'))"
+    )
     op.add_column(
         "AttackResultEntries",
         sa.Column(

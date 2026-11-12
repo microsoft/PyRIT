@@ -2017,7 +2017,6 @@ def test_mssql_indexed_hash_keeps_its_bounded_computed_expression() -> None:
     sql = str(ResolvedAttackIdentifierHash(column("reference"), column("document")).compile(dialect=mssql.dialect()))
     assert "CONVERT(varchar(64)" in sql
     assert "JSON_VALUE(" in sql
-    assert "ISJSON(" in sql
     assert "OPENJSON(" not in sql
 
 

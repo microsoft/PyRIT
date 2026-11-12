@@ -7,6 +7,7 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from alembic import command
@@ -24,6 +25,7 @@ from pyrit.memory.migration import (
     _is_fresh_database,
     _make_config,
     _PrefixedTextStream,
+    _quote_malformed_legacy_attack_identifiers,
     check_schema_migrations,
     generate_schema_migration,
     run_schema_migrations,
@@ -176,6 +178,58 @@ def test_run_schema_migrations_applies_head_revision():
             assert version == expected_head
         finally:
             engine.dispose()
+
+
+def test_run_schema_migrations_preserves_malformed_legacy_attack_identifier() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        result_id = str(uuid.uuid4())
+        with engine.begin() as connection:
+            command.upgrade(_make_config(connection=connection), "34a18645c7e9")
+            connection.execute(
+                text(
+                    'INSERT INTO "AttackResultEntries" '
+                    "(id, conversation_id, objective, outcome, timestamp, executed_turns, "
+                    "execution_time_ms, atomic_attack_identifier) "
+                    "VALUES (:id, 'legacy-conversation', 'Legacy objective', 'success', "
+                    "'2026-01-01', 0, 0, 'not-json')"
+                ),
+                {"id": result_id},
+            )
+
+        run_schema_migrations(engine=engine)
+        run_schema_migrations(engine=engine)
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT atomic_attack_identifier, resolved_atomic_attack_identifier_hash "
+                    'FROM "AttackResultEntries" WHERE id = :id'
+                ),
+                {"id": result_id},
+            ).one()
+            assert tuple(row) == (json.dumps("not-json"), None)
+        check_schema_migrations(engine=engine)
+    finally:
+        engine.dispose()
+
+
+def test_quote_malformed_legacy_attack_identifiers_uses_mssql_json_escape() -> None:
+    connection = MagicMock(spec=["dialect", "execute"])
+    connection.dialect.name = "mssql"
+    connection.execute.return_value.rowcount = 2
+    inspector = MagicMock()
+    inspector.get_columns.return_value = [{"name": "atomic_attack_identifier"}]
+
+    with patch("pyrit.memory.migration.inspect", return_value=inspector):
+        _quote_malformed_legacy_attack_identifiers(
+            connection=connection,
+            table_names={"AttackResultEntries"},
+        )
+
+    statement = str(connection.execute.call_args.args[0])
+    assert "STRING_ESCAPE([atomic_attack_identifier], 'json')" in statement
+    assert """ISJSON(CONCAT(N'{"value":', [atomic_attack_identifier], N'}')) = 0""" in statement
 
 
 @pytest.mark.parametrize("starting_revision", ["9b2d4f6a8c0e", "fcecd0617e61"])
