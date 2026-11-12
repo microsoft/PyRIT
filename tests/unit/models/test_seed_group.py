@@ -816,6 +816,15 @@ class TestAttackSeedGroupWithTechnique:
             merged.simulated_conversation_config.metadata["simulation"]["source"] = "changed execution copy"
             assert simulation.metadata["simulation"]["source"] == "original"
 
+    def test_appended_objective_follows_simulated_tool_history_reservation(self):
+        history = SeedSimulatedToolHistory(sequence=0, max_messages=6)
+        technique = AttackTechniqueSeedGroup(seeds=[history], append_objective_prompt=True)
+
+        merged = AttackSeedGroup(seeds=[SeedObjective(value="objective")]).with_technique(technique=technique)
+
+        assert [(prompt.value, prompt.sequence) for prompt in merged.prompts] == [("objective", 6)]
+        assert merged.prompts[-1].sequence not in history.sequence_range
+
     def test_merged_group_is_valid_attack_seed_group(self):
         """Test that the returned group passes AttackSeedGroup validation."""
         base = self._make_base_group()

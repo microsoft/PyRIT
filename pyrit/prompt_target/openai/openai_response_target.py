@@ -322,10 +322,10 @@ class OpenAIResponseTarget(OpenAITarget):
         """
         Report the function tools advertised to the endpoint.
 
-        Includes function declarations in ``extra_body_parameters``, the configured tools
-        (discovering provider tools first), and legacy ``custom_functions``, which have no schema and
-        so accept any argument object. Provider-hosted tools such as web search are not function tools
-        and are omitted. No tool executes.
+        Includes function declarations in ``extra_body_parameters`` and the configured tools,
+        discovering provider tools first. Legacy ``custom_functions`` are dispatch callbacks, not
+        advertised tools, so they appear only through their declarations. Provider-hosted tools such
+        as web search are not function tools and are omitted. No tool executes.
 
         Returns:
             list[ToolDefinition]: The advertised function tools.
@@ -340,11 +340,7 @@ class OpenAIResponseTarget(OpenAITarget):
             for declaration in (self._extra_body_parameters or {}).get("tools", [])
             if declaration.get("type") == "function"
         ]
-        return [
-            *declared,
-            *(tool.to_definition() for tool in self._tools),
-            *(ToolDefinition(name=name, parameters={"type": "object"}) for name in self._custom_functions),
-        ]
+        return [*declared, *(tool.to_definition() for tool in self._tools)]
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

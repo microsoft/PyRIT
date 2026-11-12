@@ -139,14 +139,17 @@ class AtomicAttack:
             for group in seed_groups
         }
         self._adversarial_chat = adversarial_chat
-        # The executor only uses this chat to generate simulated conversations, so it is part of
-        # this attack's identity only then. The objective-target projection is the standard
+        # The executor only uses this chat to generate simulated conversations or tool histories, so it
+        # is part of this attack's identity only then. The objective-target projection is the standard
         # behavioral projection for any target: operational settings such as endpoints and rate
         # limits do not change the hash.
         self._simulated_conversation_adversarial_chat_eval_hash = (
             ObjectiveTargetEvaluationIdentifier(adversarial_chat.get_identifier()).eval_hash
             if adversarial_chat is not None
-            and any(prepared.seed_group.has_simulated_conversation for prepared in self._prepared_seed_groups.values())
+            and any(
+                prepared.seed_group.generated_history_config is not None
+                for prepared in self._prepared_seed_groups.values()
+            )
             else None
         )
         self._objective_scorer = objective_scorer

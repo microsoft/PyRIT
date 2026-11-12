@@ -196,7 +196,7 @@ async def test_openai_response_target_reports_advertised_function_tools(patch_ce
         endpoint="https://mock.azure.com",
         api_key="mock-key",
         tool_providers=[provider],
-        custom_functions={"legacy": AsyncMock()},
+        custom_functions={"send_email": AsyncMock()},
         extra_body_parameters={"tools": [declaration, {"type": "web_search_preview"}]},
     )
 
@@ -205,7 +205,6 @@ async def test_openai_response_target_reports_advertised_function_tools(patch_ce
     assert [definition.model_dump() for definition in definitions] == [
         {"name": "send_email", "description": "Send an email.", "parameters": declaration["parameters"]},
         {"name": "add", "description": add.description, "parameters": add.parameters},
-        {"name": "legacy", "description": "", "parameters": {"type": "object"}},
     ]
     provider.get_tools_async.assert_awaited_once()
 

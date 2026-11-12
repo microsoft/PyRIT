@@ -217,12 +217,13 @@ class AttackSeedGroup(SeedGroup):
         )
 
         if technique.append_objective_prompt:
+            generated_types = (SeedSimulatedConversation, SeedSimulatedToolHistory)
             next_seq = (
                 max(
                     (
-                        seed.sequence_range.stop - 1 if isinstance(seed, SeedSimulatedConversation) else seed.sequence
+                        seed.sequence_range.stop - 1 if isinstance(seed, generated_types) else seed.sequence
                         for seed in merged_seeds
-                        if isinstance(seed, (SeedPrompt, SeedSimulatedConversation))
+                        if isinstance(seed, (SeedPrompt, *generated_types))
                     ),
                     default=-1,
                 )

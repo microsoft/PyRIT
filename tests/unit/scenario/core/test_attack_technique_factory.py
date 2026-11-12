@@ -1646,7 +1646,7 @@ class TestWithSimulatedToolHistory:
             atomic_attack_name="tool_call_priming",
             attack_technique=technique,
             seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="Reset the admin password.")])],
-            adversarial_chat=MagicMock(spec=PromptTarget),
+            adversarial_chat=MockPromptTarget(),
         )
 
         with patch.object(
