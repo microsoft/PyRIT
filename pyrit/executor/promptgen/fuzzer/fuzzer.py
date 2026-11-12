@@ -958,7 +958,7 @@ class FuzzerGenerator(
         )
 
         # Update MCTS rewards
-        self._update_mcts_rewards(context=context, jailbreak_count=jailbreak_count, num_queries=len(scores))
+        self._update_mcts_rewards(context=context, jailbreak_count=jailbreak_count, num_queries=len(responses))
 
     async def _teardown_async(self, *, context: FuzzerContext) -> None:
         """
@@ -1170,6 +1170,9 @@ class FuzzerGenerator(
         """
         Process scoring results and track jailbreaks.
 
+        A response is a jailbreak when any of its scores passes, and it counts once however many of its
+        scores pass, for example one per harm category.
+
         Args:
             context (FuzzerContext): The generation context.
             scores (list[Score]): The scores for each response.
@@ -1178,25 +1181,28 @@ class FuzzerGenerator(
             current_seed (_PromptNode): The seed node that was selected.
 
         Returns:
-            int: The number of jailbreaks found.
+            int: The number of jailbroken responses.
 
         Raises:
             ValueError: If a scored response piece has no conversation_id.
         """
-        jailbreak_count = 0
         response_pieces = [response.message_pieces[0] for response in responses]
         # score_batch_async returns one flattened list where a scorable may yield
         # zero or several scores, so a jailbreak verdict is attributed to its
         # response by the scored piece id rather than by position in that list.
         conversation_by_piece_id = {str(piece.id): piece.conversation_id for piece in response_pieces}
 
+        jailbroken_piece_ids: set[str] = set()
         for score in scores:
-            if self._is_jailbreak(score):
-                jailbreak_count += 1
-                conversation_id = conversation_by_piece_id.get(str(score.message_piece_id))
-                if conversation_id is None:
-                    raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
-                context.jailbreak_conversation_ids.append(conversation_id)
+            piece_id = str(score.message_piece_id)
+            if piece_id in jailbroken_piece_ids or not self._is_jailbreak(score):
+                continue
+            conversation_id = conversation_by_piece_id.get(piece_id)
+            if conversation_id is None:
+                raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
+            jailbroken_piece_ids.add(piece_id)
+            context.jailbreak_conversation_ids.append(conversation_id)
+        jailbreak_count = len(jailbroken_piece_ids)
 
         # Update tracking
         context.total_jailbreak_count += jailbreak_count
@@ -1255,16 +1261,15 @@ class FuzzerGenerator(
 
         Args:
             context (FuzzerContext): The generation context.
-            jailbreak_count (int): Number of jailbreaks found.
-            num_queries (int): Number of queries made.
+            jailbreak_count (int): Number of jailbroken responses.
+            num_queries (int): Number of responses the template produced.
         """
         # Handle division by zero
         if num_queries == 0:
             return
 
-        # The reward must stay a rate in [0, 1]: jailbreak_count counts flattened
-        # scores, and score_batch_async may yield several scores per response, so
-        # the denominator is the actual number of scored queries passed in.
+        # The reward is the template's jailbreak rate over the responses it produced, as in
+        # GPTFuzzer's MCTS-Explore. Each response counts at most once, so it stays in [0, 1].
         reward = jailbreak_count / num_queries
 
         # Use MCTS explorer to update rewards
