@@ -39,6 +39,7 @@ from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
     GitHubCopilotTarget,
+    HuggingFaceChatTarget,
     PromptTarget,
     RoundRobinTarget,
     discover_target_capabilities_async,
@@ -63,6 +64,24 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
+
+
+def _import_torch(*, use_cuda: bool) -> None:
+    """
+    Import torch, and check for CUDA when asked, as a HuggingFaceChatTarget constructor does.
+
+    Either can take seconds the first time and is quick after it, so a worker thread does them before the
+    constructor runs on the event loop. A missing torch is left for the constructor to report.
+
+    Args:
+        use_cuda (bool): Whether the target asks for CUDA.
+    """
+    try:
+        import torch  # type: ignore[ty:unresolved-import]
+    except ModuleNotFoundError:
+        return
+    if use_cuda:
+        torch.cuda.is_available()
 
 
 class TargetService:
@@ -651,6 +670,10 @@ class TargetService:
             is not target_cls
         ):
             raise ValueError("The source target type does not match the requested type")
+        if issubclass(target_cls, HuggingFaceChatTarget):
+            # Its constructor imports torch and checks for CUDA, which can hold this loop for seconds the first time,
+            # then starts loading the model on this loop. Doing both first in a worker leaves the constructor quick.
+            await asyncio.to_thread(_import_torch, use_cuda=bool(permission_params.get("use_cuda")))
         target_obj = (
             await self.build_from_source_async(request.source)
             if request.source

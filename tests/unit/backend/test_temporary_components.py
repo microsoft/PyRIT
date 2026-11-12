@@ -4,10 +4,14 @@
 """Private construction, reconstruction, lifetime, and provenance regressions."""
 
 import asyncio
+import importlib.abc
+import importlib.util
+import sys
 import threading
 import uuid
-from collections.abc import Iterator
-from types import ModuleType
+from collections.abc import Iterator, Sequence
+from importlib.machinery import ModuleSpec
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -125,6 +129,26 @@ class _ForwardedConverter(LLMGenericTextConverter):
         super().__init__(**kwargs)
 
 
+class _TorchStandIn(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Stand in for torch, noting the thread that first imports it and the one that first checks for CUDA."""
+
+    def __init__(self) -> None:
+        self.first_threads: dict[str, threading.Thread] = {}
+
+    def find_spec(
+        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> ModuleSpec | None:
+        return importlib.util.spec_from_loader(fullname, self) if fullname == "torch" else None
+
+    def exec_module(self, module: ModuleType) -> None:
+        self.first_threads.setdefault("import", threading.current_thread())
+        module.cuda = SimpleNamespace(is_available=self._is_available)  # type: ignore[attr-defined]
+
+    def _is_available(self) -> bool:
+        self.first_threads.setdefault("cuda", threading.current_thread())
+        return True
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestTemporaryComponents:
     @pytest.mark.parametrize("register", [True, False])
@@ -159,6 +183,32 @@ class TestTemporaryComponents:
             load.assert_awaited_once()
             assert response.identifier.class_name == "HuggingFaceChatTarget"
             assert registry.instances.get_names() == (["local-model"] if register else [])
+
+    @pytest.mark.parametrize(("use_cuda", "steps"), [(False, ["import"]), (True, ["cuda", "import"])])
+    async def test_hugging_face_imports_torch_off_the_request_loop_async(
+        self, use_cuda: bool, steps: list[str]
+    ) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": use_cuda, "hf_access_token": "test-only-token"},
+                )
+            )
+            target = TargetRegistry.get_registry_singleton().instances.get("local-model")
+            assert isinstance(target, HuggingFaceChatTarget)
+            await target.load_model_and_tokenizer_task
+
+        assert sorted(torch.first_threads) == steps
+        assert threading.current_thread() not in torch.first_threads.values()
+        assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
 
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
