@@ -164,3 +164,40 @@ Reference: Tan, Hu, and Lee, "Structured Visual Narratives Undermine Safety
 Alignment in Multimodal Large Language Models", arXiv:2603.21697.
 
 ---------------------------------------------------------
+
+CyberSecEval judge prompt - MIT
+https://github.com/meta-llama/PurpleLlama/tree/172c1074069eb88ec834124272c1b1c4f8893445/CybersecurityBenchmarks
+License: https://github.com/meta-llama/PurpleLlama/blob/172c1074069eb88ec834124272c1b1c4f8893445/CybersecurityBenchmarks/LICENSE
+(the rest of the Purple Llama repository is under other licenses)
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+PyRIT includes the prompt injection judge prompt (``PROMPT_JUDGE_RESPONSE``) from
+CybersecurityBenchmarks/benchmark/prompt_injection_benchmark.py at revision
+172c1074069eb88ec834124272c1b1c4f8893445, in pyrit/datasets/score/cyberseceval/.
+The two placeholders use Jinja syntax; the text is otherwise unchanged.
+
+Reference: Bhatt et al., "CyberSecEval 2: A Wide-Ranging Cybersecurity
+Evaluation Suite for Large Language Models", arXiv:2404.13161.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------
