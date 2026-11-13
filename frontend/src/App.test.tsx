@@ -4,13 +4,17 @@
  */
 
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { fluentProviderClassNames } from "@fluentui/react-components";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
 import App from "./App";
 
-import { attacksApi, operationsApi, targetsApi } from "./services/api";
+import { attacksApi, operationsApi, scenariosApi, targetsApi } from "./services/api";
+import { deferred } from "./test-utils/deferred";
 import { makeTarget } from "./test-utils/targetFixtures";
+import { LIVE_ATTACK_POLL_INTERVAL_MS } from "./hooks/useLiveAttackMetadata";
+import type { AttackMetadata } from "./types";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
 
@@ -25,10 +29,14 @@ jest.mock("./hooks/useTargetRegistry", () => ({
       targets,
       loading: false,
       error: null,
+      isEmpty: false,
       refresh: jest.fn(),
       synchronizeTargets: setTargets,
       rememberTarget: (target: import("./types").TargetInstance) => {
-        setTargets((current) => [...current, target]);
+        setTargets((current) => [
+          ...current.filter((item) => item.target_registry_name !== target.target_registry_name),
+          target,
+        ]);
       },
     };
   },
@@ -77,6 +85,7 @@ jest.mock("./services/api", () => ({
   },
   attacksApi: {
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     listAttacks: jest.fn(),
     createAttack: jest.fn(),
     deleteAttack: jest.fn(),
@@ -84,6 +93,7 @@ jest.mock("./services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     getTarget: jest.fn(),
+    detectCapabilities: jest.fn(),
   },
   convertersApi: {
     listConverters: jest.fn().mockResolvedValue({ items: [] }),
@@ -101,12 +111,16 @@ jest.mock("./services/api", () => ({
   operationsApi: {
     get: jest.fn(),
   },
+  scenariosApi: {
+    getRunProgress: jest.fn(),
+    getRunConversation: jest.fn(),
+  },
   setMsalInstance: jest.fn(),
 }));
 
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
-const mockGetAttack = attacksApi.getAttack as jest.Mock;
+const mockGetAttack = attacksApi.getAttackMetadata as jest.Mock;
 const mockGetOperation = operationsApi.get as jest.Mock;
 const mockListTargets = targetsApi.listTargets as jest.Mock;
 const mockGetTarget = targetsApi.getTarget as jest.Mock;
@@ -131,6 +145,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange,
     operatorReadOnly,
     featureNavigation,
+    banner,
   }: {
     children: React.ReactNode;
     currentView: string;
@@ -139,10 +154,12 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange: (labels: Record<string, string>) => void;
     operatorReadOnly: boolean;
     featureNavigation?: React.ReactNode;
+    banner?: React.ReactNode;
   }) => {
     const navigate = useNavigate();
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        {banner}
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
@@ -205,8 +222,15 @@ jest.mock("./components/Chat/ChatWindow", () => {
     labels,
     scenarioResultId,
     isLoadingAttack,
+    executionReadOnly,
+    inProgress,
+    attackScenarioResultId,
+    relatedConversationCount,
+    lastResponseMessagePieceId,
+    readConversationById,
+    readConversations,
   }: {
-    activeTarget: unknown;
+    activeTarget: import("./types").TargetInstance | null;
     draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
     attackResultId: string | null;
     conversationId: string | null;
@@ -222,9 +246,17 @@ jest.mock("./components/Chat/ChatWindow", () => {
     labels: Record<string, string>;
     scenarioResultId?: string | null;
     isLoadingAttack?: boolean;
+    executionReadOnly?: boolean;
+    inProgress?: boolean;
+    attackScenarioResultId?: string | null;
+    relatedConversationCount?: number;
+    lastResponseMessagePieceId?: string | null;
+    readConversationById?: (id: string) => Promise<import("./types").ConversationMessagesResponse>;
+    readConversations?: import("./types").ReadAttackConversationReferences;
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();
+    const composerSequenceRef = useRef(draftHandoff.activeSequence);
     const [composerText, setComposerText] = useState(() => draftHandoff.preservedDraft?.draft?.text ?? "none");
     const activeTextRef = useRef(composerText);
     useLayoutEffect(() => {
@@ -259,6 +291,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     }, [attackResultId, activeConversationId, conversationId, location.pathname, location.search, location.hash]);
 
     useEffect(() => {
+      const composerSequence = composerSequenceRef.current;
       return () => {
         if (activeTextRef.current && activeTextRef.current !== "none") {
           preserveDraftRef.current({
@@ -266,7 +299,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
             originatingConversationId: routeRef.current.convId,
             originatingPath: routeRef.current.path,
             draft: { text: activeTextRef.current, attachments: [] },
-          });
+          }, composerSequence);
         }
       };
     }, []);
@@ -296,8 +329,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="active-target-name">
-          {(activeTarget as { target_registry_name?: string } | null)?.target_registry_name ?? "none"}
+          {activeTarget?.target_registry_name ?? "none"}
         </span>
+        <output aria-label="Active target multi-turn">{String(activeTarget?.capabilities?.supports_multi_turn)}</output>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
         <span data-testid="objective">{objective ?? ""}</span>
         <span data-testid="outcome">{outcome ?? "none"}</span>
@@ -305,6 +339,12 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
+        <span data-testid="execution-read-only">{String(executionReadOnly)}</span>
+        <span data-testid="in-progress">{String(inProgress)}</span>
+        <span data-testid="attack-scenario-result-id">{attackScenarioResultId ?? "none"}</span>
+        <span data-testid="related-conversation-count">{relatedConversationCount}</span>
+        <span data-testid="last-response-id">{lastResponseMessagePieceId ?? "none"}</span>
+        <span data-testid="recorded-readers">{String(Boolean(readConversationById && readConversations))}</span>
         <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
           {`${location.pathname}${location.search}`}
         </span>
@@ -343,16 +383,37 @@ jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const { useUserPreferences } = jest.requireActual("@/hooks/useUserPreferences") as typeof import("@/hooks/useUserPreferences");
   const MockTargetConfig = ({
+    defaultAdversarialTarget,
+    onSetDefaultAdversarialTarget,
+    detection,
     onTargetsLoaded,
-  }: {
-    onTargetsLoaded?: (targets: import("@/types").TargetInstance[]) => void;
-  }) => {
+  }: React.ComponentProps<typeof import("./components/Config/TargetConfig").default>) => {
     const { preferences, rememberUse } = useUserPreferences();
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
           {preferences.lastUsedTargets?.objective?.registryName ?? "none"}
         </span>
+        <output aria-label="Adversarial target">{defaultAdversarialTarget?.target_registry_name ?? "none"}</output>
+        <output aria-label="Detection results">{JSON.stringify(detection.results)}</output>
+        <button onClick={() => {
+          const target = makeTarget({
+            target_registry_name: "test_target",
+            capabilities: {
+              supports_multi_turn: true, supports_system_prompt: true,
+              supports_json_schema: false, supports_json_output: false,
+              supported_input_modalities: ["text"], supported_output_modalities: ["text"],
+            },
+          });
+          onTargetsLoaded?.([target]);
+          rememberUse({ objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash } });
+          onSetDefaultAdversarialTarget(target);
+        }}>Set detection targets</button>
+        <button disabled={!defaultAdversarialTarget || detection.running} onClick={() => {
+          if (defaultAdversarialTarget) void detection.start([
+            defaultAdversarialTarget, makeTarget({ target_registry_name: "second_target" }),
+          ]);
+        }}>Detect capabilities</button>
         <button
           onClick={() => {
             const target = makeTarget({
@@ -454,17 +515,19 @@ jest.mock("./components/History/AttackHistory", () => {
 
 jest.mock("./components/Home/Home", () => {
   const MockHome = ({
-    activeTarget,
     onNavigate,
+    onNewAttack,
     onOpenAttack,
   }: {
-    activeTarget: unknown;
     onNavigate: (view: string) => void;
+    onNewAttack: () => void;
     onOpenAttack: (attackResultId: string) => void;
   }) => {
     return (
       <div data-testid="home-view">
-        <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
+        <button onClick={onNewAttack} data-testid="home-new-attack">
+          New attack
+        </button>
         <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
           Go to registry
         </button>
@@ -696,6 +759,39 @@ describe("App", () => {
     window.localStorage.clear();
   });
 
+  it("continues detection after leaving Targets and keeps results and remembered targets when returning", async () => {
+    const user = userEvent.setup();
+    let finishFirst!: (target: import("./types").TargetInstance) => void;
+    let finishSecond!: (target: import("./types").TargetInstance) => void;
+    const detect = jest.mocked(targetsApi.detectCapabilities);
+    detect.mockReset();
+    detect
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
+    renderApp("/registry/targets");
+    await user.click(screen.getByRole("button", { name: "Set detection targets" }));
+    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("test_target");
+    await user.click(screen.getByRole("button", { name: "Detect capabilities" }));
+    expect(detect).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByTestId("nav-home"));
+    expect(screen.queryByTestId("target-config")).not.toBeInTheDocument();
+    const first = detect.mock.calls[0][0];
+    await act(async () => finishFirst({
+      ...first, capabilities: { ...first.capabilities, supports_multi_turn: false },
+    }));
+    expect(detect).toHaveBeenCalledTimes(2);
+    await act(async () => finishSecond(detect.mock.calls[1][0]));
+    await user.click(screen.getByTestId("nav-config"));
+    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("none");
+    const results = JSON.parse(screen.getByLabelText("Detection results").textContent!);
+    expect(results.test_target.state).toBe("Saved");
+    expect(results.second_target.state).toBe("Saved");
+    expect(detect).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByTestId("nav-chat"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(screen.getByLabelText("Active target multi-turn")).toHaveTextContent("false");
+  });
+
   it("opens Analytics and restores its fragment after inspecting a saved attack", async () => {
     const user = userEvent.setup();
     const originalPath = `/analytics${analyticsViewToHash({
@@ -792,6 +888,18 @@ describe("App", () => {
       "home"
     );
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("says inside the app's layout and theme that saved entries couldn't be restored", async () => {
+    const { runtimeApi } = jest.requireMock("./services/api");
+    runtimeApi.getReadiness.mockResolvedValueOnce({
+      ready: false, state: "failed", generation: "first", restore_failures: 1,
+    });
+    renderApp();
+
+    const message = await screen.findByText(/Some saved entries couldn't be restored/);
+    expect(screen.getByTestId("main-layout")).toContainElement(message);
+    expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
   it("renders the view named by the initial URL", () => {
@@ -1206,7 +1314,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "branch-target-hash",
       },
     });
@@ -1335,6 +1443,20 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
+  it("returns to the unsent draft through navigation but resets it through Home New attack", async () => {
+    const user = userEvent.setup();
+    renderApp("/attack/chat");
+    await user.click(await screen.findByTestId("preserve-draft"));
+    await user.click(screen.getByTestId("nav-home"));
+    await screen.findByTestId("home-view");
+    await user.click(screen.getByTestId("nav-chat"));
+    expect(await screen.findByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+    await user.click(screen.getByTestId("nav-home"));
+    await user.click(await screen.findByTestId("home-new-attack"));
+    expect(await screen.findByTestId("preserved-draft-text")).toHaveTextContent("none");
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
+  });
+
   it("shows the not-found UX when an attack returns 404", async () => {
     mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
     renderApp();
@@ -1363,6 +1485,7 @@ describe("App", () => {
       mockGetAttack.mockResolvedValue({
         attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
         labels: {}, objective: "", outcome: "undetermined",
+        related_conversation_count: 0, selected_conversation_id: "source", selected_conversation_valid: false,
       });
       renderApp(`${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`);
       expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
@@ -1382,7 +1505,9 @@ describe("App", () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: attackId,
       conversation_id: "main-conversation",
-      related_conversation_ids: conversationId ? [conversationId] : [],
+      related_conversation_count: conversationId ? 1 : 0,
+      selected_conversation_id: conversationId ?? "main-conversation",
+      selected_conversation_valid: true,
       labels: {},
       objective: "",
       outcome: "undetermined",
@@ -1395,7 +1520,9 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith(attackId));
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith(
+      ...(conversationId ? [attackId, conversationId] : [attackId]),
+    ));
     await waitFor(() => expect(screen.getByLabelText("Current URL")).toHaveTextContent(canonicalUrl));
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
     if (conversationId) {
@@ -1471,6 +1598,163 @@ describe("App", () => {
     );
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
     expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
+  });
+
+  it("reloads the previous attack when returning before another metadata request finishes", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<AttackMetadata>();
+    const metadata: AttackMetadata = {
+      attack_result_id: "ar-attack-1", conversation_id: "first-main", objective: "", labels: {},
+      execution_read_only: true, related_conversation_count: 0, last_response_message_piece_id: null,
+      selected_conversation_id: "first-main", selected_conversation_valid: true,
+    };
+    mockGetAttack.mockImplementation((id: string) => (
+      id === "ar-attack-2" ? pending.promise : Promise.resolve(metadata)
+    ));
+    function DirectAttackNavigation() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/attacks/ar-attack-2")}>Open next attack directly</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/attacks/ar-attack-1"]}>
+        <App /><RouterProbe /><DirectAttackNavigation />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main"));
+    await user.click(screen.getByRole("button", { name: "Open next attack directly" }));
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-2"));
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+    await waitFor(() => expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main"));
+    expect(mockGetAttack.mock.calls.filter((call: unknown[]) => call[0] === "ar-attack-1")).toHaveLength(2);
+    await act(async () => { pending.resolve({ ...metadata, attack_result_id: "ar-attack-2", conversation_id: "other-main" }); });
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main");
+  });
+
+  it("follows a running scan attack and shows its saved result in place when it finishes", async () => {
+    jest.useFakeTimers();
+    try {
+      const scanId = "123e4567-e89b-12d3-a456-426614174000";
+      const live: AttackMetadata = {
+        attack_result_id: "live-attack", conversation_id: "branch-1", objective: "Goal", labels: {},
+        outcome: "undetermined", execution_read_only: true, in_progress: true, scenario_result_id: scanId,
+        related_conversation_count: 0, last_response_message_piece_id: null,
+        selected_conversation_id: "branch-1", selected_conversation_valid: true,
+      };
+      mockGetAttack
+        .mockResolvedValueOnce(live)
+        .mockResolvedValueOnce({ ...live, conversation_id: "branch-2", related_conversation_count: 1 })
+        .mockResolvedValueOnce({
+          ...live, conversation_id: "branch-2", related_conversation_count: 1, in_progress: false, outcome: "success",
+          last_response_message_piece_id: "final-response",
+        });
+
+      render(
+        <MemoryRouter initialEntries={["/attack/chat/live-attack"]}>
+          <App /><RouterProbe />
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByTestId("in-progress")).toHaveTextContent("true"));
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("branch-1");
+      expect(screen.getByTestId("attack-scenario-result-id")).toHaveTextContent(scanId);
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+      expect(screen.getByTestId("related-conversation-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("branch-2");
+      expect(screen.getByTestId("in-progress")).toHaveTextContent("true");
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+      expect(screen.getByTestId("in-progress")).toHaveTextContent("false");
+      expect(screen.getByTestId("outcome")).toHaveTextContent("success");
+      expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+      expect(screen.getByTestId("last-response-id")).toHaveTextContent("final-response");
+      expect(screen.getByTestId("route-location")).toHaveTextContent(/^\/attack\/chat\/live-attack$/);
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS * 3); });
+      expect(mockGetAttack).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  describe("recorded-only scan evidence", () => {
+    const scanId = "123e4567-e89b-12d3-a456-426614174000";
+    const canonical = `/attack/chat/interrupted/conversations/recorded?scenarioResultId=${scanId}`;
+    const record = {
+      attack_result_id: "interrupted", conversation_id: "recorded", atomic_attack_name: "direct",
+      objective: "Persisted interrupted objective", started_at: "2026-01-01T00:00:00Z", seed_identifiers: [],
+    };
+    const progress = {
+      run: { scenario_result_id: scanId, scenario_name: "Scenario", scenario_version: 1,
+        status: "CANCELLED" as const, created_at: "2026-01-01T00:00:00Z" },
+      plan: null, results: [], has_more: false, plan_complete: true, recorded_conversations: [record],
+      summary: { overall: { completed: 0, planned: 1, succeeded: 0, success_percentage: null, errors: 0, retries: 0 },
+        techniques: [], seed_groups: [], atomic_groups: [] },
+    };
+    beforeEach(() => {
+      mockGetAttack.mockReset().mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
+      jest.mocked(scenariosApi.getRunProgress).mockReset().mockResolvedValue(progress);
+      jest.mocked(scenariosApi.getRunConversation).mockReset().mockResolvedValue({
+        conversation_id: "recorded", messages: [], target_response_status: null,
+      });
+    });
+
+    it.each([canonical, `/scanner/history/${scanId}/conversations/recorded`])(
+      "should open and freshly reload %s through shared read-only Chat without a fabricated result", async (path: string) => {
+        const view = render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+        await waitFor(() => { expect(screen.getByTestId("recorded-readers")).toHaveTextContent("true"); });
+        expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("recorded");
+        expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
+        expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+        expect(screen.getByTestId("in-progress")).toHaveTextContent("false");
+        expect(screen.getByTestId("objective")).toHaveTextContent(record.objective);
+        expect(screen.getByTestId("outcome")).toHaveTextContent("undetermined");
+        expect(screen.getByTestId("last-response-id")).toHaveTextContent("none");
+        expect(screen.getByTestId("route-location")).toHaveTextContent(canonical);
+        expect(scenariosApi.getRunConversation).toHaveBeenCalledWith(scanId, "recorded");
+        expect(progress.results).toEqual([]);
+        expect(progress.summary.overall.completed).toBe(0);
+        view.unmount();
+        render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+        await waitFor(() => { expect(screen.getByTestId("recorded-readers")).toHaveTextContent("true"); });
+        expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("recorded");
+      },
+    );
+
+    it("should reject a conversation recorded for a different attack", async () => {
+      jest.mocked(scenariosApi.getRunProgress).mockResolvedValue({
+        ...progress, recorded_conversations: [{ ...record, attack_result_id: "other" }],
+      });
+      render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+      expect(await screen.findByTestId("attack-not-found")).toBeInTheDocument();
+      expect(scenariosApi.getRunConversation).not.toHaveBeenCalled();
+    });
+
+    it("should retain explicit transient metadata errors instead of substituting recorded evidence", async () => {
+      mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 503, data: {} } });
+      render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+      expect(await screen.findByText("Could not load attack")).toBeInTheDocument();
+      expect(scenariosApi.getRunProgress).not.toHaveBeenCalled();
+    });
+
+    it("should recover the same live Chat URL from recorded provenance after cancellation removes the execution", async () => {
+      jest.useFakeTimers();
+      try {
+        mockGetAttack.mockResolvedValueOnce({
+          attack_result_id: "interrupted", conversation_id: "recorded", objective: record.objective, labels: {},
+          execution_read_only: true, in_progress: true, scenario_result_id: scanId,
+          outcome: "undetermined", related_conversation_count: 0, last_response_message_piece_id: null,
+          selected_conversation_id: "recorded", selected_conversation_valid: true,
+        });
+        render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+        await waitFor(() => { expect(screen.getByTestId("in-progress")).toHaveTextContent("true"); });
+        await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+        expect(screen.getByTestId("recorded-readers")).toHaveTextContent("true");
+        expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+        expect(screen.getByTestId("route-location")).toHaveTextContent(canonical);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   it("merges default labels from backend version API", async () => {
@@ -1735,20 +2019,22 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-related"],
-      related_conversations: [
-        {
-          conversation_id: "conv-related",
-          conversation_type: "pruned",
-          description: "Previous main conversation",
-        },
-      ],
+      related_conversation_count: 700,
+      selected_conversation_id: "conv-related",
+      selected_conversation_valid: true,
+      execution_read_only: true,
+      last_response_message_piece_id: "last-response",
     });
     renderApp("/attack/chat/ar-1/conversations/conv-related");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-related")
     );
+    expect(mockGetAttack).toHaveBeenCalledWith("ar-1", "conv-related");
+    expect(screen.getByTestId("related-conversation-count")).toHaveTextContent("700");
+    expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+    expect(screen.getByTestId("last-response-id")).toHaveTextContent("last-response");
+    expect(attacksApi.getAttack).not.toHaveBeenCalled();
   });
 
   it("falls back to the main conversation when the deep-linked conversation is unknown", async () => {
@@ -1756,7 +2042,9 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-related"],
+      related_conversation_count: 1,
+      selected_conversation_id: "bogus",
+      selected_conversation_valid: false,
     });
     renderApp("/attack/chat/ar-1/conversations/bogus");
 
@@ -1766,25 +2054,22 @@ describe("App", () => {
     );
   });
 
-  it("does not activate a preparation conversation from a deep link", async () => {
+  it.each(["preparation", "adversarial"])("does not activate a %s conversation from a deep link", async (kind: string) => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-preparation"],
-      related_conversations: [
-        {
-          conversation_id: "conv-preparation",
-          conversation_type: "preparation",
-          description: "Simulated preparation",
-        },
-      ],
+      related_conversation_count: 0,
+      selected_conversation_id: `conv-${kind}`,
+      selected_conversation_valid: false,
     });
-    renderApp("/attack/chat/ar-1/conversations/conv-preparation");
+    renderApp(`/attack/chat/ar-1/conversations/conv-${kind}`);
 
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );
+    expect(mockGetAttack).toHaveBeenCalledWith("ar-1", `conv-${kind}`);
+    expect(attacksApi.getAttack).not.toHaveBeenCalled();
   });
 
   it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
@@ -1794,6 +2079,9 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: [],
+      related_conversation_count: 0,
+      selected_conversation_id: "bogus",
+      selected_conversation_valid: false,
     });
     const returnContext = { fromScenarioHistory: true, scenarioHistorySearch: "?status=COMPLETED" };
     renderApp(`/attack/chat/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`, returnContext);
@@ -1809,13 +2097,15 @@ describe("App", () => {
   });
 
   it("hydrates history filters from the URL query string", () => {
-    renderApp("/attack/history?outcome=success&attackType=PromptSendingAttack");
+    renderApp("/attack/history?outcome=success&operator=alice&attackType=PromptSendingAttack&converter=Base64Converter");
 
     const filters = JSON.parse(
       screen.getByTestId("history-filters").textContent ?? "{}"
     );
     expect(filters.outcome).toBe("success");
-    expect(filters.attackTypes).toEqual(["PromptSendingAttack"]);
+    expect(filters.operator).toEqual(["alice"]);
+    expect(filters).not.toHaveProperty("attackTypes");
+    expect(filters).not.toHaveProperty("converter");
   });
 
   it("writes filter changes into the URL", () => {
@@ -1908,7 +2198,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "persisted-alias",
         identifier_hash: "persisted-alias-hash",
       },
@@ -1940,7 +2230,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "reused-alias",
         identifier_hash: "original-hash",
       },
@@ -1971,7 +2261,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "removed-alias",
         identifier_hash: "original-hash",
       },
@@ -2001,7 +2291,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "catalog",
         identifier_hash: "catalog-target-hash",
       },
@@ -2032,7 +2322,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "persisted-alias",
         identifier_hash: "persisted-alias-hash",
       },
@@ -2066,7 +2356,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "pagination-hash",
       },
     });
@@ -2099,7 +2389,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "remount-hash",
       },
     });
@@ -2132,7 +2422,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "removed-hash",
       },
     });
@@ -2172,7 +2462,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "revisited-hash",
       },
     };
@@ -2263,7 +2553,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "duplicate-hash",
       },
     });
@@ -2304,7 +2594,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "other-target-hash",
       },
     });
@@ -2408,7 +2698,7 @@ describe("App", () => {
         labels: {},
         related_conversation_ids: [],
         target: {
-          target_type: "TextTarget",
+          target_type: "OpenAIChatTarget",
           identifier_hash: "retry-hash",
         },
       });
@@ -2443,7 +2733,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: `${attackId}-hash`,
       },
     }));

@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -34,9 +34,8 @@ from pyrit.models import (
     ScoreType,
     ScoringExpectation,
 )
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, CapabilityName, TargetRequirements
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_scores,
@@ -68,10 +67,10 @@ ConditionT = TypeVar("ConditionT", bound=Condition)
 
 def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
     """
-    Read the private same-input child participation tree on a wrapper result.
+    Read the same-input child participation tree stored on a wrapper result.
 
     Returns:
-        The validated child tree, or None when absent or invalid.
+        The validated child tree, or ``None`` when it is absent or invalid.
     """
     raw: Any = score._snapshot_participation
     return raw if _is_snapshot_participation(raw) else None
@@ -79,10 +78,10 @@ def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
 
 def _is_snapshot_participation(value: Any) -> bool:
     """
-    Validate persisted provenance before allowing it to skip a child freshness check.
+    Validate persisted participation metadata before using it to skip a freshness check.
 
     Returns:
-        Whether the value is a canonical participation tree.
+        Whether the value is a valid participation tree.
     """
     return isinstance(value, dict) and all(
         isinstance(index, str)
@@ -100,12 +99,7 @@ def _participates_in_snapshot(
     child_index: int,
     participation_by_score: dict[str, SnapshotParticipation | None],
 ) -> bool:
-    """
-    Include unknown legacy branches conservatively.
-
-    Returns:
-        Whether the branch contributed or its participation is unknown.
-    """
+    """Return whether a child participated, conservatively including unknown legacy branches."""
     participation = participation_by_score.get(str(score.id))
     return participation is None or str(child_index) in participation
 
@@ -116,7 +110,7 @@ def _child_snapshot_participation(
     child_index: int,
     participation_by_score: dict[str, SnapshotParticipation | None],
 ) -> SnapshotParticipation | None:
-    """Return one child's node-scoped participation tree when known."""
+    """Return the nested participation tree for one child, if known."""
     participation = participation_by_score.get(str(score.id))
     return participation.get(str(child_index)) if participation is not None else None
 
@@ -128,20 +122,22 @@ def _validated_snapshot_participation(
     participation_by_score: dict[str, SnapshotParticipation | None],
 ) -> SnapshotParticipation | None:
     """
-    Treat empty or out-of-range participation as unknown.
+    Treat incomplete or out-of-range participation data as unknown.
 
     Returns:
-        The validated tree, or None when it cannot identify participating branches.
+        The validated participation tree, or ``None`` when the tree is unknown.
     """
     participation = participation_by_score.get(str(score.id))
+    if participation is None or not participation:
+        return None
     valid_indices = {str(index) for index in range(child_count)}
-    if not participation or any(index not in valid_indices for index in participation):
+    if any(index not in valid_indices for index in participation):
         return None
     return participation
 
 
 def _set_snapshot_participation(*, score: Score, child_scores: dict[int, Score]) -> None:
-    """Record the same-input branches that actually contributed scores."""
+    """Attach the exact same-input child branches that contributed to a wrapper score."""
     score._snapshot_participation = {
         str(index): _read_snapshot_participation(child) for index, child in sorted(child_scores.items())
     }
@@ -305,7 +301,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scorer")
         if any(
@@ -1024,12 +1020,13 @@ class Scorer(Identifiable, abc.ABC):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Filter root identity matches by evidence freshness.
+        Filter identity matches whose required evidence snapshots are no longer current.
 
-        Snapshot-free leaves retain the root match; same-input wrappers recurse.
+        Leaf scorers without snapshot-dependent children keep the root identity match.
+        Same-input wrappers can recurse into their children while retaining the root scores.
 
         Returns:
-            Candidates whose required snapshots remain current.
+            list[Score]: The candidates whose required snapshots remain current.
         """
         return list(scores)
 
@@ -1043,17 +1040,17 @@ class Scorer(Identifiable, abc.ABC):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Check every participating same-input child's freshness contract.
+        Apply each same-input child's freshness contract to the root identity matches.
 
-        Linked observations are consumed per root score so one snapshot cannot
-        stand in for multiple participating conversation branches.
+        Child observations are consumed per root score so one linked snapshot cannot stand
+        in for multiple participating conversation-scoring branches.
 
         Returns:
-            Root candidates with current evidence for every participating child.
+            list[Score]: The candidates whose same-input children remain current.
         """
         candidates: list[Score] = list(scores)
         child_expectations = self._get_child_expectations(expectation=expectation)
-        participation_by_score = {
+        normalized_participation_by_score = {
             str(score.id): _validated_snapshot_participation(
                 score=score,
                 child_count=len(child_expectations),
@@ -1061,27 +1058,33 @@ class Scorer(Identifiable, abc.ABC):
             )
             for score in scores
         }
+        participation_by_score = normalized_participation_by_score
         for child_index, (child, child_expectation) in enumerate(child_expectations):
             participating_scores = [
                 score
                 for score in candidates
                 if _participates_in_snapshot(
-                    score=score, child_index=child_index, participation_by_score=participation_by_score
+                    score=score,
+                    child_index=child_index,
+                    participation_by_score=participation_by_score,
                 )
             ]
             if not participating_scores:
                 continue
+            child_participation = {
+                str(score.id): _child_snapshot_participation(
+                    score=score,
+                    child_index=child_index,
+                    participation_by_score=participation_by_score,
+                )
+                for score in participating_scores
+            }
             fresh_scores = await child._filter_matching_scores_by_snapshot_async(
                 scores=participating_scores,
                 scorable=scorable,
                 expectation=child_expectation,
                 used_observation_ids=used_observation_ids,
-                participation_by_score={
-                    str(score.id): _child_snapshot_participation(
-                        score=score, child_index=child_index, participation_by_score=participation_by_score
-                    )
-                    for score in participating_scores
-                },
+                participation_by_score=child_participation,
             )
             fresh_ids = {str(score.id) for score in fresh_scores}
             participating_ids = {str(score.id) for score in participating_scores}

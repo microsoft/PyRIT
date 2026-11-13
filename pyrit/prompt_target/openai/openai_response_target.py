@@ -6,11 +6,13 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from contextlib import AsyncExitStack
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Literal,
     cast,
 )
@@ -35,14 +37,23 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
     ToolExecutionMetadata,
+    ToolLoopStop,
+    ToolLoopStopReason,
     WebSearchConfig,
     WebSearchMode,
+    construct_response_from_request,
 )
 from pyrit.models.messages.chat_message import FunctionCall
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
-from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
+from pyrit.prompt_target.common.tool_provider import (
+    Tool,
+    ToolInfrastructureError,
+    ToolProvider,
+    _ScopedToolProvider,
+    collect_tools_async,
+)
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -117,6 +128,8 @@ class OpenAIResponseTarget(OpenAITarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
+    _MAX_ERROR_MESSAGE_CHARS = 2_000
     _WEB_SEARCH_TOOL_TYPES = frozenset({"web_search", "web_search_preview"})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
@@ -154,6 +167,7 @@ class OpenAIResponseTarget(OpenAITarget):
         extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
         execute_tools: bool = True,
+        max_tool_rounds: int = 10,
         custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
@@ -197,6 +211,10 @@ class OpenAIResponseTarget(OpenAITarget):
                 the first response without running registered functions. Tool discovery,
                 provider scopes, and advertisement remain enabled. This does not disable
                 provider-hosted tools configured in extra_body_parameters.
+            max_tool_rounds (int): The most model responses per send whose calls run locally. Calls in
+                a later response get error results without running, and the send ends with an error
+                response. A tool raising ``ToolInfrastructureError`` also ends the send with an error
+                response, after every call in its round has a result. Defaults to 10.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
@@ -209,16 +227,18 @@ class OpenAIResponseTarget(OpenAITarget):
             PyritException: If the temperature or top_p values are out of bounds.
             ValueError: If the temperature is not between 0 and 2 (inclusive).
             ValueError: If the top_p is not between 0 and 1 (inclusive).
+            ValueError: If max_tool_rounds is not a nonnegative integer.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, **kwargs)
-
         # Validate temperature and top_p
         validate_temperature(temperature)
         validate_top_p(top_p)
+        if isinstance(max_tool_rounds, bool) or not isinstance(max_tool_rounds, int) or max_tool_rounds < 0:
+            raise ValueError("max_tool_rounds must be a nonnegative integer.")
+        self._max_tool_rounds = max_tool_rounds
 
         self._temperature = temperature
         self._top_p = top_p
@@ -228,6 +248,7 @@ class OpenAIResponseTarget(OpenAITarget):
         self._reasoning_summary = reasoning_summary
 
         self._extra_body_parameters = extra_body_parameters
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
         if (
             custom_configuration is None
             and (extra_body_parameters or {}).get("tool_choice") != "none"
@@ -237,6 +258,7 @@ class OpenAIResponseTarget(OpenAITarget):
             )
         ):
             self.apply_capabilities(capabilities=self.capabilities.model_copy(update={"supports_web_search": True}))
+            self._refresh_generation_capabilities()
 
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._direct_tools = tuple(tools or ())
@@ -261,6 +283,12 @@ class OpenAIResponseTarget(OpenAITarget):
                     tool_name = tool.get("name")
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
+
+    def _effective_generation_parameters(self) -> dict[str, Any]:
+        parameters = super()._effective_generation_parameters()
+        reasoning = parameters.get("reasoning", self._build_reasoning_config())
+        parameters["reasoning_effort"] = reasoning.get("effort") if isinstance(reasoning, dict) else reasoning
+        return parameters
 
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """Check stored tool history through the pure serializers used for sending."""
@@ -311,8 +339,18 @@ class OpenAIResponseTarget(OpenAITarget):
                 )
                 or None,
                 "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
+                "max_tool_rounds": self._max_tool_rounds if self._execute_tools and self._has_local_tools() else None,
             },
         )
+
+    def _has_local_tools(self) -> bool:
+        """
+        Whether this target runs any tools itself.
+
+        Returns:
+            bool: True if tools, tool providers or custom functions are configured.
+        """
+        return bool(self._direct_tools or self._tool_providers or self._custom_functions)
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_RESPONSES_MODEL"
@@ -518,7 +556,7 @@ class OpenAIResponseTarget(OpenAITarget):
         }
 
         if self._extra_body_parameters:
-            body_parameters.update(self._extra_body_parameters)
+            body_parameters.update(deepcopy(self._extra_body_parameters))
 
         if self._tools and not self._suppress_tools:
             advertised_tools = [self._to_openai_function_tool(tool=tool) for tool in self._tools]
@@ -752,6 +790,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         # Track all responses generated during this interaction
         responses_to_return: list[Message] = []
+        rounds = 0
 
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
@@ -773,23 +812,140 @@ class OpenAIResponseTarget(OpenAITarget):
             if not tool_call_sections:
                 break
 
-            for tool_call_section in tool_call_sections:
-                tool_output = await self._execute_call_section_async(tool_call_section)
-                tool_piece = self._make_tool_piece(
-                    result=tool_output,
-                    call_id=tool_call_section["call_id"],
-                    reference_piece=message_piece,
+            if rounds >= self._max_tool_rounds:
+                responses_to_return.extend(
+                    self._answer_calls_without_running(
+                        sections=tool_call_sections,
+                        output={"error": "max_tool_rounds_exhausted"},
+                        reference_piece=message_piece,
+                    )
                 )
-                tool_message = Message(message_pieces=[tool_piece])
-                working_conversation.append(tool_message)
-                responses_to_return.append(tool_message)
+                detail = f"max_tool_rounds={self._max_tool_rounds} exhausted."
+                stop = ToolLoopStopReason.MAX_TOOL_ROUNDS_EXHAUSTED
+                responses_to_return.append(
+                    self._tool_loop_error(request_piece=message_piece, detail=detail, reason=stop)
+                )
+                return responses_to_return
+            rounds += 1
+
+            tool_messages, failure = await self._execute_tool_round_async(
+                sections=tool_call_sections, reference_piece=message_piece
+            )
+            working_conversation.extend(tool_messages)
+            responses_to_return.extend(tool_messages)
+            if failure is not None:
+                stop = ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+                responses_to_return.append(
+                    self._tool_loop_error(request_piece=message_piece, detail=failure, reason=stop)
+                )
+                return responses_to_return
 
         # Return all responses (normalizer will persist all of them to memory)
         return responses_to_return
 
+    async def _execute_tool_round_async(
+        self, *, sections: list[dict[str, Any]], reference_piece: MessagePiece
+    ) -> tuple[list[Message], str | None]:
+        """
+        Run one response's tool calls in order, stopping at a tool infrastructure failure.
+
+        Args:
+            sections: The response's function calls.
+            reference_piece: A piece to copy conversation context from.
+
+        Returns:
+            One result message per call, and why the turn must end, or None to continue. After a
+            failure, the calls not yet run get error results, so every call is answered.
+        """
+        messages: list[Message] = []
+        for index, section in enumerate(sections):
+            try:
+                result = await self._execute_call_section_async(section)
+            except ToolInfrastructureError as error:
+                logger.error("Tool %r could not run; ending the turn: %s", section.get("name"), error)
+                # The model sees this result again on later turns, so it gets no infrastructure details;
+                # they stay in the error response, which history replay skips.
+                failed = _ToolDispatchResult(
+                    output={"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."},
+                    invoked=error.invoked,
+                )
+                messages.append(
+                    self._make_tool_message(result=failed, section=section, reference_piece=reference_piece)
+                )
+                messages.extend(
+                    self._answer_calls_without_running(
+                        sections=sections[index + 1 :],
+                        output={"error": "tool_not_executed", "message": "An earlier tool call failed."},
+                        reference_piece=reference_piece,
+                    )
+                )
+                return messages, f"Tool {section.get('name')!r} could not run: {error}"
+            messages.append(self._make_tool_message(result=result, section=section, reference_piece=reference_piece))
+        return messages, None
+
+    def _answer_calls_without_running(
+        self, *, sections: Sequence[dict[str, Any]], output: dict[str, str], reference_piece: MessagePiece
+    ) -> list[Message]:
+        """
+        Give calls that will not run an error result, so the history keeps every call answered.
+
+        Args:
+            sections: The calls.
+            output: The error result each call gets.
+            reference_piece: A piece to copy conversation context from.
+
+        Returns:
+            One result message per call, recorded as not invoked.
+        """
+        result = _ToolDispatchResult(output=output, invoked=False)
+        return [
+            self._make_tool_message(result=result, section=section, reference_piece=reference_piece)
+            for section in sections
+        ]
+
+    def _make_tool_message(
+        self, *, result: _ToolDispatchResult, section: dict[str, Any], reference_piece: MessagePiece
+    ) -> Message:
+        """
+        Wrap a call's result in a message.
+
+        Args:
+            result: The dispatch result to record.
+            section: The function call it answers.
+            reference_piece: A piece to copy conversation context from.
+
+        Returns:
+            A message with one function_call_output piece.
+        """
+        piece = self._make_tool_piece(result=result, call_id=section["call_id"], reference_piece=reference_piece)
+        return Message(message_pieces=[piece])
+
+    @staticmethod
+    def _tool_loop_error(*, request_piece: MessagePiece, detail: str, reason: ToolLoopStopReason) -> Message:
+        """
+        Build the error response that ends a turn whose tools could not continue.
+
+        Args:
+            request_piece: The request the turn answers.
+            detail: Why the turn ended.
+            reason: The machine-readable reason, recorded in the response's metadata.
+
+        Returns:
+            An error response, which history replay skips.
+        """
+        logger.error(detail)
+        return construct_response_from_request(
+            request=request_piece,
+            response_text_pieces=[detail],
+            response_type="error",
+            prompt_metadata=ToolLoopStop(reason=reason).to_metadata(),
+            error="processing",
+        )
+
     @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_model_request_async(self, *, body: dict[str, Any], request: Message) -> Message:
+        self._prepare_request_generation(body=body, request=request)
         return await self._handle_openai_request_async(
             api_call=lambda: self._client.responses.create(**body),
             request=request,
@@ -1052,6 +1208,21 @@ class OpenAIResponseTarget(OpenAITarget):
             )
 
         if configured_tool is not None:
+            try:
+                configured_tool.validate_arguments(arguments=args)
+            except ValueError as exc:
+                if self._fail_on_missing_function:
+                    raise
+                logger.warning("Invalid arguments for function '%s': %s", name, exc)
+                return _ToolDispatchResult(
+                    output={
+                        "error": "malformed_arguments",
+                        "function": name,
+                        "raw_arguments": args_json,
+                        "message": str(exc)[: self._MAX_ERROR_MESSAGE_CHARS],
+                    },
+                    invoked=False,
+                )
             return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
         if custom_function is not None:

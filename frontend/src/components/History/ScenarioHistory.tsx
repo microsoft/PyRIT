@@ -23,7 +23,6 @@ import {
 import {
   ArrowLeftRegular,
   ArrowRightRegular,
-  ArrowSyncRegular,
   DismissRegular,
   FilterDismissRegular,
   PlayRegular,
@@ -32,6 +31,7 @@ import {
 } from '@fluentui/react-icons'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { labelsApi, operationsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -52,6 +52,18 @@ import {
 
 const PAGE_SIZE = 25
 const INVALID_ID_MESSAGE = 'Enter a complete ID (UUID).'
+
+/**
+ * One history page request. The cursor and the displayed page index always
+ * change together, and `filterKey` records which filter visit they belong to.
+ */
+interface PageRequest {
+  filterKey: string
+  cursor: string | undefined
+  page: number
+  requestId: number
+  quiet: boolean
+}
 
 interface ScenarioHistoryProps {
   filters: ScenarioHistoryFilters
@@ -124,14 +136,15 @@ export default function ScenarioHistory({
   const queue = useScenarioQueue()
   const lastQueueRevisionRef = useRef<number | null>(null)
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const pending = useRef(false)
+  const optionsPending = useRef(false)
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [scenarioOptions, setScenarioOptions] = useState<string[]>([])
+  const [optionsRevision, setOptionsRevision] = useState(0)
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<FilterOption[]>([])
   const [otherLabelOptions, setOtherLabelOptions] = useState<string[]>([])
-  const [page, setPage] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | undefined>()
   const [hasMore, setHasMore] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -143,22 +156,35 @@ export default function ScenarioHistory({
     filters.otherLabels,
     filters.referenceId,
   ])
-  const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
-  const [fetchToken, setFetchToken] = useState({
-    cursor: undefined as string | undefined,
+  const [pageRequest, setPageRequest] = useState<PageRequest>(() => ({
     filterKey,
-    nonce: 0,
-  })
-  if (fetchToken.filterKey !== filterKey) {
-    setFetchToken({ cursor: undefined, filterKey, nonce: fetchToken.nonce + 1 })
+    cursor: undefined,
+    page: 0,
+    requestId: 0,
+    quiet: false,
+  }))
+  const [settledRequestId, setSettledRequestId] = useState<number | null>(null)
+  // Every filter change (including A -> B -> A) starts a new visit on the first
+  // page, so a cursor from an earlier visit of the same filters is never reused.
+  // Uses the "adjust state during render" pattern (see React docs:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+  // instead of a useEffect so we don't trigger react-hooks/set-state-in-effect.
+  if (pageRequest.filterKey !== filterKey) {
+    setPageRequest({ filterKey, cursor: undefined, page: 0, requestId: pageRequest.requestId + 1, quiet: false })
   }
   const queueRevision = queue.snapshot?.revision
 
-  const requestPage = useCallback((cursor?: string) => {
-    setLoading(true)
+  const requestPage = useCallback((cursor: string | undefined, page: number) => {
     setError(null)
-    setFetchToken((previous) => ({ cursor, filterKey, nonce: previous.nonce + 1 }))
-  }, [filterKey])
+    setPageRequest((previous) => ({ ...previous, cursor, page, requestId: previous.requestId + 1, quiet: false }))
+  }, [])
+  const reloadCurrentPage = useCallback(() => {
+    setPageRequest((previous) => ({
+      ...previous,
+      requestId: previous.requestId + 1,
+      quiet: previous.quiet || previous.requestId === settledRequestId,
+    }))
+  }, [settledRequestId])
   const resume = useScenarioRunResume({
     onResumed: (resumedRun: ScenarioRunSummary): void => {
       setRuns((current: ScenarioRunListItem[]) => current.map((run: ScenarioRunListItem) =>
@@ -168,13 +194,14 @@ export default function ScenarioHistory({
       ))
     },
     onRefresh: (): void => {
-      requestPage(fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined)
+      reloadCurrentPage()
       queue.retry()
     },
   })
 
   useEffect(() => {
     let cancelled = false
+    optionsPending.current = true
     Promise.allSettled([
       fetchAllPages((cursor) => scenariosApi.listCatalog(100, cursor)),
       labelsApi.getLabels('scenarios'),
@@ -185,7 +212,7 @@ export default function ScenarioHistory({
       if (catalogResult.status === 'fulfilled') {
         setScenarioOptions(catalogResult.value.map((scenario) => scenario.scenario_name).sort())
       } else {
-        failures.push('scenario names')
+        failures.push(toApiError(catalogResult.reason).detail)
       }
       if (labelsResult.status === 'fulfilled') {
         const operators = labelsResult.value.labels.operator ?? []
@@ -195,19 +222,21 @@ export default function ScenarioHistory({
         setOperatorOptions([...operators].sort())
         setOtherLabelOptions(others.sort())
       } else {
-        failures.push('labels')
+        failures.push(toApiError(labelsResult.reason).detail)
       }
       if (operationsResult.status === 'fulfilled') {
         setOperationOptions(operationsResult.value.items.map(operation => ({ value: operation.id, label: operation.name })))
       } else {
-        failures.push('operations')
+        failures.push(toApiError(operationsResult.reason).detail)
       }
-      setOptionsError(failures.length > 0 ? `Some filter options could not be loaded: ${failures.join(', ')}.` : null)
+      setOptionsError(failures.length > 0 ? failures.join(' ') : null)
+      optionsPending.current = false
     })
     return () => {
       cancelled = true
+      optionsPending.current = false
     }
-  }, [])
+  }, [optionsRevision])
 
   useEffect(() => {
     if (!runs.some((run) => !isTerminal(run.status))) return
@@ -218,14 +247,15 @@ export default function ScenarioHistory({
   useEffect(() => {
     if (!validReference) return
     let cancelled = false
-    const effectiveCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
+    pending.current = true
+    const { cursor, requestId, quiet } = pageRequest
     const label = [
       ...filters.operator.map((value) => `operator:${value}`),
       ...filters.otherLabels,
     ]
     scenariosApi.listRuns({
       limit: PAGE_SIZE,
-      cursor: effectiveCursor,
+      cursor,
       scenario_names: filters.scenarioNames.length > 0 ? filters.scenarioNames : undefined,
       run_statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
       label: label.length > 0 ? label : undefined,
@@ -237,26 +267,26 @@ export default function ScenarioHistory({
       setNow(Date.now())
       setHasMore(response.pagination.has_more)
       setNextCursor(response.pagination.next_cursor ?? undefined)
-      setSettledFilterKey(filterKey)
+      setSettledRequestId(requestId)
       setError(null)
-      if (!effectiveCursor) setPage(0)
     }).catch((requestError: unknown) => {
       if (cancelled) return
-      setRuns([])
-      setHasMore(false)
-      setNextCursor(undefined)
-      setSettledFilterKey(filterKey)
+      if (!quiet) {
+        setRuns([])
+        setHasMore(false)
+        setNextCursor(undefined)
+      }
+      setSettledRequestId(requestId)
       setError(toApiError(requestError).detail)
-      if (!effectiveCursor) setPage(0)
     }).finally(() => {
-      if (!cancelled) setLoading(false)
+      if (!cancelled) pending.current = false
     })
     return () => {
       cancelled = true
+      pending.current = false
     }
   }, [
-    fetchToken,
-    filterKey,
+    pageRequest,
     filters.scenarioNames,
     filters.statuses,
     filters.operator,
@@ -271,9 +301,8 @@ export default function ScenarioHistory({
     const previousRevision = lastQueueRevisionRef.current
     lastQueueRevisionRef.current = queueRevision
     if (previousRevision === null || previousRevision === queueRevision) return
-    const currentCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
-    requestPage(currentCursor)
-  }, [fetchToken.cursor, fetchToken.filterKey, filterKey, queueRevision, requestPage])
+    reloadCurrentPage()
+  }, [queueRevision, reloadCurrentPage])
 
   const setFilter = <K extends keyof ScenarioHistoryFilters>(
     key: K,
@@ -287,26 +316,24 @@ export default function ScenarioHistory({
     || filters.operator.length > 0
     || filters.operationId.length > 0
     || filters.otherLabels.length > 0
-  const filtersPending = settledFilterKey !== filterKey
-  const displayLoading = validReference && (loading || filtersPending)
+  // A background reload must not reveal stale rows while a new page or filter
+  // visit is still loading.
+  const displayLoading = validReference && !pageRequest.quiet && settledRequestId !== pageRequest.requestId
+  const page = pageRequest.page
   const displayedRuns = validReference ? runs : []
+  useAutoRefresh(() => {
+    if (!pending.current) {
+      if (!optionsPending.current) setOptionsRevision((revision: number) => revision + 1)
+      reloadCurrentPage()
+    }
+  }, validReference && !displayLoading)
 
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <div className={styles.headerRow}>
-          {showTitle && <Text as="h1" size={500} weight="semibold">Scanner History</Text>}
-          <Button
-            className={styles.touchTargetHeight}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={() => requestPage()}
-            disabled={displayLoading}
-            data-testid="scenario-history-refresh"
-          >
-            Refresh
-          </Button>
-        </div>
+        {showTitle && <div className={styles.headerRow}>
+          <Text as="h1" size={500} weight="semibold">Scanner History</Text>
+        </div>}
         <div className={styles.filters} role="group" aria-label="Scanner history filters">
           <Tooltip content="Reset all filters" relationship="label">
             <Button
@@ -411,17 +438,12 @@ export default function ScenarioHistory({
         )}
       </header>
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       <div className={styles.content}>
         {displayLoading ? (
           <div className={styles.emptyState}><Spinner label="Loading scanner history..." /></div>
-        ) : error ? (
-          <div className={styles.emptyState} data-testid="scenario-history-error">
-            <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>
-            <Button appearance="primary" icon={<ArrowSyncRegular />} onClick={() => requestPage()}>
-              Retry
-            </Button>
-          </div>
-        ) : displayedRuns.length === 0 ? (
+        ) : error && displayedRuns.length === 0 ? null
+        : displayedRuns.length === 0 ? (
           <div className={styles.emptyState} data-testid="scenario-history-empty">
             <Text size={400}>No scenario runs found</Text>
             <Text>{hasFilters ? 'Try adjusting your filters.' : 'Launch a scenario to see its progress and results here.'}</Text>
@@ -443,16 +465,13 @@ export default function ScenarioHistory({
         )}
       </div>
 
-      {!displayLoading && !error && displayedRuns.length > 0 && (
+      {!displayLoading && displayedRuns.length > 0 && (
         <div className={styles.pagination}>
           <Button
             className={styles.touchTarget}
             icon={<ArrowLeftRegular />}
             disabled={page === 0}
-            onClick={() => {
-              setPage(0)
-              requestPage()
-            }}
+            onClick={() => requestPage(undefined, 0)}
           >
             First
           </Button>
@@ -464,8 +483,7 @@ export default function ScenarioHistory({
             disabled={!hasMore || !nextCursor}
             onClick={() => {
               if (!nextCursor) return
-              setPage((current) => current + 1)
-              requestPage(nextCursor)
+              requestPage(nextCursor, page + 1)
             }}
           >
             Next

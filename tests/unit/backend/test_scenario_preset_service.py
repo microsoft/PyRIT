@@ -10,15 +10,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.backend.services import scenario_preset_service as preset_service_module
-from pyrit.backend.services.scenario_preset_service import (
+from pyrit.backend.services import (
     ScenarioPresetService,
     get_scenario_preset_service,
 )
-from pyrit.models import Parameter
-from pyrit.models.catalog import PresetIssue, RegisteredScenario, ScenarioPreset
-from pyrit.models.catalog.scenario import ScenarioRunSizeComponent, ScenarioRunSizeEstimate
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
+from pyrit.backend.services import scenario_preset_service as preset_service_module
+from pyrit.models import (
+    DatasetSourceInput,
+    Parameter,
+    PresetIssue,
+    ScenarioDatasetRequest,
+    ScenarioPreset,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
+from pyrit.models.catalog import RegisteredScenario
 from pyrit.registry import (
     ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,
@@ -199,6 +205,19 @@ class TestPresetCrud:
         self, service: ScenarioPresetService
     ) -> None:
         assert await service.delete_preset_async(name="missing") is False
+
+    async def test_delete_with_a_stale_version_conflicts(
+        self, service: ScenarioPresetService, registered_scenario: RegisteredScenario
+    ) -> None:
+        created = await service.save_preset_async(preset=_preset(), expected_version=None)
+        updated = await service.save_preset_async(
+            preset=_preset(description="winner"), expected_version=created.version
+        )
+
+        with pytest.raises(ScenarioPresetConflictError):
+            await service.delete_preset_async(name="quick_scan", expected_version=created.version)
+
+        assert await service.delete_preset_async(name="quick_scan", expected_version=updated.version) is True
 
 
 class TestRegisteredPresets:

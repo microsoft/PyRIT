@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react'
 import {
   Text,
   Avatar,
@@ -31,9 +31,11 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import MediaPreview from '@/components/Media/MediaPreview'
 
 import type { DisplayScore, Message, MessageAttachment } from '@/types'
+import { scoreSummaryFromBackendScore, scoreSummaryValue } from '@/utils/scoreSummary'
 
 import { useMessageListStyles } from './MessageList.styles'
 import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
+import ScoreDetails from './ScoreDetails'
 
 interface MessageListProps {
   onEditConversation?: () => void
@@ -47,59 +49,28 @@ interface MessageListProps {
   onCopyToNewAttack?: (messageIndex: number) => void
   onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
+  copyConversationDisabledReason?: string
   newConversationDisabledReason?: string
   getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
   getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
+  /** Saved evidence uses one scroll surface with its controls on narrow screens. */
+  savedEvidence?: boolean
+  /** Announce new live/manual messages, not an initial page of historical evidence. */
+  announceUpdates?: boolean
+  /** Only show temperature evidence when the viewed target supports runtime temperature. */
+  showGenerationInfo?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
-  // An undetermined score has no value, so name its status instead.
-  return score.score_value ?? score.status ?? ''
+  return scoreSummaryValue(scoreSummaryFromBackendScore(score))
 }
 
 function scoreDisplayLabel(score: DisplayScore): string {
   return `${score.is_objective_score ? 'Final score' : 'Score'}: ${scoreDisplayValue(score)}`
-}
-
-function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
-  const styles = useMessageListStyles()
-  const categories = score.score_category?.filter(Boolean) ?? []
-
-  return (
-    <div className={styles.scoreSurface} data-testid={testId}>
-      <Text weight="semibold">Score details</Text>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Score</Text>
-        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{scoreDisplayValue(score)}</Badge>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
-        <Text size={200} className={styles.scoreValue}>{score.scorer_type}</Text>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Result role</Text>
-        <Text size={200} className={styles.scoreValue}>
-          {score.is_objective_score ? 'Final score' : 'Supporting score'}
-        </Text>
-      </div>
-      {categories.length > 0 && (
-        <div className={styles.scoreRow}>
-          <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
-          <Text size={200} className={styles.scoreValue}>{categories.join(', ')}</Text>
-        </div>
-      )}
-      {score.score_rationale && (
-        <div className={styles.scoreRationale}>
-          <Text size={200} weight="semibold">Rationale</Text>
-          <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
@@ -125,7 +96,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
         </PopoverTrigger>
       </Tooltip>
       <PopoverSurface>
-        <ScoreDetails score={score} testId={`message-score-details-${groupId}-${scoreIndex}`} />
+        <ScoreDetails score={scoreSummaryFromBackendScore(score)} testId={`message-score-details-${groupId}-${scoreIndex}`} />
       </PopoverSurface>
     </Popover>
   )
@@ -162,6 +133,8 @@ interface ScoreOverflowMenuProps {
 const SCORE_TAB_WIDTH_PX = 152
 const SCORE_TAB_GAP_PX = 4
 const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
+// Readers this close to the end keep following new messages; scrolling further up keeps their place.
+const FOLLOW_LATEST_THRESHOLD_PX = 48
 
 function scoreTabLabel({
   score,
@@ -225,7 +198,7 @@ function ScoreOverflowMenu({ scores, orderedScores, onSelect }: ScoreOverflowMen
             <ScoreOverflowMenuItem
               key={score.id}
               score={score}
-              label={labels[index]}
+              label={labels[index] ?? ''}
               onSelect={onSelect}
             />
           ))}
@@ -424,7 +397,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
             id={`message-score-panel-${groupId}`}
             aria-labelledby={`message-score-tab-${groupId}-${selectedIndex}`}
           >
-            <ScoreDetails score={selectedScore} testId={`message-score-details-${groupId}-${selectedIndex}`} />
+            <ScoreDetails score={scoreSummaryFromBackendScore(selectedScore)} testId={`message-score-details-${groupId}-${selectedIndex}`} />
           </div>
         </PopoverSurface>
       </Popover>
@@ -440,12 +413,16 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  */
 export default function MessageList({
   conversationId, messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
+  copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, globalMarkdown = false, onEditConversation,
+  isLoading, savedEvidence = false, announceUpdates = !savedEvidence, showGenerationInfo = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const followedListRef = useRef<HTMLDivElement | null>(null)
+  const followLatestRef = useRef(true)
   const copyMenuId = useId()
+  const isCopyConversationDisabled = copyConversationDisabled || Boolean(copyConversationDisabledReason)
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
 
   const handleDownload = async (att: MessageAttachment, downloadKey: string) => {
@@ -477,13 +454,20 @@ export default function MessageList({
     }
   }
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  // Historical pages keep their reading position; live/manual transcripts follow near the end.
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || savedEvidence) return
+    if (list !== followedListRef.current) {
+      followedListRef.current = list
+      followLatestRef.current = true
+    }
+    if (followLatestRef.current) list.scrollTop = list.scrollHeight
+  }, [messages, savedEvidence])
 
   if (isLoading) {
     return (
-      <div className={styles.emptyState} data-testid="loading-state">
+      <div className={mergeClasses(styles.emptyState, savedEvidence && styles.savedEvidenceBody)} data-testid="loading-state">
         <Spinner size="medium" label="Loading conversation..." />
       </div>
     )
@@ -491,7 +475,7 @@ export default function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className={styles.emptyState} data-testid="message-list" onDoubleClick={onEditConversation}>
+      <div className={mergeClasses(styles.emptyState, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={onEditConversation}>
         <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
           There are no messages in this conversation yet.
         </Text>
@@ -500,12 +484,18 @@ export default function MessageList({
   }
 
   return (
-    <div className={styles.root} data-testid="message-list" onDoubleClick={(event) => {
+    <div ref={listRef} className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list"
+      role={announceUpdates ? 'log' : undefined} aria-live={announceUpdates ? 'polite' : undefined}
+      aria-relevant={announceUpdates ? 'additions text' : undefined} aria-atomic={announceUpdates ? false : undefined}
+      onScroll={(event: UIEvent<HTMLDivElement>) => {
+        const list = event.currentTarget
+        followLatestRef.current = list.scrollHeight - list.clientHeight - list.scrollTop <= FOLLOW_LATEST_THRESHOLD_PX
+      }} onDoubleClick={(event) => {
       if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
       onEditConversation?.()
     }}>
       {messages.map((message, index) => {
-        const branchDisabledReason = newConversationDisabledReason ?? getBranchConversationDisabledReason?.(index)
+        const branchDisabledReason = copyConversationDisabledReason ?? newConversationDisabledReason ?? getBranchConversationDisabledReason?.(index)
         const isUser = message.role === 'user'
         const isSimulated = message.role === 'simulated_assistant' || message.role === 'simulated_tool'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
@@ -517,7 +507,7 @@ export default function MessageList({
 
         return (
           <div
-            key={index}
+            key={message.sequence == null ? `index:${index}` : `sequence:${message.sequence}`}
             className={mergeClasses(styles.message, isUser && styles.userMessage)}
           >
             <Avatar
@@ -701,18 +691,20 @@ export default function MessageList({
                             children: copyToInputDisabledReason ?? 'Copy only this message to the prompt box.' }}>
                           Copy to next message
                         </MenuItem>
-                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(branchDisabledReason)}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || isCopyConversationDisabled || Boolean(branchDisabledReason)}
                           aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
                           subText={{ id: `${copyMenuId}-${index}-conversation`,
                             children: `${getBranchConversationDescription?.(index) ?? 'Copy history including this turn into the same attack.'}${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
                           onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
-                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || isCopyConversationDisabled}
                           aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}
-                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
+                          subText={{ id: `${copyMenuId}-${index}-attack`, children: copyConversationDisabledReason
+                            ?? 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
                           onClick={() => onCopyToNewAttack?.(index)}>Branch attack</MenuItem>
-                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
+                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={isCopyConversationDisabled}
                           aria-label="Use in scan" aria-describedby={`${copyMenuId}-${index}-scan`}
-                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Apply a PyRIT attack technique after prepending history including this turn.' }}
+                          subText={{ id: `${copyMenuId}-${index}-scan`, children: copyConversationDisabledReason
+                            ?? 'Apply a PyRIT attack technique after prepending history including this turn.' }}
                           onClick={() => onUseInTechnique(index)}>Use in scan</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>
@@ -753,14 +745,31 @@ export default function MessageList({
               <div className={styles.messageFooter}>
                 <Text className={styles.timestamp}>{timestamp}</Text>
                 <div className={styles.footerDetails}>
+                  {message.isPartial && (
+                    <Tooltip content="More message pieces for this turn are not loaded." relationship="description">
+                      <Badge appearance="tint" color="warning">Incomplete turn</Badge>
+                    </Tooltip>
+                  )}
                   <Text className={styles.role}>{message.role}</Text>
+                  {showGenerationInfo && message.generationDescription && (message.generationDetails ? (
+                    <Popover positioning="above-end">
+                      <PopoverTrigger disableButtonEnhancement>
+                        <Button appearance="transparent" size="small" className={styles.messageActionButton}
+                          aria-label={`Generation details: ${message.generationDescription}`}>
+                          {message.generationDescription}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverSurface className={styles.generationDetails} role="dialog" aria-label="Saved generation details">
+                        <Text>{message.generationDetails}</Text>
+                      </PopoverSurface>
+                    </Popover>
+                  ) : <Text size={100}>{message.generationDescription}</Text>)}
                 </div>
               </div>
             </div>
           </div>
         )
       })}
-      <div ref={messagesEndRef} />
     </div>
   )
 }

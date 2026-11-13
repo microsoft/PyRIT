@@ -18,9 +18,8 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, ScenarioHistoryRunRecord
 from pyrit.memory._scenario_history import _ScenarioHistoryQueries
-from pyrit.memory.memory_interface import ScenarioHistoryKeysetCursor, ScenarioHistoryRunRecord
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import ScenarioRunState
 from unit.mocks import get_mock_target_identifier, make_scenario_result
@@ -103,6 +102,7 @@ async def test_get_scenario_run_history_page_delegates_to_component_async(
         reference_id=reference_id,
         cursor=None,
         limit=50,
+        sort_by="created_at",
     )
     assert result[0] == records
     assert result[2] is True

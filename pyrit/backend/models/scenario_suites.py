@@ -8,8 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from pyrit.models.catalog.scenario_preset import PresetIssue
-from pyrit.models.catalog.scenario_suite import ScenarioSuite
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.models import PresetIssue, ScenarioSuite
 
 __all__ = [
     "ScenarioSuiteEntryStatus",
@@ -52,8 +52,8 @@ class ScenarioSuiteResponse(BaseModel):
     version: str | None = Field(
         ...,
         description=(
-            "Opaque version required to update a stored suite. None for a registered suite, "
-            "which has no document to guard."
+            "Opaque version required to update a stored suite and optionally sent to delete it. "
+            "None for a registered suite, which has no document to guard."
         ),
     )
     entry_statuses: list[ScenarioSuiteEntryStatus] = Field(
@@ -73,4 +73,4 @@ class UpdateScenarioSuiteRequest(BaseModel):
     """Request body for replacing a scenario suite the caller has read."""
 
     suite: ScenarioSuite = Field(..., description="The replacement suite")
-    expected_version: str = Field(..., description="Version returned when the suite being edited was read")
+    expected_version: IdentifierStr = Field(..., description="Version returned when the suite being edited was read")

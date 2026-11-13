@@ -18,11 +18,40 @@ export const useChatWindowStyles = makeStyles({
   fadingInfoNotice: {
     opacity: 0,
   },
+  savedTranscriptControls: {
+    display: 'flex',
+    flexDirection: 'column',
+    flexShrink: 0,
+    minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    gap: tokens.spacingVerticalXS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground3,
+    overflowAnchor: 'none',
+  },
+  savedChatArea: {
+    [NARROW_VIEWPORT_QUERY]: {
+      overflowY: 'auto',
+    },
+  },
+  savedTranscriptActions: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+    },
+  },
   root: {
     display: 'flex',
     height: '100%',
     width: '100%',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      flexShrink: 0,
+    },
   },
   pageHeading: {
     position: 'absolute',
@@ -121,16 +150,6 @@ export const useChatWindowStyles = makeStyles({
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
-  },
-  temperatureField: {
-    gridTemplateColumns: 'max-content 5rem',
-    columnGap: tokens.spacingHorizontalNone,
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  temperatureInput: {
-    width: '5rem',
-    minWidth: 0,
   },
   sharedTarget: {
     maxWidth: '240px',

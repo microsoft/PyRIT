@@ -15,6 +15,28 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
 
+class ToolInfrastructureError(Exception):
+    """
+    A tool could not run because its own infrastructure failed, not because of the model's call.
+
+    For example, the sandbox a code-execution tool runs in became unreachable, or a call's outcome is
+    unknown. Targets with a bounded tool loop, such as ``OpenAIResponseTarget``, end the turn with an
+    error response instead of asking the model to fix a failure that isn't its own. ``invoked`` is False
+    when the tool knows nothing ran, so the call is not recorded as invoked.
+    """
+
+    def __init__(self, message: str, *, invoked: bool = True) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            message (str): What failed.
+            invoked (bool): Whether the tool may have run. Defaults to True, since the outcome is unknown.
+        """
+        super().__init__(message)
+        self.invoked = invoked
+
+
 class Tool(ABC):
     """A tool that a target can advertise and execute."""
 
@@ -45,6 +67,18 @@ class Tool(ABC):
         self.description = description
         self.parameters = parameters
         self.strict = strict
+
+    def validate_arguments(self, *, arguments: dict[str, object]) -> None:
+        """
+        Check model-supplied arguments before the tool is executed.
+
+        The default accepts any arguments. Overrides raise ``ValueError`` to reject a call
+        without executing the tool, so the caller can return the error to the model.
+
+        Args:
+            arguments: Arguments supplied by the model.
+        """
+        return
 
     @abstractmethod
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
@@ -123,6 +157,18 @@ class FunctionTool(Tool):
         )
         self._function = function
         self._argument_model: type[BaseModel] = argument_model
+
+    def validate_arguments(self, *, arguments: dict[str, object]) -> None:
+        """
+        Check arguments against the function signature.
+
+        Args:
+            arguments: Arguments supplied by the model.
+
+        Raises:
+            ValidationError: If the arguments do not match the function signature.
+        """
+        self._argument_model.model_validate(arguments)
 
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
         """

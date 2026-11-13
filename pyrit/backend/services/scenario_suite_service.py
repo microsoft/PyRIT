@@ -5,24 +5,27 @@
 
 import asyncio
 import logging
+import traceback
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
-from azure.core.exceptions import AzureError
-
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
     ScenarioSuiteEntryStatus,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
-from pyrit.models.catalog import (
+from pyrit.common.azure_storage import redact_urls
+from pyrit.models import (
     PresetIssue,
     ScenarioSuite,
     ScenarioSuiteEntry,
+)
+from pyrit.models.catalog import (
     ScenarioSuiteRegistryEntry,
 )
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +105,22 @@ class ScenarioSuiteService:
         entry = ScenarioSuiteRegistryEntry(suite=stored.suite, origin="stored", version=stored.version)
         return await asyncio.to_thread(self._to_response, entry=entry)
 
-    async def delete_suite_async(self, *, name: str) -> bool:
+    async def delete_suite_async(self, *, name: str, expected_version: str | None = None) -> bool:
         """
         Delete one stored scenario suite.
 
+        Args:
+            name (str): The suite name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
+
         Returns:
             bool: True if a suite was deleted, False if it was already absent.
+
+        Raises:
+            ScenarioSuiteConflictError: If the stored version does not match ``expected_version``.
         """
-        return await asyncio.to_thread(self._get_registry().delete_suite, name=name)
+        return await asyncio.to_thread(self._get_registry().delete_suite, name=name, expected_version=expected_version)
 
     def _get_registry(self) -> ScenarioSuiteRegistry:
         """
@@ -207,24 +218,24 @@ class ScenarioSuiteService:
                 )
 
             stored_version = registry.get_preset_version(name=preset_name)
-        except (AzureError, OSError):
-            logger.warning(
-                "Could not project scenario preset '%s' because preset storage is unavailable.",
-                preset_name,
-                exc_info=True,
-            )
+        except DocumentStorageUnavailableError as error:
+            # The error behind it can carry a SAS URL, so the traceback is logged with URL credentials removed.
+            details = redact_urls("".join(traceback.format_exception(error)).rstrip())
+            logger.warning(f"Could not project scenario preset '{preset_name}': {error}\n{details}")
+            if isinstance(error, DocumentUnreadableError):
+                message = (
+                    f"Scenario preset '{preset_name}' can't be read: {error.reason}; "
+                    "repair or replace the preset before running this suite."
+                )
+            else:
+                message = (
+                    f"Scenario preset '{preset_name}' could not be checked because preset storage is "
+                    "temporarily unavailable; retry when storage is available."
+                )
             return _PresetProjection(
                 origin=None,
                 version=None,
-                issues=(
-                    PresetIssue(
-                        field="preset_name",
-                        message=(
-                            f"Scenario preset '{preset_name}' could not be checked because preset storage is "
-                            "temporarily unavailable; retry when storage is available."
-                        ),
-                    ),
-                ),
+                issues=(PresetIssue(field="preset_name", message=message),),
             )
 
         if stored_version is None:

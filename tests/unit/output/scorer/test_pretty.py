@@ -9,9 +9,9 @@ import pytest
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
-from pyrit.score import FloatScaleScorer
-from pyrit.score.scorer_evaluation.scorer_evaluator import HarmScorerEvaluator
-from pyrit.score.scorer_evaluation.scorer_metrics import (
+from pyrit.score import (
+    FloatScaleScorer,
+    HarmScorerEvaluator,
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
 )
@@ -56,6 +56,7 @@ def _make_harm_metrics(**overrides) -> HarmScorerMetrics:
         "p_value": 0.13,
         "krippendorff_alpha_combined": 0.85,
         "krippendorff_alpha_model": 0.82,
+        "krippendorff_alpha_gold_model": 0.75,
         "average_score_time_seconds": 0.8,
     }
     defaults.update(overrides)
@@ -90,7 +91,7 @@ def test_init_negative_indent_raises():
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="MyScorer")
@@ -112,7 +113,60 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_shows_baselines_when_beaten(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_objective_metrics(baseline_accuracy=0.52, baseline_f1_score=0.65)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline Accuracy: 52.00%" in output
+    assert "Constant-Guess Baseline F1: 0.6500" in output
+    assert "does not beat it" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_flags_scorer_that_does_not_beat_the_f1_baseline(
+    mock_find, mock_eval_id_cls, capsys
+):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    # High precision and low recall: accuracy clears its baseline, F1 does not.
+    mock_find.return_value = _make_objective_metrics(
+        accuracy=0.62, f1_score=0.37, precision=0.98, recall=0.23, baseline_accuracy=0.52, baseline_f1_score=0.65
+    )
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline Accuracy: 52.00%\n" in output
+    assert "Constant-Guess Baseline F1: 0.6500 (scorer does not beat it)" in output
+
+
+def test_render_objective_metrics_treats_a_tie_with_the_baseline_as_not_beating_it():
+    metrics = _make_objective_metrics(accuracy=0.6, f1_score=0.5, baseline_accuracy=0.6, baseline_f1_score=0.5)
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_objective_metrics(metrics)
+
+    assert "Constant-Guess Baseline Accuracy: 60.00% (scorer does not beat it)" in output
+    assert "Constant-Guess Baseline F1: 0.5000 (scorer does not beat it)" in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_omits_baselines_for_older_results(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_objective_metrics()
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_omits_optional_fields(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
@@ -133,7 +187,7 @@ async def test_write_async_objective_omits_optional_fields(mock_find, mock_eval_
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="xyz")
@@ -162,6 +216,7 @@ async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys
     assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
+    assert "Krippendorff Alpha (Gold vs Model): 0.7500" in output
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
 
 
@@ -299,7 +354,7 @@ async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_renders_compact_projected_component_tree(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
@@ -329,6 +384,7 @@ async def test_write_async_renders_compact_projected_component_tree(mock_find, m
     )
 
     await printer.write_async(scorer_identifier=identifier)
+    mock_find.assert_called_once()
     output = capsys.readouterr().out
 
     assert "▸ sub_scorers (2 components)" in output
@@ -350,7 +406,7 @@ async def test_write_async_renders_compact_projected_component_tree(mock_find, m
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_with_colors_enabled_emits_ansi_codes(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=True)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
@@ -358,6 +414,7 @@ async def test_write_async_with_colors_enabled_emits_ansi_codes(mock_find, mock_
     mock_find.return_value = _make_objective_metrics(accuracy=0.95, f1_score=0.5, precision=0.8, recall=0.95)
 
     await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    mock_find.assert_called_once()
     output = capsys.readouterr().out
     assert "\x1b[" in output  # ANSI escape sequences present
 

@@ -15,6 +15,7 @@ import { UserAccountButton } from '@/components/UserAccountButton'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { usePreventFileNavigation } from '@/hooks/usePreventFileNavigation'
 import { versionApi } from '@/services/api'
 import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import type { UserPreferences } from '@/types'
@@ -34,6 +35,8 @@ interface MainLayoutProps extends OperationControlProps {
   onStartTour?: () => void
   labelsBusy?: boolean
   featureNavigation?: React.ReactNode
+  /** Shown above the top bar, so the content below gets smaller instead of losing its bottom. */
+  banner?: React.ReactNode
 }
 
 export default function MainLayout({
@@ -52,7 +55,9 @@ export default function MainLayout({
   onStartTour,
   labelsBusy = false,
   featureNavigation,
+  banner,
 }: MainLayoutProps) {
+  usePreventFileNavigation()
   const styles = useMainLayoutStyles()
   const { background } = useTheme()
   const { preferences, updatePreferences } = useUserPreferences()
@@ -87,6 +92,7 @@ export default function MainLayout({
       <a href="#main-content" className={styles.skipLink}>
         Skip to main content
       </a>
+      {banner && <div className={styles.banner}>{banner}</div>}
       <div className={styles.topBar}>
         <Tooltip
           content={

@@ -7,6 +7,7 @@ import json
 import sys
 import types
 from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +27,7 @@ from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
+    CapabilityName,
     JsonResponseConfig,
     Message,
     MessagePiece,
@@ -37,12 +39,14 @@ from pyrit.models import (
     TraceScorable,
 )
 from pyrit.prompt_target import (
+    LiteLLMChatTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
+    discover_target_capabilities_async,
 )
-from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
@@ -789,6 +793,70 @@ async def test_unknown_error_wrapped_in_pyrit_exception(target, litellm_stub):
     litellm_stub.acompletion = AsyncMock(side_effect=RuntimeError("something broke"))
     with pytest.raises(PyritException, match="LiteLLM error"):
         await target.send_prompt_async(message=_user_message())
+
+
+@pytest.mark.parametrize("status_code", [None, 400, 422, 403, 500])
+async def test_provider_error_preserves_status_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int | None
+) -> None:
+    error = _StubLiteLLMError("Provider rejected request", status_code=status_code)
+    litellm_stub.acompletion.side_effect = error
+    with pytest.raises(PyritException) as caught:
+        await target.send_prompt_async(message=_user_message())
+    assert caught.value.status_code == (status_code or 500)
+    assert caught.value.__cause__ is error
+
+
+@pytest.mark.parametrize("status_code", [400, 422])
+async def test_strict_discovery_records_provider_rejection_after_control_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int
+) -> None:
+    calls: list[dict[str, object]] = []
+    expected = target.capabilities.model_copy(update={"supports_json_output": False})
+
+    async def complete_async(**kwargs: object) -> object:
+        calls.append(kwargs)
+        if kwargs.get("response_format"):
+            raise litellm_stub.exceptions.BadRequestError("JSON mode unsupported", status_code=status_code)
+        return _mock_response()
+
+    litellm_stub.acompletion.side_effect = complete_async
+    result = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[CapabilityName.JSON_OUTPUT],
+        test_modalities={frozenset({"text"})},
+        retries=0,
+        apply=True,
+        raise_on_error=True,
+    )
+    assert "response_format" not in calls[0]
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert result == expected
+    assert target.capabilities == expected
+
+
+@pytest.mark.parametrize("status_code", [401, 500])
+async def test_strict_discovery_preserves_configuration_on_operational_failure_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int
+) -> None:
+    original = target.configuration
+
+    async def complete_async(**kwargs: object) -> object:
+        if kwargs.get("response_format"):
+            raise _StubLiteLLMError("Operational failure", status_code=status_code)
+        return _mock_response()
+
+    litellm_stub.acompletion.side_effect = complete_async
+    with pytest.raises(CapabilityDiscoveryError):
+        await discover_target_capabilities_async(
+            target=target,
+            capabilities=[CapabilityName.JSON_OUTPUT],
+            test_modalities={frozenset({"text"})},
+            retries=0,
+            apply=True,
+            raise_on_error=True,
+        )
+    assert target.configuration is original
 
 
 # ---------------------------------------------------------------------------
