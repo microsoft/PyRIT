@@ -36,6 +36,6 @@ describe('Krippendorff alpha labels', () => {
     expect(scorerMetricLabel('krippendorff_alpha_combined')).toBe('Combined alpha (humans + trials)')
     expect(scorerMetricDescription('krippendorff_alpha_combined')).toContain('rises with the number of trials')
     expect(scorerMetricLabel('krippendorff_alpha_gold_model')).toBe('Gold vs model alpha')
-    expect(scorerMetricDescription('krippendorff_alpha_gold_model')).toContain('does not depend on the number of trials')
+    expect(scorerMetricDescription('krippendorff_alpha_gold_model')).toContain("more trials with the same answers don't raise it")
   })
 })

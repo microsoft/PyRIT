@@ -48,7 +48,7 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
   krippendorff_alpha_combined: "Krippendorff's alpha over the human ratings and every scoring trial together. "
     + "Each trial counts as an extra rater, so it rises with the number of trials even when the scorer's answers don't change.",
   krippendorff_alpha_gold_model: "Krippendorff's alpha between the gold (median human) label and the scorer's median score "
-    + 'per response. It does not depend on the number of trials.',
+    + "per response. Unlike the combined alpha, more trials with the same answers don't raise it.",
   average_score_time_seconds: 'The average seconds per scored item during the recorded evaluation.',
 }
 
