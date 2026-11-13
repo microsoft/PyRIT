@@ -261,6 +261,7 @@ def test_seed_prompt_keeps_template_whose_missing_parameter_decides_a_branch(tem
         ("Say {{ prompt | upper }}", "Say HELLO"),
         ("{{ prompt | length }} characters", "5 characters"),
         ("{{ prompt | replace('l', 'L') }}", "heLLo"),
+        ("{{ 'Say hello' | replace(old=prompt, new='hi') }}", "Say hi"),
     ],
 )
 @pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
