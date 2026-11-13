@@ -4,6 +4,7 @@
  */
 
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { fluentProviderClassNames } from "@fluentui/react-components";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
@@ -144,6 +145,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange,
     operatorReadOnly,
     featureNavigation,
+    banner,
   }: {
     children: React.ReactNode;
     currentView: string;
@@ -152,10 +154,12 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange: (labels: Record<string, string>) => void;
     operatorReadOnly: boolean;
     featureNavigation?: React.ReactNode;
+    banner?: React.ReactNode;
   }) => {
     const navigate = useNavigate();
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        {banner}
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
@@ -884,6 +888,18 @@ describe("App", () => {
       "home"
     );
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("says inside the app's layout and theme that saved entries couldn't be restored", async () => {
+    const { runtimeApi } = jest.requireMock("./services/api");
+    runtimeApi.getReadiness.mockResolvedValueOnce({
+      ready: false, state: "failed", generation: "first", restore_failures: 1,
+    });
+    renderApp();
+
+    const message = await screen.findByText(/Some saved entries couldn't be restored/);
+    expect(screen.getByTestId("main-layout")).toContainElement(message);
+    expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
   it("renders the view named by the initial URL", () => {

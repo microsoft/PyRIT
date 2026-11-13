@@ -10,7 +10,7 @@ describe('scoreSummary', () => {
       score_rationale: 'Refused.', timestamp: '2026-01-01T00:00:00Z',
     }
     expect(scoreSummaryFromBackendScore(score)).toEqual({
-      scorer: 'Judge', scoreType: 'true_false', value: 'false', status: 'complete',
+      scorer: 'Judge', value: 'false', status: 'complete',
       rationale: 'Refused.', categories: ['harm'], isObjective: false,
     })
   })
@@ -27,8 +27,8 @@ describe('scoreSummary', () => {
   })
 
   it('names the status of a score without a value', () => {
-    expect(scoreSummaryValue({ scorer: 'Judge', scoreType: 'true_false', value: 'true', status: 'complete' })).toBe('true')
-    expect(scoreSummaryValue({ scorer: 'Judge', scoreType: 'true_false', value: null, status: 'undetermined' })).toBe('undetermined')
-    expect(scoreSummaryValue({ scorer: 'Judge', scoreType: 'true_false' })).toBe('')
+    expect(scoreSummaryValue({ scorer: 'Judge', value: 'true', status: 'complete' })).toBe('true')
+    expect(scoreSummaryValue({ scorer: 'Judge', value: null, status: 'undetermined' })).toBe('undetermined')
+    expect(scoreSummaryValue({ scorer: 'Judge' })).toBe('')
   })
 })

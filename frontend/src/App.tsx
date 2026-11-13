@@ -965,6 +965,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           <Joyride {...tourProps} />
           <ConnectionBannerContainer />
           <MainLayout
+            banner={<RuntimeBanner />}
             currentView={currentView}
             onNavigate={handleNavigate}
             onOpenFeedback={() => setFeedbackOpen(true)}
@@ -1202,7 +1203,6 @@ function App() {
   const operatorAlias = account?.username ? (account.username.split('@')[0]?.toLowerCase() ?? null) : null
   return (
     <RuntimeProvider>
-      <RuntimeBanner />
       <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
         <ThemeProvider>
           <ChatDraftProvider>
