@@ -69,6 +69,7 @@ def reset_setup_registries() -> None:
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
+        ScenarioPresetRegistry,
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
@@ -78,6 +79,11 @@ def reset_setup_registries() -> None:
     from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 
     reset_dynamic_technique_caches()
+
+    # Initializers re-register code-owned presets, but configured preset storage must outlive setup.
+    preset_registry = ScenarioPresetRegistry.get_registry_singleton()
+    for name in preset_registry.instances.get_names():
+        preset_registry.instances.unregister(name)
 
     for registry in (
         AttackRegistry,

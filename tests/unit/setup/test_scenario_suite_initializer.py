@@ -17,6 +17,7 @@ from pyrit.backend.services import ScenarioRunService
 from pyrit.datasets import TextJailBreak
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
+    DatasetFetchPolicy,
     LaunchScenarioSuiteRequest,
     ScenarioPreset,
     ScenarioSuite,
@@ -155,6 +156,7 @@ async def test_catalog_dependent_errors_register_nothing_async(args: dict[str, A
         {"suite_args": {SUITE: {"jailbreak_names": ["all", "t1.yaml"]}}},
         {"suite_args": {SUITE: {"languages": ["French"], "num_languages": 2}}},
         {"suite_args": {SUITE: {"dataset_names": []}}},
+        {"suite_args": {SUITE: {"dataset_fetch": "always"}}},
     ],
 )
 async def test_invalid_configuration_fails_in_preflight_without_building_async(args: dict[str, Any]) -> None:
@@ -177,6 +179,29 @@ async def test_invalid_configuration_fails_in_preflight_without_building_async(a
 def test_python_constructor_rejects_invalid_inputs(args: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         HorizontalTechniquesSuite(**args)
+
+
+def test_python_constructor_rejects_per_preset_dataset_refresh() -> None:
+    with pytest.raises(ValueError, match="once per preset"):
+        HorizontalTechniquesSuite(dataset_fetch=DatasetFetchPolicy.ALWAYS)
+
+
+@pytest.mark.usefixtures("isolated_registries", "catalogs")
+async def test_reset_allows_changed_and_removed_configuration_async(tmp_path: Path) -> None:
+    await ScenarioSuiteInitializer().initialize_async()
+    original = ScenarioPresetRegistry.get_registry_singleton().instances.get(f"{SUITE}_jailbreaks")
+
+    reset_setup_registries()
+    ScenarioSuiteRegistry.get_registry_singleton().configure_source(str(tmp_path / "suites"))
+    await _configured({"num_jailbreaks": 1}).initialize_async()
+    changed = ScenarioPresetRegistry.get_registry_singleton().instances.get(f"{SUITE}_jailbreaks")
+    assert original is not None and changed is not None
+    assert len(original.scenario_params["jailbreak_names"]) == 5
+    assert len(changed.scenario_params["jailbreak_names"]) == 1
+
+    reset_setup_registries()
+    assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
+    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
 
 
 @pytest.mark.usefixtures("isolated_registries", "catalogs")

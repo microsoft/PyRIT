@@ -45,8 +45,9 @@ suite_registry = ScenarioSuiteRegistry.get_registry_singleton()
 # Foundry technique catalogs. Scoring follows the existing scenario defaults.
 #
 # `dataset_names` can select other text-objective datasets. `dataset_fetch` defaults
-# to `if_missing`; `never` requires provisioned data and `always` requests a refresh
-# through the existing dataset lifecycle at run time.
+# to `if_missing`; `never` requires provisioned data. `always` is rejected because each
+# preset prepares the shared datasets on its own and would replace them once per family.
+# To refresh them, run the `refresh_datasets` initializer once before launch.
 #
 # ### Preset configuration
 #

@@ -15,11 +15,12 @@ import pytest
 from pyrit.common import get_global_default_values
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
-from pyrit.models import ScenarioSuite
+from pyrit.models import ScenarioPreset, ScenarioSuite
 from pyrit.registry import (
     AttackRegistry,
     InitializerRegistry,
     Registry,
+    ScenarioPresetRegistry,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
     TargetRegistry,
@@ -93,6 +94,23 @@ def test_reset_setup_registries_replaces_registered_suites_without_deleting_stor
     after_removal.configure_source(str(tmp_path))
     assert after_removal.get_suite(name=registered.name) is None
     assert after_removal.get_suite(name=stored.suite.name) is not None
+
+
+def test_reset_setup_registries_discards_registered_presets_and_keeps_storage(tmp_path: Path) -> None:
+    registry = ScenarioPresetRegistry.get_registry_singleton()
+    registry.configure_source(str(tmp_path))
+    stored = registry.save_preset(
+        preset=ScenarioPreset(name="stored_preset", scenario_name="airt.jailbreak"), expected_version=None
+    )
+    registry.register_preset(preset=ScenarioPreset(name="registered_preset", scenario_name="airt.jailbreak"))
+
+    reset_setup_registries()
+
+    after_reset = ScenarioPresetRegistry.get_registry_singleton()
+    assert after_reset.get_preset(name="registered_preset") is None
+    stored_after_reset = after_reset.get_preset(name="stored_preset")
+    assert stored_after_reset is not None
+    assert stored_after_reset.version == stored.version
 
 
 async def test_preflight_uses_isolated_registry_without_changing_live_state() -> None:

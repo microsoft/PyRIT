@@ -51,7 +51,7 @@ class HorizontalTechniquesSuite:
         Validate constructor types and domain constraints without loading catalogs.
 
         Raises:
-            ValueError: If selectors conflict, counts are invalid, or dataset names are empty.
+            ValueError: If selectors conflict, counts are invalid, or dataset settings are invalid.
         """
         resolved = _resolve_suite_arguments(
             suite_class=type(self), args={field.name: getattr(self, field.name) for field in fields(self)}
@@ -66,10 +66,7 @@ class HorizontalTechniquesSuite:
                 raise ValueError(f"{count_name} must be positive.")
             if names is not None:
                 self._validate_selection_shape(name=name, names=names)
-        if self.dataset_names is not None and (
-            not self.dataset_names or any(not name.strip() for name in self.dataset_names)
-        ):
-            raise ValueError("dataset_names must contain at least one non-empty name.")
+        self._validate_datasets()
 
     def build_presets(self, *, suite_name: str) -> list[ScenarioPreset]:
         """
@@ -175,6 +172,26 @@ class HorizontalTechniquesSuite:
             raise ValueError(f"{count_name} cannot exceed {len(pool)} eligible members.")
         generator = get_random_generator(stream=name, namespace=self.SAMPLING_NAMESPACE, seed=self.selection_seed)
         return sorted(generator.sample(pool, k=size))
+
+    def _validate_datasets(self) -> None:
+        """
+        Validate the shared dataset request without loading datasets.
+
+        Every preset prepares the shared datasets independently, so ``always`` would
+        replace them once per preset and the families could run different objectives.
+
+        Raises:
+            ValueError: If dataset names are empty or the fetch policy is ``always``.
+        """
+        if self.dataset_names is not None and (
+            not self.dataset_names or any(not name.strip() for name in self.dataset_names)
+        ):
+            raise ValueError("dataset_names must contain at least one non-empty name.")
+        if self.dataset_fetch == DatasetFetchPolicy.ALWAYS:
+            raise ValueError(
+                "dataset_fetch 'always' would refresh the shared datasets once per preset. Refresh them once "
+                "before launch, for example with the refresh_datasets initializer, and use 'if_missing' or 'never'."
+            )
 
     def _shared_datasets(self) -> ScenarioDatasetRequest:
         """Return an independent dataset request over the full common objective population."""
