@@ -4,9 +4,11 @@
 import asyncio
 import logging
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from pyrit.common import get_non_required_value
@@ -45,6 +47,8 @@ class GitHubCopilotTarget(PromptTarget):
     """
 
     GITHUB_TOKEN_ENVIRONMENT_VARIABLE: str = "GITHUB_TOKEN"
+    caller_path_parameters: ClassVar[frozenset[str]] = frozenset({"working_directory"})
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"github_token": None})
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True)

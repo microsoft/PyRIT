@@ -11,14 +11,14 @@ import pytest
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import get_mock_prompt_normalizer
 
-from pyrit.executor.workflow import xpia as xpia_module
-from pyrit.executor.workflow.xpia import (
+from pyrit.executor.workflow import (
     XPIAContext,
     XPIAManualProcessingWorkflow,
     XPIAResult,
     XPIAStatus,
     XPIAWorkflow,
 )
+from pyrit.executor.workflow import xpia as xpia_module
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus
 from pyrit.prompt_target import PromptTarget
@@ -675,7 +675,7 @@ class TestXPIAGuards:
         self,
     ) -> None:
         """Test that the process_async closure raises RuntimeError when processing_prompt is None."""
-        from pyrit.executor.workflow.xpia import XPIATestWorkflow
+        from pyrit.executor.workflow import XPIATestWorkflow
 
         mock_target = MagicMock(spec=PromptTarget)
         mock_target.get_identifier.return_value = ComponentIdentifier(

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     _GarakCratesDataset,
     _GarakDartDataset,
     _GarakNpmDataset,

@@ -23,7 +23,7 @@ export const useScenarioRunPageStyles = makeStyles({
     flexDirection: 'column',
     width: '100%',
     maxWidth: '96rem',
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     padding: tokens.spacingVerticalXXL,
     marginInline: 'auto',
     [NARROW_VIEWPORT_QUERY]: {
@@ -65,6 +65,8 @@ export const useScenarioRunPageStyles = makeStyles({
   },
   titleRow: {
     display: 'flex',
+    minWidth: 0,
+    overflowWrap: 'anywhere',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalS,
@@ -92,24 +94,13 @@ export const useScenarioRunPageStyles = makeStyles({
       flexGrow: 1,
     },
   },
-  metadata: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(10rem, 1fr))',
-    gap: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXL}`,
-    paddingTop: tokens.spacingVerticalM,
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
-    [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: '1fr',
-    },
-  },
-  metadataItem: {
+  progressTiming: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalXS,
     minWidth: 0,
-  },
-  metadataLabel: {
     color: tokens.colorNeutralForeground3,
+    fontVariantNumeric: 'tabular-nums',
   },
   section: {
     display: 'flex',
@@ -146,6 +137,20 @@ export const useScenarioRunPageStyles = makeStyles({
       gap: tokens.spacingVerticalM,
     },
   },
+  progressRegion: {
+    display: 'grid',
+    gridTemplateRows: '1fr',
+    opacity: 1,
+    transitionProperty: 'grid-template-rows, opacity',
+    transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveDecelerateMid,
+    '@media (prefers-reduced-motion: reduce)': { transitionDuration: '0s' },
+  },
+  progressRegionComplete: {
+    gridTemplateRows: '0fr',
+    opacity: 0,
+  },
+  progressClip: { minHeight: 0, overflow: 'hidden' },
   progressPrimary: {
     display: 'flex',
     flexDirection: 'column',
@@ -230,13 +235,38 @@ export const useScenarioRunPageStyles = makeStyles({
     textAlign: 'right',
   },
   attemptsTable: {
-    minWidth: '64rem',
+    minWidth: '48rem',
     tableLayout: 'auto',
   },
   displayGroupList: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
+  },
+  compactGroupSummary: {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalM,
+    padding: tokens.spacingVerticalS,
+  },
+  liveConversation: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalL,
+    padding: tokens.spacingVerticalM,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  liveActivity: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    maxHeight: '60vh',
+    maxWidth: `min(48rem, calc(100vw - ${tokens.spacingHorizontalXXL} * 2))`,
+    overflowY: 'auto',
   },
   displayGroup: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -350,8 +380,8 @@ export const useScenarioRunPageStyles = makeStyles({
     overflowWrap: 'anywhere',
   },
   attackDetailDialogSurface: {
-    width: 'min(92vw, 88rem)',
-    maxWidth: '88rem',
+    width: 'min(90vw, 56rem)',
+    maxWidth: '56rem',
     maxHeight: '90vh',
     boxSizing: 'border-box',
     overflow: 'hidden',
@@ -360,8 +390,17 @@ export const useScenarioRunPageStyles = makeStyles({
     minHeight: 0,
     maxHeight: 'calc(90vh - 48px)',
   },
+  attackDetailDialogTitle: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+  },
   attackDetailDialogContent: {
     minHeight: 0,
+    paddingTop: tokens.spacingVerticalL,
     overflowY: 'auto',
   },
   detailList: {

@@ -234,7 +234,7 @@ class TrueFalseScoreAggregator:
         "MAJORITY",
         result_func=_majority,
         true_msg="A strict majority of constituent scorers returned True in a MAJORITY composite scorer.",
-        false_msg="A strict majority of constituent scorers did not return True in a MAJORITY composite scorer.",
+        false_msg="Constituent scorers returning True did not reach a strict majority in a MAJORITY composite scorer.",
     )
 
     AND_RAISE_ON_EMPTY: TrueFalseAggregatorFunc = _create_binary_aggregator(
@@ -257,6 +257,6 @@ class TrueFalseScoreAggregator:
         "MAJORITY_RAISE_ON_EMPTY",
         result_func=_majority,
         true_msg="A strict majority of constituent scorers returned True in a MAJORITY composite scorer.",
-        false_msg="A strict majority of constituent scorers did not return True in a MAJORITY composite scorer.",
+        false_msg="Constituent scorers returning True did not reach a strict majority in a MAJORITY composite scorer.",
         raise_on_empty=True,
     )

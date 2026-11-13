@@ -20,7 +20,7 @@ from pyrit.prompt_target import (
     TargetConfiguration,
 )
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.garak import FigStep, FigStepTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.figstep import DEFAULT_MAX_DATASET_SIZE
 from pyrit.score import TrueFalseScorer
@@ -96,7 +96,7 @@ class TestFigStepInitialization:
         scenario = FigStep(objective_scorer=mock_objective_scorer)
 
         assert scenario._objective_scorer is mock_objective_scorer
-        assert scenario._scorer_config.objective_scorer is mock_objective_scorer
+        assert scenario._configured_objective_scorer is mock_objective_scorer
 
     def test_default_dataset_uses_figstep(self, mock_objective_scorer):
         config = FigStep(objective_scorer=mock_objective_scorer)._default_dataset_config

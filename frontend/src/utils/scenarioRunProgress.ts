@@ -7,6 +7,7 @@ import type {
   ScenarioRunPlan,
   ScenarioRunState,
   ScenarioRunSummary,
+  ScenarioActiveConversation,
 } from '@/types'
 
 export type ScenarioRunLoadStatus = 'loading' | 'ready' | 'not-found' | 'error'
@@ -21,6 +22,8 @@ export interface ScenarioRunProgressState {
   readonly error: string | null
   readonly stale: boolean
   readonly overloadSummaries: ScenarioOverloadSummary[]
+  readonly activeConversations: ScenarioActiveConversation[]
+  readonly recordedConversations: ScenarioActiveConversation[]
 }
 
 export type ScenarioRunProgressAction =
@@ -41,6 +44,8 @@ export const INITIAL_SCENARIO_RUN_PROGRESS_STATE: ScenarioRunProgressState = {
   error: null,
   stale: false,
   overloadSummaries: [],
+  activeConversations: [],
+  recordedConversations: [],
 }
 
 export function isTerminalRunState(status: ScenarioRunState): boolean {
@@ -75,6 +80,7 @@ export function scenarioRunProgressReducer(
       ...state,
       loadStatus: 'ready',
       run: {
+        ...state.run,
         scenario_result_id: action.run.scenario_result_id,
         scenario_name: action.run.scenario_name,
         scenario_registry_name: action.run.scenario_registry_name,
@@ -98,6 +104,8 @@ export function scenarioRunProgressReducer(
       error: null,
       stale: false,
       overloadSummaries: state.overloadSummaries,
+      activeConversations: isTerminalRunState(action.run.status) ? [] : state.activeConversations,
+      recordedConversations: state.recordedConversations,
     }
   }
 
@@ -126,6 +134,8 @@ export function scenarioRunProgressReducer(
     error: null,
     stale: false,
     overloadSummaries,
+    activeConversations: action.page.active_conversations ?? [],
+    recordedConversations: action.page.recorded_conversations ?? [],
   }
 }
 
@@ -170,7 +180,10 @@ export function getEtaMilliseconds(
   return Number.isFinite(estimate) && estimate >= 0 ? estimate : null
 }
 
-function compareAttempts(left: ScenarioProgressResult, right: ScenarioProgressResult): number {
+export function compareAttempts(
+  left: Pick<ScenarioProgressResult, 'timestamp' | 'attack_result_id'>,
+  right: Pick<ScenarioProgressResult, 'timestamp' | 'attack_result_id'>,
+): number {
   const timestampDifference = Date.parse(left.timestamp) - Date.parse(right.timestamp)
   if (Number.isFinite(timestampDifference) && timestampDifference !== 0) {
     return timestampDifference

@@ -57,7 +57,7 @@ Requires [Ollama](https://ollama.com/) running locally. No API key needed.
 ```bash
 OPENAI_CHAT_ENDPOINT="https://api.groq.com/openai/v1"
 OPENAI_CHAT_KEY="gsk_your-key-here"
-OPENAI_CHAT_MODEL="llama3-8b-8192"
+OPENAI_CHAT_MODEL="openai/gpt-oss-20b"
 ```
 
 Get your API key from [console.groq.com](https://console.groq.com/).
@@ -73,11 +73,41 @@ OPENAI_CHAT_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 Get your token from [huggingface.co/docs/hub/security-tokens](https://huggingface.co/docs/hub/security-tokens). Browse available models at [huggingface.co/models](https://huggingface.co/models).
 :::
 
+:::{tab-item} Anthropic
+```bash
+OPENAI_CHAT_ENDPOINT="https://api.anthropic.com/v1"
+OPENAI_CHAT_KEY="sk-ant-your-key-here"
+OPENAI_CHAT_MODEL="claude-opus-5-5"
+```
+
+Get your API key from [console.anthropic.com](https://console.anthropic.com/). Uses Anthropic's [OpenAI SDK compatibility layer](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk).
+:::
+
+:::{tab-item} Google Gemini
+```bash
+OPENAI_CHAT_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai"
+OPENAI_CHAT_KEY="your-gemini-key-here"
+OPENAI_CHAT_MODEL="gemini-3.8-flash"
+```
+
+Get your API key from [Google AI Studio](https://aistudio.google.com/). Uses the Gemini API's [OpenAI compatibility endpoint](https://ai.google.dev/gemini-api/docs/openai).
+:::
+
+:::{tab-item} Amazon Bedrock
+```bash
+OPENAI_CHAT_ENDPOINT="https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
+OPENAI_CHAT_KEY="your-bedrock-api-key-here"
+OPENAI_CHAT_MODEL="openai.gpt-oss-120b-1:0"
+```
+
+Create an Amazon Bedrock API key in the AWS console and adjust the region in the endpoint as needed. Bedrock's [Chat Completions API](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html) serves only the models that support it (e.g., the OpenAI open-weight models); other Bedrock models use different APIs.
+:::
+
 :::{tab-item} OpenRouter
 ```bash
 OPENAI_CHAT_ENDPOINT="https://openrouter.ai/api/v1"
 OPENAI_CHAT_KEY="sk-or-v1-your-key-here"
-OPENAI_CHAT_MODEL="anthropic/claude-3.7-sonnet"
+OPENAI_CHAT_MODEL="anthropic/claude-sonnet-5"
 ```
 
 Get your API key from [openrouter.ai](https://openrouter.ai/).

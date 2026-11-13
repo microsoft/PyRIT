@@ -10,6 +10,7 @@ from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _PACKAGE_ROOT = _REPOSITORY_ROOT / "pyrit"
@@ -196,6 +197,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.score.observation.otel_trace_source",
         "pyrit.score.observation.otel_span_exporter",
     ),
+    (
+        "pyrit.setup.initializers",
+        "ScorerInitializerTags",
+        "pyrit.setup.initializers.scorers",
+        "pyrit.setup.initializers.tools",
+    ),
 ]
 
 
@@ -356,7 +363,7 @@ def _assert_subprocess_succeeds(code: str) -> None:
         [sys.executable, "-c", dedent(code)],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=TEST_WATCHDOG_SECONDS,
     )
 
     assert result.returncode == 0, result.stderr

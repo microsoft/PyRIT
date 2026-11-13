@@ -6,6 +6,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Self
+from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -22,6 +23,7 @@ from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score.score import ScoreStatus
 
 SCENARIO_RUN_PLAN_METADATA_KEY = "run_plan"
+SCENARIO_CONVERSATIONS_METADATA_KEY = "scenario_conversations_v1"
 SCENARIO_RUN_STARTED_AT_METADATA_KEY = "started_at"
 SCENARIO_RUN_PLAN_VERSION = 1
 
@@ -76,6 +78,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
+    #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
+    is_compound: bool | None = None
 
 
 class ScenarioRunPlan(BaseModel):
@@ -137,6 +141,10 @@ class ScenarioProgressHeader(BaseModel):
     datasets_used: list[str] = Field(default_factory=list)
     scenario_parameters: dict[str, Any] = Field(default_factory=dict)
     labels: dict[str, str] = Field(default_factory=dict)
+    operation_id: UUID | None = None
+    operation_name: str | None = None
+    description: str | None = None
+    scenario_identity: "ScenarioComponentIdentity | None" = None
     queue_position: int | None = Field(None, ge=1)
     active_scenario_result_id: str | None = None
     overload_summaries: list["ScenarioOverloadSummary"] = Field(default_factory=list)
@@ -150,6 +158,7 @@ class ScenarioProgressScore(BaseModel):
     status: ScoreStatus
     score_value: str | None = None
     score_rationale: str | None = None
+    score_category: list[str] = Field(default_factory=list)
 
 
 class ScenarioComponentIdentity(BaseModel):
@@ -180,6 +189,7 @@ class ScenarioProgressResult(BaseModel):
     error_type: str | None = None
     error_message: str | None = None
     score: ScenarioProgressScore | None = None
+    seed_identifiers: list[ScenarioComponentIdentity] = Field(default_factory=list)
     #: Recorded by the producing strategy. ``unknown`` when the row predates roles.
     result_role: AttackResultRole = AttackResultRole.UNKNOWN
     #: Ordered results this orchestration parent ran, as persisted by ``SequentialAttack``.
@@ -354,6 +364,22 @@ class ScenarioProgressSummary(BaseModel):
     unattributed_attempts: int = Field(default=0, ge=0)
 
 
+class ScenarioActiveConversation(BaseModel):
+    """A saved objective conversation and the scan execution that produced it."""
+
+    attack_result_id: str
+    #: The conversation the attack is working on, or the recorded objective conversation.
+    conversation_id: str
+    #: Every objective conversation the attack has started so far, in first-use order.
+    conversation_ids: list[str] = Field(default_factory=list)
+    atomic_attack_name: str
+    seed_group_id: str | None = None
+    objective: str
+    started_at: AwareDatetime
+    technique_details: ScenarioAttackTechniqueDetails | None = None
+    seed_identifiers: list[ScenarioComponentIdentity] = Field(default_factory=list)
+
+
 class ScenarioRunProgress(BaseModel):
     """Canonical rollups and an incremental page of scenario progress results."""
 
@@ -364,6 +390,8 @@ class ScenarioRunProgress(BaseModel):
     next_cursor: str | None = None
     has_more: bool = False
     plan_complete: bool
+    active_conversations: list[ScenarioActiveConversation] = Field(default_factory=list)
+    recorded_conversations: list[ScenarioActiveConversation] = Field(default_factory=list)
 
 
 class ScenarioQueueEntry(BaseModel):

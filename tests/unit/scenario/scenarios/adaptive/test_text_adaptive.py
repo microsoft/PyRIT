@@ -22,28 +22,33 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    ComponentIdentifier,
+    ScenarioEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier, ScenarioEvaluationIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import IncompatibleTechniqueError, IncompatibleTechniquePolicy, TechniqueRequirements
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
+    BaselineAttackPolicy,
+    DatasetAttackConfiguration,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+    TechniqueRequirements,
+)
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
-from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
-from pyrit.scenario.scenarios.adaptive.selectors import (
+from pyrit.scenario.scenarios.adaptive import (
+    AdaptiveTechniqueDispatcher,
     EpsilonGreedyTechniqueSelector,
     SelectorScope,
     TechniqueSelector,
+    TextAdaptive,
 )
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
 from tests.unit.mocks import MockPromptTarget
@@ -107,7 +112,8 @@ def mock_runtime_env():
             "OPENAI_CHAT_MODEL": "gpt-4",
         },
     ):
-        yield
+        with override_default_adversarial_target(MockPromptTarget()):
+            yield
 
 
 def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> AttackSeedGroup:
@@ -139,6 +145,8 @@ def _make_fake_factory(
     )
     fake_technique = AttackTechnique(attack=fake_attack, seed_technique=seed_technique, requirements=requirements)
     factory = MagicMock(spec=AttackTechniqueFactory)
+    factory.uses_default_adversarial_target = False
+    factory.get_identifier.return_value = _mock_id(f"FakeFactory{fake_id}")
     factory.attack_class = PromptSendingAttack
     factory.requirements = fake_technique.requirements
     factory.seed_technique = seed_technique
@@ -1141,7 +1149,7 @@ class TestTextAdaptiveResume:
         original = await initialize_async(factory=original_factory)
         unchanged = await initialize_async(factory=original_factory, scenario_result_id=original._scenario_result_id)
         assert unchanged._build_run_plan() == original._build_run_plan()
-        with pytest.raises(ValueError, match="unavailable|reconstructable"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await initialize_async(factory=changed_factory, scenario_result_id=original._scenario_result_id)
 
     async def _initialize_scenario_async(
@@ -1379,7 +1387,7 @@ class TestTextAdaptiveResume:
         selector.select_async.reset_mock()
         selector.select_async.side_effect = AssertionError("Resume selected techniques again")
 
-        with pytest.raises(ValueError, match="Selected adaptive techniques are unavailable or incompatible"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await self._initialize_scenario_async(
                 target=mock_objective_target,
                 scorer=mock_objective_scorer,

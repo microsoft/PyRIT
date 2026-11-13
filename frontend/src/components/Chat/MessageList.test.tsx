@@ -47,6 +47,120 @@ describe("MessageList", () => {
     },
   ];
 
+  it("should label a split turn and preserve its bubble when ordered evidence is extended", () => {
+    const first = { ...mockMessages[0], sequence: 0, isPartial: true };
+    const rendered = render(<TestWrapper><MessageList messages={[first]} /></TestWrapper>);
+    const bubble = screen.getByTestId("message-bubble-0");
+    expect(screen.getByText("Incomplete turn")).toBeVisible();
+    rendered.rerender(<TestWrapper><MessageList messages={[
+      { ...mockMessages[1], role: "system", sequence: -1 }, { ...first, isPartial: false },
+    ]} /></TestWrapper>);
+    expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
+    expect(screen.queryByText("Incomplete turn")).not.toBeInTheDocument();
+  });
+
+  it("should open at the latest message and follow new ones only while the reader stays near the end", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} /></TestWrapper>);
+    const list = screen.getByTestId("message-list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, writable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages.slice(0, 2)} /></TestWrapper>);
+    expect(list.scrollTop).toBe(1000);
+    list.scrollTop = 770;
+    fireEvent.scroll(list);
+    Object.defineProperty(list, "scrollHeight", { value: 1200 });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(list.scrollTop).toBe(1200);
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    Object.defineProperty(list, "scrollHeight", { value: 1400 });
+    rendered.rerender(<TestWrapper><MessageList messages={[...mockMessages, mockMessages[1]]} /></TestWrapper>);
+    expect(list.scrollTop).toBe(100);
+    expect(screen.getByTestId("message-list")).toBe(list);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("should preserve historical saved evidence position instead of following its inner non-scrolling body", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} savedEvidence /></TestWrapper>);
+    const list = screen.getByTestId("message-list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, writable: true, value: 900 },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages.slice(0, 2)} savedEvidence announceUpdates={false} /></TestWrapper>);
+    expect(list.scrollTop).toBe(0);
+    expect(screen.queryByRole("log")).not.toBeInTheDocument();
+    list.scrollTop = 200;
+    fireEvent.scroll(list);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} savedEvidence /></TestWrapper>);
+    expect(list.scrollTop).toBe(200);
+  });
+
+  it("should announce appended live messages politely without replacing existing keyed bubbles", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} /></TestWrapper>);
+    const log = screen.getByRole("log");
+    const bubble = screen.getByTestId("message-bubble-0");
+    expect(log).toHaveAttribute("aria-live", "polite");
+    expect(log).toHaveAttribute("aria-relevant", "additions text");
+    expect(log).toHaveAttribute("aria-atomic", "false");
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(screen.getByRole("log")).toBe(log);
+    expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
+  });
+  it.each([2, 3])("should retain gapped sequence %s beside optimistic user and loading rows without duplicate keys", (sequence: number) => {
+    const errors = jest.spyOn(console, "error").mockImplementation(() => {});
+    const stored: Message[] = [
+      { ...mockMessages[0], sequence: 0 }, { ...mockMessages[1], sequence },
+    ];
+    const pending: Message[] = [
+      { role: "user", content: "Pending request", timestamp: mockMessages[0].timestamp },
+      { role: "assistant", content: "...", timestamp: mockMessages[0].timestamp, isLoading: true },
+    ];
+    try {
+      const rendered = render(<TestWrapper><MessageList messages={[...stored, ...pending]} /></TestWrapper>);
+      const bubble = screen.getByTestId("message-bubble-1");
+      expect(screen.getByText("Pending request")).toBeVisible();
+      rendered.rerender(<TestWrapper><MessageList messages={[
+        ...stored, { ...pending[0], sequence: sequence + 2 },
+        { ...mockMessages[1], content: "Saved pending response", sequence: sequence + 3 },
+      ]} /></TestWrapper>);
+      expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
+      expect(screen.getAllByText("Pending request")).toHaveLength(1);
+      expect(screen.getByText("Saved pending response")).toBeVisible();
+      expect(errors.mock.calls.flat().filter((value: unknown) =>
+        typeof value === "string" && value.includes("same key"))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("should explain why partial saved evidence cannot be copied or branched", async () => {
+    const user = userEvent.setup();
+    const onCopyToInput = jest.fn();
+    const onCopyToNewConversation = jest.fn();
+    const onCopyToNewAttack = jest.fn();
+    const onUseInTechnique = jest.fn();
+    const reason = "Load the complete saved transcript before continuing, copying, exporting, or assessing this result.";
+    render(<TestWrapper><MessageList messages={mockMessages} copyConversationDisabledReason={reason}
+      copyToInputDisabledReason={reason} onCopyToInput={onCopyToInput}
+      onCopyToNewConversation={onCopyToNewConversation} onCopyToNewAttack={onCopyToNewAttack}
+      onUseInTechnique={onUseInTechnique} /></TestWrapper>);
+    await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
+    for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
+      const item = screen.getByRole("menuitem", { name, exact: true });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(/Load the complete saved transcript/);
+      await user.click(item);
+    }
+    for (const callback of [onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique]) {
+      expect(callback).not.toHaveBeenCalled();
+    }
+  });
+
   it("should render empty state when no messages", () => {
     render(
       <TestWrapper>
@@ -57,6 +171,76 @@ describe("MessageList", () => {
     expect(
       screen.getByText("There are no messages in this conversation yet.")
     ).toBeInTheDocument();
+  });
+
+  describe("generation evidence", () => {
+    it.each([
+      [0, "request", "Temperature: 0 (request override)"],
+      [0.8, "target_default", "Temperature: 0.8 (target default)"],
+      [null, "provider_default", "Temperature: provider default (unknown)"],
+      [undefined, undefined, undefined],
+    ])("renders persisted temperature %s from %s", (
+      value: number | null | undefined, source: string | undefined, expected: string | undefined,
+    ) => {
+      const backendMessage: BackendMessage = {
+        turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "request-piece", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "hello", converted_value: "hello", scores: [],
+          prompt_metadata: source === undefined ? {} : {
+            _pyrit_generation: {
+              temperature: { requested: source === "request" ? value : null, resolved: value, source },
+              request_piece_ids: ["request-piece"],
+            },
+          },
+        }],
+      };
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} showGenerationInfo /></TestWrapper>);
+      if (expected === undefined) {
+        expect(screen.queryByText(/^Temperature:/)).not.toBeInTheDocument();
+      } else {
+        expect(screen.getByText(expected)).toBeInTheDocument();
+      }
+    });
+
+    it.each(["user", "assistant"] as const)("shows read-only requested and resolved evidence on a %s message", async (role: "user" | "assistant") => {
+      const user = userEvent.setup();
+      const backendMessage: BackendMessage = {
+        turn_number: 0, role, created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "piece", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "hello", converted_value: "hello", scores: [],
+          prompt_metadata: { _pyrit_generation: {
+            temperature: { requested: 0, resolved: 0, source: "request" }, request_piece_ids: ["request-piece"],
+          } },
+        }],
+      };
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} showGenerationInfo /></TestWrapper>);
+      await user.click(screen.getByRole("button", { name: "Generation details: Temperature: 0 (request override)" }));
+      const details = screen.getByRole("dialog", { name: "Saved generation details" });
+      expect(details).toHaveTextContent("Requested override: 0. Sent parameter: 0. Source: request override.");
+      expect(within(details).queryByRole("spinbutton")).not.toBeInTheDocument();
+    });
+
+    it.each([false, undefined])("hides temperature markers without confirmed support (%s) and preserves the evidence", (
+      showGenerationInfo: boolean | undefined,
+    ) => {
+      const messages: Message[] = mockMessages.slice(0, 2).map((message: Message) => ({
+        ...message,
+        generationDescription: "Temperature: provider default (unknown)",
+        generationDetails: "Temperature. Requested override: none. Sent parameter: not specified (provider default unknown). Source: provider default.",
+      }));
+      const rendered = render(<TestWrapper><MessageList messages={messages}
+        showGenerationInfo={showGenerationInfo} /></TestWrapper>);
+      expect(screen.queryAllByRole("button", { name: /^Generation details:/ })).toHaveLength(0);
+      expect(screen.queryByText(/^Temperature:/)).not.toBeInTheDocument();
+
+      rendered.rerender(<TestWrapper><MessageList messages={messages} showGenerationInfo savedEvidence /></TestWrapper>);
+      expect(screen.getAllByRole("button", {
+        name: "Generation details: Temperature: provider default (unknown)",
+      })).toHaveLength(2);
+      expect(messages[0].generationDetails).toContain("provider default unknown");
+    });
   });
 
   it.each(["Copy to next message", "Branch conversation", "Branch attack"])("copies through one menu to %s", async (destination: string) => {
@@ -1349,6 +1533,51 @@ describe("MessageList", () => {
         { label: "safe", score: 0.97 },
         { label: "unsafe", score: 0.03 },
       ]);
+    });
+
+    it("renders JSON responses with large integers without rounding", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '{"id":9007199254740993}',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      const block = screen.getByTestId("message-json-0");
+      expect(block.tagName).toBe("PRE");
+      expect(block.textContent).toBe('{\n  "id": 9007199254740993\n}');
+    });
+
+    it.each([
+      '{"literal":"\\u005fPYRIT_NUM_i_0_0__","id":42}',
+      '{"\\u005fPYRIT_NUM_i_0_0__":42,"id":7}',
+    ])("preserves escaped marker strings and keys in JSON responses: %s", (content: string) => {
+      const random = jest.spyOn(Math, "random").mockReturnValueOnce(0.5).mockReturnValue(0.25);
+      const now = jest.spyOn(Date, "now").mockReturnValue(0);
+      try {
+        const message: Message = {
+          role: "assistant",
+          content,
+          timestamp: "2026-11-04T00:00:00Z",
+        };
+        render(
+          <TestWrapper>
+            <MessageList messages={[message]} />
+          </TestWrapper>
+        );
+        expect(screen.getByTestId("message-json-0").textContent).toBe(
+          JSON.stringify(JSON.parse(content), null, 2)
+        );
+        expect(message.content).toBe(content);
+      } finally {
+        random.mockRestore();
+        now.mockRestore();
+      }
     });
 
     it("does not reformat plain text assistant content", () => {

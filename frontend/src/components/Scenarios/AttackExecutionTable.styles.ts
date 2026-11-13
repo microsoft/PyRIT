@@ -1,0 +1,61 @@
+import { makeStyles, tokens } from '@fluentui/react-components'
+
+import { mobileTouchTarget } from '@/styles/touchTargets'
+
+export const useAttackExecutionTableStyles = makeStyles({
+  tableScroll: {
+    width: '100%',
+    overflowX: 'auto',
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  table: { minWidth: '44rem', tableLayout: 'auto' },
+  semanticHeader: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    overflow: 'hidden',
+    clip: 'rect(0, 0, 0, 0)',
+    whiteSpace: 'nowrap',
+  },
+  resultRow: {
+    cursor: 'pointer',
+    ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
+    ':focus-visible': {
+      outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: `-${tokens.strokeWidthThick}`,
+    },
+  },
+  resultCell: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    minWidth: '18rem',
+  },
+  identity: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+  },
+  actions: { textAlign: 'end', whiteSpace: 'nowrap' },
+  expandSpacer: { width: '2rem', flexShrink: 0, ...mobileTouchTarget },
+  position: { color: tokens.colorNeutralForeground3, fontVariantNumeric: 'tabular-nums' },
+  hint: { color: tokens.colorNeutralForeground3 },
+  unresolved: {
+    color: tokens.colorNeutralForeground3,
+    fontStyle: 'italic',
+    overflowWrap: 'anywhere',
+  },
+  nowrap: { whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' },
+  footer: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
+    paddingTop: tokens.spacingVerticalXS,
+  },
+  touchTarget: { flexShrink: 0, ...mobileTouchTarget },
+})

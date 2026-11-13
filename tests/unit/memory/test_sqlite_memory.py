@@ -23,14 +23,17 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    EmbeddingDataEntry,
+    MemoryEmbedding,
+    PromptMemoryEntry,
+    SQLiteMemory,
+    set_message_piece_sha256_async,
+)
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
-from pyrit.memory.memory_embedding import MemoryEmbedding
-from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.memory.sqlite_memory import SQLiteMemory
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     Conversation,
     EmbeddingData,
@@ -43,7 +46,7 @@ from pyrit.models import (
     TargetIdentifier,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target import TextTarget
 from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import get_sample_conversation_entries, make_scenario_result
 
@@ -852,6 +855,32 @@ async def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_insta
     assert result == {}
 
 
+async def test_get_conversation_stats_returns_aware_utc_created_at(sqlite_instance):
+    """The raw MIN(timestamp) aggregate must still surface aware UTC like every other read path."""
+    import uuid
+    from datetime import UTC
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    piece = MessagePiece(
+        role="user",
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
+
+    created_at = result[conv_id].created_at
+    assert created_at == piece.timestamp
+    assert created_at.utcoffset() == UTC.utcoffset(None)
+
+
 async def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
     """Test that message_count reflects distinct sequence numbers, not raw rows."""
     # Extract conversation IDs and sequences before inserting (entries get detached after commit)
@@ -1243,8 +1272,8 @@ async def test_file_backed_scenario_writes_wait_for_another_connections_lock_asy
 ) -> None:
     """Concurrent scenario writes wait in SQLite's busy handler rather than failing with ``database is locked``."""
     database = tmp_path / "contention.db"
-    memory = isolated_memory_factory(db_path=database, skip_schema_migration=True)
-    Base.metadata.create_all(memory.engine)
+    memory = isolated_memory_factory(db_path=database, _defer_initialization=True)
+    await memory.initialize_async()
     scenario_target = TargetIdentifier(class_name="ScenarioTarget", class_module="tests.unit.memory")
     existing = make_scenario_result(objective_target_identifier=scenario_target, attack_results={})
     await memory.add_scenario_results_to_memory_async(scenario_results=[existing])
@@ -1266,7 +1295,7 @@ async def test_file_backed_scenario_writes_wait_for_another_connections_lock_asy
         connection_key = id(connection_record)
 
         def trace_statement(statement: str) -> None:
-            if statement.startswith(("INSERT", "UPDATE")):
+            if statement.startswith(("BEGIN IMMEDIATE", "INSERT", "UPDATE")):
                 loop.call_soon_threadsafe(record_write, connection_key)
 
         dbapi_connection.run_async(lambda driver: driver.set_trace_callback(trace_statement))
