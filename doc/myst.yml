@@ -48,6 +48,15 @@ project:
       severity: ignore
       keys:
         - "https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation"
+    # NCC Group's site serves a bot-protection challenge that returns 403 to
+    # automated link checks (403 even with a browser user agent via curl).
+    # The articles load fine in a real browser; exempt only these three posts.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://www.nccgroup.com/us/research-blog/non-deterministic-nature-of-prompt-injection/"
+        - "https://www.nccgroup.com/us/research-blog/exploring-prompt-injection-attacks/"
+        - "https://www.nccgroup.com/sg/research-blog/proxying-pyrit-for-fun-and-profit/"
   toc:
     - file: index.md
     - file: security.md
