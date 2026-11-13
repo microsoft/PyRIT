@@ -51,7 +51,7 @@ export default function DatasetSelection() {
 
   return (
     <section className={styles.root} aria-labelledby="dataset-selection-title">
-      <Link className={styles.backLink} to={catalogPath} state={location.state}>Back to datasets</Link>
+      <Link className={styles.backLink} to={catalogPath} state={chatOrigin ? { chatOrigin } : null}>Back to datasets</Link>
       {chatOrigin && <Link className={styles.backLink} to={chatOrigin.path} state={chatOrigin.state}>Return to Chat</Link>}
       <h1 id="dataset-selection-title" ref={headingRef} tabIndex={-1} className={styles.title}>
         {title}

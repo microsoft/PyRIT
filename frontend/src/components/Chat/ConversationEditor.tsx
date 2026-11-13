@@ -173,6 +173,7 @@ interface ConversationEditorProps {
   saveLabel?: string
   initialConverters?: ChatConverterSnapshot
   blockNavigation?: boolean
+  preserveOnDatasetNavigation?: boolean
 }
 
 export interface ConversationEditorHandle {
@@ -186,7 +187,7 @@ export interface ConversationEditorHandle {
 export default function ConversationEditor({
   controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit, onDiscard,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
-  initialConverters, blockNavigation = true, onUploadErrorChange,
+  initialConverters, blockNavigation = true, preserveOnDatasetNavigation = false, onUploadErrorChange,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const resizeBoundaryRef = useRef<HTMLDivElement>(null)
@@ -206,9 +207,9 @@ export default function ConversationEditor({
   }, [onUploadErrorChange, uploadError])
   const target = draft?.target
   const shouldBlock = useCallback<BlockerFunction>(({ nextLocation }) => {
-    if (blockNavigation === false || (!saving && isDatasetsPath(nextLocation.pathname))) return false
+    if (!blockNavigation || (preserveOnDatasetNavigation && !saving && isDatasetsPath(nextLocation.pathname))) return false
     return controller.shouldBlock()
-  }, [blockNavigation, controller, saving])
+  }, [blockNavigation, preserveOnDatasetNavigation, controller, saving])
   const blocker = useBlocker(shouldBlock)
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
     if (controller.shouldBlock()) {

@@ -208,6 +208,42 @@ describe('DatasetCatalog', () => {
     expect(screen.getByText('Loading datasets...')).toBeInTheDocument()
   })
 
+  it('starts another dataset on page one without leaking the previous dataset cursor history', async () => {
+    const user = userEvent.setup()
+    mockGet.mockImplementation((url: string, config?: { params?: { selection_key?: string; cursor?: string } }) => {
+      if (url === '/datasets') return Promise.resolve({ data: { items: [LOADED, UNNAMED] } })
+      if (url === '/datasets/seeds') {
+        const hasMore = config?.params?.selection_key === LOADED.selection_key && !config.params.cursor
+        return Promise.resolve({ data: {
+          ...EMPTY_SEED_PAGE, total: 40,
+          pagination: { limit: 20, has_more: hasMore, next_cursor: hasMore ? 'dataset-a-page-2' : null, prev_cursor: null },
+        } })
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`))
+    })
+    const chatOrigin = { path: '/attack/chat', attackId: null, conversationId: null }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+    await user.click(await screen.findByRole('link', { name: 'harmbench' }))
+    await user.click(await screen.findByRole('button', { name: 'Next page' }))
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    await user.click(await screen.findByRole('link', { name: '(unnamed)' }))
+    expect(await screen.findByText('Page 1')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+    expect(screen.getByRole('link', { name: 'Return to Chat' })).toHaveAttribute('href', '/attack/chat')
+    const otherDatasetCalls = mockGet.mock.calls.filter((call) =>
+      call[0] === '/datasets/seeds' && call[1]?.params?.selection_key === UNNAMED.selection_key)
+    expect(otherDatasetCalls.length).toBeGreaterThan(0)
+    for (const call of otherDatasetCalls) expect(call[1]?.params?.cursor).toBeUndefined()
+    await user.click(screen.getByRole('button', { name: 'History back' }))
+    await screen.findByRole('heading', { name: 'Datasets' })
+    await user.click(screen.getByRole('button', { name: 'History back' }))
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Previous page' }))
+    expect(await screen.findByText('Page 1')).toBeVisible()
+  })
+
   it('renders summary cards from the catalog response', async () => {
     render(<Harness initialPath="/datasets" />)
 

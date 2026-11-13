@@ -2020,7 +2020,7 @@ describe('App draft handoff with the real chat and composer', () => {
       expect(screen.queryByText('Original turn 1 modified')).not.toBeInTheDocument()
     })
 
-    it('preserves a normal editor draft while browsing datasets without requiring discard', async () => {
+    it.each(['cancel', 'navigation'] as const)('preserves a normal editor draft and its discard guard after browsing datasets (%s)', async (exit: 'cancel' | 'navigation') => {
       const user = userEvent.setup()
       const source: BackendMessage[] = [{
         turn_number: 0, role: 'user', created_at: '2026-01-01T00:00:00Z',
@@ -2039,6 +2039,54 @@ describe('App draft handoff with the real chat and composer', () => {
       await returnToChat(user)
       expect(await screen.findByTestId('conversation-editor')).toBeInTheDocument()
       expect(screen.getByDisplayValue('Original turn edited')).toBeInTheDocument()
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: exit === 'cancel' ? 'Cancel' : 'Scanner', exact: true }))
+      expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeVisible()
+      await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+      expect(screen.getByDisplayValue('Original turn edited')).toBeInTheDocument()
+    })
+
+    it.each([false, true])('restores editor converter work without reusing stale runtime results (runtime changed: %s)', async (runtimeChanged: boolean) => {
+      jest.useFakeTimers()
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      jest.mocked(attacksApi.getMessages).mockResolvedValue({
+        conversation_id: 'main', target_response_status: null,
+        messages: [{
+          turn_number: 0, role: 'user', created_at: '',
+          message_pieces: [{ id: 'editor-piece', original_value_data_type: 'text', original_value: 'Editor original',
+            converted_value_data_type: 'text', converted_value: 'Editor original', scores: [], response_error: 'none' }],
+        }],
+      })
+      renderChat('/attacks/saved/conversations/main')
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      const first = await screen.findByRole('region', { name: 'Message 1' })
+      await user.click(within(first).getByRole('button', { name: 'Toggle converter panel' }))
+      await user.click(await screen.findByRole('combobox', { name: 'Add converter' }))
+      await user.click(await screen.findByRole('option', { name: /draft-converter/ }))
+      const working = screen.getByRole('textbox', { name: 'Working input - Message 1: text' })
+      await user.clear(working)
+      await user.type(working, 'Editor working input')
+      await user.click(screen.getByRole('button', { name: 'Convert 1 message', exact: true }))
+      const output = await screen.findByRole('textbox', { name: 'Stage 1 output - Message 1: text' })
+      await user.clear(output)
+      await user.type(output, 'Editor working output')
+      await visitDatasets(user)
+      if (runtimeChanged) {
+        jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: 'new-runtime' })
+        await act(async () => { jest.advanceTimersByTime(2000) })
+      }
+      await returnToChat(user)
+      await user.click(within(await screen.findByRole('region', { name: 'Message 1' }))
+        .getByRole('button', { name: 'Toggle converter panel' }))
+      if (runtimeChanged) {
+        expect(screen.queryByRole('textbox', { name: 'Stage 1 output - Message 1: text' })).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByRole('button', { name: 'Remove converter draft-converter' })).toBeVisible()
+        expect(screen.getByRole('textbox', { name: 'Working input - Message 1: text' })).toHaveValue('Editor working input')
+        expect(screen.getByRole('textbox', { name: 'Stage 1 output - Message 1: text' })).toHaveValue('Editor working output')
+      }
       expect(attacksApi.saveConversation).not.toHaveBeenCalled()
       expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
     })

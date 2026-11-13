@@ -500,6 +500,11 @@ export default function ChatWindow({
   const isSavingEditor = editor.saving
   const [editorUploadError, setEditorUploadError] = useState<string>()
   const editorRef = useRef<ConversationEditorHandle>(null)
+  const editorConvertersRef = useRef<ChatConverterSnapshot | undefined>(undefined)
+  const captureEditorRef = useCallback((handle: ConversationEditorHandle | null): void => {
+    editorRef.current = handle
+    if (handle) editorConvertersRef.current = handle.getConverters()
+  }, [])
   const [editorInitialConverters, setEditorInitialConverters] = useState<ChatConverterSnapshot>()
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const [editorNotice, setEditorNoticeState] = useState<ChatInfoNotice | null>(null)
@@ -888,6 +893,8 @@ export default function ChatWindow({
     ...(editDraft ? {
       conversation: {
         messages: editDraft.messages,
+        baselineMessages: editDraft.baselineMessages,
+        baselineTargetKey: editDraft.baselineTargetKey,
         objective: editDraft.objective,
         initialObjective: editDraft.initialObjective,
         sourceConversationId: editDraft.sourceConversationId,
@@ -964,7 +971,10 @@ export default function ChatWindow({
         originatingConversationId: draftConversationId,
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
-        draft: savedDraft,
+        draft: savedDraft.conversation ? {
+          ...savedDraft,
+          conversation: { ...savedDraft.conversation, converters: editorConvertersRef.current },
+        } : savedDraft,
       }, draftHandoff.activeSequence, draftHandoff.pendingImport?.id)
     }
   })
@@ -1062,8 +1072,11 @@ export default function ChatWindow({
             })
           }
         }
+        setEditorInitialConverters(consumed.conversation.converters)
         editor.begin({
           messages: consumed.conversation.messages,
+          baselineMessages: consumed.conversation.baselineMessages,
+          baselineTargetKey: consumed.conversation.baselineTargetKey,
           objective: consumed.conversation.objective ?? currentObjective,
           initialObjective: consumed.conversation.initialObjective ?? currentObjective,
           sourceConversationId: consumed.conversation.sourceConversationId ?? null,
@@ -2813,7 +2826,7 @@ export default function ChatWindow({
         </MessageBarBody></MessageBar>}
         {editDraft !== null && <ConversationEditor
           key={editDraft.id}
-          ref={editorRef}
+          ref={captureEditorRef}
           initialConverters={editorInitialConverters}
           controller={editor}
           onUploadErrorChange={setEditorUploadError}
@@ -2841,6 +2854,7 @@ export default function ChatWindow({
           saveDestination={attackResultId ? 'same_attack' : 'new_attack'}
           saveLabel="Save"
           blockNavigation={!editDraft?.unsavedImport}
+          preserveOnDatasetNavigation
         />}
         {editDraft === null && conversationLoadIssue?.conversationId === viewedConversationId && (
           <MessageBar intent={conversationLoadIssue.unavailable ? 'warning' : 'error'}>

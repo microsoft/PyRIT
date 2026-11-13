@@ -58,6 +58,36 @@ describe('useConversationDraft', () => {
     expect(result.current.history).toHaveLength(0)
   })
 
+  it.each([null, registeredTarget])('preserves the original target baseline when restoring edits from %j', (target: TargetInstance | null) => {
+    const { result } = renderHook(() => useConversationDraft())
+    act(() => result.current.begin({ ...initial, target }))
+    act(() => result.current.changeTarget(target ? null : registeredTarget))
+    const restored = result.current.draft
+    if (!restored) throw new Error('Expected an active conversation draft')
+    act(() => result.current.begin(restored))
+    expect(result.current.dirty).toBe(true)
+    expect(result.current.shouldBlock()).toBe(true)
+    act(() => result.current.changeTarget(target))
+    expect(result.current.dirty).toBe(false)
+  })
+
+  it('keeps a clean file-backed editor clean when restoring its retained baseline', () => {
+    const file = new File(['image'], 'history.png', { type: 'image/png' })
+    const { result } = renderHook(() => useConversationDraft())
+    act(() => result.current.begin({
+      ...initial, messages: [{
+        id: 'image', role: 'user', pieces: [{
+          draftId: 'image', data_type: 'image_path', original_value: '', file,
+        }],
+      }],
+    }))
+    const restored = result.current.draft
+    if (!restored) throw new Error('Expected an active conversation draft')
+    act(() => result.current.begin(restored))
+    expect(result.current.dirty).toBe(false)
+    expect(result.current.shouldBlock()).toBe(false)
+  })
+
   it.each(['same_attack', 'new_attack'] as const)(
     'saves %s with the selected target without constructing a variant',
     async (destination) => {
