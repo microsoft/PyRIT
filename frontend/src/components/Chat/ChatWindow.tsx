@@ -505,7 +505,6 @@ export default function ChatWindow({
     editorRef.current = handle
     if (handle) editorConvertersRef.current = handle.getConverters()
   }, [])
-  const [editorInitialConverters, setEditorInitialConverters] = useState<ChatConverterSnapshot>()
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const [editorNotice, setEditorNoticeState] = useState<ChatInfoNotice | null>(null)
   const setEditorNotice = useCallback((message: string | null): void => {
@@ -1072,8 +1071,8 @@ export default function ChatWindow({
             })
           }
         }
-        setEditorInitialConverters(consumed.conversation.converters)
         editor.begin({
+          initialConverters: consumed.conversation.converters,
           messages: consumed.conversation.messages,
           baselineMessages: consumed.conversation.baselineMessages,
           baselineTargetKey: consumed.conversation.baselineTargetKey,
@@ -2244,9 +2243,9 @@ export default function ChatWindow({
       editor.begin({
         messages: draftMessages, objective: currentObjective,
         initialObjective: currentObjective, sourceConversationId: sourceId,
+        initialConverters: converters.snapshot(),
         sourceAttackId: attackResultId, target, labels,
       })
-      setEditorInitialConverters(converters.snapshot())
       setIsConverterPanelOpen(false)
       onRefreshTargets()
     } catch (error) {
@@ -2827,7 +2826,7 @@ export default function ChatWindow({
         {editDraft !== null && <ConversationEditor
           key={editDraft.id}
           ref={captureEditorRef}
-          initialConverters={editorInitialConverters}
+          initialConverters={editDraft.initialConverters}
           controller={editor}
           onUploadErrorChange={setEditorUploadError}
           sameAttackDisabledReason={sameAttackDisabledReason}
