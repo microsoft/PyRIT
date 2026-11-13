@@ -4,7 +4,7 @@
 """Private recipe contract and constructor validation for code-owned scenario suites."""
 
 import copy
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from pyrit.models import ScenarioPreset
 
@@ -23,6 +23,22 @@ class _SuiteRecipe(Protocol):
 
         Returns:
             list[ScenarioPreset]: The configured presets.
+        """
+        ...
+
+
+@runtime_checkable
+class _SuiteCatalogValidator(Protocol):
+    """Optional recipe validation independent of the live environment and registries."""
+
+    def validate_catalogs(self) -> None:
+        """
+        Check configured selections against catalogs without building or registering presets.
+
+        Runs in a worker thread during preflight and must not change live state.
+
+        Raises:
+            ValueError: If catalog-dependent selections are invalid.
         """
         ...
 

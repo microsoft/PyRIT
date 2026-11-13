@@ -170,6 +170,23 @@ class PyRITInitializer(ABC):
             declared=self.supported_parameters(), params=self.params, owner=f"Initializer '{type(self).__name__}'"
         )
 
+    async def preflight_async(self) -> None:
+        """
+        Perform optional read-only checks before live runtime replacement.
+
+        Called after parameter and required-environment validation. The replacement
+        environment and registries are not installed yet: inspect only configured
+        inputs and independent resources, never mutate live state or initialize
+        components. Keep blocking reads off the event loop. Initialization must
+        still validate its inputs independently; preflight instances are discarded.
+
+        The default implementation does nothing.
+
+        Raises:
+            ValueError: If an opted-in check rejects the configuration.
+        """
+        return
+
     async def initialize_with_tracking_async(self) -> None:
         """
         Execute initialization while tracking what changes are made.

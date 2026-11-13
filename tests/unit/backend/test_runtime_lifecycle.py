@@ -31,13 +31,23 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
+from pyrit.datasets import TextJailBreak
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ScenarioRunState
+from pyrit.models import ScenarioPreset, ScenarioRunState, ScenarioSuite
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    Registry,
+    ScenarioPresetRegistry,
+    ScenarioSuiteRegistry,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
+from pyrit.scenario.scenarios.airt import Multilingual
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -384,6 +394,51 @@ async def test_stale_version_and_invalid_preflight_do_not_mutate(runtime: Runtim
     assert runtime.state == "ready"
     assert "secret" not in runtime.message
     lifecycle_module.close_services_async.assert_not_awaited()
+
+
+async def test_invalid_suite_technique_keeps_live_runtime_async(runtime: RuntimeLifecycle) -> None:
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[],
+        enable_live_reinitialization=True,
+        initializers=[
+            {
+                "name": "scenario_suite",
+                "args": {"suite_args": {"horizontal_techniques": {"encoding_techniques": ["not_a_real_encoding"]}}},
+            }
+        ],
+    )
+    with patch.dict(Registry._singletons, {}, clear=True):
+        presets = ScenarioPresetRegistry.get_registry_singleton()
+        suites = ScenarioSuiteRegistry.get_registry_singleton()
+        preset = ScenarioPreset(name="live_preset", scenario_name="airt.jailbreak")
+        suite = ScenarioSuite(name="live_suite")
+        presets.instances.register(preset, name=preset.name)
+        suites.instances.register(suite, name=suite.name)
+        live_registries = dict(Registry._singletons)
+        with (
+            patch.object(runtime, "_load_async", AsyncMock(return_value=config)),
+            patch.object(
+                config,
+                "apply_prepared_reinitialization_async",
+                AsyncMock(side_effect=AssertionError("must not replace the runtime")),
+            ) as replace_runtime,
+            patch.object(TextJailBreak, "get_jailbreak_templates", return_value=[f"t{i}.yaml" for i in range(5)]),
+            patch.object(
+                Multilingual, "get_default_languages", return_value=["French", "Spanish", "Japanese", "Korean"]
+            ),
+        ):
+            await apply_async(runtime)
+
+        assert runtime.state == "ready"
+        assert runtime.outcome == "invalid-configuration"
+        assert runtime.generation == "original"
+        lifecycle_module.close_services_async.assert_not_awaited()
+        replace_runtime.assert_not_awaited()
+        assert Registry._singletons == live_registries
+        assert presets.instances.get(preset.name) is preset
+        assert suites.instances.get(suite.name) is suite
 
 
 async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: RuntimeLifecycle) -> None:

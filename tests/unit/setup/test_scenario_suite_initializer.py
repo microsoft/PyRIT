@@ -118,19 +118,48 @@ def test_sampling_is_repeatable_name_independent_and_family_isolated() -> None:
 
 
 @pytest.mark.usefixtures("isolated_registries", "catalogs")
+@pytest.mark.parametrize("phase", ["preflight", "initialize"])
 @pytest.mark.parametrize(
     "args",
     [
         {"jailbreak_names": ["missing.yaml"]},
+        {"encoding_techniques": ["not_a_real_encoding"]},
         {"encoding_techniques": ["char_swap"]},
         {"obfuscation_techniques": ["base64"]},
         {"num_languages": 1000},
         {"num_jailbreaks": 1000},
+        {"num_encodings": 1000},
+        {"num_obfuscations": 1000},
     ],
 )
-async def test_catalog_dependent_errors_register_nothing_async(args: dict[str, Any]) -> None:
+async def test_catalog_dependent_errors_register_nothing_async(*, args: dict[str, Any], phase: str) -> None:
     with pytest.raises(ValueError):
-        await _configured(args).initialize_async()
+        if phase == "preflight":
+            config = ConfigurationLoader(
+                memory_db_type="in_memory",
+                env_files=[],
+                initialization_scripts=[],
+                initializers=[{"name": "scenario_suite", "args": {"suite_args": {SUITE: args}}}],
+            )
+            await config.preflight_reinitialization_async(environment_values={})
+        else:
+            await _configured(args).initialize_async()
+    assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
+    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
+
+
+@pytest.mark.usefixtures("isolated_registries", "catalogs")
+@pytest.mark.parametrize("phase", ["preflight", "initialize"])
+async def test_empty_family_catalog_is_rejected_async(phase: str) -> None:
+    initializer = _configured({"encoding_techniques": ["all"]})
+    with (
+        patch.object(FoundryTechnique, "get_techniques_by_tag", return_value=set()),
+        pytest.raises(ValueError, match="encoding_techniques has no eligible catalog members"),
+    ):
+        if phase == "preflight":
+            await initializer.preflight_async()
+        else:
+            await initializer.initialize_async()
     assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
     assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
 
@@ -322,7 +351,21 @@ async def test_catalog_loading_is_off_loop_and_discovery_does_not_build_async() 
         assert {p.name for p in metadata.supported_parameters} == {"tags", "suite_args"}
         for parameter in metadata.supported_parameters:
             parameter.model_dump_json()
-    with patch.object(TextJailBreak, "get_jailbreak_templates", side_effect=discover):
+    with patch.object(TextJailBreak, "get_jailbreak_templates", side_effect=discover) as load_catalog:
+        config = ConfigurationLoader(
+            memory_db_type="in_memory",
+            env_files=[],
+            initialization_scripts=[],
+            initializers=[{"name": "scenario_suite", "args": {"suite_args": {SUITE: {"languages": ["Klingon"]}}}}],
+        )
+        with (
+            patch.object(HorizontalTechniquesSuite, "build_presets", side_effect=AssertionError("must not build")),
+            patch.object(ScenarioSuiteInitializer, "_check_conflicts", side_effect=AssertionError("must not check")),
+        ):
+            await config.preflight_reinitialization_async(environment_values={})
+        assert load_catalog.call_count == 1
+        assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
+        assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
         await ScenarioSuiteInitializer().initialize_async()
 
 
@@ -349,13 +392,17 @@ async def test_plain_recipe_constructed_once_per_initialization_without_prefligh
         assert len(constructed) == 1
         assert built == []
 
-        await initializer.initialize_async()
+        await initializer.preflight_async()
         assert len(constructed) == 2
-        assert built == [constructed[1]]
+        assert built == []
 
         await initializer.initialize_async()
         assert len(constructed) == 3
-        assert built == [constructed[1], constructed[2]]
+        assert built == [constructed[2]]
+
+        await initializer.initialize_async()
+        assert len(constructed) == 4
+        assert built == [constructed[2], constructed[3]]
 
 
 @pytest.mark.usefixtures("isolated_registries")

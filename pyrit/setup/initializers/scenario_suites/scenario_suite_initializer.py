@@ -16,6 +16,7 @@ from pyrit.models import Parameter, ScenarioPreset, ScenarioSuite, ScenarioSuite
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.setup.initializers.scenario_suites._suite_recipe import (
     _resolve_suite_arguments,
+    _SuiteCatalogValidator,
     _SuiteRecipe,
 )
 from pyrit.setup.initializers.scenario_suites.horizontal_techniques import HorizontalTechniquesSuite
@@ -68,6 +69,12 @@ class ScenarioSuiteInitializer(PyRITInitializer):
     def validate_params(self) -> None:
         """Validate nested arguments and constructors without catalog I/O or registry mutations."""
         self._configured_recipes()
+
+    async def preflight_async(self) -> None:
+        """Run opted-in recipe catalog checks without building presets or consulting live registries."""
+        for _, recipe in self._configured_recipes():
+            if isinstance(recipe, _SuiteCatalogValidator):
+                await asyncio.to_thread(recipe.validate_catalogs)
 
     async def initialize_async(self) -> None:
         """Prepare the complete batch before registering any definitions."""

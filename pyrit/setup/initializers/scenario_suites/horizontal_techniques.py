@@ -68,6 +68,15 @@ class HorizontalTechniquesSuite:
                 self._validate_selection_shape(name=name, names=names)
         self._validate_datasets()
 
+    def validate_catalogs(self) -> None:
+        """
+        Check selections against packaged catalogs without building presets or changing live state.
+
+        Raises:
+            ValueError: If a name is incompatible or a requested sample exceeds its catalog.
+        """
+        self._resolve_selections()
+
     def build_presets(self, *, suite_name: str) -> list[ScenarioPreset]:
         """
         Resolve family selections and build one preset per family.
@@ -78,23 +87,7 @@ class HorizontalTechniquesSuite:
         Returns:
             list[ScenarioPreset]: Ordered presets with shared text objectives.
         """
-        from pyrit.datasets import TextJailBreak
-        from pyrit.scenario.airt import Multilingual  # type: ignore[ty:unresolved-import]
-        from pyrit.scenario.foundry import FoundryTechnique  # type: ignore[ty:unresolved-import]
-
-        jailbreaks = self._select(name="jailbreak_names", candidates=TextJailBreak.get_jailbreak_templates())
-        languages = self._select(
-            name="languages",
-            candidates=[name for name in Multilingual.get_default_languages() if name.casefold() != "english"],
-        )
-        encodings = self._select(
-            name="encoding_techniques",
-            candidates=[technique.value for technique in FoundryTechnique.get_techniques_by_tag("encoding")],
-        )
-        obfuscations = self._select(
-            name="obfuscation_techniques",
-            candidates=[technique.value for technique in FoundryTechnique.get_techniques_by_tag("obfuscation")],
-        )
+        selections = self._resolve_selections()
         return [
             ScenarioPreset(
                 name=f"{suite_name}_jailbreaks",
@@ -103,7 +96,7 @@ class HorizontalTechniquesSuite:
                 techniques=["prompt_sending"],
                 datasets=self._shared_datasets(),
                 include_baseline=True,
-                scenario_params={"jailbreak_names": jailbreaks},
+                scenario_params={"jailbreak_names": selections["jailbreak_names"]},
             ),
             ScenarioPreset(
                 name=f"{suite_name}_multilingual",
@@ -113,7 +106,7 @@ class HorizontalTechniquesSuite:
                 datasets=self._shared_datasets(),
                 include_baseline=False,
                 scenario_params={
-                    "languages": languages,
+                    "languages": selections["languages"],
                     "translation_strategies": ["translation"],
                 },
             ),
@@ -121,7 +114,7 @@ class HorizontalTechniquesSuite:
                 name=f"{suite_name}_encoding",
                 scenario_name="foundry.red_team_agent",
                 show_in_scanner=False,
-                techniques=encodings,
+                techniques=selections["encoding_techniques"],
                 datasets=self._shared_datasets(),
                 include_baseline=False,
             ),
@@ -129,11 +122,41 @@ class HorizontalTechniquesSuite:
                 name=f"{suite_name}_obfuscation",
                 scenario_name="foundry.red_team_agent",
                 show_in_scanner=False,
-                techniques=obfuscations,
+                techniques=selections["obfuscation_techniques"],
                 datasets=self._shared_datasets(),
                 include_baseline=False,
             ),
         ]
+
+    def _resolve_selections(self) -> dict[str, list[str]]:
+        """
+        Resolve family selections using the same catalogs for preflight and initialization.
+
+        Returns:
+            dict[str, list[str]]: Concrete selections keyed by family parameter.
+
+        Raises:
+            ValueError: If a name is incompatible or the requested sample cannot be drawn.
+        """
+        from pyrit.datasets import TextJailBreak
+        from pyrit.scenario.airt import Multilingual  # type: ignore[ty:unresolved-import]
+        from pyrit.scenario.foundry import FoundryTechnique  # type: ignore[ty:unresolved-import]
+
+        return {
+            "jailbreak_names": self._select(name="jailbreak_names", candidates=TextJailBreak.get_jailbreak_templates()),
+            "languages": self._select(
+                name="languages",
+                candidates=[name for name in Multilingual.get_default_languages() if name.casefold() != "english"],
+            ),
+            "encoding_techniques": self._select(
+                name="encoding_techniques",
+                candidates=[technique.value for technique in FoundryTechnique.get_techniques_by_tag("encoding")],
+            ),
+            "obfuscation_techniques": self._select(
+                name="obfuscation_techniques",
+                candidates=[technique.value for technique in FoundryTechnique.get_techniques_by_tag("obfuscation")],
+            ),
+        }
 
     def _select(self, *, name: str, candidates: list[str]) -> list[str]:
         """

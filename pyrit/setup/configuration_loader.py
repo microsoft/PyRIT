@@ -764,6 +764,9 @@ class ConfigurationLoader(YamlLoadable):
                     f"Initializer '{type(initializer).__name__}' has missing required environment variables."
                 )
 
+        for initializer in initializers:
+            await initializer.preflight_async()
+
         return PreparedReinitialization(
             environment_values=dict(environment_values),
             initializer_registry=registry,
