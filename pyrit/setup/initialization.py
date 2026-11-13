@@ -80,7 +80,7 @@ def reset_setup_registries() -> None:
 
     reset_dynamic_technique_caches()
 
-    # Initializers re-register code-owned presets, but configured preset storage must outlive setup.
+    # Clear code registrations for rebuilding, but keep the registry's configured storage source.
     preset_registry = ScenarioPresetRegistry.get_registry_singleton()
     for name in preset_registry.instances.get_names():
         preset_registry.instances.unregister(name)

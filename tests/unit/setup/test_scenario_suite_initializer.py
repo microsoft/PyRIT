@@ -187,6 +187,7 @@ async def test_empty_family_catalog_is_rejected_async(phase: str) -> None:
         {"suite_args": {SUITE: {"jailbreak_names": ["all", "t1.yaml"]}}},
         {"suite_args": {SUITE: {"languages": ["French"], "num_languages": 2}}},
         {"suite_args": {SUITE: {"dataset_names": []}}},
+        {"suite_args": {SUITE: {"dataset_names": ["airt_harms", "airt_harms"]}}},
         {"suite_args": {SUITE: {"dataset_fetch": "always"}}},
     ],
 )
@@ -206,7 +207,15 @@ async def test_invalid_configuration_fails_in_preflight_without_building_async(a
     assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
 
 
-@pytest.mark.parametrize("args", [{"num_jailbreaks": True}, {"languages": "French"}, {"num_encodings": -1}])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"num_jailbreaks": True},
+        {"languages": "French"},
+        {"num_encodings": -1},
+        {"dataset_names": ["airt_harms", "airt_harms"]},
+    ],
+)
 def test_python_constructor_rejects_invalid_inputs(args: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         HorizontalTechniquesSuite(**args)

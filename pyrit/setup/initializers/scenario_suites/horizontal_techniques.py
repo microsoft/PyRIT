@@ -204,7 +204,7 @@ class HorizontalTechniquesSuite:
         replace them once per preset and the families could run different objectives.
 
         Raises:
-            ValueError: If dataset names are empty or the fetch policy is ``always``.
+            ValueError: If the dataset request is invalid or the fetch policy is ``always``.
         """
         if self.dataset_names is not None and (
             not self.dataset_names or any(not name.strip() for name in self.dataset_names)
@@ -215,6 +215,7 @@ class HorizontalTechniquesSuite:
                 "dataset_fetch 'always' would refresh the shared datasets once per preset. Refresh them once "
                 "before launch, for example with the refresh_datasets initializer, and use 'if_missing' or 'never'."
             )
+        self._shared_datasets()
 
     def _shared_datasets(self) -> ScenarioDatasetRequest:
         """Return an independent dataset request over the full common objective population."""
