@@ -563,11 +563,15 @@ it does not by itself identify why the service stalled.
 The action requests cancellation on timeout, but that response alone does not
 confirm that the deployment has stopped.
 
-The failed `Deploy` job records the Pages status and source SHA in its summary.
-Inspect the action logs and the read-only status endpoint before recovery:
+After `Deploy` completes, `Diagnose Pages deployment` reads its retained action log
+and records the actual Pages deployment ID, source SHA, run/attempt, and status in
+its summary. The ID is the value after `ID:` in the action's
+`Created deployment for ..., ID: ...` log line; it is not necessarily the source
+SHA. Inspect that log and the read-only status endpoint before recovery, replacing
+`DEPLOYMENT_ID` with the logged ID:
 
 ```bash
-gh api repos/microsoft/PyRIT/pages/deployments/SOURCE_SHA
+gh api repos/microsoft/PyRIT/pages/deployments/DEPLOYMENT_ID
 ```
 
 Only retry after a confirmed terminal failure or cancellation, and resolve any
@@ -590,7 +594,9 @@ artifact downloads.
 If the artifact expired, a new manual run on `main` can rebuild after the previous
 deployment is confirmed terminal and the service problem is resolved. A new run
 at a SHA with an earlier production run also checks its Pages status, so manual
-dispatch cannot bypass an active or ambiguous same-SHA deployment. If the earlier
+dispatch cannot bypass an active or ambiguous same-SHA deployment. Recovery uses
+the latest deployment attempt's logged ID, not a guessed SHA-based ID. Missing,
+expired, ambiguous, or mismatched logs also stop recovery. If the earlier
 run never reached Pages and the API cannot confirm a terminal state, publication
 requires a new main commit or a verified resolution from GitHub Support, not
 repeated dispatches. Do not recover a superseded run. Runs created

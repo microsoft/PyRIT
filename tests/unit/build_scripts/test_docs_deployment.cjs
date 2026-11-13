@@ -16,9 +16,18 @@ const current = {
 const runRoute = "GET /repos/{owner}/{repo}/actions/runs/{run_id}";
 const listRoute = "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs";
 const statusRoute = "GET /repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}";
+const jobsRoute = "GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs";
+const logsRoute = "GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs";
+const deploymentId = "pages-deployment-987";
+const deploymentJob = {
+  id: 987, name: "Deploy", run_attempt: 1, status: "completed",
+  steps: [{ name: "Deploy to GitHub Pages", started_at: "2026-11-13T10:00:00Z", conclusion: "failure" }]
+};
+const deploymentLog = `2026-11-13T10:00:00.0000000Z Created deployment for ${context.sha}, ID: ${deploymentId}\n`;
 
 function fixture({
-  attempt = 1, run = {}, pages, previousRuns = [[current]], status = "deployment_cancelled", errorRoute, errorStatus
+  attempt = 1, run = {}, pages, previousRuns = [[current]], status = "deployment_cancelled", errorRoute, errorStatus,
+  jobPages = [[deploymentJob]], log = deploymentLog, logs
 } = {}) {
   const calls = [];
   const messages = [];
@@ -39,17 +48,31 @@ function fixture({
         assert.equal(options.run_id, context.runId);
         return { data: { ...current, run_attempt: attempt, ...run } };
       }
+      if (route === logsRoute) {
+        if (logs) {
+          assert.ok(Object.hasOwn(logs, options.job_id));
+          return { data: logs[options.job_id] };
+        }
+        assert.equal(options.job_id, deploymentJob.id);
+        return { data: log };
+      }
       assert.equal(route, statusRoute); // No API writes, retries or deployment creation.
-      assert.equal(options.pages_deployment_id, context.sha);
+      assert.equal(options.pages_deployment_id, deploymentId);
       return { data: { status } };
     },
     paginate: {
       async *iterator(route, options) {
         calls.push({ route, options });
+        if (route === errorRoute) throw new Error("API unavailable");
+        if (route === jobsRoute) {
+          assert.equal(options.filter, "all");
+          assert.equal(options.per_page, 100);
+          for (const data of jobPages) yield { data };
+          return;
+        }
         assert.equal(route, listRoute);
         assert.equal(options.branch, "main");
         assert.equal(options.workflow_id, 7);
-        if (route === errorRoute) throw new Error("API unavailable");
         if (options.head_sha) {
           assert.equal(options.head_sha, context.sha);
           for (const data of previousRuns) yield { data };
@@ -76,6 +99,7 @@ test("a new run may publish an updated release tree after a successful same-SHA 
   const f = fixture({ status: "succeed", previousRuns: [[{ ...current, id: 122 }]] });
   await check(f.options);
   assert.equal(f.calls.at(-1).route, statusRoute);
+  assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, 122);
 });
 
 for (const status of ["syncing_files", ""]) {
@@ -105,7 +129,8 @@ for (const status of [
   test(`confirmed terminal ${status} permits a manual failed-job retry`, async () => {
     const f = fixture({ attempt: 2, status });
     await check(f.options);
-    assert.deepEqual(f.calls.map(call => call.route), [runRoute, listRoute, statusRoute]);
+    assert.deepEqual(f.calls.map(call => call.route), [runRoute, listRoute, jobsRoute, logsRoute, statusRoute]);
+    assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, context.runId);
   });
 }
 
@@ -113,9 +138,10 @@ for (const status of ["", undefined, null, "syncing_files", "deployment_in_progr
   "deployment_queued", "deployment_attempt_error", "unknown_status", "not_found", "succeed", "unexpected"]) {
   test(`retry refuses ambiguous, active or successful status ${JSON.stringify(status)}`, async () => {
     const f = fixture({ attempt: 2 });
+    const request = f.options.github.request;
     f.options.github.request = async (route, options) => {
       if (route === statusRoute) return { data: { status } };
-      return { data: { ...current, run_attempt: 2 } };
+      return request(route, options);
     };
     await assert.rejects(check(f.options), /Refusing Pages retry/);
   });
@@ -152,7 +178,7 @@ for (const run of [
   });
 }
 
-for (const errorRoute of [runRoute, listRoute, statusRoute]) {
+for (const errorRoute of [runRoute, listRoute, jobsRoute, logsRoute, statusRoute]) {
   test(`API failure at ${errorRoute} stops retry`, async () => {
     const f = fixture({ attempt: 2, errorRoute });
     await assert.rejects(check(f.options), /API unavailable/);
@@ -162,9 +188,12 @@ for (const errorRoute of [runRoute, listRoute, statusRoute]) {
 test("diagnostics preserve empty service status and never retry", async () => {
   const f = fixture({ status: "" });
   await check({ ...f.options, mode: "diagnose" });
-  assert.deepEqual(f.calls.map(call => call.route), [statusRoute]);
+  assert.deepEqual(f.calls.map(call => call.route), [jobsRoute, logsRoute, statusRoute]);
   const data = JSON.parse(f.messages[1]);
-  assert.deepEqual(data, { run: context.runId, attempt: 1, sha: context.sha, status: "" });
+  assert.deepEqual(data, {
+    run: context.runId, attempt: 1, sha: context.sha, deploymentId,
+    deploymentRun: context.runId, deploymentAttempt: 1, status: ""
+  });
   assert.ok(f.messages.includes("written"));
   assert.match(f.messages.at(-1), /No deployment was retried/);
 });
@@ -172,6 +201,89 @@ test("diagnostics preserve empty service status and never retry", async () => {
 test("diagnostic API failure stays visible", async () => {
   const f = fixture({ errorRoute: statusRoute });
   await assert.rejects(check({ ...f.options, mode: "diagnose" }), /API unavailable/);
+});
+
+test("recovery selects the newest same-SHA production run across all pages", async () => {
+  const f = fixture({ previousRuns: [
+    [{ ...current, id: 121, run_number: 48 }],
+    [{ ...current, id: 122, run_number: 49 }]
+  ] });
+  await check(f.options);
+  assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, 122);
+});
+
+test("retry uses the latest actual deployment, not current or preflight-only attempts", async () => {
+  const f = fixture({ attempt: 3, jobPages: [
+    [{ ...deploymentJob, id: 989, run_attempt: 3, status: "in_progress" }],
+    [{ ...deploymentJob, id: 988, run_attempt: 2,
+      steps: [{ name: "Deploy to GitHub Pages", started_at: null, conclusion: "skipped" }] }],
+    [deploymentJob]
+  ] });
+  await check(f.options);
+  assert.equal(f.calls.find(call => call.route === logsRoute).options.job_id, deploymentJob.id);
+});
+
+test("new runs check the latest deployment attempt of the previous same-SHA run", async () => {
+  const f = fixture({
+    previousRuns: [[{ ...current, id: 122, run_attempt: 3 }]],
+    jobPages: [[{ ...deploymentJob, id: 986 }], [{ ...deploymentJob, run_attempt: 3 }]]
+  });
+  await check(f.options);
+  assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, 122);
+  assert.equal(f.calls.find(call => call.route === logsRoute).options.job_id, deploymentJob.id);
+});
+
+test("a missing latest deployment ID cannot fall back to an older terminal deployment", async () => {
+  const f = fixture({
+    attempt: 3,
+    jobPages: [[deploymentJob], [{ ...deploymentJob, id: 988, run_attempt: 2 }]],
+    logs: { 987: deploymentLog, 988: "" }
+  });
+  await assert.rejects(check(f.options), /Cannot identify the Pages deployment ID/);
+  assert.equal(f.calls.find(call => call.route === logsRoute).options.job_id, 988);
+  assert.equal(f.calls.some(call => call.route === statusRoute), false);
+});
+
+test("diagnostics cannot fall back to a different attempt's deployment", async () => {
+  const f = fixture({ attempt: 2 });
+  await assert.rejects(check({ ...f.options, mode: "diagnose" }), /Cannot identify a completed/);
+  assert.equal(f.calls.some(call => call.route === statusRoute), false);
+});
+
+for (const jobPages of [
+  [[]],
+  [[{ ...deploymentJob, status: "in_progress" }]],
+  [[{ ...deploymentJob, steps: [] }]],
+  [[{ ...deploymentJob, run_attempt: undefined }]],
+  [[deploymentJob, { ...deploymentJob, id: 988 }]],
+  [[deploymentJob, { ...deploymentJob, id: 988, run_attempt: 2, status: "in_progress" }]]
+]) {
+  test(`missing or ambiguous deployment jobs fail closed: ${JSON.stringify(jobPages)}`, async () => {
+    const f = fixture({ attempt: 3, jobPages });
+    await assert.rejects(check(f.options), /Cannot identify a completed/);
+    assert.equal(f.calls.some(call => call.route === statusRoute), false);
+  });
+}
+
+for (const log of [
+  "",
+  deploymentLog.replace(context.sha, "b".repeat(40)),
+  deploymentLog.replace(deploymentId, "undefined"),
+  deploymentLog.replace(deploymentId, "null"),
+  deploymentLog + deploymentLog,
+  deploymentLog.replace(deploymentId, "unrecognized/id")
+]) {
+  test(`missing or ambiguous deployment IDs never fall back to SHA: ${JSON.stringify(log)}`, async () => {
+    const f = fixture({ attempt: 2, log });
+    await assert.rejects(check(f.options), /Cannot identify the Pages deployment ID/);
+    assert.equal(f.calls.some(call => call.route === statusRoute), false);
+  });
+}
+
+test("binary job logs and CRLF retain the actual non-SHA deployment ID", async () => {
+  const f = fixture({ attempt: 2, log: Buffer.from(deploymentLog.replace("\n", "\r\n")) });
+  await check(f.options);
+  assert.equal(f.calls.at(-1).options.pages_deployment_id, deploymentId);
 });
 
 for (const changes of [{ ref: "refs/heads/release" }, { eventName: "pull_request" }]) {
