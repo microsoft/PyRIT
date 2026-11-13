@@ -34,6 +34,33 @@ _WILSON_DECIMAL_CONTEXT = Context(
 _WILSON_Z_95 = Decimal("1.959963984540054")
 
 
+def compute_wilson_ci(*, successes: int, total: int) -> tuple[float | None, float | None]:
+    """
+    Calculate the 95% Wilson score confidence interval for a proportion.
+
+    Args:
+        successes (int): Number of successful observations.
+        total (int): Total number of decided observations.
+
+    Returns:
+        tuple[float | None, float | None]: The (lower, upper) confidence interval bounds,
+            or (None, None) when total is 0.
+    """
+    if not total:
+        return None, None
+    with localcontext(_WILSON_DECIMAL_CONTEXT):
+        n = Decimal(total)
+        p = Decimal(successes) / n
+        q = Decimal(total - successes) / n
+        z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) / n
+        denom = Decimal(1) + z2_inv_n
+        center = (p + Decimal("0.5") * z2_inv_n) / denom
+        half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
+        lower = 0.0 if successes == 0 else float(max(Decimal(0), center - half_width))
+        upper = 1.0 if successes == total else float(min(Decimal(1), center + half_width))
+    return lower, upper
+
+
 @dataclass
 class AttackStats:
     """Compatible six-field statistics for attack analysis results."""
@@ -205,19 +232,14 @@ class AttackAnalyticsStatistics(AttackStats):
             or not 0 <= lower <= upper <= 1
         ):
             raise ValueError("success_rate confidence interval must agree with its outcome counts.")
-        with localcontext(_WILSON_DECIMAL_CONTEXT):
-            n = Decimal(denominator)
-            p = Decimal(numerator) / n
-            q = Decimal(denominator - numerator) / n
-            z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) / n
-            denom = Decimal(1) + z2_inv_n
-            center = (p + Decimal("0.5") * z2_inv_n) / denom
-            half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
-            expected_lower = 0.0 if numerator == 0 else float(max(Decimal(0), center - half_width))
-            expected_upper = 1.0 if numerator == denominator else float(min(Decimal(1), center + half_width))
-        if not (
-            isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=0.0)
-            and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=0.0)
+        expected_lower, expected_upper = compute_wilson_ci(successes=numerator, total=denominator)
+        if (
+            expected_lower is None
+            or expected_upper is None
+            or not (
+                isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=0.0)
+                and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=0.0)
+            )
         ):
             raise ValueError("success_rate confidence interval must agree with its outcome counts.")
 

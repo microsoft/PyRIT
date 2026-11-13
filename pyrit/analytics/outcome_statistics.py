@@ -6,27 +6,15 @@
 from __future__ import annotations
 
 from collections import Counter
-from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
 from typing import TYPE_CHECKING
 
 from pyrit.models import AttackOutcome, OutcomeStatistics
+from pyrit.models.analytics import compute_wilson_ci
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from pyrit.models import AttackStats
-
-_WILSON_DECIMAL_CONTEXT = Context(
-    prec=50,
-    rounding=ROUND_HALF_EVEN,
-    Emin=MIN_EMIN,
-    Emax=MAX_EMAX,
-    capitals=1,
-    clamp=0,
-    flags=[],
-    traps=[],
-)
-_WILSON_Z_95 = Decimal("1.959963984540054")
 
 
 def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -> OutcomeStatistics:
@@ -57,7 +45,7 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
     errors = values.get(AttackOutcome.ERROR, 0)
     decided = successes + failures
     total = decided + undetermined + errors
-    ci_lower, ci_upper = _wilson_ci(successes=successes, total=decided)
+    ci_lower, ci_upper = compute_wilson_ci(successes=successes, total=decided)
     return OutcomeStatistics(
         successes=successes,
         failures=failures,
@@ -140,19 +128,3 @@ def _validated_counts(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -
 
 def _rate(*, successes: int, total: int) -> float | None:
     return successes / total if total else None
-
-
-def _wilson_ci(*, successes: int, total: int) -> tuple[float | None, float | None]:
-    if not total:
-        return None, None
-    with localcontext(_WILSON_DECIMAL_CONTEXT):
-        n = Decimal(total)
-        p = Decimal(successes) / n
-        q = Decimal(total - successes) / n
-        z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) / n
-        denom = Decimal(1) + z2_inv_n
-        center = (p + Decimal("0.5") * z2_inv_n) / denom
-        half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
-        lower = 0.0 if successes == 0 else float(max(Decimal(0), center - half_width))
-        upper = 1.0 if successes == total else float(min(Decimal(1), center + half_width))
-    return lower, upper
