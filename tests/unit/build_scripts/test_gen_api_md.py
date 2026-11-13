@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from markdown_it import MarkdownIt
+
 from build_scripts import example_index as example_index_module
 from build_scripts import gen_api_md as gen_api_md_module
 from build_scripts.gen_api_md import (
@@ -25,7 +27,43 @@ from build_scripts.gen_api_md import (
     render_class,
     render_function,
     render_module,
+    render_params,
 )
+
+
+def test_parameter_table_preserves_union_types_and_pipes_inside_cells() -> None:
+    markdown = render_params(
+        [
+            {"name": "objective_target", "type": "PromptTarget", "desc": "The chat model."},
+            {
+                "name": "processing_model",
+                "type": "PromptTarget | None",
+                "desc": "Choose `left | right`.\nPreserve an escaped \\| too.",
+                "default": "'left|right'",
+            },
+            {"name": "converter_config", "type": "StrategyConverterConfig | None", "desc": "Converters."},
+            {"name": "prompt_normalizer", "type": "PromptNormalizer | None", "desc": "Normalizer."},
+        ]
+    )
+    tokens = MarkdownIt("commonmark").enable("table").parse(markdown)
+    rows = []
+    cells: list[str] = []
+    for token in tokens:
+        if token.type == "tr_open":
+            cells = []
+        elif token.type == "inline":
+            cells.append("".join(child.content for child in token.children or []))
+        elif token.type == "tr_close":
+            rows.append(cells)
+
+    assert [len(row) for row in rows] == [3, 3, 3, 3, 3]
+    assert rows[2] == [
+        "processing_model",
+        "PromptTarget | None",
+        "Choose left | right. Preserve an escaped | too. Defaults to 'left|right'.",
+    ]
+    assert rows[3][1] == "StrategyConverterConfig | None"
+    assert rows[4][1] == "PromptNormalizer | None"
 
 
 def test_docs_scripts_share_validate_docs_module() -> None:

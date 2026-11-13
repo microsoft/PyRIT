@@ -107,7 +107,8 @@ def render_params(params: list[dict]) -> str:
         default = p.get("default", "")
         if default:
             desc += f" Defaults to `{default}`."
-        lines.append(f"| {name} | `{ptype}` | {desc} |")
+        cells = [re.sub(r"(?<!\\)\|", r"\\|", cell) for cell in (name, f"`{ptype}`", desc)]
+        lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
