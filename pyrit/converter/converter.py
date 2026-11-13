@@ -65,6 +65,10 @@ class Converter(Identifiable):
     #: Constructor parameters whose controls must preserve line breaks.
     MULTILINE_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
 
+    #: Constructor parameters that choose where requests go or how they authenticate. A private
+    #: copy built from API input keeps its source's values for these.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     #: Capability requirements placed on the converter's target (if any).
     #: Subclasses that use a target should override this and pass the target to
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
