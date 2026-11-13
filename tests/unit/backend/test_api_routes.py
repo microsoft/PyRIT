@@ -57,11 +57,11 @@ from pyrit.backend.services import AttackService
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
-from pyrit.backend.services.target_service import SavedTargetConflictError, SavedTargetStorageError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1399,8 +1399,8 @@ class TestTargetRoutes:
     @pytest.mark.parametrize(
         ("error", "status_code"),
         [
-            (SavedTargetConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
-            (SavedTargetStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
+            (SavedEntryConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
+            (SavedEntryStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
         ],
     )
     def test_create_target_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:

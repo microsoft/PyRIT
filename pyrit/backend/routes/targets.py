@@ -23,9 +23,9 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
-from pyrit.backend.services.target_service import SavedTargetConflictError, SavedTargetStorageError
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
+from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -186,9 +186,9 @@ async def create_target(
             owner=_saved_entry_owner(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
-    except SavedTargetConflictError as e:
+    except SavedEntryConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
-    except SavedTargetStorageError as e:
+    except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(
