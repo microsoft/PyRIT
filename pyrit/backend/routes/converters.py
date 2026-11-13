@@ -33,12 +33,8 @@ from pyrit.backend.routes.common import (
     saved_entry_owner_from_request,
 )
 from pyrit.backend.services import get_converter_service
-from pyrit.backend.services.saved_entries import (
-    NotSaveableError,
-    SavedEntryConflictError,
-    SavedEntryRemovalError,
-    SavedEntryStorageError,
-)
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 

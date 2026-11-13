@@ -21,10 +21,10 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeResponse,
 )
 from pyrit.backend.routes.common import NOT_SAVEABLE_PROBLEM_TYPE, not_saveable_response, saved_entry_owner_from_request
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.models.technique_edit import TechniqueOverride
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/techniques", tags=["techniques"])
 

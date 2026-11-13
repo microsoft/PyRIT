@@ -24,9 +24,9 @@ from pyrit.backend.routes.common import (
     not_saveable_response,
     saved_entry_owner_from_request,
 )
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog import ScorerInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 

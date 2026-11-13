@@ -25,7 +25,6 @@ from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import PaginationInfo
 from pyrit.backend.models.techniques import CreateTechniqueRequest, TechniqueListResponse
 from pyrit.backend.services import ScenarioRunService, ScenarioService
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
@@ -51,7 +50,10 @@ from pyrit.registry import (
     AttackRegistry,
     AttackTechniqueRegistry,
     ConverterRegistry,
+    NotSaveableError,
     Registry,
+    SavedEntryConflictError,
+    SavedEntryStorageError,
     ScenarioRegistry,
     TargetRegistry,
 )
