@@ -246,6 +246,22 @@ describe('ScenarioRunPage', () => {
     await waitFor(() => expect(details).toHaveFocus())
   })
 
+  it('restores focus to the technique opener when attack details are closed with the Close button', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await expand(user)
+    const details = screen.getAllByRole('button', { name: /^Open details for PromptSendingAttack:/ })[0]
+    details.focus()
+    await user.keyboard('{Enter}')
+    const dialog = within(await screen.findByRole('dialog'))
+    await user.click(dialog.getByRole('button', { name: 'Close', exact: true }))
+    await waitFor(() => expect(details).toHaveFocus())
+    await user.click(details)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(details).toHaveFocus())
+  })
+
   it('keeps canonical conversation navigation separate from row details', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
