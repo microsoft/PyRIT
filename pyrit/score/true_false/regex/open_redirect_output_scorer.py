@@ -40,7 +40,7 @@ class OpenRedirectOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     _EXECUTABLE_DATA_MIME_TYPES = (
         rf"(?:text{_SLASH}(?:html|(?:x-)?javascript|ecmascript)"
         rf"|image{_SLASH}svg{_PLUS}xml"
-        rf"|application{_SLASH}(?:x-)?javascript)(?![A-Za-z0-9+_-])"
+        rf"|application{_SLASH}(?:(?:x-)?javascript|xhtml{_PLUS}xml))(?![A-Za-z0-9+_-])"
     )
 
     _DEFAULT_PATTERNS: dict[str, str] | None = {

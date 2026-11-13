@@ -90,6 +90,8 @@ from pyrit.score import OpenRedirectOutputScorer
         "url=data:application/javascript,alert(1)",
         "url=data:text/ecmascript,alert(1)",
         "https://example.com/login?redirect_uri=data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "url=data:application/xhtml+xml,<html xmlns='http://www.w3.org/1999/xhtml'><script>alert(1)</script></html>",
+        "https://example.com/login?redirect=data%3Aapplication%2Fxhtml%2Bxml,%3Chtml%3E",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -140,6 +142,7 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "url=data:image/png;base64,iVBORw0KGgo=",
         "url=data:text/plain,hello",
         "url=data:text/htmlx,hello",
+        "url=data:application/xhtml+xmlx,hi",
         "redirect: javascript: is unsafe to allow",
         "target: data: unavailable in cache",
         "The javascript: protocol should never be used.",
