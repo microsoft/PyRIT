@@ -166,6 +166,7 @@ describe('CreateConverterDialog', () => {
     renderDialog({ editing: { converter }, onTemporary })
     const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
     expect(offset).toHaveValue('1')
+    expect(screen.getByText('Only changed fields apply to this stage, not the registered converter.')).toBeInTheDocument()
     expect(screen.queryByLabelText(/registry name/i)).not.toBeInTheDocument()
     await user.clear(offset)
     await user.type(offset, '3')
@@ -177,6 +178,85 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
     expect(converter.identifier.caesar_offset).toBe(1)
     expect(onTemporary.mock.calls[0][1].hash).toBe('private-hash')
+  })
+
+  it('keeps a copy on its source connection settings', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, copy_locked: true },
+      { name: 'synthesis_voice_name', type_name: 'str', required: false, default: 'en-US-AvaNeural' },
+    ], 'AzureSpeechTextToAudioConverter')
+    const converter = {
+      converter_id: 'speech',
+      identifier: {
+        class_name: 'AzureSpeechTextToAudioConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash',
+      },
+    }
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: { ...converter.identifier, hash: 'copy-hash' } })
+    renderDialog({ editing: { converter }, onTemporary })
+
+    const voice = await screen.findByRole('textbox', { name: /synthesis_voice_name/i })
+    expect(screen.queryByRole('textbox', { name: /azure_speech_region/i })).not.toBeInTheDocument()
+    expect(screen.getByText(
+      'Only changed fields apply to this stage, not the registered converter. '
+      + 'Connection settings stay with the source converter.',
+    )).toBeInTheDocument()
+    await user.clear(voice)
+    await user.type(voice, 'en-US-JennyNeural')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('AzureSpeechTextToAudioConverter', {
+      source_name: 'speech', source_hash: 'source-hash', params: { synthesis_voice_name: 'en-US-JennyNeural' },
+    })
+  })
+
+  it('drops a connection setting carried over from earlier temporary settings', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, copy_locked: true },
+      { name: 'synthesis_voice_name', type_name: 'str', required: false, default: 'en-US-AvaNeural' },
+      { name: 'output_format', type_name: 'str', required: false, default: 'wav' },
+    ], 'AzureSpeechTextToAudioConverter')
+    const converter = {
+      converter_id: 'speech',
+      identifier: {
+        class_name: 'AzureSpeechTextToAudioConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash',
+      },
+    }
+    const spec = {
+      source_name: 'speech', source_hash: 'source-hash',
+      params: { azure_speech_region: 'westus2', output_format: 'mp3' },
+    }
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: { ...converter.identifier, hash: 'copy-hash' } })
+    renderDialog({ editing: { converter, spec }, onTemporary })
+
+    const voice = await screen.findByRole('textbox', { name: /synthesis_voice_name/i })
+    await user.clear(voice)
+    await user.type(voice, 'en-US-JennyNeural')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('AzureSpeechTextToAudioConverter', {
+      source_name: 'speech',
+      source_hash: 'source-hash',
+      params: { output_format: 'mp3', synthesis_voice_name: 'en-US-JennyNeural' },
+    })
+  })
+
+  it('offers connection settings when creating a converter', async () => {
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, copy_locked: true },
+    ], 'AzureSpeechTextToAudioConverter')
+    renderDialog()
+    await selectConverterType('AzureSpeechTextToAudioConverter')
+
+    expect(await screen.findByRole('textbox', { name: /azure_speech_region/i })).toBeInTheDocument()
+    expect(screen.queryByText(/connection settings stay with the source converter/i)).not.toBeInTheDocument()
   })
 
   it('locks scalar inputs while Apply Settings is building so a newer edit cannot be lost', async () => {
