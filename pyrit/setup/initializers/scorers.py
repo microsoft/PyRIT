@@ -26,6 +26,7 @@ from azure.ai.contentsafety.models import TextCategory
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import Parameter, SeedPrompt
 from pyrit.registry import ScorerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.score import (
     AzureContentFilterScorer,
     DecisionScorer,
@@ -513,6 +514,8 @@ class ScorerInitializer(PyRITInitializer):
         for best_tag, (preferred_name, category_tag) in self._PREFERRED_BEST.items():
             entry = scorer_registry.instances.get_entry(preferred_name)
             if entry is not None:
+                # A saved scorer under this name would stand in for the one this script couldn't build.
+                refuse_saved_entry(entry)
                 scorer_registry.instances.add_tags(name=preferred_name, tags=[best_tag])
                 logger.info(f"Tagged {preferred_name} as {best_tag}")
                 continue
@@ -635,7 +638,10 @@ class ScorerInitializer(PyRITInitializer):
 
         # Fall back: prefer scale_and_refusal, then first composite
         best_tags: list[str] = [ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
-        if scorer_registry.instances.get_entry(self.SCALE_AND_REFUSAL):
+        scale_and_refusal = scorer_registry.instances.get_entry(self.SCALE_AND_REFUSAL)
+        if scale_and_refusal is not None:
+            # A saved scorer under this name would stand in for the one this script couldn't build.
+            refuse_saved_entry(scale_and_refusal)
             fallback_name = self.SCALE_AND_REFUSAL
         else:
             composites = scorer_registry.instances.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)

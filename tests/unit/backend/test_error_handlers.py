@@ -5,12 +5,16 @@
 Tests for backend error handler middleware.
 """
 
+import logging
+
 import pytest
+from azure.core.exceptions import ServiceRequestError
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from pyrit.backend.middleware import register_error_handlers
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 
 class TestErrorHandlers:
@@ -124,6 +128,78 @@ class TestErrorHandlers:
         assert data["type"] == "/errors/forbidden"
         assert data["title"] == "Forbidden"
         assert data["status"] == 403
+
+    def test_storage_failure_returns_503_and_names_the_location_only_in_the_log(
+        self, app: FastAPI, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that the log names the storage location and the response doesn't."""
+        error = DocumentStorageUnavailableError(
+            label="Scenario preset", source="/srv/presets", reason="Permission denied"
+        )
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            raise error
+
+        with caplog.at_level(logging.DEBUG, logger="pyrit.backend.middleware.error_handlers"):
+            response = client.get("/test")
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "type": "/errors/storage-unavailable",
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "Scenario preset storage is unavailable",
+            "instance": "/test",
+        }
+        assert "Scenario preset storage at /srv/presets is unavailable: Permission denied (GET /test)" in (
+            caplog.messages
+        )
+        assert all(record.exc_info is None for record in caplog.records)
+
+    def test_storage_failure_log_keeps_the_error_behind_it_without_its_sas_url(
+        self, app: FastAPI, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that the debug log shows the error behind a storage failure, with its SAS URL left out."""
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            cause = ServiceRequestError(message="https://account.blob.core.windows.net/presets?sp=r&sig=secret-sig")
+            raise DocumentStorageUnavailableError(
+                label="Scenario preset",
+                source="https://account.blob.core.windows.net/presets",
+                reason="ServiceRequestError",
+            ) from cause
+
+        with caplog.at_level(logging.DEBUG, logger="pyrit.backend.middleware.error_handlers"):
+            response = client.get("/test")
+
+        assert response.status_code == 503
+        assert (
+            "Scenario preset storage at https://account.blob.core.windows.net/presets is unavailable: "
+            "ServiceRequestError (GET /test)"
+        ) in caplog.messages
+        assert "ServiceRequestError: https://account.blob.core.windows.net/presets" in caplog.text
+        assert "secret-sig" not in caplog.text
+
+    def test_unreadable_document_returns_503_with_the_reason(self, app: FastAPI, client: TestClient) -> None:
+        """Test that one document that can't be read is named with its reason."""
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            raise DocumentUnreadableError(
+                label="Scenario preset",
+                source="/srv/presets",
+                name="nightly",
+                file_name="nightly.json",
+                reason="Not a regular file",
+            )
+
+        response = client.get("/test")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Scenario preset 'nightly' can't be read: Not a regular file"
+        assert "/srv/presets" not in response.text
 
     def test_not_implemented_error_returns_501(self, app: FastAPI, client: TestClient) -> None:
         """Test that NotImplementedError returns 501 with RFC 7807 format."""

@@ -842,6 +842,9 @@ export type AttackTargetResolutionStatus =
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
 
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
+
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
   | 'operation'
@@ -1045,6 +1048,10 @@ export interface AttackSummary {
   chat_scorer?: RegisteredComponentReference | null
   chat_scorer_inherited?: boolean
   execution_read_only?: boolean
+  /** The attack is still running in a scan; its result is not saved yet. */
+  in_progress?: boolean
+  /** The scan run that produced this attack; null outside a scan. */
+  scenario_result_id?: string | null
   manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
@@ -1070,7 +1077,7 @@ export interface AttackSummary {
 export interface AttackMetadata extends Pick<AttackSummary,
   | 'attack_result_id' | 'conversation_id' | 'objective' | 'labels' | 'operator'
   | 'target' | 'target_unbound' | 'outcome' | 'automated_score' | 'human_score'
-  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation'
+  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation' | 'in_progress' | 'scenario_result_id'
 > {
   readonly execution_read_only: boolean
   readonly last_response_message_piece_id: string | null
@@ -1242,6 +1249,16 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
+/** Message-score fields displayed by ScoreDetails. */
+export interface ScoreSummary {
+  scorer: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
+}
+
 export interface BackendMessagePiece {
   id: string
   sequence?: number
@@ -1406,6 +1423,20 @@ export interface AttackConversationsResponse {
   total_count?: number | null
 }
 
+/** Read-only display references may lack saved-result counts and a main conversation. */
+export interface ConversationReferenceView extends Omit<ConversationSummary, 'message_count'> {
+  message_count: number | null
+}
+
+export interface AttackConversationReferencesView extends Omit<AttackConversationsResponse, 'main_conversation_id' | 'conversations'> {
+  main_conversation_id: string | null
+  conversations: ConversationReferenceView[]
+}
+
+export type ReadAttackConversationReferences = (
+  attackResultId: string, params?: ConversationPageParams,
+) => Promise<AttackConversationReferencesView>
+
 
 export interface CreateConversationRequest {
   source_conversation_id?: string
@@ -1513,6 +1544,7 @@ export interface SeedRecord {
   parameters: string[] | null
   conditions: SeedCondition[] | null
   response_json_schema: Record<string, unknown> | null
+  is_general_technique?: boolean
 }
 
 /** Wire shape of one logical example from `GET /api/datasets/seeds`. */
@@ -1776,10 +1808,6 @@ export interface LaunchScenarioSuiteRequest {
   labels?: Record<string, string> | null
 }
 
-export interface ScenarioSuiteReadinessRequest extends Omit<LaunchScenarioSuiteRequest, 'target_name'> {
-  target_name?: string | null
-}
-
 export type ScenarioSuiteExecutionStatus =
   | 'QUEUING'
   | 'IN_PROGRESS'
@@ -1909,11 +1937,6 @@ export interface ScenarioRunSizeEstimateRequest {
   datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
-}
-
-export interface ScenarioReadiness {
-  bindings: Array<{ role: string; component: string; identifier: ComponentIdentifier }>
-  issues: Array<{ role: string; component: string; reason: string; remediation: string }>
 }
 
 export interface ScenarioRunEstimateComponent {
@@ -2154,13 +2177,14 @@ export interface ScenarioQueueSnapshot {
   queued: ScenarioQueueEntry[]
 }
 
-/** One persisted attack attempt in ascending progress order. */
+/** The objective score of one persisted scan attack attempt. */
 export interface ScenarioProgressScore {
   scorer_name: string
   score_type: 'true_false' | 'float_scale' | 'unknown'
   status: 'complete' | 'undetermined'
   score_value?: string | null
   score_rationale?: string | null
+  score_category?: string[]
 }
 
 export type ScenarioIdentityValue =
@@ -2275,6 +2299,8 @@ export interface PairedOutcomeDetailPage {
 }
 
 export interface ScenarioRunPlanAtomicGroup {
+  /** Absent in legacy plans, whose topology is unknown. */
+  is_compound?: boolean | null
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
@@ -2472,7 +2498,10 @@ export interface ScenarioProgressSummary {
 
 export interface ScenarioActiveConversation {
   attack_result_id: string
+  /** The conversation the attack is working on, or the recorded objective conversation. */
   conversation_id: string
+  /** Every objective conversation the running attack has started so far, in first-use order. */
+  conversation_ids?: string[]
   atomic_attack_name: string
   seed_group_id?: string | null
   objective: string
@@ -2496,6 +2525,25 @@ export interface RuntimeReadiness {
   ready: boolean
   state: string
   generation: string
+  /** How many saved entries couldn't be restored; administrators see why in the runtime status. */
+  restore_failures?: number
+}
+
+export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniques'
+
+export interface SavedEntryRef {
+  kind: RegistryRecipeKind
+  name: string
+}
+
+/** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */
+export interface RestoreFailure {
+  kind: RegistryRecipeKind
+  name: string | null
+  reason: string
+  message: string
+  version: string | null
+  dependency: SavedEntryRef | null
 }
 
 export interface RuntimeStatus {
@@ -2506,6 +2554,8 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
+  /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
+  restore_failures?: RestoreFailure[]
 }
 export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
@@ -2578,6 +2628,20 @@ export interface FindingListResponse {
 
 export interface FindingListItem extends Finding {
   evidence_count: number
+}
+
+/** A finding that links an attack as evidence. */
+export interface AttackFindingItem extends Finding {
+  /** Current name of the finding's Operation. */
+  operation_name: string
+  /** The evidence link; detach it through the Operation evidence route. */
+  evidence_id: string
+}
+
+/** Every finding that links an attack, highest severity first, then newest first. */
+export interface AttackFindingListResponse {
+  attack_result_id: string
+  items: AttackFindingItem[]
 }
 
 export interface FindingEvidenceCreateRequest {

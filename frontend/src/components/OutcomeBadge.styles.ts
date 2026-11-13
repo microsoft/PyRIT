@@ -1,6 +1,7 @@
 import { makeStyles, shorthands, tokens } from '@fluentui/react-components'
 
 import { OUTCOME_PALETTE } from '@/styles/outcomePalette'
+import { mobileTouchTargetHeight } from '@/styles/touchTargets'
 
 export const useOutcomeBadgeStyles = makeStyles({
   success: {
@@ -18,6 +19,14 @@ export const useOutcomeBadgeStyles = makeStyles({
   undetermined: {
     '--pyrit-outcome-color': OUTCOME_PALETTE.undetermined.color,
     '--pyrit-outcome-tint': OUTCOME_PALETTE.undetermined.tint,
+  },
+  in_progress: {
+    '--pyrit-outcome-color': tokens.colorBrandForeground1,
+    '--pyrit-outcome-tint': tokens.colorBrandBackground2,
+  },
+  preparing: {
+    '--pyrit-outcome-color': tokens.colorNeutralForeground2,
+    '--pyrit-outcome-tint': tokens.colorNeutralBackground3,
   },
   filled: {
     backgroundColor: 'var(--pyrit-outcome-color)',
@@ -43,5 +52,11 @@ export const useOutcomeBadgeStyles = makeStyles({
     display: 'inline-flex',
     flexShrink: 0,
     color: 'var(--pyrit-outcome-color)',
+  },
+  scoreTrigger: {
+    ...mobileTouchTargetHeight,
+    minWidth: 0,
+    minHeight: 0,
+    padding: 0,
   },
 })
