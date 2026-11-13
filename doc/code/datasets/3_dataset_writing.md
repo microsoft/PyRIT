@@ -69,7 +69,9 @@ seeds:
 
 Loading the dataset flattens this into seven objectives with their parent links and paths. Dataset defaults apply to every child, and a child can share a `prompt_group_alias` with prompts like any other seed. `SeedDataset.get_decomposition_tree()` walks the result. `CentralMemory.get_instance().get_seed_decomposition_async(objective_id=...)` reads a stored objective with everything beneath it; pass the same ID as `root_id` to `build_objective_decomposition_tree` to walk a subtree that starts below the root.
 
-Memory stores and deduplicates each tree as one unit: reloading the same tree reuses the stored rows and their IDs, while the same objective text standalone or in a different tree stays separate. A tree must therefore be added whole, with every parent present, and all of its objectives and grouped prompts in one dataset.
+Memory stores and deduplicates each tree as one unit, including its grouped prompts. Matching uses execution content, group membership and sequence, parent links, and ordered path steps. Re-importing a tree with only metadata edits updates the stored metadata, including path names and descriptions, without adding rows. Stored seed, group, and path IDs, parent links, and original import attribution and timestamps are preserved; the caller's IDs are remapped to the stored ones. Content, behavioral, or structural changes create a separate tree, and the same objective text standalone or in another tree stays separate.
+
+A tree must be added whole, with every parent present, and all of its objectives and grouped prompts in one dataset. Deleting only part of a tree, even through prompt-group expansion, raises `ValueError` before deleting any rows; select every objective in the tree, for example by dataset name. Reads return parents before children, with siblings ordered by `date_added`, then `id`; the order of steps within each path is unchanged.
 
 ## Design LLMs for Single Tasks
 

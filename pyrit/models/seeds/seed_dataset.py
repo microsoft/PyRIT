@@ -176,7 +176,7 @@ class SeedDataset(BaseModel):
         return data
 
     @classmethod
-    def from_yaml_file(cls, file: str | Path) -> SeedDataset:
+    def from_yaml_file(cls, file: str | Path, *, default_dataset_name: str | None = None) -> SeedDataset:
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
@@ -186,6 +186,8 @@ class SeedDataset(BaseModel):
 
         Args:
             file: The input file path.
+            default_dataset_name: Dataset name used when the YAML declares neither
+                ``dataset_name`` nor ``name``.
 
         Returns:
             SeedDataset: The loaded dataset.
@@ -198,7 +200,7 @@ class SeedDataset(BaseModel):
         # it at the top of this module would create a circular import.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_dataset_from_yaml
 
-        return load_seed_dataset_from_yaml(file)
+        return load_seed_dataset_from_yaml(file, default_dataset_name=default_dataset_name)
 
     def get_values(
         self,
@@ -356,6 +358,8 @@ class SeedDataset(BaseModel):
             if isinstance(seed, dict) and cls.SUB_OBJECTIVES_KEY in seed:
                 flattened.extend(cls._flatten_objective(seed=seed, parent_id=None))
             else:
+                if isinstance(seed, dict):
+                    cls._require_children_for_symbolic_paths(seed)
                 flattened.append(seed)
         return flattened
 
@@ -371,6 +375,7 @@ class SeedDataset(BaseModel):
             ValueError: If a decomposed seed is not an objective, or a sub-objective key or path
                 step is invalid.
         """
+        cls._require_children_for_symbolic_paths(seed)
         seed = dict(seed)
         if seed.setdefault("seed_type", "objective") != "objective":
             raise ValueError(f"Only objectives can have {cls.SUB_OBJECTIVES_KEY}; got seed_type '{seed['seed_type']}'.")
@@ -389,6 +394,28 @@ class SeedDataset(BaseModel):
         if children:
             seed["paths"] = [cls._resolve_path_keys(path=path, keys=keys) for path in seed.get("paths") or []]
         return [seed, *descendants]
+
+    @classmethod
+    def _require_children_for_symbolic_paths(cls, seed: dict[str, Any]) -> None:
+        """
+        Distinguish unresolved child keys from flat UUID-based path steps.
+
+        Raises:
+            ValueError: If symbolic path steps have no sub-objectives to resolve.
+        """
+        paths = seed.get("paths")
+        if seed.get(cls.SUB_OBJECTIVES_KEY) or not isinstance(paths, (list, tuple)):
+            return
+        for path in paths:
+            steps = path.get("steps") if isinstance(path, dict) else path
+            if not isinstance(steps, (list, tuple)):
+                continue
+            for step in steps:
+                if isinstance(step, str):
+                    try:
+                        uuid.UUID(step)
+                    except ValueError as exc:
+                        raise ValueError(f"Symbolic paths require non-empty {cls.SUB_OBJECTIVES_KEY}.") from exc
 
     @classmethod
     def _take_sub_objective_key(cls, *, child: Any, taken: dict[str, uuid.UUID]) -> tuple[str, dict[str, Any]]:

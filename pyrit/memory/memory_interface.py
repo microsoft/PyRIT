@@ -5020,6 +5020,9 @@ class MemoryInterface(abc.ABC):
         with closing(self._get_session()) as session:
             try:
                 query = session.query(SeedEntry).filter(and_(*conditions))
+                self._validate_decomposition_deletion(
+                    session=session, seed_ids=select(SeedEntry.id).where(and_(*conditions))
+                )
                 count = query.delete(synchronize_session=False)
                 session.commit()
                 return count
@@ -5067,7 +5070,8 @@ class MemoryInterface(abc.ABC):
 
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
@@ -5171,6 +5175,10 @@ class MemoryInterface(abc.ABC):
                     .where(SeedEntry.prompt_group_id.isnot(None))
                     .distinct()
                 )
+                self._validate_decomposition_deletion(
+                    session=session,
+                    seed_ids=select(SeedEntry.id).where(SeedEntry.prompt_group_id.in_(group_id_subquery)),
+                )
                 count = (
                     session.query(SeedEntry)
                     .filter(SeedEntry.prompt_group_id.in_(group_id_subquery))
@@ -5182,6 +5190,31 @@ class MemoryInterface(abc.ABC):
                 session.rollback()
                 logger.exception(f"Failed to remove seed groups from memory: {e}")
                 raise
+
+    @staticmethod
+    def _validate_decomposition_deletion(*, session: Session, seed_ids: Select[tuple[uuid.UUID]]) -> None:
+        """
+        Reject a delete that selects only one end of a stored parent-child link.
+
+        Args:
+            session (Session): The deletion's transaction.
+            seed_ids (Select): The IDs selected for deletion, including any group expansion.
+
+        Raises:
+            ValueError: If the selection contains only part of a decomposition tree.
+        """
+        deletion = seed_ids.cte()
+        selected = SeedEntry.id.in_(select(deletion.c.id))
+        parent_selected = SeedEntry.parent_objective_id.in_(select(deletion.c.id))
+        boundary = session.query(SeedEntry.id).filter(
+            SeedEntry.parent_objective_id.is_not(None),
+            or_(and_(selected, not_(parent_selected)), and_(not_(selected), parent_selected)),
+        )
+        if boundary.first() is not None:
+            raise ValueError(
+                "Deletion must include the whole decomposition tree; select every objective in the tree "
+                "(for example, by dataset_name). No seeds were deleted."
+            )
 
     def _add_list_conditions(
         self,
@@ -5343,6 +5376,13 @@ class MemoryInterface(abc.ABC):
         successful insertion; a copy that would otherwise reuse the stored group ID is moved to a
         new group so editing it cannot alter the original group.
 
+        Decomposition trees, including prompts grouped with their objectives, deduplicate as complete
+        units by execution identity, group membership, parent links, and ordered path steps. Descriptive
+        metadata and path labels do not change tree identity: re-importing updates that metadata in
+        place, keeping the original import attribution and timestamps. Caller seed, group, parent,
+        and path IDs are remapped to the stored IDs only after a successful write. Changes to content,
+        behavioral inputs, group sequence, or tree structure store a separate tree.
+
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
             added_by (str): The user who added the seeds.
@@ -5370,14 +5410,15 @@ class MemoryInterface(abc.ABC):
         """
         Store one decomposition tree unless an equivalent tree is already stored.
 
-        An equivalent stored tree has the same content, structure, and paths in the same dataset;
+        An equivalent stored tree has the same execution content, structure, and paths in the same dataset;
         each caller seed then takes its stored counterpart's identifiers, including group IDs the
         caller left unset. A new tree whose seed or group IDs are already stored is copied with new
         identifiers so it cannot alter the stored rows.
         """
-        canonical, ordered = canonicalize_decomposition(unit=unit, member_key=self._seed_group_member_key)
+        canonical, ordered = canonicalize_decomposition(unit=unit, member_key=self._seed_decomposition_member_key)
         stored = self._find_stored_decomposition(root=unit.root, canonical=canonical)
         if stored is not None:
+            self._update_decomposition_metadata(seeds=ordered, stored=stored)
             for target, source in zip(ordered, stored, strict=True):
                 assign_decomposition_identity(target=target, source=source)
             return
@@ -5389,6 +5430,67 @@ class MemoryInterface(abc.ABC):
         self._insert_entries(entries=[SeedEntry(entry=seed) for seed in copies])
         for target, source in zip(unit.seeds, copies, strict=True):
             assign_decomposition_identity(target=target, source=source)
+
+    def _seed_decomposition_member_key(self, seed: Seed[Any]) -> str:
+        """
+        Identify a tree member by execution content and its position in a prompt group.
+
+        Returns:
+            str: Canonical execution identity, excluding descriptive metadata.
+        """
+        return json.dumps(
+            {
+                "execution": self._seed_standalone_key(seed),
+                "value_sha256": seed.value_sha256,
+                "sequence": getattr(seed, "sequence", None),
+                "parameters": getattr(seed, "parameters", None) or [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _update_decomposition_metadata(self, *, seeds: Sequence[Seed[Any]], stored: Sequence[Seed[Any]]) -> None:
+        """
+        Update matched tree metadata atomically, retaining stored identity and import provenance.
+
+        Args:
+            seeds (Sequence[Seed]): Incoming seeds in canonical order.
+            stored (Sequence[Seed]): Matching stored seeds in the same order.
+
+        Raises:
+            StaleDataError: If a matched row disappeared.
+            SQLAlchemyError: If the metadata update fails.
+        """
+        with closing(self._get_session()) as session:
+            try:
+                for seed, source in zip(seeds, stored, strict=True):
+                    copy = seed.model_copy(deep=True)
+                    assign_decomposition_identity(target=copy, source=source)
+                    entry = SeedEntry(entry=copy)
+                    count = (
+                        session.query(SeedEntry)
+                        .filter(SeedEntry.id == source.id)
+                        .update(
+                            {
+                                SeedEntry.name: entry.name,
+                                SeedEntry.description: entry.description,
+                                SeedEntry.harm_categories: entry.harm_categories,
+                                SeedEntry.authors: entry.authors,
+                                SeedEntry.groups: entry.groups,
+                                SeedEntry.source: entry.source,
+                                SeedEntry.prompt_metadata: entry.prompt_metadata,
+                                SeedEntry.paths: entry.paths,
+                            },
+                            synchronize_session=False,
+                        )
+                    )
+                    if count != 1:
+                        raise StaleDataError(f"Stored decomposition member {source.id} disappeared during re-import.")
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to update decomposition metadata: {e}")
+                raise
 
     def _find_stored_decomposition(self, *, root: SeedObjective, canonical: str) -> list[Seed[Any]] | None:
         """
@@ -5404,7 +5506,9 @@ class MemoryInterface(abc.ABC):
         ]
         if root.dataset_name:
             conditions.append(SeedEntry.dataset_name == root.dataset_name)
-        for candidate in self._query_entries(SeedEntry, conditions=and_(*conditions)):
+        for candidate in self._query_entries(
+            SeedEntry, conditions=and_(*conditions), order_by=(SeedEntry.date_added, SeedEntry.id)
+        ):
             objectives, mates = self._get_decomposition_entries(root_id=candidate.id)
             if len(objectives) < 2:
                 continue
@@ -5413,7 +5517,7 @@ class MemoryInterface(abc.ABC):
                     root_id=candidate.id, seeds=tuple(entry.get_seed() for entry in (*objectives, *mates))
                 )
                 stored_canonical, stored_ordered = canonicalize_decomposition(
-                    unit=stored_unit, member_key=self._seed_group_member_key
+                    unit=stored_unit, member_key=self._seed_decomposition_member_key
                 )
             except ValueError:
                 logger.warning(f"Skipping stored decomposition {candidate.id}: its tree is incomplete or invalid.")
@@ -5437,7 +5541,10 @@ class MemoryInterface(abc.ABC):
             children = [
                 entry
                 for entry in self._execute_batched_query(
-                    SeedEntry, batch_column=SeedEntry.parent_objective_id, batch_values=frontier
+                    SeedEntry,
+                    batch_column=SeedEntry.parent_objective_id,
+                    batch_values=frontier,
+                    order_by=(SeedEntry.date_added, SeedEntry.id),
                 )
                 if entry.id not in seen
             ]
@@ -5449,7 +5556,10 @@ class MemoryInterface(abc.ABC):
             [
                 entry
                 for entry in self._execute_batched_query(
-                    SeedEntry, batch_column=SeedEntry.prompt_group_id, batch_values=group_ids
+                    SeedEntry,
+                    batch_column=SeedEntry.prompt_group_id,
+                    batch_values=group_ids,
+                    order_by=(SeedEntry.date_added, SeedEntry.id),
                 )
                 if entry.id not in seen
             ]
@@ -6212,6 +6322,9 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                self._validate_decomposition_deletion(
+                    session=session, seed_ids=select(SeedEntry.id).where(SeedEntry.dataset_name == dataset_name)
+                )
                 deleted = (
                     session.query(SeedEntry)
                     .filter(SeedEntry.dataset_name == dataset_name)
@@ -6362,9 +6475,14 @@ class MemoryInterface(abc.ABC):
         if seeds:
             related_prompt_group_ids = {seed.prompt_group_id for seed in seeds if seed.prompt_group_id}
             if related_prompt_group_ids:
-                seeds = self._dispatch_memory_operation(
-                    "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
-                )
+                # Seeds without a group can't be found by group ID, so keep them as matched.
+                ungrouped_seeds = [seed for seed in seeds if not seed.prompt_group_id]
+                seeds = [
+                    *self._dispatch_memory_operation(
+                        "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
+                    ),
+                    *ungrouped_seeds,
+                ]
 
         # Deduplicate seeds to ensure we don't have duplicate prompts in the groups
         if seeds:
@@ -11163,6 +11281,9 @@ class MemoryInterface(abc.ABC):
         filter must be provided to prevent accidental deletion of all seeds. The deletion runs in a single
         transaction, so it works consistently across SQLite and Azure SQL.
 
+        A filter that selects only part of a decomposition tree raises ``ValueError`` before any
+        rows are deleted. Select every objective in the tree, for example by dataset name.
+
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
@@ -11218,7 +11339,7 @@ class MemoryInterface(abc.ABC):
             int: The number of seeds removed.
 
         Raises:
-            ValueError: If no filters are provided.
+            ValueError: If no filters are provided or the selection would delete only part of a decomposition tree.
             SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
         """
         return await self._run_database_operation_async(
@@ -11346,9 +11467,13 @@ class MemoryInterface(abc.ABC):
         to prevent accidental deletion of all seeds. The deletion runs in a single transaction, so it
         works consistently across SQLite and Azure SQL.
 
+        Group expansion must still select every objective of an affected decomposition tree;
+        otherwise ``ValueError`` is raised before any rows are deleted.
+
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
@@ -11405,7 +11530,7 @@ class MemoryInterface(abc.ABC):
             int: The number of seeds removed across all affected groups.
 
         Raises:
-            ValueError: If no filters are provided.
+            ValueError: If no filters are provided or the expanded groups contain only part of a decomposition tree.
             SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
         """
         return await self._run_database_operation_async(

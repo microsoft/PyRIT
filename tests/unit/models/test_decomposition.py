@@ -91,6 +91,19 @@ def test_tree_subtree_starts_at_any_level() -> None:
     assert tree.get_subtree(A) == (A,)
 
 
+@pytest.mark.parametrize("method", ["get_node", "get_children", "walk", "get_subtree"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_tree_rejects_unknown_node_id(*, method: str, empty: bool) -> None:
+    tree = DecompositionTree([]) if empty else _tree()
+    missing = uuid.uuid4()
+
+    with pytest.raises(ValueError, match=f"Decomposition node {missing} is missing"):
+        if method == "walk":
+            next(tree.walk(missing))
+        else:
+            getattr(tree, method)(missing)
+
+
 def test_tree_rejects_duplicate_nodes() -> None:
     with pytest.raises(ValueError, match="more than once"):
         DecompositionTree([DecompositionNode(id=A), DecompositionNode(id=A)])

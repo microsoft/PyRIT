@@ -194,6 +194,62 @@ def test_from_dict_rejects_invalid_sub_objectives(seed: dict[str, Any], message:
         SeedDataset.from_dict({"seeds": [seed]})
 
 
+@pytest.mark.parametrize("empty_children", [False, True])
+@pytest.mark.parametrize("mapping_path", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("from_dict", [False, True])
+def test_symbolic_paths_require_sub_objectives(
+    *, empty_children: bool, mapping_path: bool, nested: bool, from_dict: bool
+) -> None:
+    seed: dict[str, Any] = {
+        "seed_type": "objective",
+        "value": "Goal",
+        "paths": [{"steps": ["step"]}] if mapping_path else [["step"]],
+    }
+    if empty_children:
+        seed["sub_objectives"] = []
+    if nested:
+        seed = {"value": "Parent", "sub_objectives": [{"key": "child", **seed}]}
+
+    with pytest.raises(ValueError, match="Symbolic paths require non-empty sub_objectives"):
+        if from_dict:
+            SeedDataset.from_dict({"seeds": [seed]})
+        else:
+            SeedDataset(seeds=[seed])
+
+
+@pytest.mark.parametrize("as_model", [False, True])
+def test_flat_uuid_paths_do_not_require_nested_sub_objectives(*, as_model: bool) -> None:
+    root_id, child_id = uuid.uuid4(), uuid.uuid4()
+    dataset = SeedDataset.from_dict(
+        {
+            "seeds": [
+                {
+                    "seed_type": "objective",
+                    "id": str(root_id),
+                    "value": "Goal",
+                    "paths": [DecompositionPath(steps=(child_id,))] if as_model else [{"steps": [str(child_id)]}],
+                },
+                {
+                    "seed_type": "objective",
+                    "id": str(child_id),
+                    "value": "Step",
+                    "parent_objective_id": str(root_id),
+                },
+            ]
+        }
+    )
+
+    assert dataset.objectives[0].paths[0].steps == (child_id,)
+    assert dataset.get_decomposition_tree().get_children(root_id) == (child_id,)
+
+
+@pytest.mark.parametrize("paths", [42, [42], [{"steps": None}]])
+def test_malformed_flat_paths_keep_model_validation(paths: Any) -> None:
+    with pytest.raises(ValidationError):
+        SeedDataset.from_dict({"seeds": [{"seed_type": "objective", "value": "Goal", "paths": paths}]})
+
+
 def test_decomposition_tree_rejects_missing_parent() -> None:
     dataset = SeedDataset(seeds=[SeedObjective(value="child", parent_objective_id=uuid.uuid4())])
 

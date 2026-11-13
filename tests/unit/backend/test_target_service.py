@@ -340,7 +340,7 @@ class TestListTargetTypes:
         assert targets_parameter.type_name == "list[str]"
         assert targets_parameter.is_list is True
         weights_parameter = next(param for param in types_entry.parameters if param.name == "weights")
-        assert weights_parameter.type_name == "list[int]"
+        assert weights_parameter.type_name == "list[int] | None"
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
@@ -1657,9 +1657,10 @@ class TestFrontendBackendCompatibilitySync:
                     continue
                 if parameter.choices:
                     continue
-                if parameter.type_name in scalar_types or parameter.type_name in simple_list_types:
+                type_name = parameter.type_name.removesuffix(" | None")
+                if type_name in scalar_types or type_name in simple_list_types:
                     continue
-                if parameter.type_name == "dict" or parameter.type_name.startswith("dict["):
+                if type_name == "dict" or type_name.startswith("dict["):
                     continue
                 unsupported_names.append(parameter.name)
             if unsupported_names:
