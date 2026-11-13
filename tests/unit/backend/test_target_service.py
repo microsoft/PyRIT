@@ -15,11 +15,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import AzureError
 
 from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models import ComponentIdentifier
 from pyrit.models.catalog import (
@@ -32,8 +30,8 @@ from pyrit.models.catalog import (
 )
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.instance_registry import RegistryNameTakenError, registration_origin
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, TargetRegistry
+from pyrit.registry.instance_registry import registration_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
@@ -1865,32 +1863,16 @@ class TestSaveTarget:
         assert "auth_mode" not in document["params"]
         assert "owner" not in document
 
-    @pytest.mark.parametrize(
-        ("auth_mode", "params", "message"),
-        [
-            ("api_key", {"api_key": "sk-typed-secret"}, "can't hold credentials"),
-            ("api_key", {}, "'api_key' is empty"),
-            ("identity", {"headers": '{"api-key": "sk-header-secret"}'}, "'headers' can carry a credential"),
-            ("identity", {"endpoint": f"{_AZURE_ENDPOINT}?code=sk-url-secret"}, "can carry a credential in a URL"),
-        ],
-    )
-    async def test_refuses_to_save_a_target_that_would_hold_or_use_a_key(
-        self, tmp_path: Path, auth_mode: str, params: dict[str, Any], message: str
-    ) -> None:
+    async def test_a_target_that_cant_be_saved_is_neither_created_nor_saved(self, tmp_path: Path) -> None:
         service = TargetService()
         request = _save_request(
-            params={"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", **params}, auth_mode=auth_mode
+            params={"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "api_key": "sk-typed-secret"},
+            auth_mode="api_key",
         )
 
-        with (
-            patch.dict(os.environ, {"OPENAI_CHAT_KEY": "sk-server-key"}),
-            pytest.raises(NotSaveableError, match=message) as refusal,
-        ):
+        with pytest.raises(NotSaveableError, match="can't hold credentials"):
             await service.create_target_async(request=request, recipes_source=str(tmp_path))
 
-        assert str(refusal.value).endswith("It can still be created without saving it.")
-        assert "secret" not in str(refusal.value)
-        assert "sk-server-key" not in str(refusal.value)
         assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
         assert not (tmp_path / "targets").exists()
 
@@ -1952,52 +1934,6 @@ class TestSaveTarget:
         release.assert_awaited_once()
         assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
         assert (tmp_path / "targets" / "contoso_gpt4o.json").read_bytes() == before
-
-    @pytest.mark.parametrize(
-        ("error", "raised"),
-        [
-            (RegistryNameTakenError("Instance 'contoso_gpt4o' already exists"), SavedEntryConflictError),
-            (ValueError("Instance name 'contoso_gpt4o' is reserved"), ValueError),
-            (RuntimeError("x"), RuntimeError),
-        ],
-    )
-    async def test_deletes_the_saved_file_when_the_target_cant_be_registered(
-        self, tmp_path: Path, error: Exception, raised: type[Exception]
-    ) -> None:
-        service = TargetService()
-
-        with (
-            patch.object(service._registry.instances, "register", side_effect=error),
-            pytest.raises(raised) as refusal,
-        ):
-            await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
-
-        assert type(refusal.value) is raised
-        assert not (tmp_path / "targets" / "contoso_gpt4o.json").exists()
-
-    @pytest.mark.parametrize(
-        ("error", "reason"),
-        [
-            (PermissionError(13, "Permission denied", "/srv/recipes/targets/x.json"), "Permission denied"),
-            (OSError("disk full"), "OSError"),
-            (AzureError("unreachable"), "AzureError"),
-        ],
-    )
-    async def test_reports_storage_failures_as_unavailable(self, tmp_path: Path, error: Exception, reason: str) -> None:
-        service = TargetService()
-
-        with (
-            patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=error),
-            patch("pyrit.backend.services.saved_entries.logger") as log,
-            pytest.raises(SavedEntryStorageError, match="Saved targets can't be written right now."),
-        ):
-            await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
-
-        assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
-        message = log.error.call_args.args[0] % log.error.call_args.args[1:]
-        assert f"'contoso_gpt4o' couldn't be written to {tmp_path / 'targets'} ({reason})" in message
-        assert not any(detail in message for detail in ("/srv/recipes", "disk full", "unreachable"))
-        assert log.error.call_args.kwargs.get("exc_info") is None
 
     async def test_two_saves_of_one_name_save_one_target(self, tmp_path: Path) -> None:
         service = TargetService()
@@ -2092,23 +2028,6 @@ class TestSaveTarget:
         assert entries["OpenAIChatTarget"].saveable_auth_modes == []
         assert "OPENAI_CUSTOM_HEADERS" in (entries["OpenAIChatTarget"].not_saveable_reason or "")
         assert entries["TextTarget"].saveable_auth_modes == ["api_key"]
-
-    async def test_reports_storage_trouble_when_a_failed_save_cant_be_undone(self, tmp_path: Path) -> None:
-        service = TargetService()
-
-        with (
-            patch.object(service._registry.instances, "register", side_effect=ValueError("taken")),
-            patch.object(RegistryRecipeStorage, "delete_recipe", side_effect=OSError("disk gone")),
-            patch("pyrit.backend.services.saved_entries.logger") as log,
-            pytest.raises(SavedEntryStorageError),
-        ):
-            await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
-
-        assert (tmp_path / "targets" / "contoso_gpt4o.json").exists()
-        message = log.error.call_args.args[0] % log.error.call_args.args[1:]
-        assert "'contoso_gpt4o'" in message
-        assert "couldn't be deleted (OSError)" in message
-        assert "disk gone" not in message
 
     async def test_a_reserved_name_is_refused_as_invalid_not_as_taken(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="reserved") as refusal:

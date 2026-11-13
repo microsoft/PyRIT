@@ -31,9 +31,9 @@ from pyrit.backend.routes.common import (
     saved_entry_owner_from_request,
 )
 from pyrit.backend.services import get_target_service
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.models.catalog import TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
