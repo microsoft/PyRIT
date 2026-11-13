@@ -7,6 +7,8 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  MessageBar,
+  MessageBarBody,
   Text,
   mergeClasses,
 } from '@fluentui/react-components'
@@ -99,6 +101,28 @@ export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAtt
           </DialogActions>
         </DialogBody>
       </DialogSurface>
+    </Dialog>
+  )
+}
+
+interface CancelScanDialogProps {
+  readonly open: boolean
+  readonly cancelling: boolean
+  readonly error: string | null
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}
+
+export function CancelScanDialog({ open, cancelling, error, onOpenChange, onConfirm }: CancelScanDialogProps) {
+  const styles = useScenarioRunPageStyles()
+  return (
+    <Dialog open={open} onOpenChange={(_, data) => { onOpenChange(data.open) }}>
+      <DialogSurface><DialogBody><DialogTitle>Cancel scan?</DialogTitle><DialogContent className={styles.dialogContent}>
+        <Text>Stop remaining attacks. Saved conversations and results stay available.</Text>
+        {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+      </DialogContent><DialogActions><Button disabled={cancelling} onClick={() => { onOpenChange(false) }}>Keep running</Button>
+        <Button appearance="primary" disabled={cancelling} onClick={onConfirm}>{cancelling ? 'Cancelling...' : 'Cancel scan'}</Button>
+      </DialogActions></DialogBody></DialogSurface>
     </Dialog>
   )
 }

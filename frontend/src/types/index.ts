@@ -1246,6 +1246,16 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
+/** Message-score fields displayed by ScoreDetails. */
+export interface ScoreSummary {
+  scorer: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
+}
+
 export interface BackendMessagePiece {
   id: string
   sequence?: number
