@@ -1519,7 +1519,7 @@ _RESTORABLE_TARGET = {
     "class_module": "pyrit.prompt_target.openai.openai_chat_target",
     "class_name": "OpenAIChatTarget",
     "auth_mode": "identity",
-    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o"},
+    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "headers": "{}"},
 }
 _BROKEN_TARGET = {"class_module": "nowhere", "class_name": "Nope"}
 

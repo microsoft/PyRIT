@@ -6,6 +6,7 @@ import logging
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from types import MappingProxyType
 from typing import Any, ClassVar, Self, final
 
 from pyrit.common import AuthMode, print_deprecation_message
@@ -119,6 +120,28 @@ class PromptTarget(Identifiable):
     # cannot point the server's credentials at a caller-chosen resource; direct Python use is
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
+
+    # Credential parameters that, left empty, let the target fall back to a credential from this
+    # server (an environment variable, or the server's Azure identity), each mapped to the value
+    # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
+    # parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls back
+    # to this server's credentials, so a saved entry that would is refused. Choosing ``"identity"``
+    # isn't a fallback.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
+
+    # Parameters that say where the target sends requests (a URL, or a path the target adds to
+    # one), each mapped to whether an empty value takes this server's setting. A saved target sets
+    # each one that would, since a server setting can carry a credential, and none can carry a
+    # credential itself: a user name or password, a SAS token, a fragment, or a query other than
+    # ``api-version``.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({})
+
+    # Environment variables the target's client reads extra headers from, whatever the target's own
+    # settings say. A server can put a credential there, so a saved target isn't built while one is set.
+    server_header_variables: ClassVar[tuple[str, ...]] = ()
+
+    # Why this target type can't be saved even without a credential, or None when it can.
+    not_saveable_reason: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
