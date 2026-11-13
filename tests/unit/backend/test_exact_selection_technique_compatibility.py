@@ -12,9 +12,9 @@ from uuid import UUID, uuid4
 import pytest
 
 import pyrit.models.seeds.seed_simulated_conversation as simulated_conversation_module
+from pyrit.backend.services import ScenarioService
 from pyrit.backend.services.dataset_example_fingerprint import dataset_example_fingerprint
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.executor.attack import RTASystemPromptPaths
 from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
@@ -27,15 +27,14 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SimulatedTargetSystemPromptPaths,
     TargetIdentifier,
 )
 from pyrit.models.component_spec import RegisteredComponentReference
-from pyrit.models.seeds.seed_simulated_conversation import SimulatedTargetSystemPromptPaths
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario
+from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, TechniqueRequirements
 from pyrit.scenario.core.technique_requirements import (
-    TechniqueRequirements,
     filter_seed_groups,
     prepare_seed_group,
 )
