@@ -146,6 +146,14 @@ if TYPE_CHECKING:
         MessageMultiLabelTrueFalseScorer,
         MultiLabelTrueFalseScorer,
     )
+    from pyrit.score.true_false.nemotron_safety_guard_parser import (
+        NemotronSafetyGuardLabel,
+        parse_nemotron_safety_guard_response,
+    )
+    from pyrit.score.true_false.nemotron_safety_guard_scorer import (
+        NemotronSafetyGuardScorer,
+        render_nemotron_safety_guard_prompt,
+    )
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallOrderScorer, OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
     from pyrit.score.true_false.physics_consistency_scorer import PhysicsConsistencyScorer
@@ -306,6 +314,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "NonReplayableObservationError": "pyrit.score.observation.execution",
     "MethKeywordScorer": "pyrit.score.true_false.regex.meth_keyword_scorer",
     "MetricsType": "pyrit.score.scorer_evaluation.metrics_type",
+    "NemotronSafetyGuardLabel": "pyrit.score.true_false.nemotron_safety_guard_parser",
+    "NemotronSafetyGuardScorer": "pyrit.score.true_false.nemotron_safety_guard_scorer",
     "NerveAgentKeywordScorer": "pyrit.score.true_false.regex.nerve_agent_keyword_scorer",
     "NumericRange": "pyrit.score.float_scale.numeric_scale",
     "NumericRubric": "pyrit.score.float_scale.numeric_scale",
@@ -317,6 +327,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PackageHallucinationScorer": "pyrit.score.true_false.regex.package_hallucination_scorer",
     "parse_harmbench_response": "pyrit.score.true_false.harmbench_parser",
     "parse_llamaguard_response": "pyrit.score.true_false.llamaguard_parser",
+    "parse_nemotron_safety_guard_response": "pyrit.score.true_false.nemotron_safety_guard_parser",
     "parse_shieldgemma_response": "pyrit.score.true_false.shieldgemma_parser",
     "parse_strongreject_response": "pyrit.score.float_scale.strongreject_parser",
     "parse_wildguard_response": "pyrit.score.true_false.wildguard_parser",
@@ -332,6 +343,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "render_insecure_code_system_prompt": "pyrit.score.float_scale.insecure_code_scorer",
     "render_llamaguard_prompt": "pyrit.score.true_false.llamaguard_scorer",
     "render_likert_system_prompt": "pyrit.score.float_scale.self_ask_likert_scorer",
+    "render_nemotron_safety_guard_prompt": "pyrit.score.true_false.nemotron_safety_guard_scorer",
     "render_scale_system_prompt": "pyrit.score.float_scale.self_ask_scale_scorer",
     "render_shieldgemma_prompt": "pyrit.score.true_false.shieldgemma_scorer",
     "render_strongreject_prompt": "pyrit.score.float_scale.strongreject_scorer",

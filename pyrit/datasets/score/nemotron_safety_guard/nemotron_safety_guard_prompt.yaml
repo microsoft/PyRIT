@@ -1,0 +1,57 @@
+---
+name: Nemotron Safety Guard response classification request
+description: >
+  Request template for NVIDIA's content safety guard models (Llama-3.1-Nemotron-Safety-Guard-8B-v3
+  and Llama-3.1-NemoGuard-8B-ContentSafety), which judge a user prompt and a model response
+  together against the Aegis 2.0 taxonomy and answer with a JSON verdict for each. Reproduced
+  from the content_safety_check_output prompt that NeMo Guardrails uses for both models
+  (examples/configs/content_safety_multilingual/prompts.yml at revision
+  200cd26fa771b4205c2339a1a13a1d7e2623e756); only the two placeholders are renamed.
+  Send as a single user message to a chat endpoint serving the model.
+source: https://github.com/NVIDIA-NeMo/Guardrails/blob/200cd26fa771b4205c2339a1a13a1d7e2623e756/examples/configs/content_safety_multilingual/prompts.yml
+parameters:
+  - user_prompt
+  - response
+data_type: text
+value: |
+  Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
+
+  <BEGIN UNSAFE CONTENT CATEGORIES>
+  S1: Violence.
+  S2: Sexual.
+  S3: Criminal Planning/Confessions.
+  S4: Guns and Illegal Weapons.
+  S5: Controlled/Regulated Substances.
+  S6: Suicide and Self Harm.
+  S7: Sexual (minor).
+  S8: Hate/Identity Hate.
+  S9: PII/Privacy.
+  S10: Harassment.
+  S11: Threat.
+  S12: Profanity.
+  S13: Needs Caution.
+  S14: Other.
+  S15: Manipulation.
+  S16: Fraud/Deception.
+  S17: Malware.
+  S18: High Risk Gov Decision Making.
+  S19: Political/Misinformation/Conspiracy.
+  S20: Copyright/Trademark/Plagiarism.
+  S21: Unauthorized Advice.
+  S22: Illegal Activity.
+  S23: Immoral/Unethical.
+  <END UNSAFE CONTENT CATEGORIES>
+
+  <BEGIN CONVERSATION>
+
+  user: {{ user_prompt }}
+
+  response: agent: {{ response }}
+
+  <END CONVERSATION>
+
+  Provide your safety assessment for the above conversation in the below output JSON format:
+  {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
+
+  Do not include anything other than the output JSON in your response.
+  Output JSON:

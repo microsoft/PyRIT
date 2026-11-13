@@ -525,6 +525,16 @@ for mode in AssertJudgmentMode:
 #   HarmBench, the scorer clips each response to 512 classifier tokens; it downloads the classifier's
 #   tokenizer on first use, which needs `pip install pyrit[huggingface]`, and `clip_generations=False`
 #   sends full responses instead.
+# - **`NemotronSafetyGuardScorer`** sends a prompt and response pair to a `PromptTarget` serving one of
+#   NVIDIA's content safety guard models, `nvidia/Llama-3.1-Nemotron-Safety-Guard-8B-v3`
+#   [@joshi2025cultureguard] (multilingual) or `nvidia/llama-3.1-nemoguard-8b-content-safety`, with the
+#   prompt NeMo Guardrails sends to both. In one call the model rates the prompt and the response safe or
+#   unsafe against the Aegis 2.0 taxonomy [@ghosh2025aegis]; `NemotronSafetyGuardLabel` selects which
+#   verdict becomes the boolean, and the other verdict and the named categories are kept in the score
+#   metadata, where `NemotronSafetyGuardVerdicts.read(score)` reads them. The prompt is the latest earlier
+#   user turn of the scored conversation, or the objective when there is none, as for a labelled
+#   response in a scorer evaluation. Serve the model from a chat endpoint that applies its chat
+#   template, such as vLLM's OpenAI-compatible server or an NVIDIA NIM, at temperature 0.
 # - **`WildGuardScorer`** — sends a prompt and response pair to a `PromptTarget` serving
 #   WildGuard, which judges in one call whether the request is harmful, whether the response is
 #   a refusal, and whether the response is harmful. `WildGuardLabel` selects which judgement

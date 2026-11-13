@@ -36,6 +36,7 @@ from pyrit.score import (
     MessageFloatScaleScorer,
     MessageScorer,
     MessageTrueFalseScorer,
+    NemotronSafetyGuardScorer,
     NonReplayableObservationError,
     NumericRange,
     NumericRubric,
@@ -302,6 +303,7 @@ def test_legacy_constructor_rejects_invalid_target(legacy_scorer_type: type[Scor
         (WildGuardScorer, {}),
         (HarmBenchScorer, {}),
         (StrongRejectScorer, {}),
+        (NemotronSafetyGuardScorer, {}),
         (InsecureCodeScorer, {"system_prompt": "Judge the code.", "harm_categories": ["test"]}),
         (
             SelfAskGeneralFloatScaleScorer,

@@ -15,6 +15,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.score import (
     HarmBenchScorer,
     LlamaGuardScorer,
+    NemotronSafetyGuardScorer,
     Scorer,
     ShieldGemmaGuideline,
     ShieldGemmaScorer,
@@ -29,6 +30,7 @@ SCORER_CASES = [
     pytest.param(WildGuardScorer, {}, "{{ user_prompt }} {{ response }}", id="wildguard"),
     pytest.param(HarmBenchScorer, {}, "{{ behavior }} {{ generation }}", id="harmbench"),
     pytest.param(StrongRejectScorer, {}, "{{ forbidden_prompt }} {{ response }}", id="strongreject"),
+    pytest.param(NemotronSafetyGuardScorer, {}, "{{ user_prompt }} {{ response }}", id="nemotron_safety_guard"),
     pytest.param(
         ShieldGemmaScorer,
         {"guideline": ShieldGemmaGuideline(name="Custom harm", description="content that is bad.")},

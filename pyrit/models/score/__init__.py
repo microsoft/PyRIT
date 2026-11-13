@@ -40,6 +40,10 @@ if TYPE_CHECKING:
         FloatFeedback,
         InvalidFloatFeedbackError,
     )
+    from pyrit.models.score.nemotron_safety_guard_verdicts import (
+        InvalidNemotronSafetyGuardVerdictsError,
+        NemotronSafetyGuardVerdicts,
+    )
     from pyrit.models.score.observation import (
         Acquisition,
         ConversationObservationPayload,
@@ -115,6 +119,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "InvalidFloatFeedbackError": "pyrit.models.score.float_feedback",
     "InvalidStrongRejectAnswersError": "pyrit.models.score.strongreject_answers",
     "StrongRejectAnswers": "pyrit.models.score.strongreject_answers",
+    "InvalidNemotronSafetyGuardVerdictsError": "pyrit.models.score.nemotron_safety_guard_verdicts",
+    "NemotronSafetyGuardVerdicts": "pyrit.models.score.nemotron_safety_guard_verdicts",
     "ExecutionStepKind": "pyrit.models.score.trace",
     "ExecutionTraceObservationPayload": "pyrit.models.score.observation",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",
