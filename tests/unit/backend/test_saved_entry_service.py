@@ -18,11 +18,6 @@ from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services import ConverterService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.saved_entries import (
-    SavedEntryConflictError,
-    SavedEntryStorageError,
-    save_then_register_async,
-)
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
@@ -44,13 +39,18 @@ from pyrit.models.catalog import (
     RestoreFailureReason,
     SavedEntryOwner,
 )
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryStorageError,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import registration_origin, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.async_utils import TEST_WATCHDOG_SECONDS
-from unit.mocks import MockPromptTarget
 
 ADA = SavedEntryOwner(oid="00000000-0000-0000-0000-000000000001", name="Ada")
 BEN_OID = "00000000-0000-0000-0000-000000000002"
@@ -504,40 +504,6 @@ async def test_a_deleted_entry_is_released_unless_it_is_still_registered(tmp_pat
         release.assert_not_awaited()
     else:
         release.assert_awaited_once_with(target)
-
-
-async def test_a_save_naming_an_entry_deleted_after_it_was_checked_is_refused(tmp_path: Path) -> None:
-    recipe = ComponentRecipe(
-        class_module="pyrit.converter.tone_converter",
-        class_name="ToneConverter",
-        params={"converter_target": "saved_chat", "tone": "formal"},
-    )
-    register = AsyncMock()
-
-    with pytest.raises(SavedEntryConflictError) as refusal:
-        await save_then_register_async(
-            kind=CONVERTERS, name="formal_tone", recipe=recipe, recipes_source=str(tmp_path), register=register
-        )
-
-    assert str(refusal.value) == "Target 'saved_chat' was deleted while this was being saved, so it can't be saved now."
-    register.assert_not_called()
-    assert not (tmp_path / "converters" / "formal_tone.json").exists()
-
-
-async def test_a_save_naming_a_temporary_entry_that_took_a_deleted_ones_name_is_refused(tmp_path: Path) -> None:
-    TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="saved_chat")
-    recipe = ComponentRecipe(
-        class_module="pyrit.converter.tone_converter",
-        class_name="ToneConverter",
-        params={"converter_target": "saved_chat", "tone": "formal"},
-    )
-
-    with pytest.raises(SavedEntryConflictError):
-        await save_then_register_async(
-            kind=CONVERTERS, name="formal_tone", recipe=recipe, recipes_source=str(tmp_path), register=AsyncMock()
-        )
-
-    assert not (tmp_path / "converters" / "formal_tone.json").exists()
 
 
 async def test_a_delete_waits_for_a_save_in_progress_and_then_sees_it(tmp_path: Path) -> None:

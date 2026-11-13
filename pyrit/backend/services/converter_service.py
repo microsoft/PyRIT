@@ -49,20 +49,19 @@ from pyrit.backend.services.media_persistence import (
     results_container_url,
     validate_blob_media_url,
 )
-from pyrit.backend.services.saved_entries import (
-    NotSaveableError,
-    SavedEntryConflictError,
-    SavedEntryRemovalError,
-    launch_script_class_reason,
-    prepare_saved_params_async,
-    save_then_register_async,
-)
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError, save_then_register_locked_async
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.registry import ConverterRegistry
+from pyrit.registry import (
+    ConverterRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    launch_script_class_reason,
+    prepare_saved_params_async,
+)
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
@@ -459,13 +458,13 @@ class ConverterService:
             owner=owner,
             current_user_oid=owner.oid if owner is not None else None,
         )
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.CONVERTERS,
             name=name,
             recipe=ComponentRecipe(
                 class_module=converter_cls.__module__, class_name=request.type, params=params, owner=owner
             ),
-            recipes_source=recipes_source,
+            source=recipes_source,
             register=lambda metadata: self._registry.instances.register(converter_obj, name=name, metadata=metadata),
         )
         return converter

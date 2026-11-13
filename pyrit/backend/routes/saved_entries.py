@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from pyrit.backend.middleware.auth import current_user_oid, get_authentication_policy, has_admin_access
 from pyrit.backend.models import ProblemDetail
 from pyrit.backend.models.saved_entries import SavedEntryResponse
-from pyrit.backend.services.saved_entries import SavedEntryStorageError
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
     SavedEntryForbiddenError,
@@ -25,6 +24,7 @@ from pyrit.backend.services.saved_entry_service import (
 )
 from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog import RegistryRecipeKind
+from pyrit.registry import SavedEntryStorageError
 
 router = APIRouter(prefix="/saved-entries", tags=["saved-entries"])
 

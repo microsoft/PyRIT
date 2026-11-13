@@ -15,14 +15,7 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
-from pyrit.backend.services.saved_entries import (
-    NotSaveableError,
-    SavedEntryConflictError,
-    launch_script_class_reason,
-    refuse_temporary_entries,
-    refuse_temporary_references,
-    save_then_register_async,
-)
+from pyrit.backend.services.saved_entries import save_then_register_locked_async
 from pyrit.models import ComponentType
 from pyrit.models.catalog import (
     RegistryEntryOrigin,
@@ -31,7 +24,15 @@ from pyrit.models.catalog import (
     SavedEntryOwner,
     TechniqueRecipe,
 )
-from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
+from pyrit.registry import (
+    AttackRegistry,
+    AttackTechniqueRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    launch_script_class_reason,
+    refuse_temporary_entries,
+    refuse_temporary_references,
+)
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
 from pyrit.registry.instance_registry import registry_entry_origin, saved_entry_owner
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
@@ -196,12 +197,12 @@ class TechniqueService:
             owner=owner,
             current_user_oid=owner.oid if owner is not None else None,
         )
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.TECHNIQUES,
             name=request.name,
             recipe=TechniqueRecipe(**request.model_dump(exclude_unset=True, exclude={"name", "persist"}), owner=owner),
-            recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register_runtime(factory, metadata=metadata),
+            source=recipes_source,
         )
         return result
 

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.backend.models.saved_entries import SavedEntryResponse
 from pyrit.backend.services.component_lifecycle import release_component_async
-from pyrit.backend.services.saved_entries import REGISTRIES_BY_KIND, SavedEntryStorageError, saved_entry_lock
+from pyrit.backend.services.saved_entries import REGISTRIES_BY_KIND, saved_entry_lock
 from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.models.catalog import (
     RegistryEntryOrigin,
@@ -30,6 +30,7 @@ from pyrit.models.catalog import (
     SavedEntryRef,
     StoredRecipe,
 )
+from pyrit.registry import SavedEntryStorageError
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
