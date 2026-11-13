@@ -103,10 +103,12 @@ def _seed_upgrade_rows(connection: sa.Connection) -> None:
             id=operation_id, name="Preserved", name_key="preserved", created_at=timestamp, description=""
         )
     )
+    # Insert into this revision's schema, without defaults for columns added by later revisions.
+    findings = sa.Table(FindingEntry.__tablename__, sa.MetaData(), autoload_with=connection)
     connection.execute(
-        sa.insert(FindingEntry).values(
-            id=finding_id,
-            operation_id=operation_id,
+        findings.insert().values(
+            id=str(finding_id),
+            operation_id=str(operation_id),
             title="Preserved finding",
             description="",
             severity="important",
