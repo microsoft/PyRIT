@@ -3,6 +3,7 @@
 
 """Exact selections must not be changed by technique compatibility skips or adaptation."""
 
+import json
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -10,22 +11,29 @@ from uuid import UUID, uuid4
 
 import pytest
 
+import pyrit.models.seeds.seed_simulated_conversation as simulated_conversation_module
 from pyrit.backend.services.dataset_example_fingerprint import dataset_example_fingerprint
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_service import ScenarioService
+from pyrit.executor.attack import RTASystemPromptPaths
 from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     DatasetExampleReference,
     DatasetExampleSelection,
     DatasetExampleSelectionError,
+    ScenarioRunSizeEstimateRequest,
     Seed,
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
     TargetIdentifier,
 )
+from pyrit.models.component_spec import RegisteredComponentReference
+from pyrit.models.seeds.seed_simulated_conversation import SimulatedTargetSystemPromptPaths
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
-from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy
+from pyrit.registry import AttackTechniqueRegistry, ScorerRegistry, TargetRegistry
+from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core.technique_requirements import (
     TechniqueRequirements,
     filter_seed_groups,
@@ -34,7 +42,7 @@ from pyrit.scenario.core.technique_requirements import (
 from pyrit.scenario.scenarios.adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt import RapidResponse
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
-from pyrit.score import TrueFalseScorer
+from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 DATASET = "exact-technique"
@@ -241,3 +249,92 @@ async def test_exact_selection_checks_the_registered_override_text_adaptive_runs
     )
     groups = await resolved["dataset_config"].get_attack_seed_groups_async()
     assert [seed_group.objective.value for seed_group in groups] == ["separate goal"]
+
+
+async def _objective_and_legacy_simulated_conversation(memory: MemoryInterface) -> UUID:
+    """Store an objective with a simulated conversation saved before prompt paths were inlined."""
+    group = uuid4()
+    common = {"dataset_name": DATASET, "added_by": "test", "prompt_group_id": group}
+    conversation = SeedSimulatedConversation(
+        num_turns=1,
+        adversarial_chat_system_prompt=SeedPrompt(value="adversary", parameters=["objective"]),
+        simulated_target_system_prompt=SeedPrompt(value="target", parameters=["objective", "num_turns"]),
+        **common,
+    )
+    await _store(memory, SeedObjective(value="simulated goal", **common), conversation)
+    async with await memory.get_session_async() as session:
+        entry = await session.get(SeedEntry, conversation.id)
+        assert entry is not None
+        entry.value = json.dumps(
+            {
+                "num_turns": 1,
+                "adversarial_chat_system_prompt_path": str(RTASystemPromptPaths.TEXT_GENERATION.value),
+                "simulated_target_system_prompt_path": str(SimulatedTargetSystemPromptPaths.COMPLIANT.value),
+            }
+        )
+        await session.commit()
+    return group
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_configured_estimate_checks_techniques_without_loading_legacy_templates(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """Estimate checks crescendo against a stored simulated conversation from inspection data alone."""
+    group = await _objective_and_legacy_simulated_conversation(sqlite_instance)
+    selection = await _selection(sqlite_instance, example_ids=[group])
+    scorer = SubStringScorer(substring="expected")
+    scorers = ScorerRegistry()
+    scorers.instances.register(scorer, name="explicit")
+    request = ScenarioRunSizeEstimateRequest(
+        techniques=["crescendo"],
+        example_selection=selection,
+        include_baseline=False,
+        objective_scorer=RegisteredComponentReference(
+            registry_name="explicit", identifier_hash=scorer.get_identifier().hash
+        ),
+    )
+    loader = MagicMock(side_effect=simulated_conversation_module.resolve_prompt_source)
+    template = MagicMock(side_effect=SeedPrompt.from_yaml_with_required_parameters)
+    with (
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=scorers),
+        patch.object(simulated_conversation_module, "resolve_prompt_source", loader),
+        patch.object(SeedPrompt, "from_yaml_with_required_parameters", template),
+        patch.object(PromptTarget, "send_prompt_async", side_effect=AssertionError("target call")),
+        patch.object(Scenario, "initialize_async", side_effect=AssertionError("launch")),
+    ):
+        estimate = await ScenarioService().estimate_scenario_run_size_async(
+            scenario_name="airt.rapid_response", request=request
+        )
+    assert estimate is not None
+    assert estimate.dataset_size.model_dump() == {"kind": "bounded", "value": 1}
+    assert estimate.total_attack_count == 1
+    assert loader.call_count == 0
+    assert template.call_count == 0
+
+    resolved = await _resolve(sqlite_instance, technique="crescendo", example_ids=[group])
+    groups = await resolved["dataset_config"].get_attack_seed_groups_async()
+    assert groups[0].has_simulated_conversation
+    assert groups[0].simulated_conversation_config.adversarial_chat_system_prompt is not None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_configured_estimate_still_rejects_an_incompatible_simulated_conversation(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """The inspection check keeps rejecting a technique that would skip or adapt the stored conversation."""
+    group = await _objective_and_legacy_simulated_conversation(sqlite_instance)
+    request = ScenarioRunSizeEstimateRequest(
+        techniques=["many_shot"],
+        example_selection=await _selection(sqlite_instance, example_ids=[group]),
+        include_baseline=False,
+    )
+    loader = MagicMock(side_effect=simulated_conversation_module.resolve_prompt_source)
+    with (
+        patch.object(simulated_conversation_module, "resolve_prompt_source", loader),
+        pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught,
+    ):
+        await ScenarioService().estimate_scenario_run_size_async(scenario_name="airt.rapid_response", request=request)
+    assert caught.value.example_id == group
+    assert "many_shot" in str(caught.value)
+    assert loader.call_count == 0

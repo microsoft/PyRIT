@@ -253,6 +253,7 @@ class ScenarioConfigurationResolver:
         max_retries: int | None = None,
         memory_labels: dict[str, str] | None = None,
         scenario_params: Mapping[str, Any] | None = None,
+        inspect_exact_selection: bool = False,
     ) -> dict[str, Any]:
         """
         Resolve shared launch and estimate fields into scenario parameters.
@@ -264,7 +265,9 @@ class ScenarioConfigurationResolver:
         run it only after objective-only adaptation. The factories checked are the ones
         the scenario executes, resolved by the scenario itself with ``scenario_params``
         and the resolved values, so a registered override or run-local edit is checked
-        rather than a catalog default it replaces.
+        rather than a catalog default it replaces. Estimates set ``inspect_exact_selection``
+        so the check reads stored seed types, roles, and sequences and never rebuilds a
+        simulated conversation or loads a prompt template; launch checks the built seeds.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -331,7 +334,9 @@ class ScenarioConfigurationResolver:
             # Configure the introspection instance with the parameters the run receives, then
             # ask the scenario which factory it executes for each selected technique.
             introspection_instance.set_params_from_args(args={**(scenario_params or {}), **resolved})
-            exact_selection.validate_technique_factories(introspection_instance._get_selected_technique_factories())
+            exact_selection.validate_technique_factories(
+                introspection_instance._get_selected_technique_factories(), inspect_only=inspect_exact_selection
+            )
         return resolved
 
     @classmethod
@@ -385,12 +390,15 @@ class ScenarioConfigurationResolver:
         memory: MemoryInterface | None = None,
         reject_exact_selection: bool = False,
         scenario_params: Mapping[str, Any] | None = None,
+        inspect_exact_selection: bool = False,
     ) -> dict[str, Any]:
         """
         Resolve launch and estimate fields, including an exact example selection.
 
         Named-dataset requests keep today's override behavior. An exact selection replaces
-        the population and is rejected by the explicit dataset load route.
+        the population and is rejected by the explicit dataset load route. Estimates pass
+        ``inspect_exact_selection`` so the technique check uses stored inspection data only;
+        launch leaves it off and checks the executable seeds.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -444,4 +452,5 @@ class ScenarioConfigurationResolver:
             max_retries=max_retries,
             memory_labels=memory_labels,
             scenario_params=scenario_params,
+            inspect_exact_selection=inspect_exact_selection,
         )

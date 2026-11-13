@@ -562,6 +562,7 @@ class ScenarioService:
                 example_selection=request.example_selection,
                 include_baseline=request.include_baseline,
                 scenario_params=request.scenario_params,
+                inspect_exact_selection=True,
             )
             return await self._registry.create_and_estimate_async(
                 name=scenario_name,
