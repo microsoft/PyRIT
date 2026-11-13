@@ -78,6 +78,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
+    #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
+    is_compound: bool | None = None
 
 
 class ScenarioRunPlan(BaseModel):

@@ -4,6 +4,7 @@ import { Button, MessageBar, MessageBarBody, Text } from '@fluentui/react-compon
 import { ArrowClockwiseRegular, PlayRegular, StopRegular } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
+import OperationParentLink from '@/components/Operations/OperationParentLink'
 import ScanStatusBadge from '@/components/ScanStatusBadge'
 import type { ScenarioRunControls } from '@/hooks/useScenarioRunControls'
 import type { ScenarioProgressHeader } from '@/types'
@@ -18,7 +19,7 @@ interface ScenarioRunHeaderProps {
   readonly headerRef: Ref<HTMLElement>
 }
 
-/** The scan's title, state, and run controls, with any control failure below them. */
+/** The scan's Operation, title, state, and run controls, with any control failure below them. */
 export default function ScenarioRunHeader({ run, active, controls, headerRef }: ScenarioRunHeaderProps) {
   const styles = useScenarioRunPageStyles()
   const resumable = run.status === 'FAILED' || run.status === 'CANCELLED'
@@ -26,6 +27,7 @@ export default function ScenarioRunHeader({ run, active, controls, headerRef }: 
     <>
       <header className={styles.header} ref={headerRef} tabIndex={-1}>
         <div className={styles.headerIdentity}>
+          <OperationParentLink id={run.operation_id} name={run.operation_name} />
           <div className={styles.titleRow}>
             <Text as="h1" size={700} weight="semibold">{run.scenario_registry_name ?? run.scenario_name}</Text>
             <ScanStatusBadge status={run.status} testId="run-state-badge" />
@@ -35,7 +37,7 @@ export default function ScenarioRunHeader({ run, active, controls, headerRef }: 
         <div className={styles.headerActions}>
           {active && <Link className={styles.backLink} to="/scanner/queue">View queue</Link>}
           <Button icon={<ArrowClockwiseRegular />} disabled={controls.rerunPending} onClick={controls.rerun}>
-            {controls.rerunPending ? 'Loading...' : 'Rerun'}
+            {controls.rerunPending ? 'Loading...' : 'Rerun with changes'}
           </Button>
           {active ? (
             <Button icon={<StopRegular />} className={styles.touchTarget} onClick={() => { controls.setCancelOpen(true) }}>

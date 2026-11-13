@@ -9,7 +9,7 @@ import type { ScenarioHierarchyNode, ScenarioProgressResult, ScenarioProgressSum
 import AttackExecutionTable from './AttackExecutionTable'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioResultHierarchy from './ScenarioResultHierarchy'
-import { hierarchyDisplayGroups } from './scenarioHierarchy'
+import { hierarchyDisplayGroups, runExecutionCount } from './scenarioHierarchy'
 
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
 const AUTO_EXPAND_GROUP_LIMIT = 20
@@ -20,7 +20,8 @@ interface AtomicAttackGroupsSectionProps {
   readonly summary: ScenarioProgressSummary
   readonly results: readonly ScenarioProgressResult[]
   readonly hierarchy: UseScenarioResultHierarchyResult
-  readonly seedObjectives: Map<string, string>
+  readonly seedObjectives: ReadonlyMap<string, string>
+  readonly techniqueNames: ReadonlyMap<string, string>
   readonly onOpenDetails: (attempt: ScenarioProgressResult | ScenarioHierarchyNode, trigger: HTMLElement) => void
   /** The section toggle, which receives focus when an opened attack is no longer on the page. */
   readonly toggleRef: Ref<HTMLButtonElement>
@@ -28,7 +29,7 @@ interface AtomicAttackGroupsSectionProps {
 
 /** Every display group's progress, expandable to its attack executions. */
 export default function AtomicAttackGroupsSection({
-  scenarioResultId, runStatus, summary, results, hierarchy, seedObjectives, onOpenDetails, toggleRef,
+  scenarioResultId, runStatus, summary, results, hierarchy, seedObjectives, techniqueNames, onOpenDetails, toggleRef,
 }: AtomicAttackGroupsSectionProps) {
   const styles = useScenarioRunPageStyles()
   const [sectionExpandedChoice, setSectionExpandedChoice] = useState<boolean | null>(null)
@@ -51,10 +52,7 @@ export default function AtomicAttackGroupsSection({
   }, [results])
 
   const displayGroups = hierarchyDisplayGroups(summary.display_groups ?? summary.techniques, hierarchy.roots.groups)
-  const producerCounts = summary.overall.producer_counts
-  const executionCount = producerCounts
-    ? producerCounts.target_facing.attempts + producerCounts.orchestration.attempts + producerCounts.unknown.attempts
-    : results.length
+  const executions = runExecutionCount(summary, results.length)
   const defaultExpanded = displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
   const sectionExpanded = sectionExpandedChoice ?? defaultExpanded
 
@@ -83,7 +81,7 @@ export default function AtomicAttackGroupsSection({
           </Button>
         </div>
         <Text className={styles.sectionHint}>
-          {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executionCount.toLocaleString()} ${producerCounts ? '' : 'loaded '}execution${executionCount === 1 ? '' : 's'}`}
+          {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${executions.count.toLocaleString()} ${executions.exact ? '' : 'loaded '}execution${executions.count === 1 ? '' : 's'}`}
         </Text>
       </div>
       <div id="atomic-groups-panel" hidden={!sectionExpanded}>
@@ -139,6 +137,7 @@ export default function AtomicAttackGroupsSection({
                               .flatMap((savedGroup) => savedGroup.roots)}
                             hierarchy={hierarchy}
                             seedObjectives={seedObjectives}
+                            techniqueNames={techniqueNames}
                             onOpenDetails={onOpenDetails}
                             showTimestamp={false}
                             showConversationLink
@@ -159,8 +158,9 @@ export default function AtomicAttackGroupsSection({
 }
 
 function DisplayGroupMetric({ label, value }: { readonly label: string; readonly value: string }) {
+  const styles = useScenarioRunPageStyles()
   return (
-    <div>
+    <div className={styles.displayGroupMetric}>
       <Text size={200}>{label}</Text>
       <Text weight="semibold">{value}</Text>
     </div>
