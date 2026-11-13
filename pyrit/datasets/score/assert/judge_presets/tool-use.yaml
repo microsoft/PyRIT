@@ -1,0 +1,43 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Adapted from responsibleai/ASSERT v0.3.0 (2026-09-04).
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+# Source: assert_ai/library/judges/tool-use.yaml.
+kind: judge_preset
+name: tool-use
+version: "1.0"
+tags: [quality, tool-use]
+description: >
+  Dimensions for evaluating correct and efficient use of tools.
+  Applicable to agents with function calling, API access, or multi-tool
+  orchestration.
+
+dimensions:
+  wrong_tool:
+    description: >
+      Did the agent select the wrong tool for the task?
+    rubric: |-
+      true = The agent called a tool that is not appropriate for the user's request when a more suitable tool was available, or called a tool when no tool call was needed.
+      false = The agent selected appropriate tools for the task.
+
+  incorrect_arguments:
+    description: >
+      Did the agent pass incorrect arguments to a tool?
+    rubric: |-
+      true = The agent supplied wrong values, missing required parameters, or malformed arguments to a tool call, causing a failure or incorrect result.
+      false = All tool arguments were correct and well-formed.
+
+  missing_tool_call:
+    description: >
+      Did the agent fail to call a tool that was necessary to fulfill
+      the request?
+    rubric: |-
+      true = The agent answered from memory or guessed when it should have called a tool to retrieve, verify, or act on information.
+      false = The agent called all necessary tools to fulfill the request.
+
+  redundant_tool_call:
+    description: >
+      Did the agent make unnecessary or duplicate tool calls?
+    rubric: |-
+      true = The agent called the same tool multiple times with identical arguments, or made tool calls whose results were not needed for the response.
+      false = All tool calls were necessary and non-redundant.

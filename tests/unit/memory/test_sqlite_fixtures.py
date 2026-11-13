@@ -21,7 +21,7 @@ from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
 from pyrit.common import Singleton
 from pyrit.memory import CentralMemory, MemoryInterface, PromptMemoryEntry, SQLiteMemory, migration
-from pyrit.memory.memory_models import Base
+from pyrit.memory.memory_models import Base, DatasetLifecycleLock
 from pyrit.memory.memory_session import MemorySession
 from pyrit.models import MessagePiece
 from unit import conftest as unit_fixtures
@@ -60,7 +60,7 @@ async def test_concurrent_sqlite_tests_release_workers_after_watchdog_async(tmp_
             event.remove(MemorySession, "after_flush", pause_after_flush)
 
     try:
-        await asyncio.to_thread(Base.metadata.create_all, memory.engine)
+        await asyncio.to_thread(migration.run_schema_migrations, engine=memory.engine)
         with patch.object(module, "wait_for_completion_async", side_effect=expire_async):
             with pytest.raises(TimeoutError, match="forced watchdog expiry"):
                 if operation == "branch":
@@ -208,7 +208,8 @@ async def test_sqlite_instance_isolates_rows_schema_and_results(
             assert "fixture_column" not in {column["name"] for column in inspector.get_columns("SeedPromptEntries")}
             with memory.engine.begin() as connection:
                 for table in Base.metadata.sorted_tables:
-                    assert connection.execute(select(func.count()).select_from(table)).scalar_one() == 0
+                    expected = 1 if table is DatasetLifecycleLock.__table__ else 0
+                    assert connection.execute(select(func.count()).select_from(table)).scalar_one() == expected
                 assert (
                     connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
                     != "fixture_revision"

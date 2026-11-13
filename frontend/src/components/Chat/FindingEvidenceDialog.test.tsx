@@ -296,6 +296,33 @@ it('retains the draft when creation fails, and a retry reuses the same finding I
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
 })
 
+it('shows caller-owned attack validation errors and permits retry without an evidence input', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.createFinding).mockRejectedValueOnce(Object.assign(new Error('Request failed'), {
+    isAxiosError: true,
+    response: {
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [{ field: 'body.attack_result_id', message: 'Attack is unavailable', code: 'value_error' }],
+      },
+    },
+  }))
+  renderDialog()
+  await openCreation(user)
+  await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Retain assessment')
+  await user.click(screen.getByRole('button', { name: 'Save finding' }))
+  expect(await screen.findByText('attack_result_id: Attack is unavailable')).toBeInTheDocument()
+  expect(screen.queryByRole('textbox', { name: 'Evidence attack ID' })).not.toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Retain assessment')
+  expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Save finding' }))
+  expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
+  const [first, retry] = jest.mocked(operationsApi.createFinding).mock.calls
+  expect(retry).toEqual(first)
+  expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
+})
+
 it('guards duplicate saves and cancellation while creating', async () => {
   const user = userEvent.setup()
   let finish: (value: typeof FINDING) => void = () => {}

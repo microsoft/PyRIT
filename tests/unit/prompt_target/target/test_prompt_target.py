@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 from collections.abc import MutableSequence
 from typing import Any
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.chat import ChatCompletion
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack import AttackStrategy
@@ -19,7 +21,9 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    ParameterResolution,
     PromptDataType,
+    RequestGenerationInfo,
     flatten_to_message_pieces,
 )
 from pyrit.prompt_target import (
@@ -66,6 +70,72 @@ def mock_attack_strategy():
         class_module="pyrit.executor.attack.test_attack",
     )
     return strategy
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [None, ValueError, asyncio.CancelledError])
+def test_capabilities_scope_restores_configuration_and_preserves_policy(error: type[BaseException] | None) -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=True),
+            normalizer_overrides={CapabilityName.EDITABLE_HISTORY: HistorySquashNormalizer()},
+        )
+    )
+    other = MockPromptTarget()
+    original = target.configuration
+    other_original = other.configuration
+    saved = original.capabilities.model_copy(update={"supports_multi_turn": False, "supports_json_output": True})
+
+    def scoped_operation() -> None:
+        with target.capabilities_scope(saved):
+            assert target.configuration is not original
+            assert target.configuration.policy is original.policy
+            assert target.configuration.normalizer_overrides == original.normalizer_overrides
+            assert target.configuration.pipeline.has_normalizer_for(capability=CapabilityName.EDITABLE_HISTORY)
+            assert target.capabilities == saved
+            assert other.configuration is other_original
+            with other.capabilities_scope(saved):
+                assert target.capabilities == saved
+                assert other.capabilities == saved
+                with target.capabilities_scope(original.capabilities):
+                    assert target.capabilities == original.capabilities
+                assert target.capabilities == saved
+            if error is not None:
+                raise error("Interrupted scoped operation")
+
+    if error is None:
+        scoped_operation()
+    else:
+        with pytest.raises(error):
+            scoped_operation()
+    assert target.configuration is original
+    assert target.capabilities == original.capabilities
+    assert other.configuration is other_original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_capabilities_scope_does_not_change_concurrent_target_reads_async() -> None:
+    target = MockPromptTarget()
+    original = target.configuration
+    saved = target.capabilities.model_copy(update={"supports_multi_turn": False})
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def scoped_operation_async() -> None:
+        with target.capabilities_scope(saved):
+            entered.set()
+            await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            assert target.capabilities == saved
+
+    task = asyncio.create_task(scoped_operation_async())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        assert target.configuration is original
+        assert target.capabilities.supports_multi_turn
+    finally:
+        release.set()
+        await task
+    assert target.configuration is original
 
 
 @pytest.mark.parametrize("data_type", ["audio_path", "video_path", "binary_path"])
@@ -554,7 +624,15 @@ async def test_response_preserves_metadata_after_history_squash():
 
     assert response_piece.conversation_id == _LINEAGE_CONVERSATION_ID
     # Lineage metadata survives alongside the metadata captured from the API response.
-    assert response_piece.prompt_metadata == {**_LINEAGE_PROMPT_METADATA, "finish_reason": "stop"}
+    info = RequestGenerationInfo(
+        temperature=ParameterResolution(requested=None, resolved=None, source="provider_default"),
+        request_piece_ids=(str(user_msg.get_piece().id),),
+    )
+    assert response_piece.prompt_metadata == {
+        **_LINEAGE_PROMPT_METADATA,
+        "finish_reason": "stop",
+        **info.to_metadata(),
+    }
 
 
 @pytest.mark.usefixtures("patch_central_database")

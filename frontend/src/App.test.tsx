@@ -4,6 +4,7 @@
  */
 
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { fluentProviderClassNames } from "@fluentui/react-components";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
@@ -31,7 +32,10 @@ jest.mock("./hooks/useTargetRegistry", () => ({
       refresh: jest.fn(),
       synchronizeTargets: setTargets,
       rememberTarget: (target: import("./types").TargetInstance) => {
-        setTargets((current) => [...current, target]);
+        setTargets((current) => [
+          ...current.filter((item) => item.target_registry_name !== target.target_registry_name),
+          target,
+        ]);
       },
     };
   },
@@ -88,6 +92,7 @@ jest.mock("./services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     getTarget: jest.fn(),
+    detectCapabilities: jest.fn(),
   },
   convertersApi: {
     listConverters: jest.fn().mockResolvedValue({ items: [] }),
@@ -135,6 +140,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange,
     operatorReadOnly,
     featureNavigation,
+    banner,
   }: {
     children: React.ReactNode;
     currentView: string;
@@ -143,10 +149,12 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange: (labels: Record<string, string>) => void;
     operatorReadOnly: boolean;
     featureNavigation?: React.ReactNode;
+    banner?: React.ReactNode;
   }) => {
     const navigate = useNavigate();
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        {banner}
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
@@ -213,7 +221,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     relatedConversationCount,
     lastResponseMessagePieceId,
   }: {
-    activeTarget: unknown;
+    activeTarget: import("./types").TargetInstance | null;
     draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
     attackResultId: string | null;
     conversationId: string | null;
@@ -308,8 +316,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="active-target-name">
-          {(activeTarget as { target_registry_name?: string } | null)?.target_registry_name ?? "none"}
+          {activeTarget?.target_registry_name ?? "none"}
         </span>
+        <output aria-label="Active target multi-turn">{String(activeTarget?.capabilities?.supports_multi_turn)}</output>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
         <span data-testid="objective">{objective ?? ""}</span>
         <span data-testid="outcome">{outcome ?? "none"}</span>
@@ -358,16 +367,37 @@ jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const { useUserPreferences } = jest.requireActual("@/hooks/useUserPreferences") as typeof import("@/hooks/useUserPreferences");
   const MockTargetConfig = ({
+    defaultAdversarialTarget,
+    onSetDefaultAdversarialTarget,
+    detection,
     onTargetsLoaded,
-  }: {
-    onTargetsLoaded?: (targets: import("@/types").TargetInstance[]) => void;
-  }) => {
+  }: React.ComponentProps<typeof import("./components/Config/TargetConfig").default>) => {
     const { preferences, rememberUse } = useUserPreferences();
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
           {preferences.lastUsedTargets?.objective?.registryName ?? "none"}
         </span>
+        <output aria-label="Adversarial target">{defaultAdversarialTarget?.target_registry_name ?? "none"}</output>
+        <output aria-label="Detection results">{JSON.stringify(detection.results)}</output>
+        <button onClick={() => {
+          const target = makeTarget({
+            target_registry_name: "test_target",
+            capabilities: {
+              supports_multi_turn: true, supports_system_prompt: true,
+              supports_json_schema: false, supports_json_output: false,
+              supported_input_modalities: ["text"], supported_output_modalities: ["text"],
+            },
+          });
+          onTargetsLoaded?.([target]);
+          rememberUse({ objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash } });
+          onSetDefaultAdversarialTarget(target);
+        }}>Set detection targets</button>
+        <button disabled={!defaultAdversarialTarget || detection.running} onClick={() => {
+          if (defaultAdversarialTarget) void detection.start([
+            defaultAdversarialTarget, makeTarget({ target_registry_name: "second_target" }),
+          ]);
+        }}>Detect capabilities</button>
         <button
           onClick={() => {
             const target = makeTarget({
@@ -713,6 +743,39 @@ describe("App", () => {
     window.localStorage.clear();
   });
 
+  it("continues detection after leaving Targets and keeps results and remembered targets when returning", async () => {
+    const user = userEvent.setup();
+    let finishFirst!: (target: import("./types").TargetInstance) => void;
+    let finishSecond!: (target: import("./types").TargetInstance) => void;
+    const detect = jest.mocked(targetsApi.detectCapabilities);
+    detect.mockReset();
+    detect
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
+    renderApp("/registry/targets");
+    await user.click(screen.getByRole("button", { name: "Set detection targets" }));
+    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("test_target");
+    await user.click(screen.getByRole("button", { name: "Detect capabilities" }));
+    expect(detect).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByTestId("nav-home"));
+    expect(screen.queryByTestId("target-config")).not.toBeInTheDocument();
+    const first = detect.mock.calls[0][0];
+    await act(async () => finishFirst({
+      ...first, capabilities: { ...first.capabilities, supports_multi_turn: false },
+    }));
+    expect(detect).toHaveBeenCalledTimes(2);
+    await act(async () => finishSecond(detect.mock.calls[1][0]));
+    await user.click(screen.getByTestId("nav-config"));
+    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("none");
+    const results = JSON.parse(screen.getByLabelText("Detection results").textContent!);
+    expect(results.test_target.state).toBe("Saved");
+    expect(results.second_target.state).toBe("Saved");
+    expect(detect).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByTestId("nav-chat"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(screen.getByLabelText("Active target multi-turn")).toHaveTextContent("false");
+  });
+
   it("opens Analytics and restores its fragment after inspecting a saved attack", async () => {
     const user = userEvent.setup();
     const originalPath = `/analytics${analyticsViewToHash({
@@ -809,6 +872,18 @@ describe("App", () => {
       "home"
     );
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("says inside the app's layout and theme that saved entries couldn't be restored", async () => {
+    const { runtimeApi } = jest.requireMock("./services/api");
+    runtimeApi.getReadiness.mockResolvedValueOnce({
+      ready: false, state: "failed", generation: "first", restore_failures: 1,
+    });
+    renderApp();
+
+    const message = await screen.findByText(/Some saved entries couldn't be restored/);
+    expect(screen.getByTestId("main-layout")).toContainElement(message);
+    expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
   it("renders the view named by the initial URL", () => {

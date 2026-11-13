@@ -94,6 +94,7 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
 def _load_identifier(
@@ -122,6 +123,8 @@ def _load_identifier(
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
     """
     if not stored:
+        return None
+    if set(stored) == {_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY}:
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
@@ -256,6 +259,40 @@ class Base(DeclarativeBase):
     """
     Base class for all database models.
     """
+
+
+class DatasetLifecycleLock(Base):
+    """One transaction lock shared by dataset lifecycle and media-reference writers."""
+
+    __tablename__ = "DatasetLifecycleLock"
+    id: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+
+
+class DatasetLifecycleEntry(Base):
+    """Durable import staging or dataset deletion; no prompt content is stored here."""
+
+    __tablename__ = "DatasetLifecycleEntries"
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    dataset_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    deleted_seeds: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Unicode(256), nullable=True)
+
+
+class DatasetMediaEntry(Base):
+    """API-owned assets, including permanent tombstones preventing dangling new references."""
+
+    __tablename__ = "DatasetMediaEntries"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    path: Mapped[str] = mapped_column(Unicode, nullable=False)
+    upload_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=False, index=True
+    )
+    cleanup_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class OperationEntry(Base):
@@ -411,6 +448,7 @@ class FindingEvidenceEntry(Base):
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        Index("ix_FindingEvidenceEntries_attack_result_id", "attack_result_id"),
         UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 
@@ -1495,7 +1533,9 @@ class ScoreEntry(Base):
     scorer_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
     )
-    prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
+    prompt_request_response_id = mapped_column(
+        CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), index=True
+    )
     timestamp = mapped_column(UTCDateTime, nullable=False)
     # The full, versioned expectation this score was judged against (objective + conditions).
     # Supersedes the legacy ``objective`` column.
@@ -1727,7 +1767,7 @@ class SeedEntry(Base):
     value_sha256 = mapped_column(Unicode, nullable=True)
     data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     name = mapped_column(String, nullable=True)
-    dataset_name = mapped_column(String, nullable=True)
+    dataset_name = mapped_column(Unicode, nullable=True)
     harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     description = mapped_column(String, nullable=True)
     authors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -1745,6 +1785,7 @@ class SeedEntry(Base):
         String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
     )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    is_general_technique: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Decomposition members are deduplicated as whole trees, so the parent link has no foreign key:
     # bulk inserts and dataset replacement validate complete trees in code instead.
     parent_objective_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
@@ -1782,6 +1823,7 @@ class SeedEntry(Base):
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
         self.origin = entry.origin.value
+        self.is_general_technique = bool(entry.is_general_technique)
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
@@ -1914,6 +1956,7 @@ class SeedEntry(Base):
             parameters=self.parameters,
             conditions=self.conditions,
             response_json_schema=response_json_schema,
+            is_general_technique=self.is_general_technique,
             parent_objective_id=self.parent_objective_id,
             paths=self._decode_paths(),
         )
@@ -2003,6 +2046,7 @@ class SeedEntry(Base):
                     num_turns=config.get("num_turns", 3),
                     sequence=config.get("sequence", 0),
                     pyrit_version=config.get("pyrit_version"),
+                    is_general_technique=self.is_general_technique,
                     **prompt_config,
                 )
             except (OSError, ValueError) as exc:
@@ -2034,6 +2078,7 @@ class SeedEntry(Base):
             prompt_group_id=self.prompt_group_id,
             sequence=self.sequence or 0,
             role=self.role,
+            is_general_technique=self.is_general_technique,
         )
 
 
@@ -2352,6 +2397,7 @@ class AttackResultEntry(Base):
                 return uuid.UUID(str(obj.id))
             except (ValueError, TypeError):
                 pass
+
         return None
 
     @staticmethod

@@ -1,5 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { MINIMUM_TOUCH_TARGET_SIZE, TOUCH_INPUT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
+
+import { TARGET_FILTER_RESET_WIDTH } from './TargetFiltersBar.styles'
 
 export const useTargetTableStyles = makeStyles({
   tableContainer: {
@@ -107,7 +109,30 @@ export const useTargetTableStyles = makeStyles({
     cursor: 'help',
   },
   visibilityControls: {
-    marginBottom: tokens.spacingVerticalS,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalS,
+    marginBottom: tokens.spacingVerticalM,
+  },
+  detectionControls: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
+    marginInlineStart: `calc(${TARGET_FILTER_RESET_WIDTH} + ${tokens.spacingHorizontalS})`,
+    [TOUCH_INPUT_QUERY]: {
+      marginInlineStart: `calc(${MINIMUM_TOUCH_TARGET_SIZE} + ${tokens.spacingHorizontalS})`,
+    },
+  },
+  visibilityInactive: {
+    color: tokens.colorNeutralForegroundDisabled,
+  },
+  selectionCell: {
+    width: '48px',
+  },
+  detectionCell: {
+    width: '120px',
   },
   noMatchState: {
     display: 'flex',
