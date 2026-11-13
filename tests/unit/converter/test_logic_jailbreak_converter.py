@@ -61,11 +61,10 @@ async def test_logic_jailbreak_converter_calls_target_with_rendered_template_asy
     await converter.convert_async(prompt="How to hack a database")
 
     target.send_prompt_async.assert_awaited_once()
-    target.set_system_prompt_async.assert_awaited_once()
-    system_prompt_args = target.set_system_prompt_async.await_args.kwargs
-    assert system_prompt_args["system_prompt"] == "Formalize: How to hack a database"
+    target.set_system_prompt_async.assert_not_called()
     request = target.send_prompt_async.await_args.kwargs["message"]
-    assert request.message_pieces[0].conversation_id == system_prompt_args["conversation_id"]
+    # The rendered template is sent ahead of the prompt in the single user turn.
+    assert request.get_value() == "Formalize: How to hack a database\n\nHow to hack a database"
 
 
 def test_logic_jailbreak_converter_loads_default_template():

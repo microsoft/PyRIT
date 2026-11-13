@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import json
 import logging
 import uuid
@@ -14,6 +15,7 @@ from pyrit.exceptions import (
     remove_markdown_json,
 )
 from pyrit.models import (
+    ComponentIdentifier,
     JsonResponseConfig,
     Message,
     MessagePiece,
@@ -56,9 +58,27 @@ class FuzzerConverter(Converter):
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
         """
+        super().__init__(converter_target=converter_target)
         self.converter_target = converter_target
         self.system_prompt = prompt_template.value
         self.template_label = "TEMPLATE"
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with prompt template and target parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        prompt_template_hash = (
+            hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:16] if self.system_prompt else None
+        )
+        return self._create_identifier(
+            params={
+                "prompt_template_hash": prompt_template_hash,
+            },
+            converter_target=self.converter_target.get_identifier() if self.converter_target else None,
+        )
 
     def update(self, **kwargs: Any) -> None:
         """Update the converter with new parameters."""
@@ -80,14 +100,6 @@ class FuzzerConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        conversation_id = str(uuid.uuid4())
-
-        (
-            await self.converter_target.set_system_prompt_async(
-                system_prompt=self.system_prompt, conversation_id=conversation_id
-            )
-        )
-
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
         prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
@@ -95,8 +107,11 @@ class FuzzerConverter(Converter):
                 MessagePiece(
                     role="user",
                     original_value=formatted_prompt,
-                    converted_value=formatted_prompt,
-                    conversation_id=conversation_id,
+                    # The fuzzer instructions are sent in the user turn; see Converter._prepend_instructions.
+                    converted_value=self._prepend_instructions(
+                        instructions=self.system_prompt, prompt=formatted_prompt
+                    ),
+                    conversation_id=str(uuid.uuid4()),
                     sequence=1,
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,

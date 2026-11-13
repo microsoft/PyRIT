@@ -1,9 +1,9 @@
 import type {
-  AttackResultRole,
   ScenarioDisplayGroupProgress,
   ScenarioHierarchyGroup,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
+  ScenarioProgressSummary,
 } from '@/types'
 
 /** One saved child-reference position under a parent: a loaded child, or a reference that did not resolve. */
@@ -113,12 +113,18 @@ export function hierarchyDisplayGroups(
   ]
 }
 
-const ROLE_LABELS: Record<AttackResultRole, string> = {
-  orchestration: 'Orchestration',
-  target_facing: 'Target-facing',
-  unknown: 'Unknown role',
+interface RunExecutionCount {
+  readonly count: number
+  /** False when the server did not report totals, so only loaded results were counted. */
+  readonly exact: boolean
 }
 
-export function resultRoleLabel(role: AttackResultRole): string {
-  return ROLE_LABELS[role] ?? ROLE_LABELS.unknown
+/** Attack executions in a run: the server's producer totals, otherwise the results loaded so far. */
+export function runExecutionCount(summary: ScenarioProgressSummary, loadedResults: number): RunExecutionCount {
+  const producerCounts = summary.overall.producer_counts
+  if (!producerCounts) return { count: loadedResults, exact: false }
+  return {
+    count: producerCounts.target_facing.attempts + producerCounts.orchestration.attempts + producerCounts.unknown.attempts,
+    exact: true,
+  }
 }
