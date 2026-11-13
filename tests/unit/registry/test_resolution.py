@@ -728,6 +728,15 @@ class TestDeriveParameters:
         assert params["note"].multiline
         assert TargetIdentifier.get_multiline_parameter_names() == frozenset({"http_request"})
 
+    def test_component_copy_locked_names_mark_only_declared_parameters(self) -> None:
+        class _Locked(_Plain):
+            COPY_LOCKED_PARAMETER_NAMES = frozenset({"note"})
+
+        params = {p.name: p for p in derive_parameters(cls=_Locked)}
+        assert params["note"].copy_locked
+        assert not params["mode"].copy_locked
+        assert not any(p.copy_locked for p in derive_parameters(cls=_Plain))
+
     def test_order_follows_signature(self) -> None:
         names = [p.name for p in derive_parameters(cls=_Plain)]
         assert names == ["count", "ratio", "mode", "note"]
