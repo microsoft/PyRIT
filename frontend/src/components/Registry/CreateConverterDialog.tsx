@@ -723,10 +723,6 @@ export default function CreateConverterDialog({
                 <MessageBarBody role="status">{fileNotice}</MessageBarBody>
               </MessageBar>}
               {loading && <Spinner label="Loading converter types..." />}
-              {editing && <Text>
-                Only changed fields replace source settings. These settings apply to this stage,
-                not the registered converter.
-              </Text>}
               {!loading && converterTypes.length === 0 && !error && (
                 <Text>No converter types are available.</Text>
               )}
@@ -824,9 +820,11 @@ export default function CreateConverterDialog({
                       }}
                     />
                   </HelpField>}
-                  {editing && <Text>Changes apply only to this stage. The registered converter stays unchanged.</Text>}
-                  {keepsSourceConnection && (
-                    <Text>Connection settings come from the source converter and can&apos;t be changed here.</Text>
+                  {editing && (
+                    <Text>
+                      Only changed fields apply to this stage, not the registered converter.
+                      {keepsSourceConnection && ' Connection settings stay with the source converter.'}
+                    </Text>
                   )}
                   <div className={styles.parameterGrid}>
                     {editableParameters.map((parameter) => (
