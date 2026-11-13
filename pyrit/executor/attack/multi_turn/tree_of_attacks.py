@@ -2486,12 +2486,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     async def _create_failure_result_async(self, context: TAPAttackContext) -> TAPAttackResult:
         """
-        Create a failure result for the attack.
+        Create the result for an attack that did not achieve its objective.
 
-        Constructs a `TAPAttackResult` indicating the attack failed to achieve its objective
-        within the configured tree depth. The outcome reason includes the best score
-        achieved for diagnostic purposes. Delegates to `_create_attack_result` for common
-        result construction logic.
+        Returns an `ERROR` result when no response was ever scored and at least one branch
+        failed to execute, an `UNDETERMINED` result when the best score carries no verdict,
+        and a `FAILURE` result otherwise. The outcome reason includes the best score
+        achieved for diagnostic purposes. Delegates to `_create_attack_result_async` for
+        common result construction logic.
 
         Args:
             context (TAPAttackContext): The attack context containing the final state
@@ -2504,15 +2505,22 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         best_score = context.best_objective_score
         if best_score is None and context.node_errors:
             # Nothing was ever scored and branches crashed, so the target was not shown to hold.
+            error_count = len(context.node_errors)
+            last_error = context.node_errors[-1]
             result = await self._create_attack_result_async(
                 context=context,
                 outcome=AttackOutcome.ERROR,
                 outcome_reason=(
-                    f"No branch produced a scored response and {len(context.node_errors)} failed. "
-                    f"Last error: {context.node_errors[-1]}"
+                    f"No branch produced a scored response and {error_count} "
+                    f"{'branch' if error_count == 1 else 'branches'} failed to execute. "
+                    f"Last error: {last_error}"
                 ),
             )
-            result.error_message = context.node_errors[-1]
+            result.error_message = last_error
+            # Branches store errors as "<kind>: <detail>" strings, so the original exception
+            # class is not recoverable here; surface the stored kind as the error type.
+            error_kind, separator, _ = last_error.partition(":")
+            result.error_type = error_kind if separator else None
             return result
 
         if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:

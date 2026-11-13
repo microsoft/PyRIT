@@ -2430,7 +2430,7 @@ class TestTreeOfAttacksErrorHandling:
                     objective_target_conversation_id=f"conv_{i}",
                 )
             )
-            node.error_message = "Execution failed"
+            node.error_message = "Execution error: simulated crash"
             node.send_prompt_async = AsyncMock(return_value=None)
             failing_nodes.append(node)
 
@@ -2443,10 +2443,11 @@ class TestTreeOfAttacksErrorHandling:
 
         # Nothing was scored and every branch crashed, so this is an error, not a defended target
         assert result.outcome == AttackOutcome.ERROR
-        assert result.outcome_reason == (
-            "No branch produced a scored response and 2 failed. Last error: Execution failed"
-        )
-        assert result.error_message == "Execution failed"
+        assert "No branch produced a scored response" in result.outcome_reason
+        assert "2 branches failed to execute" in result.outcome_reason
+        assert result.outcome_reason.endswith("Execution error: simulated crash")
+        assert result.error_message == "Execution error: simulated crash"
+        assert result.error_type == "Execution error"
 
     async def test_attack_continues_after_node_errors(self, attack_builder, node_factory, helpers):
         """Test that attack continues when some nodes have errors."""
