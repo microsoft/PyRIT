@@ -500,7 +500,11 @@ export default function ChatWindow({
   const isSavingEditor = editor.saving
   const [editorUploadError, setEditorUploadError] = useState<string>()
   const editorRef = useRef<ConversationEditorHandle>(null)
-  const [editorInitialConverters, setEditorInitialConverters] = useState<ChatConverterSnapshot>()
+  const editorConvertersRef = useRef<ChatConverterSnapshot | undefined>(undefined)
+  const captureEditorRef = useCallback((handle: ConversationEditorHandle | null): void => {
+    editorRef.current = handle
+    if (handle) editorConvertersRef.current = handle.getConverters()
+  }, [])
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const [editorNotice, setEditorNoticeState] = useState<ChatInfoNotice | null>(null)
   const setEditorNotice = useCallback((message: string | null): void => {
@@ -888,6 +892,8 @@ export default function ChatWindow({
     ...(editDraft ? {
       conversation: {
         messages: editDraft.messages,
+        baselineMessages: editDraft.baselineMessages,
+        baselineTargetKey: editDraft.baselineTargetKey,
         objective: editDraft.objective,
         initialObjective: editDraft.initialObjective,
         sourceConversationId: editDraft.sourceConversationId,
@@ -964,7 +970,10 @@ export default function ChatWindow({
         originatingConversationId: draftConversationId,
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
-        draft: savedDraft,
+        draft: savedDraft.conversation ? {
+          ...savedDraft,
+          conversation: { ...savedDraft.conversation, converters: editorConvertersRef.current },
+        } : savedDraft,
       }, draftHandoff.activeSequence, draftHandoff.pendingImport?.id)
     }
   })
@@ -1063,7 +1072,10 @@ export default function ChatWindow({
           }
         }
         editor.begin({
+          initialConverters: consumed.conversation.converters,
           messages: consumed.conversation.messages,
+          baselineMessages: consumed.conversation.baselineMessages,
+          baselineTargetKey: consumed.conversation.baselineTargetKey,
           objective: consumed.conversation.objective ?? currentObjective,
           initialObjective: consumed.conversation.initialObjective ?? currentObjective,
           sourceConversationId: consumed.conversation.sourceConversationId ?? null,
@@ -2231,9 +2243,9 @@ export default function ChatWindow({
       editor.begin({
         messages: draftMessages, objective: currentObjective,
         initialObjective: currentObjective, sourceConversationId: sourceId,
+        initialConverters: converters.snapshot(),
         sourceAttackId: attackResultId, target, labels,
       })
-      setEditorInitialConverters(converters.snapshot())
       setIsConverterPanelOpen(false)
       onRefreshTargets()
     } catch (error) {
@@ -2813,8 +2825,8 @@ export default function ChatWindow({
         </MessageBarBody></MessageBar>}
         {editDraft !== null && <ConversationEditor
           key={editDraft.id}
-          ref={editorRef}
-          initialConverters={editorInitialConverters}
+          ref={captureEditorRef}
+          initialConverters={editDraft.initialConverters}
           controller={editor}
           onUploadErrorChange={setEditorUploadError}
           sameAttackDisabledReason={sameAttackDisabledReason}
@@ -2841,6 +2853,7 @@ export default function ChatWindow({
           saveDestination={attackResultId ? 'same_attack' : 'new_attack'}
           saveLabel="Save"
           blockNavigation={!editDraft?.unsavedImport}
+          preserveOnDatasetNavigation
         />}
         {editDraft === null && conversationLoadIssue?.conversationId === viewedConversationId && (
           <MessageBar intent={conversationLoadIssue.unavailable ? 'warning' : 'error'}>
@@ -2979,6 +2992,8 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           onConfigureTarget={() => onNavigate?.('registry')}
+          onBrowseSeedPrompts={() => onNavigate?.('datasets')}
+          showSeedInspiration={messages.length === 0 && !chatInputText.trim() && draftAttachments.length === 0}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={handleComposerInputChange}

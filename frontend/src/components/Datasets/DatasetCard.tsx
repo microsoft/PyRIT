@@ -4,7 +4,7 @@ import { Badge, Text } from '@fluentui/react-components'
 import { Link, useLocation } from 'react-router'
 
 import type { DatasetInfo } from '@/types'
-import { datasetDetailPath } from '@/utils/routeParams'
+import { chatOriginFromNavigationState, datasetDetailPath } from '@/utils/routeParams'
 
 import { useDatasetCardStyles } from './DatasetCard.styles'
 
@@ -51,6 +51,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
   const titleId = useId()
   const descriptionId = useId()
   const catalogPath = `${location.pathname}${location.search}`
+  const chatOrigin = chatOriginFromNavigationState(location.state)
 
   return (
     <article
@@ -62,7 +63,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
         <h2 id={titleId} className={styles.title}>
           <Link
             to={datasetDetailPath(dataset.selection_key)}
-            state={{ catalogPath }}
+            state={{ ...(chatOrigin ? { chatOrigin } : {}), catalogPath }}
             className={styles.cardLink}
             aria-describedby={descriptionId}
           >

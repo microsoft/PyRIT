@@ -137,12 +137,14 @@ describe('seed cursor history', () => {
     expect(seedCursorsFromNavigationState({ seedCursors: ['cursor-2', 4] })).toEqual([])
     expect(seedCursorsFromNavigationState(null)).toEqual([])
 
+    const chatOrigin = { path: '/attack/chat', attackId: null, conversationId: null, state: { draft: true } }
     const state = seedNavigationState(
-      { catalogPath: '/datasets?q=policy&modality=text&sort=logical_examples_desc' },
+      { catalogPath: '/datasets?q=policy&modality=text&sort=logical_examples_desc', chatOrigin },
       [null],
       'gen-1',
     )
     expect(state.catalogPath).toBe('/datasets?q=policy&modality=text&sort=logical_examples_desc')
+    expect(state.chatOrigin).toEqual(chatOrigin)
     expect(state.seedCursors).toEqual([null])
     expect(seedCursorIsStale(state, 'gen-1')).toBe(false)
     expect(seedCursorIsStale(state, 'gen-2')).toBe(true)

@@ -50,6 +50,149 @@ test.describe("dataset examples against the real backend @seeded", () => {
     await waitForBackend(request);
   });
 
+  test("empty Chat can browse seed prompts and return to its draft @seeded", async ({ page, request }) => {
+    test.setTimeout(90_000);
+    await waitForBackend(request);
+    const postRequests: string[] = [];
+    page.on("request", (outgoing) => {
+      if (outgoing.method() === "POST") postRequests.push(new URL(outgoing.url()).pathname);
+    });
+    await page.goto("/attack/chat");
+    await page.getByRole("button", { name: "Browse seed prompts", exact: true }).click();
+    await expect(page).toHaveURL(/\/datasets$/);
+    await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
+    await page.getByRole("link", { name: "Return to Chat" }).click();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
+    await expect(page.getByPlaceholder("Type prompt here")).toBeVisible();
+    expect(postRequests).toEqual([]);
+  });
+
+  test("browses and returns to a saved Chat while target verification gates sending @seeded", async ({ page }) => {
+    const mutations: string[] = [];
+    page.on("request", (outgoing) => {
+      if (!["GET", "HEAD", "OPTIONS"].includes(outgoing.method())) mutations.push(new URL(outgoing.url()).pathname);
+    });
+    const path = "/attack/chat/11111111-1111-4111-8111-111111111111";
+    await page.goto(path);
+    await expect(page.getByTestId("target-resolution-legacy-banner")).toBeVisible();
+    const origin = page.url();
+    await page.getByRole("button", { name: "Browse seed prompts from composer" }).click();
+    await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
+    await page.getByRole("link", { name: "Return to Chat" }).click();
+    await expect(page).toHaveURL(origin);
+    await expect(page.getByTestId("target-resolution-legacy-banner")).toBeVisible();
+    expect(mutations).toEqual([]);
+  });
+
+  for (const width of [390, 1280]) {
+    test(`keeps a nonempty draft and target on a keyboard round trip at ${width}px @seeded`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const mutations: string[] = [];
+      page.on('request', (outgoing) => {
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(outgoing.method())) mutations.push(new URL(outgoing.url()).pathname);
+      });
+      await page.goto('/attack/chat');
+      const target = page.getByRole('combobox', { name: 'Objective target', exact: true });
+      await target.selectOption('browser_offline');
+      await page.getByPlaceholder('Type prompt here').fill('Keep my nonempty browser draft.');
+      const browse = page.getByRole('button', { name: 'Browse seed prompts from composer' });
+      await browse.focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('textbox', { name: 'Search datasets' }).fill('jailbreak');
+      const back = page.getByRole('button', { name: 'Return to Chat' });
+      await back.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByPlaceholder('Type prompt here')).toHaveValue('Keep my nonempty browser draft.');
+      await expect(page.getByPlaceholder('Type prompt here')).toBeFocused();
+      await expect(target).toHaveValue('browser_offline');
+      await page.getByRole('button', { name: 'Browse seed prompts from composer' }).click();
+      await expect(page.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('jailbreak');
+      expect(mutations).toEqual([]);
+    });
+  }
+
+  for (const destination of ['new-attack', 'current-conversation', 'new-conversation'] as const) {
+    test(`imports a whole conversation with linked media into ${destination} without sending @seeded`, async ({ page, request }) => {
+      test.setTimeout(90_000);
+      const headers = compatibilityHeaders();
+      const selectionKey = 'dataset:named:browser_seed_journeys';
+      const list = await request.get(`/api/datasets/seeds?selection_key=${encodeURIComponent(selectionKey)}`, { headers });
+      expect(list.ok(), await list.text()).toBe(true);
+      const examples = await list.json() as SeedExamplePage;
+      expect(examples.items).toHaveLength(1);
+      const example = examples.items[0];
+      const detailResponse = await request.get(`/api/datasets/seeds/${example.example_id}?selection_key=${encodeURIComponent(selectionKey)}`, { headers });
+      expect(detailResponse.ok(), await detailResponse.text()).toBe(true);
+      const detail = await detailResponse.json() as SeedExampleDetail;
+      const media = detail.members.filter((member) => member.data_type === 'image_path');
+      expect(media).toHaveLength(2);
+      for (const member of media) {
+        if (!member.value_url) throw new Error('Expected linked local seed media');
+        const image = await request.get(member.value_url, { headers });
+        expect(image.ok(), await image.text()).toBe(true);
+        expect(image.headers()['content-type']).toContain('image/png');
+      }
+
+      let source: { attack_result_id: string; conversation_id: string } | undefined;
+      let sourceMessages: unknown;
+      if (destination !== 'new-attack') {
+        const created = await request.post('/api/attacks', { headers, data: {
+          target_registry_name: 'browser_offline',
+          prepended_conversation: [
+            { role: 'user', pieces: [{ original_value: 'Preserve existing saved history.' }] },
+            { role: 'simulated_assistant', pieces: [{ original_value: 'Existing simulated reply.' }] },
+          ],
+        } });
+        expect(created.status(), await created.text()).toBe(201);
+        source = await created.json();
+        if (!source) throw new Error('Expected saved destination');
+        const before = await request.get(`/api/attacks/${source.attack_result_id}/messages?conversation_id=${source.conversation_id}`, { headers });
+        expect(before.ok()).toBe(true);
+        sourceMessages = await before.json();
+        await page.goto(`/attack/chat/${source.attack_result_id}/conversations/${source.conversation_id}`);
+        await page.getByRole('button', { name: 'Browse seed prompts from composer' }).click();
+      } else {
+        await page.goto('/datasets');
+        await expect(page.getByRole('button', { name: 'Return to Chat' })).toHaveCount(0);
+      }
+      const mutations: string[] = [];
+      page.on('request', (outgoing) => {
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(outgoing.method())) mutations.push(new URL(outgoing.url()).pathname);
+      });
+      await page.getByRole('link', { name: 'browser_seed_journeys', exact: true }).click();
+      await page.getByRole('table', { name: 'Examples' }).getByRole('button', { name: /^Show / }).click();
+      await page.getByTestId('import-into-chat-button').click();
+      await page.getByTestId(`import-${destination}-item`).click();
+      const editor = page.getByTestId('conversation-editor');
+      await expect(editor).toBeVisible();
+      await expect.poll(async () => editor.locator('textarea').evaluateAll((nodes) => nodes.map((node) => (node as HTMLTextAreaElement).value))).toContain('Browser seed first turn.');
+      await expect.poll(async () => editor.locator('textarea').evaluateAll((nodes) => nodes.map((node) => (node as HTMLTextAreaElement).value))).toContain('Browser seed simulated reply.');
+      await expect.poll(async () => editor.locator('textarea').evaluateAll((nodes) => nodes.map((node) => (node as HTMLTextAreaElement).value))).toContain('Browser seed final unsent turn.');
+      await expect(editor.getByRole('button', { name: 'Remove browser-seed.png', exact: true })).toHaveCount(2);
+      // The complete unsent editor, including per-turn media, must survive browsing.
+      await page.getByRole('button', { name: 'Datasets', exact: true }).click();
+      await page.getByRole('link', { name: 'Return to Chat' }).click();
+      await expect(editor).toBeVisible();
+      await expect.poll(async () => editor.locator('textarea').evaluateAll((nodes) => nodes.map((node) => (node as HTMLTextAreaElement).value))).toContain('Browser seed final unsent turn.');
+      await expect(editor.getByRole('button', { name: 'Remove browser-seed.png', exact: true })).toHaveCount(2);
+      expect(mutations).toEqual(destination === 'new-conversation'
+        ? [`/api/attacks/${source!.attack_result_id}/conversations`] : []);
+      if (source) {
+        const after = await request.get(`/api/attacks/${source.attack_result_id}/messages?conversation_id=${source.conversation_id}`, { headers });
+        expect(after.ok()).toBe(true);
+        expect(await after.json()).toEqual(sourceMessages);
+      }
+      if (destination === 'new-conversation') {
+        await page.getByRole('button', { name: 'Home', exact: true }).click();
+        await page.getByRole('button', { name: 'Datasets', exact: true }).click();
+        await expect(page.getByRole('link', { name: 'Return to Chat' })).toHaveCount(0);
+        await page.getByTestId('import-into-chat-button').click();
+        await expect(page.getByTestId('import-current-conversation-item')).toBeDisabled();
+        await expect(page.getByTestId('import-new-conversation-item')).toBeDisabled();
+      }
+    });
+  }
+
   for (const entry of ["chat", "dataset"]) {
     test(`imports a template from ${entry} into the visible prompt box without sending @seeded`, async ({ page, request }) => {
       test.setTimeout(90_000);

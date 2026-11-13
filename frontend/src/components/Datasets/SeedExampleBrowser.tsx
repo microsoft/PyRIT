@@ -134,8 +134,8 @@ export function SeedExampleBrowserView({
   const [importError, setImportError] = useState<string | null>(null)
   const [pendingDirtyDestination, setPendingDirtyDestination] = useState<ImportDestinationType | null>(null)
 
-  const effectiveAttackId = activeAttackId ?? draftHandoff.preservedDraft?.originatingAttackId ?? null
-  const effectiveConversationId = activeConversationId ?? draftHandoff.preservedDraft?.originatingConversationId ?? null
+  const effectiveAttackId = activeAttackId === undefined ? draftHandoff.preservedDraft?.originatingAttackId ?? null : activeAttackId
+  const effectiveConversationId = activeConversationId === undefined ? draftHandoff.preservedDraft?.originatingConversationId ?? null : activeConversationId
   const { query, visitedCursors, generation, commit } = browserState
   useLayoutEffect(() => {
     importRequestRef.current += 1

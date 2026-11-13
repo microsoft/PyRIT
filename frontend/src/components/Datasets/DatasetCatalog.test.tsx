@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
@@ -71,10 +71,11 @@ function makeDataset(
   }
 }
 
-function Harness({ initialPath }: { initialPath: string }) {
+function Harness({ initialPath, initialState }: { initialPath: string; initialState?: unknown }) {
+  const url = new URL(initialPath, 'http://localhost')
   return (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[initialPath]}>
+      <MemoryRouter initialEntries={[{ pathname: url.pathname, search: url.search, state: initialState }]}>
         <RefreshableRoutes />
       </MemoryRouter>
     </FluentProvider>
@@ -153,10 +154,94 @@ describe('DatasetCatalog', () => {
     jest.restoreAllMocks()
   })
 
+  it('preserves a Chat origin through the catalog and dataset detail route', async () => {
+    const user = userEvent.setup()
+    const chatOrigin = {
+      path: '/attack/chat/attack-1/conversations/conversation-1',
+      state: { fromScenarioHistory: true },
+      attackId: 'attack-1',
+      conversationId: 'conversation-1',
+    }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+
+    const returnButton = await screen.findByRole('button', { name: 'Return to Chat' })
+    await user.click(returnButton)
+    expect(currentUrl().pathname).toBe(chatOrigin.path)
+  })
+
+  it('retains the return action after filtering, opening an example and returning to the catalog', async () => {
+    const user = userEvent.setup()
+    const chatOrigin = { path: '/attack/chat', attackId: null, conversationId: null }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+    await user.type(await screen.findByRole('textbox', { name: 'Search datasets' }), 'harmbench')
+    await user.click(screen.getByRole('link', { name: 'harmbench', exact: true }))
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    // Runtime binding writes navigation state on mount, before any interaction.
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Return to Chat' })).toBeInTheDocument())
+    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    expect(screen.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('harmbench')
+    await user.click(screen.getByRole('button', { name: 'Return to Chat' }))
+    expect(currentUrl().pathname).toBe('/attack/chat')
+  })
+
+  it('carries Chat origin into the selected dataset detail page', async () => {
+    const user = userEvent.setup()
+    const chatOrigin = {
+      path: '/attack/chat/attack-1/conversations/conversation-1',
+      state: { fromScenarioHistory: true },
+      attackId: 'attack-1',
+      conversationId: 'conversation-1',
+    }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+
+    await user.click(await screen.findByRole('link', { name: 'harmbench' }))
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    const returnLink = screen.getByRole('link', { name: 'Return to Chat' })
+    expect(returnLink).toHaveAttribute('href', chatOrigin.path)
+    await user.click(returnLink)
+    expect(currentUrl().pathname).toBe(chatOrigin.path)
+  })
+
   it('shows a loading state while the catalog request is in flight', () => {
     mockGet.mockReturnValue(new Promise(() => {}))
     render(<Harness initialPath="/datasets" />)
     expect(screen.getByText('Loading datasets...')).toBeInTheDocument()
+  })
+
+  it('starts another dataset on page one without leaking the previous dataset cursor history', async () => {
+    const user = userEvent.setup()
+    mockGet.mockImplementation((url: string, config?: { params?: { selection_key?: string; cursor?: string } }) => {
+      if (url === '/datasets') return Promise.resolve({ data: { items: [LOADED, UNNAMED] } })
+      if (url === '/datasets/seeds') {
+        const hasMore = config?.params?.selection_key === LOADED.selection_key && !config.params.cursor
+        return Promise.resolve({ data: {
+          ...EMPTY_SEED_PAGE, total: 40,
+          pagination: { limit: 20, has_more: hasMore, next_cursor: hasMore ? 'dataset-a-page-2' : null, prev_cursor: null },
+        } })
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`))
+    })
+    const chatOrigin = { path: '/attack/chat', attackId: null, conversationId: null }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+    await user.click(await screen.findByRole('link', { name: 'harmbench' }))
+    await user.click(await screen.findByRole('button', { name: 'Next page' }))
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    await user.click(await screen.findByRole('link', { name: '(unnamed)' }))
+    expect(await screen.findByText('Page 1')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+    expect(screen.getByRole('link', { name: 'Return to Chat' })).toHaveAttribute('href', '/attack/chat')
+    const otherDatasetCalls = mockGet.mock.calls.filter((call) =>
+      call[0] === '/datasets/seeds' && call[1]?.params?.selection_key === UNNAMED.selection_key)
+    expect(otherDatasetCalls.length).toBeGreaterThan(0)
+    for (const call of otherDatasetCalls) expect(call[1]?.params?.cursor).toBeUndefined()
+    await user.click(screen.getByRole('button', { name: 'History back' }))
+    await screen.findByRole('heading', { name: 'Datasets' })
+    await user.click(screen.getByRole('button', { name: 'History back' }))
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Previous page' }))
+    expect(await screen.findByText('Page 1')).toBeVisible()
   })
 
   it('renders summary cards from the catalog response', async () => {
