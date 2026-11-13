@@ -175,23 +175,24 @@ def test_migration_rejects_inconsistent_finding_classifications(invalid: dict[st
     try:
         with engine.begin() as connection:
             command.upgrade(_config_for(connection), REVISION)
-            insert = sa.insert(FindingEntry)
-            connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **valid))
+            # The table as this revision created it; later revisions add columns the current model fills in.
+            insert = sa.insert(sa.Table(FindingEntry.__tablename__, sa.MetaData(), autoload_with=connection))
+            connection.execute(insert.values(id=str(uuid4()), operation_id=str(uuid4()), **valid))
             # Harm types are unconstrained so HarmCategory can change without a migration.
             connection.execute(
-                insert.values(id=uuid4(), operation_id=uuid4(), **valid, harm_type="Not a current category")
+                insert.values(id=str(uuid4()), operation_id=str(uuid4()), **valid, harm_type="Not a current category")
             )
             connection.execute(
                 insert.values(
-                    id=uuid4(),
-                    operation_id=uuid4(),
+                    id=str(uuid4()),
+                    operation_id=str(uuid4()),
                     **{**valid, "severity": "other", "severity_other": "Custom"},
                     harm_type="Other",
                     harm_type_other="Custom",
                 )
             )
             with pytest.raises(IntegrityError, match="CHECK"):
-                connection.execute(insert.values(id=uuid4(), operation_id=uuid4(), **{**valid, **invalid}))
+                connection.execute(insert.values(id=str(uuid4()), operation_id=str(uuid4()), **{**valid, **invalid}))
     finally:
         engine.dispose()
 

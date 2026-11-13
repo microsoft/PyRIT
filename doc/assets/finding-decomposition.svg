@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1060" viewBox="0 0 1800 1060" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title description">
+  <title id="title">Hierarchical findings: a finding, its sub-findings, and the paths between them</title>
+  <desc id="description">An operator records a finding in the Operations page or through the REST API, adds sub-findings that are each demonstrated or not, and adds paths: ordered lists of direct sub-findings. Here finding 1, CRM data exfiltration, has four sub-findings and two paths. Credential theft is partial because Obtain creds was not demonstrated; Phishing is complete. Memory stores one row per finding with parent, demonstrated, and paths columns; deleting a finding deletes its sub-findings, and a path step cannot be deleted or moved. Markdown and Word exports number the findings, nest the sub-findings, and mark each path complete or partial.</desc>
+  <defs>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1f5fbf"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1e8a4c"/></marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b3fb3"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b8742a"/></marker>
+    <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4a5568"/></marker>
+    <marker id="an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6675"/></marker>
+  </defs>
+  <rect width="1800" height="1060" fill="#ffffff"/>
+  <text x="24" y="48" font-size="30" font-weight="700" fill="#1d2733">Hierarchical findings: a finding, its sub-findings, and the paths between them</text>
+
+  <!-- OPERATOR -->
+  <rect x="16" y="78" width="360" height="966" rx="14" fill="#f3f5f8" stroke="#c9d1dc" stroke-width="2"/>
+  <text x="36" y="108" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">OPERATOR</text>
+  <rect x="34" y="124" width="324" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="54" y="158" font-size="21" font-weight="700" fill="#1d2733">Browser</text>
+  <text x="54" y="186" font-size="15.5" fill="#3c4a5c">the Operations page in the PyRIT GUI</text>
+  <rect x="34" y="224" width="324" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="54" y="258" font-size="21" font-weight="700" fill="#1d2733">Scripts and harnesses</text>
+  <text x="54" y="286" font-size="15.5" fill="#3c4a5c">through PyRIT's REST API</text>
+
+  <g font-size="16" fill="#3c4a5c">
+    <text x="36" y="362" font-size="18" font-weight="700" fill="#1f5fbf">A · Record</text>
+    <text x="36" y="390">A1  create a finding with its</text>
+    <text x="68" y="413">severity, harm type and evidence</text>
+    <text x="36" y="438">A2  add sub-findings, each one</text>
+    <text x="68" y="461">demonstrated or not</text>
+    <text x="36" y="486">A3  nest again for more detail</text>
+
+    <text x="36" y="534" font-size="18" font-weight="700" fill="#1e8a4c">B · Connect</text>
+    <text x="36" y="562">B1  add paths: ordered lists of</text>
+    <text x="68" y="585">direct sub-findings</text>
+    <text x="36" y="610">B2  a path is complete only when</text>
+    <text x="68" y="633">every step is demonstrated</text>
+
+    <text x="36" y="681" font-size="18" font-weight="700" fill="#b8742a">C · Report</text>
+    <text x="36" y="709">C1  export: each selected finding</text>
+    <text x="68" y="732">brings its sub-findings</text>
+    <text x="36" y="757">C2  Markdown or Word: numbered,</text>
+    <text x="68" y="780">nested, paths complete or partial</text>
+
+    <text x="36" y="828" font-size="18" font-weight="700" fill="#6b3fb3">R · Guard</text>
+    <text x="36" y="856">Deleting a finding deletes its</text>
+    <text x="36" y="879">sub-findings and their evidence</text>
+    <text x="36" y="904">A path step can't be deleted or</text>
+    <text x="36" y="927">moved until its path changes</text>
+    <text x="36" y="1012" font-size="15" font-style="italic">Findings stay manual: none are</text>
+    <text x="36" y="1032" font-size="15" font-style="italic">created from objectives</text>
+  </g>
+
+  <!-- PYRIT -->
+  <rect x="396" y="78" width="800" height="966" rx="14" fill="#eef4fb" stroke="#b9cde6" stroke-width="2"/>
+  <text x="416" y="108" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">PYRIT</text>
+  <text x="1176" y="108" font-size="14" font-style="italic" fill="#5b6675" text-anchor="end">pyrit.models · pyrit.memory · pyrit.backend · GUI</text>
+
+  <rect x="416" y="124" width="760" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="436" y="158" font-size="21" font-weight="700" fill="#1d2733">Operations page and REST API</text>
+  <text x="436" y="188" font-size="15" fill="#3c4a5c" font-family="Consolas, 'Courier New', monospace">/api/operations/{operation_id}/findings · PUT …/findings/{finding_id}/paths</text>
+
+  <!-- the finding tree -->
+  <rect x="416" y="250" width="760" height="530" rx="12" fill="#fdf6e3" stroke="#d4b25a" stroke-width="2.5"/>
+  <text x="438" y="288" font-size="23" font-weight="700" fill="#1d2733">Finding 1, its sub-findings, and their paths</text>
+
+  <rect x="576" y="306" width="440" height="74" rx="10" fill="#ffffff" stroke="#2b2f36" stroke-width="2"/>
+  <text x="596" y="338" font-size="19" font-weight="700" fill="#1d2733">1 · CRM data exfiltration</text>
+  <text x="596" y="364" font-size="15" fill="#3c4a5c">Critical · 4 sub-findings · 2 paths</text>
+
+  <g stroke="#8a99ad" stroke-width="2" fill="none">
+    <path d="M796,380 V408"/>
+    <path d="M511,408 H1081"/>
+    <path d="M511,408 V430"/>
+    <path d="M701,408 V430"/>
+    <path d="M891,408 V430"/>
+    <path d="M1081,408 V430"/>
+  </g>
+  <text x="806" y="400" font-size="13" font-style="italic" fill="#5b6675">sub-findings, oldest first</text>
+
+  <g>
+    <rect x="426" y="430" width="170" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="442" y="458" font-size="16.5" font-weight="700" fill="#1d2733">1.1 Recon</text>
+    <text x="442" y="480" font-size="14" fill="#3c4a5c">Moderate</text>
+    <text x="442" y="502" font-size="13.5" font-weight="700" fill="#1e8a4c">✓ demonstrated</text>
+
+    <rect x="616" y="430" width="170" height="84" rx="10" fill="#fffaf2" stroke="#b8742a" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="632" y="458" font-size="16.5" font-weight="700" fill="#1d2733">1.2 Obtain creds</text>
+    <text x="632" y="480" font-size="14" fill="#3c4a5c">Important</text>
+    <text x="632" y="502" font-size="13.5" font-weight="700" fill="#b8742a">✗ not demonstrated</text>
+
+    <rect x="806" y="430" width="170" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="822" y="458" font-size="16.5" font-weight="700" fill="#1d2733">1.3 Phish an admin</text>
+    <text x="822" y="480" font-size="14" fill="#3c4a5c">Important</text>
+    <text x="822" y="502" font-size="13.5" font-weight="700" fill="#1e8a4c">✓ demonstrated</text>
+
+    <rect x="996" y="430" width="170" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="1012" y="458" font-size="16.5" font-weight="700" fill="#1d2733">1.4 Pull records</text>
+    <text x="1012" y="480" font-size="14" fill="#3c4a5c">Critical</text>
+    <text x="1012" y="502" font-size="13.5" font-weight="700" fill="#1e8a4c">✓ demonstrated</text>
+  </g>
+
+  <text x="438" y="560" font-size="17" font-weight="700" fill="#1d2733">Paths: ordered lists of direct sub-findings</text>
+
+  <rect x="426" y="574" width="740" height="70" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="444" y="602" font-size="16" font-weight="700" fill="#1d2733">1 · Credential theft</text>
+  <rect x="444" y="612" width="78" height="24" rx="12" fill="#fdf0e1" stroke="#b8742a"/>
+  <text x="483" y="629" font-size="13.5" font-weight="700" fill="#8a5418" text-anchor="middle">Partial</text>
+  <g font-size="15" fill="#1d2733">
+    <rect x="620" y="590" width="130" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="685" y="615" text-anchor="middle">1.1 Recon</text>
+    <rect x="796" y="590" width="176" height="38" rx="19" fill="#fffaf2" stroke="#b8742a" stroke-width="1.5" stroke-dasharray="5 4"/><text x="884" y="615" text-anchor="middle" fill="#8a5418">1.2 Obtain creds ✗</text>
+    <rect x="1018" y="590" width="140" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="1088" y="615" text-anchor="middle">1.4 Pull records</text>
+  </g>
+  <path d="M754,609 H790" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+  <path d="M976,609 H1012" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+
+  <rect x="426" y="658" width="740" height="70" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="444" y="686" font-size="16" font-weight="700" fill="#1d2733">2 · Phishing</text>
+  <rect x="444" y="696" width="92" height="24" rx="12" fill="#e6f4ea" stroke="#1e8a4c"/>
+  <text x="490" y="713" font-size="13.5" font-weight="700" fill="#1e5d36" text-anchor="middle">Complete</text>
+  <g font-size="15" fill="#1d2733">
+    <rect x="620" y="674" width="130" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="685" y="699" text-anchor="middle">1.1 Recon</text>
+    <rect x="796" y="674" width="176" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="884" y="699" text-anchor="middle">1.3 Phish an admin</text>
+    <rect x="1018" y="674" width="140" height="38" rx="19" fill="#ffffff" stroke="#8a99ad"/><text x="1088" y="699" text-anchor="middle">1.4 Pull records</text>
+  </g>
+  <path d="M754,693 H790" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+  <path d="M976,693 H1012" stroke="#5b6675" stroke-width="2.5" fill="none" marker-end="url(#an)"/>
+  <text x="438" y="760" font-size="14.5" font-style="italic" fill="#5b6675">Complete only when every step is demonstrated. Computed from the steps, never stored.</text>
+
+  <!-- shared shape -->
+  <rect x="416" y="802" width="760" height="226" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="438" y="838" font-size="19" font-weight="700" fill="#1d2733">The same shape as decomposed objectives</text>
+  <g font-size="14.5" font-family="Consolas, 'Courier New', monospace" fill="#1d2733">
+    <rect x="438" y="856" width="170" height="34" rx="17" fill="#fdf6e3" stroke="#d4b25a"/><text x="523" y="879" text-anchor="middle">DecompositionPath</text>
+    <rect x="620" y="856" width="170" height="34" rx="17" fill="#fdf6e3" stroke="#d4b25a"/><text x="705" y="879" text-anchor="middle">DecompositionNode</text>
+    <rect x="802" y="856" width="170" height="34" rx="17" fill="#fdf6e3" stroke="#d4b25a"/><text x="887" y="879" text-anchor="middle">DecompositionTree</text>
+  </g>
+  <g font-size="15.5" fill="#3c4a5c">
+    <text x="438" y="924">A sub-finding names its parent (<tspan font-family="Consolas, 'Courier New', monospace" font-size="14.5">parent_finding_id</tspan>); the parent lists its paths.</text>
+    <text x="438" y="952">A decomposed objective stores the same relationships, but nothing links</text>
+    <text x="438" y="976">the two: one can mirror the other when that helps, and neither is required.</text>
+    <text x="438" y="1006">Each finding keeps its own severity; nothing rolls up to its parent.</text>
+  </g>
+
+  <!-- THE IDEA -->
+  <rect x="1216" y="78" width="568" height="176" rx="14" fill="#fffdf6" stroke="#d4b25a" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="1236" y="108" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">THE IDEA</text>
+  <text x="1236" y="146" font-size="18.5" fill="#1d2733">A finding has <tspan font-weight="700">sub-findings</tspan> and <tspan font-weight="700">paths</tspan> through</text>
+  <text x="1236" y="174" font-size="18.5" fill="#1d2733">them, like a decomposed objective.</text>
+  <text x="1236" y="202" font-size="18.5" fill="#1d2733">A <tspan font-weight="700">partial path</tspan> is still a finding; the report</text>
+  <text x="1236" y="230" font-size="18.5" fill="#1d2733">shows which steps were <tspan font-weight="700">not demonstrated</tspan>.</text>
+
+  <!-- MEMORY -->
+  <rect x="1216" y="274" width="568" height="426" rx="14" fill="#f6f2fb" stroke="#d6c8ea" stroke-width="2"/>
+  <text x="1236" y="302" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">MEMORY</text>
+  <rect x="1234" y="318" width="532" height="250" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="1252" y="350" font-size="19" font-weight="700" fill="#1d2733" font-family="Consolas, 'Courier New', monospace">FindingEntries</text>
+  <text x="1252" y="374" font-size="14" fill="#3c4a5c">plus three new columns; evidence links are unchanged</text>
+  <rect x="1428" y="386" width="328" height="172" rx="6" fill="#f4effb"/>
+  <g font-size="13" font-weight="700" fill="#5b6675">
+    <text x="1252" y="406">title</text>
+    <text x="1438" y="406" font-family="Consolas, 'Courier New', monospace">parent_finding_id</text>
+    <text x="1586" y="406" font-family="Consolas, 'Courier New', monospace">demonstrated</text>
+    <text x="1700" y="406" font-family="Consolas, 'Courier New', monospace">paths</text>
+  </g>
+  <path d="M1252,416 H1748" stroke="#c9d1dc" stroke-width="1.5"/>
+  <g font-size="15" fill="#1d2733">
+    <text x="1252" y="442" font-weight="700">CRM data exfiltration</text><text x="1438" y="442" fill="#5b6675">—</text><text x="1586" y="442">yes</text><text x="1700" y="442">2</text>
+    <text x="1268" y="466">Recon</text><text x="1438" y="466">1</text><text x="1586" y="466">yes</text><text x="1700" y="466" fill="#5b6675">—</text>
+    <text x="1268" y="490">Obtain creds</text><text x="1438" y="490">1</text><text x="1586" y="490" font-weight="700" fill="#b8742a">no</text><text x="1700" y="490" fill="#5b6675">—</text>
+    <text x="1268" y="514">Phish an admin</text><text x="1438" y="514">1</text><text x="1586" y="514">yes</text><text x="1700" y="514" fill="#5b6675">—</text>
+    <text x="1268" y="538">Pull records</text><text x="1438" y="538">1</text><text x="1586" y="538">yes</text><text x="1700" y="538" fill="#5b6675">—</text>
+  </g>
+
+  <rect x="1234" y="586" width="532" height="100" rx="12" fill="#f4effb" stroke="#6b3fb3" stroke-width="2.5"/>
+  <text x="1252" y="616" font-size="18" font-weight="700" fill="#1d2733">Every change locks the finding tree</text>
+  <g font-size="15" fill="#3c4a5c">
+    <text x="1252" y="644">• deleting a finding deletes its sub-findings and evidence</text>
+    <text x="1252" y="670">• a path step can't be deleted or moved (HTTP 409)</text>
+  </g>
+
+  <!-- REPORT -->
+  <rect x="1216" y="744" width="568" height="300" rx="14" fill="#fbf3ea" stroke="#e2b98f" stroke-width="2"/>
+  <text x="1236" y="772" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">REPORT · MARKDOWN AND WORD</text>
+  <rect x="1234" y="786" width="532" height="250" rx="10" fill="#ffffff" stroke="#e2b98f" stroke-width="1.5"/>
+  <g font-size="13.5" fill="#1d2733" font-family="Consolas, 'Courier New', monospace">
+    <text x="1252" y="812" font-weight="700">## 1 CRM data exfiltration</text>
+    <text x="1252" y="831.5">**Severity:** Critical</text>
+    <text x="1252" y="851">**Paths:**</text>
+    <text x="1252" y="870.5">1. **Credential theft** (partial): 1.1 Recon</text>
+    <text x="1276" y="890">→ 1.2 Obtain creds <tspan fill="#b8742a" font-weight="700">(not demonstrated)</tspan></text>
+    <text x="1276" y="909.5">→ 1.4 Pull records</text>
+    <text x="1252" y="929">2. **Phishing** (complete): 1.1 Recon</text>
+    <text x="1276" y="948.5">→ 1.3 Phish an admin → 1.4 Pull records</text>
+    <text x="1252" y="968" fill="#5b6675">…</text>
+    <text x="1252" y="987.5" font-weight="700">### 1.2 Obtain creds</text>
+    <text x="1252" y="1007">**Severity:** Important</text>
+    <text x="1252" y="1026.5">**Status:** <tspan fill="#b8742a" font-weight="700">Not demonstrated</tspan></text>
+  </g>
+
+  <!-- flows -->
+  <path d="M358,166 H410" stroke="#4a5568" stroke-width="2.5" fill="none" marker-end="url(#ak)"/>
+  <path d="M358,266 H384 V190 H410" stroke="#4a5568" stroke-width="2.5" fill="none" marker-end="url(#ak)"/>
+  <path d="M700,208 V244" stroke="#1f5fbf" stroke-width="3" fill="none" marker-end="url(#ab)"/>
+  <circle cx="700" cy="226" r="15" fill="#1f5fbf"/><text x="700" y="231.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">A</text>
+  <path d="M892,208 V244" stroke="#1e8a4c" stroke-width="3" fill="none" marker-end="url(#ag)"/>
+  <circle cx="892" cy="226" r="15" fill="#1e8a4c"/><text x="892" y="231.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">B</text>
+  <path d="M1176,470 H1228" stroke="#6b3fb3" stroke-width="3" fill="none" marker-end="url(#ap)"/>
+  <circle cx="1202" cy="470" r="15" fill="#6b3fb3"/><text x="1202" y="475.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">R</text>
+  <path d="M1500,700 V738" stroke="#b8742a" stroke-width="3" fill="none" marker-end="url(#ao)"/>
+  <circle cx="1500" cy="721" r="15" fill="#b8742a"/><text x="1500" y="726.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">C</text>
+</svg>

@@ -9,11 +9,11 @@ import { AddRegular, ArrowLeftRegular } from '@fluentui/react-icons'
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { Finding, FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
+import type { FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
 import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
-import FindingEvidenceList from './FindingEvidenceList'
 import FindingExportDialog from './FindingExportDialog'
-import FindingSeverityBadge from './FindingSeverityBadge'
+import FindingPathsDialog from './FindingPathsDialog'
+import FindingTreeItem, { type FindingTreeActions } from './FindingTreeItem'
 import OperationDeleteDialog from './OperationDeleteDialog'
 import OperationEditDialog from './OperationEditDialog'
 import { useOperationsStyles } from './Operations.styles'
@@ -24,6 +24,18 @@ type OperationState =
   | { key: string; status: 'loaded'; operation: OperationDetail }
   | { key: string; status: 'missing' }
   | { key: string; status: 'error'; error: string }
+
+/** The finding dialog's subject: a new finding, a new sub-finding of a parent, or an existing finding. */
+interface FindingDialogTarget {
+  editing: FindingListItem | null
+  parent: { id: string; title: string } | null
+}
+
+/** A finding whose paths are being edited, with the sub-findings its steps choose from. */
+interface PathsTarget {
+  finding: FindingListItem
+  subFindings: FindingListItem[]
+}
 
 interface OperationDetailPageProps {
   /** Called after the Operation is renamed or deleted, so views holding it can refresh. */
@@ -52,16 +64,17 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   const [error, setError] = useState('')
   const requestKey = JSON.stringify([operationId, offset, revision])
   const [notice, setNotice] = useState('')
-  const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState<Finding | null>(null)
-  const [deleting, setDeleting] = useState<Finding | null>(null)
+  const [dialog, setDialog] = useState<FindingDialogTarget | null>(null)
+  const [deleting, setDeleting] = useState<FindingListItem | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [removing, setRemoving] = useState(false)
+  const [pathsTarget, setPathsTarget] = useState<PathsTarget | null>(null)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const deleteSubmitting = useRef(false)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const newFindingRef = useRef<HTMLButtonElement>(null)
   const wasModalOpen = useRef(false)
-  const modalOpen = open || deleting !== null
+  const modalOpen = dialog !== null || deleting !== null || pathsTarget !== null
 
   useEffect(() => {
     if (wasModalOpen.current && !modalOpen) {
@@ -89,7 +102,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
 
   useEffect(() => {
     let ignore = false
-    operationsApi.listFindings(operationId, { limit: PAGE_SIZE, offset })
+    operationsApi.listFindings(operationId, { limit: PAGE_SIZE, offset, top_level: true })
       .then(result => { if (!ignore) { setPage(result); setError(''); setSettledKey(requestKey) } })
       .catch((cause: unknown) => { if (!ignore) { setError(toApiError(cause).detail); setSettledKey(requestKey) } })
     return () => { ignore = true }
@@ -103,17 +116,27 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
     setParams(next)
   }
 
+  /** Reload after a change. Top-level changes can reorder the list, so they return to its first page. */
+  const refresh = (topLevel: boolean): void => {
+    if (topLevel) navigatePage(0)
+    setRevision(value => value + 1)
+  }
+
   const save = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
+    if (dialog === null) return
+    const { editing, parent } = dialog
     const saved = editing
-      ? await operationsApi.updateFinding(operationId, editing.id, draft)
+      ? await operationsApi.updateFinding(operationId, editing.id, {
+        ...draft, parent_finding_id: editing.parent_finding_id,
+      })
       : await operationsApi.createFinding(operationId, {
-        ...draft, id: attempt.id, ...(attempt.attackResultId ? { attack_result_id: attempt.attackResultId } : {}),
+        ...draft, id: attempt.id, ...(parent ? { parent_finding_id: parent.id } : {}),
+        ...(attempt.attackResultId ? { attack_result_id: attempt.attackResultId } : {}),
       })
     setNotice(`Finding ${editing ? 'updated' : 'saved'}: ${saved.title}`)
-    setOpen(false)
-    setEditing(null)
-    navigatePage(0)
-    setRevision(value => value + 1)
+    setDialog(null)
+    if (parent) setExpanded(current => new Set(current).add(parent.id))
+    refresh(parent === null && !editing?.parent_finding_id)
   }
 
   const remove = async (): Promise<void> => {
@@ -125,14 +148,45 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       await operationsApi.deleteFinding(operationId, deleting.id)
       setNotice(`Finding deleted: ${deleting.title}`)
       setDeleting(null)
-      navigatePage(0)
-      setRevision(value => value + 1)
+      refresh(!deleting.parent_finding_id)
     } catch (cause: unknown) {
       setDeleteError(toApiError(cause).detail)
     } finally {
       deleteSubmitting.current = false
       setRemoving(false)
     }
+  }
+
+  const treeActions: FindingTreeActions = {
+    onToggle: findingId => {
+      setExpanded(current => {
+        const next = new Set(current)
+        if (!next.delete(findingId)) next.add(findingId)
+        return next
+      })
+    },
+    onEdit: (finding, parentTitle, trigger) => {
+      returnFocusRef.current = trigger
+      setDialog({
+        editing: finding,
+        parent: finding.parent_finding_id && parentTitle !== undefined
+          ? { id: finding.parent_finding_id, title: parentTitle } : null,
+      })
+    },
+    onAddSubFinding: (parent, trigger) => {
+      returnFocusRef.current = trigger
+      setDialog({ editing: null, parent: { id: parent.id, title: parent.title } })
+    },
+    onDelete: (finding, trigger) => {
+      returnFocusRef.current = trigger
+      setDeleteError('')
+      setDeleting(finding)
+    },
+    onEditPaths: (finding, subFindings, trigger) => {
+      returnFocusRef.current = trigger
+      setPathsTarget({ finding, subFindings })
+    },
+    onEvidenceDetached: () => { setEvidenceRevision(value => value + 1) },
   }
 
   const backLink = (
@@ -164,30 +218,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
     )
   }
 
-  const renderFinding = (finding: FindingListItem): React.ReactNode => (
-    <li key={finding.id} className={styles.item}>
-      <h2 className={styles.title}>{finding.title}</h2>
-      <div className={styles.metadata}>
-        <FindingSeverityBadge finding={finding} />
-        <time dateTime={finding.created_at}>{new Date(finding.created_at).toLocaleString()}</time>
-      </div>
-      {finding.harm_type && <Text>Harm-type: {finding.harm_type === 'Other' ? finding.harm_type_other : finding.harm_type}</Text>}
-      {finding.description && <p className={styles.description}>{finding.description}</p>}
-      <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
-        onDetached={() => { setEvidenceRevision(value => value + 1) }} actions={<>
-          <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`} onClick={event => {
-            returnFocusRef.current = event.currentTarget
-            setEditing(finding)
-            setOpen(true)
-          }}>Edit</Button>
-          <Button className={styles.button} aria-label={`Delete finding: ${finding.title}`} onClick={event => {
-            returnFocusRef.current = event.currentTarget
-            setDeleteError('')
-            setDeleting(finding)
-          }}>Delete</Button>
-        </>} />
-    </li>
-  )
+  const editing = dialog?.editing ?? null
 
   return (
     <section className={styles.root} aria-label="Operation">
@@ -211,17 +242,24 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           <FindingExportDialog key={current.operation.id} operation={current.operation} />
           <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
             returnFocusRef.current = event.currentTarget
-            setEditing(null)
-            setOpen(true)
+            setDialog({ editing: null, parent: null })
           }}>New finding</Button>
         </div>
-        {open && <FindingDialog editing={editing !== null} evidenceField={editing === null}
+        {dialog && <FindingDialog editing={editing !== null} evidenceField={editing === null}
+          parentTitle={dialog.parent?.title}
           initialValues={editing ? {
             title: editing.title, description: editing.description, severity: editing.severity,
             severity_other: editing.severity_other ?? null, harm_type: editing.harm_type ?? null,
-            harm_type_other: editing.harm_type_other ?? null,
+            harm_type_other: editing.harm_type_other ?? null, demonstrated: editing.demonstrated,
           } : undefined}
-          onSave={save} onClose={() => { setOpen(false); setEditing(null) }} />}
+          onSave={save} onClose={() => { setDialog(null) }} />}
+        {pathsTarget && <FindingPathsDialog operationId={operationId} finding={pathsTarget.finding}
+          subFindings={pathsTarget.subFindings} onClose={() => { setPathsTarget(null) }}
+          onSaved={saved => {
+            setNotice(`Paths saved: ${saved.title}`)
+            setPathsTarget(null)
+            refresh(false)
+          }} />}
       </header>
       {current.operation.description && <p className={styles.description}>{current.operation.description}</p>}
       <Dialog open={deleting !== null} onOpenChange={(_, data) => {
@@ -231,7 +269,10 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           <DialogBody>
             <DialogTitle>Delete finding?</DialogTitle>
             <DialogContent className={styles.form}>
-              <Text>Permanently delete “{deleting?.title}”? This cannot be undone.</Text>
+              <Text>
+                Permanently delete “{deleting?.title}”{deleting?.child_count ? ' and all of its sub-findings' : ''}?
+                This cannot be undone.
+              </Text>
               {deleteError && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{deleteError}</MessageBarBody></MessageBar>}
               <div className={styles.actions}>
                 <Button className={styles.button} disabled={removing} onClick={() => {
@@ -256,7 +297,10 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       ) : (
         <>
           {page.items.length === 0 ? <Text>No findings in this operation yet. Create one to record an assessment.</Text>
-            : <ul className={styles.list}>{page.items.map(renderFinding)}</ul>}
+            : <ul className={styles.list}>{page.items.map(finding => (
+              <FindingTreeItem key={finding.id} operationId={operationId} finding={finding} depth={0}
+                revision={revision + evidenceRevision} expanded={expanded} actions={treeActions} />
+            ))}</ul>}
           <div className={styles.header}>
             <Button className={styles.button} disabled={offset === 0} onClick={() => { navigatePage(0) }}>First</Button>
             <Text>Page {Math.floor(offset / PAGE_SIZE) + 1}</Text>

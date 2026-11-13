@@ -11,7 +11,7 @@ import OperationDetailPage from './OperationDetailPage'
 jest.mock('@/services/api', () => ({
   operationsApi: {
     get: jest.fn(), update: jest.fn(), delete: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
-    updateFinding: jest.fn(), deleteFinding: jest.fn(),
+    updateFinding: jest.fn(), deleteFinding: jest.fn(), replaceFindingPaths: jest.fn(),
     listFindingEvidence: jest.fn(), detachFindingEvidence: jest.fn(),
     getFindingOptions: jest.fn(), exportFindings: jest.fn(),
   },
@@ -24,6 +24,7 @@ const OPERATION: OperationDetail = { ...SAVED, usage: { findings: 0, attacks: 0,
 const FINDING: FindingListItem = {
   id: 'finding-1', operation_id: 'op-1', title: 'Human assessment',
   description: '', severity: 'informational', created_at: '2026-10-06T20:00:00Z', evidence_count: 0,
+  parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'missing' } } }
@@ -242,7 +243,7 @@ it('shows the operation and records a finding within it', async () => {
   expect(screen.getByText('Informational')).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', {
     id: expect.any(String), title: FINDING.title, severity: 'informational', description: '',
-    severity_other: null, harm_type: null, harm_type_other: null,
+    severity_other: null, harm_type: null, harm_type_other: null, demonstrated: true,
   })
 })
 
@@ -355,7 +356,7 @@ it('prefills edit fields and saves only editable values', async () => {
   await waitFor(() => { expect(screen.getByRole('heading', { name: edited.title })).toBeInTheDocument() })
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
     title: edited.title, severity: edited.severity, description: edited.description,
-    severity_other: null, harm_type: null, harm_type_other: null,
+    severity_other: null, harm_type: null, harm_type_other: null, demonstrated: true, parent_finding_id: null,
   })
 
   expect(operationsApi.createFinding).not.toHaveBeenCalled()
@@ -379,7 +380,7 @@ it('displays and preserves both custom classifications when editing a finding', 
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
     title: FINDING.title, description: '', severity: 'other', severity_other: 'Team severity',
-    harm_type: 'Other', harm_type_other: 'Team harm',
+    harm_type: 'Other', harm_type_other: 'Team harm', demonstrated: true, parent_finding_id: null,
   })
 })
 
@@ -497,7 +498,7 @@ it('opens findings export from the header without changing findings or the dashb
   await waitFor(() => expect(trigger).toHaveFocus())
   expect(screen.getByText('Page 2')).toBeInTheDocument()
   expect(jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.limit === 20))
-    .toEqual([['op-1', { limit: 20, offset: 20 }]])
+    .toEqual([['op-1', { limit: 20, offset: 20, top_level: true }]])
   expect(operationsApi.exportFindings).not.toHaveBeenCalled()
   expect(operationsApi.createFinding).not.toHaveBeenCalled()
   expect(operationsApi.updateFinding).not.toHaveBeenCalled()
@@ -524,7 +525,7 @@ it('pages through findings', async () => {
   await screen.findByRole('heading', { level: 2, name: FINDING.title })
   await user.click(screen.getByRole('button', { name: 'Next' }))
   await screen.findByText(/no findings/i)
-  expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20 }])
+  expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20, top_level: true }])
   expect(screen.getByText('Page 2')).toBeInTheDocument()
 })
 
@@ -556,5 +557,209 @@ describe('history after changing a finding on the first page', () => {
 
     await act(async () => { await router.navigate(-1) })
     expect(await screen.findByRole('heading', { level: 1, name: 'Operations list' })).toBeInTheDocument()
+  })
+})
+
+describe('sub-findings and paths', () => {
+  const PARENT: FindingListItem = {
+    ...FINDING, id: 'parent', title: 'Data theft', severity: 'critical', child_count: 3, paths: [
+      { id: 'path-1', name: 'Credential theft', description: '', steps: ['recon', 'creds'], complete: false },
+      { id: 'path-2', name: null, description: '', steps: ['recon', 'pivot'], complete: true },
+    ],
+  }
+  const RECON: FindingListItem = { ...FINDING, id: 'recon', title: 'Recon', parent_finding_id: 'parent' }
+  const CREDS: FindingListItem = {
+    ...FINDING, id: 'creds', title: 'Obtain creds', parent_finding_id: 'parent', demonstrated: false,
+  }
+  const PIVOT: FindingListItem = { ...FINDING, id: 'pivot', title: 'Pivot', parent_finding_id: 'parent' }
+
+  function listTree(topLevel: FindingListItem[] = [PARENT], children: FindingListItem[] = [RECON, CREDS, PIVOT]): void {
+    jest.mocked(operationsApi.listFindings).mockImplementation(async (_, params) => {
+      if (params.top_level) return { ...EMPTY, items: topLevel }
+      if (params.parent_finding_id === 'parent') return { ...EMPTY, items: children }
+      return EMPTY
+    })
+  }
+
+  async function expandParent(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    await user.click(await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' }))
+    const region = await screen.findByRole('region', { name: 'Sub-findings of Data theft' })
+    await within(region).findByRole('heading', { level: 3, name: RECON.title })
+    return region
+  }
+
+  it('lists top-level findings and expands one into its sub-findings and paths', async () => {
+    const user = userEvent.setup()
+    listTree()
+    renderPage()
+    const toggle = await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' })
+    expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 20, offset: 0, top_level: true })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
+
+    const region = await expandParent(user)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 100, offset: 0, parent_finding_id: 'parent' })
+    const creds = within(region).getByRole('heading', { level: 3, name: CREDS.title }).closest('li') as HTMLElement
+    expect(within(creds).getByText('Not demonstrated')).toBeInTheDocument()
+    const recon = within(region).getByRole('heading', { level: 3, name: RECON.title }).closest('li') as HTMLElement
+    expect(within(recon).queryByText('Not demonstrated')).not.toBeInTheDocument()
+    const panel = within(region).getByRole('region', { name: 'Paths of Data theft' })
+    expect(within(panel).getByText('Paths (2)')).toBeInTheDocument()
+    const credentialTheft = within(panel).getByRole('list', { name: 'Steps of Credential theft' })
+    expect(within(credentialTheft).getAllByRole('listitem').map(item => item.textContent))
+      .toEqual(['Recon', '→Obtain creds(not demonstrated)'])
+    const unnamed = within(panel).getByRole('list', { name: 'Steps of Path 2' })
+    expect(within(unnamed).getAllByRole('listitem').map(item => item.textContent)).toEqual(['Recon', '→Pivot'])
+    expect(within(panel).getByText('Partial')).toBeInTheDocument()
+    expect(within(panel).getByText('Complete')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(screen.queryByRole('region', { name: 'Sub-findings of Data theft' })).not.toBeInTheDocument()
+  })
+
+  it('adds a not-demonstrated sub-finding under its parent without leaving the page', async () => {
+    const user = userEvent.setup()
+    let added = false
+    jest.mocked(operationsApi.listFindings).mockImplementation(async (_, params) => {
+      if (params.top_level) return { ...EMPTY, items: [{ ...FINDING, child_count: added ? 1 : 0 }] }
+      return { ...EMPTY, items: added ? [{ ...RECON, parent_finding_id: FINDING.id, demonstrated: false }] : [] }
+    })
+    jest.mocked(operationsApi.createFinding).mockImplementation(async (_, request) => {
+      added = true
+      return { ...RECON, ...request, id: 'recon', parent_finding_id: FINDING.id } as FindingListItem
+    })
+    renderPage('/operations/op-1?offset=20')
+    expect(screen.queryByRole('button', { name: /^Sub-findings/ })).not.toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: `Add sub-finding: ${FINDING.title}` }))
+    const dialog = screen.getByRole('dialog', { name: 'New sub-finding' })
+    expect(within(dialog).getByText(`Sub-finding of “${FINDING.title}”`)).toBeInTheDocument()
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), RECON.title)
+    const demonstrated = within(dialog).getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).toBeChecked()
+    await user.click(demonstrated)
+    await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(`Finding saved: ${RECON.title}`)).toBeInTheDocument()
+    expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', expect.objectContaining({
+      title: RECON.title, parent_finding_id: FINDING.id, demonstrated: false,
+    }))
+    const toggle = await screen.findByRole('button', { name: `Sub-findings (1): ${FINDING.title}` })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByRole('heading', { level: 3, name: RECON.title })).toBeInTheDocument()
+    expect(screen.getByText('Page 2')).toBeInTheDocument()
+  })
+
+  it('edits a sub-finding in place, keeping its parent', async () => {
+    const user = userEvent.setup()
+    listTree()
+    renderPage()
+    const region = await expandParent(user)
+    await user.click(within(region).getByRole('button', { name: `Edit finding: ${CREDS.title}` }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit finding' })
+    expect(within(dialog).getByText(`Sub-finding of “${PARENT.title}”`)).toBeInTheDocument()
+    const demonstrated = within(dialog).getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).not.toBeChecked()
+    await user.click(demonstrated)
+    await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+
+    await waitFor(() => expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', CREDS.id, expect.objectContaining({
+      title: CREDS.title, parent_finding_id: 'parent', demonstrated: true,
+    })))
+  })
+
+  it('warns that deleting a parent removes its sub-findings, and shows why a path step cannot be deleted', async () => {
+    const user = userEvent.setup()
+    listTree()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: `Delete finding: ${PARENT.title}` }))
+    expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/))
+      .toHaveTextContent(`Permanently delete “${PARENT.title}” and all of its sub-findings? This cannot be undone.`)
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    const region = await expandParent(user)
+    const detail = "Finding 'recon' is a step of its parent's paths 'Credential theft', so it cannot be deleted."
+    jest.mocked(operationsApi.deleteFinding).mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail } },
+    })
+    await user.click(within(region).getByRole('button', { name: `Delete finding: ${RECON.title}` }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/cannot be undone/)).not.toHaveTextContent('sub-findings')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete finding' }))
+    expect(await within(dialog).findByText(detail)).toBeInTheDocument()
+    expect(operationsApi.deleteFinding).toHaveBeenCalledWith('op-1', RECON.id)
+  })
+
+  it('reports a sub-finding load failure and retries it', async () => {
+    const user = userEvent.setup()
+    listTree()
+    jest.mocked(operationsApi.listFindings).mockImplementationOnce(async () => ({ ...EMPTY, items: [PARENT] }))
+      .mockRejectedValueOnce(new Error('Sub-findings unavailable'))
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' }))
+    const region = await screen.findByRole('region', { name: 'Sub-findings of Data theft' })
+    expect(await within(region).findByText(/Could not load sub-findings: Sub-findings unavailable/)).toBeInTheDocument()
+
+    await user.click(within(region).getByRole('button', { name: 'Retry sub-findings' }))
+    expect(await within(region).findByRole('heading', { level: 3, name: RECON.title })).toBeInTheDocument()
+  })
+
+  it('stops loading sub-findings when the server repeats a page offset', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockImplementation(async (_, params) => (
+      params.top_level ? { ...EMPTY, items: [PARENT] } : { items: [RECON], has_more: true, next_offset: 0 }
+    ))
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Sub-findings (3): Data theft' }))
+    const region = await screen.findByRole('region', { name: 'Sub-findings of Data theft' })
+    expect(await within(region).findByText(/did not advance/)).toBeInTheDocument()
+    expect(jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.parent_finding_id))
+      .toHaveLength(1)
+  })
+
+  it('edits paths from the direct sub-findings and saves them in order', async () => {
+    const user = userEvent.setup()
+    listTree()
+    jest.mocked(operationsApi.replaceFindingPaths).mockResolvedValue(PARENT)
+    renderPage()
+    const region = await expandParent(user)
+    await user.click(within(region).getByRole('button', { name: `Edit paths: ${PARENT.title}` }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit paths' })
+
+    const credentialTheft = within(dialog).getByRole('group', { name: /Credential theft/ })
+    expect(within(credentialTheft).getByText('Partial')).toBeInTheDocument()
+    await user.click(within(credentialTheft).getByRole('button', { name: `Move up: ${CREDS.title}` }))
+    expect(within(within(credentialTheft).getByRole('list')).getAllByRole('listitem')[0])
+      .toHaveTextContent(CREDS.title)
+    await user.click(within(credentialTheft).getByRole('button', { name: `Remove step: ${RECON.title}` }))
+
+    const unnamed = within(dialog).getByRole('group', { name: /Path 2/ })
+    expect(within(unnamed).getByText('Complete')).toBeInTheDocument()
+    await user.type(within(unnamed).getByRole('textbox', { name: 'Name' }), 'Lateral movement')
+    expect(within(dialog).getByRole('group', { name: /Lateral movement/ })).toBe(unnamed)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Add path' }))
+    const added = within(dialog).getByRole('group', { name: /Path 3/ })
+    expect(within(added).getByText('Add at least one step.')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Save paths' })).toBeDisabled()
+    const addStep = within(added).getByRole('combobox', { name: 'Add step' })
+    expect(within(addStep).getAllByRole('option').map(option => option.textContent))
+      .toEqual(['Choose a sub-finding…', RECON.title, CREDS.title, PIVOT.title])
+    await user.selectOptions(addStep, PIVOT.title)
+    expect(within(added).getByText('Complete')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Save paths' }))
+
+    expect(await screen.findByText(`Paths saved: ${PARENT.title}`)).toBeInTheDocument()
+    expect(operationsApi.replaceFindingPaths).toHaveBeenCalledWith('op-1', PARENT.id, {
+      paths: [
+        { id: 'path-1', name: 'Credential theft', description: '', steps: [CREDS.id] },
+        { id: 'path-2', name: 'Lateral movement', description: '', steps: [RECON.id, PIVOT.id] },
+        { name: null, description: '', steps: [PIVOT.id] },
+      ],
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })

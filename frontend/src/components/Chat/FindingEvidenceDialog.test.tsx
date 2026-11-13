@@ -19,6 +19,7 @@ jest.mock('@/services/api', () => ({
 const FINDING: FindingListItem = {
   id: 'finding', operation_id: 'saved', title: 'Proof', severity: 'low', description: '',
   created_at: '2026-10-08T12:00:00Z', evidence_count: 0,
+  parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const SAVED = { id: 'saved', name: 'Exact', created_at: '2026-10-08T12:00:00Z' }
@@ -231,7 +232,7 @@ it('creates the finding with the viewed attack as evidence in one request and cl
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
     id: expect.any(String), title: '  New assessment', severity: 'important', description: 'Optional notes',
-    severity_other: null, harm_type: null, harm_type_other: null,
+    severity_other: null, harm_type: null, harm_type_other: null, demonstrated: true,
     attack_result_id: 'viewed',
   })
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
@@ -260,7 +261,7 @@ it('creates and attaches custom classifications from the same shared form and sh
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
     id: expect.any(String), title: 'Custom', description: '', severity: 'other', severity_other: 'Team severity',
-    harm_type: 'Other', harm_type_other: 'Team harm', attack_result_id: 'viewed',
+    harm_type: 'Other', harm_type_other: 'Team harm', demonstrated: true, attack_result_id: 'viewed',
   })
 })
 
