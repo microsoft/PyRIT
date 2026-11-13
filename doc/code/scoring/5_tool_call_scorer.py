@@ -294,8 +294,8 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # not count either.
 #
 # Stored messages are partial evidence. Hosted tools, several response section
-# types, and targets that execute tools themselves leave no output pieces, so the
-# scorer returns true or undetermined and never false. `OpenAIResponseTarget`
+# types, and targets that execute tools themselves leave no output pieces. For
+# subset conditions, the scorer returns true or undetermined and never false. `OpenAIResponseTarget`
 # records these pieces when it runs `custom_functions`. Combine it with
 # `OtelToolCallScorer` under `TrueFalseScoreAggregator.OR` when trace evidence is
 # also available.
