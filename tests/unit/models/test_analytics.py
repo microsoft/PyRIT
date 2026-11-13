@@ -184,6 +184,17 @@ def test_shared_statistics_accept_legacy_payload_without_confidence_interval_and
         assert TypeAdapter(OutcomeStatistics).validate_python(payload) == statistics
 
 
+@pytest.mark.parametrize("total", [10**325, 10**400])
+def test_shared_statistics_reject_collapsed_ci_below_float_range(total: int) -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": total - 1})
+    payload = asdict(statistics)
+    assert TypeAdapter(OutcomeStatistics).validate_python(payload) == statistics
+    with pytest.raises(ValueError, match="confidence interval"):
+        replace(statistics, success_rate_ci_upper=0.0)
+    with pytest.raises(ValidationError, match="confidence interval"):
+        TypeAdapter(OutcomeStatistics).validate_python({**payload, "success_rate_ci_upper": 0.0})
+
+
 def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:
     statistics = compute_outcome_statistics({"success": 1})
     statistics.successes = 5

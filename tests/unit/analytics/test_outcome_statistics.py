@@ -114,6 +114,14 @@ def test_skewed_large_integer_counts_do_not_underflow_wilson_interval() -> None:
     assert subnormal_stats.success_rate_ci_upper == 1.235e-322
 
 
+@pytest.mark.parametrize("total", [10**325, 10**400])
+@pytest.mark.parametrize("successes", [0, 1])
+def test_wilson_upper_bound_rounds_outward_below_float_range(total: int, successes: int) -> None:
+    statistics = compute_outcome_statistics({"success": successes, "failure": total - successes})
+    assert statistics.success_rate_ci_lower == 0.0
+    assert statistics.success_rate_ci_upper == 5e-324
+
+
 def test_wilson_interval_ignores_caller_decimal_traps_and_rounding() -> None:
     expected = compute_outcome_statistics({"success": 1, "failure": 1})
     with localcontext() as ctx:

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
 from enum import Enum
-from math import isclose, isfinite
+from math import isclose, isfinite, nextafter
 from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -57,7 +57,10 @@ def compute_wilson_ci(*, successes: int, total: int) -> tuple[float | None, floa
         center = (p + Decimal("0.5") * z2_inv_n) / denom
         half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
         lower = 0.0 if successes == 0 else float(max(Decimal(0), center - half_width))
-        upper = 1.0 if successes == total else float(min(Decimal(1), center + half_width))
+        upper_decimal = Decimal(1) if successes == total else min(Decimal(1), center + half_width)
+        upper = float(upper_decimal)
+        if upper == 0.0 and upper_decimal > 0:
+            upper = nextafter(0.0, 1.0)
     return lower, upper
 
 
