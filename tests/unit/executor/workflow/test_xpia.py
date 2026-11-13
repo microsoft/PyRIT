@@ -773,7 +773,12 @@ class TestXPIAManualProcessingWorkflow:
             assert release_input.wait(timeout=TEST_WATCHDOG_SECONDS)
             return "processed output"
 
-        with patch("builtins.input", side_effect=operator_input) as mock_input:
+        prompt_shown_again = asyncio.Event()
+
+        with (
+            patch("builtins.input", side_effect=operator_input) as mock_input,
+            patch("builtins.print", side_effect=lambda *args, **kwargs: prompt_shown_again.set()),
+        ):
             first_read = asyncio.create_task(context.processing_callback())
             assert await asyncio.to_thread(input_started.wait, TEST_WATCHDOG_SECONDS)
             first_read.cancel()
@@ -781,11 +786,45 @@ class TestXPIAManualProcessingWorkflow:
                 await first_read
 
             second_read = asyncio.create_task(context.processing_callback())
+            await asyncio.wait_for(prompt_shown_again.wait(), timeout=TEST_WATCHDOG_SECONDS)
             release_input.set()
             response = await asyncio.wait_for(second_read, timeout=TEST_WATCHDOG_SECONDS)
 
         assert response == "processed output"
         mock_input.assert_called_once()
+
+    async def test_line_entered_after_its_read_was_cancelled_is_not_given_to_a_later_read(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        input_started = threading.Event()
+        release_stale_line = threading.Event()
+        lines = iter(["stale output", "fresh output"])
+
+        def operator_input(prompt: str) -> str:
+            line = next(lines)
+            if line == "stale output":
+                input_started.set()
+                assert release_stale_line.wait(timeout=TEST_WATCHDOG_SECONDS)
+            return line
+
+        with patch("builtins.input", side_effect=operator_input) as mock_input:
+            cancelled_read = asyncio.create_task(context.processing_callback())
+            assert await asyncio.to_thread(input_started.wait, TEST_WATCHDOG_SECONDS)
+            stale_reader = next(t for t in threading.enumerate() if t.name == "pyrit-console-reader")
+            cancelled_read.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled_read
+            release_stale_line.set()
+            await asyncio.to_thread(stale_reader.join, TEST_WATCHDOG_SECONDS)
+
+            response = await asyncio.wait_for(context.processing_callback(), timeout=TEST_WATCHDOG_SECONDS)
+
+        assert stale_reader.daemon, "A pending console read must never delay interpreter shutdown"
+        assert response == "fresh output"
+        assert mock_input.call_count == 2
 
     async def test_cancelled_queued_read_keeps_later_reads_waiting_their_turn(
         self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message

@@ -681,8 +681,9 @@ class _ConsoleLineReader:
 
     ``input()`` cannot be interrupted, so a read keeps waiting for the operator even after its
     caller is cancelled. Each read runs on a daemon thread so it never delays interpreter
-    shutdown, and a line typed for a cancelled caller is handed to the next caller instead of
-    being dropped. Callers take turns, so concurrent reads never receive the same line.
+    shutdown. A pending read passes to the next caller, which shows its own prompt; a line typed
+    while no caller is waiting is discarded. Callers take turns, so concurrent reads never receive
+    the same line.
     """
 
     def __init__(self) -> None:
@@ -696,14 +697,14 @@ class _ConsoleLineReader:
         Return the next console line, reusing a read left behind by a cancelled caller.
 
         Args:
-            prompt (str): The prompt shown when a new read starts.
+            prompt (str): The prompt shown to the operator.
 
         Returns:
             str: The line the operator entered.
 
         Raises:
             asyncio.CancelledError: If the caller is cancelled before the line arrives. The read
-                keeps running and its line goes to the next caller.
+                keeps running; its line goes to a later caller only if one is waiting when it arrives.
         """
         with self._lock:
             previous_turn = self._turn
@@ -717,8 +718,14 @@ class _ConsoleLineReader:
             raise
         try:
             with self._lock:
+                if self._unclaimed_line is not None and self._unclaimed_line.done():
+                    # Nobody was waiting when this line arrived, so it answers a cancelled caller's prompt.
+                    logger.warning("Discarding console input entered after its manual XPIA read was cancelled.")
+                    self._unclaimed_line = None
                 if self._unclaimed_line is None:
                     self._unclaimed_line = self._start_read(prompt=prompt)
+                else:
+                    print(prompt, flush=True)
                 line = self._unclaimed_line
             try:
                 result = await asyncio.shield(asyncio.wrap_future(line))
