@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react'
 import {
   Text,
   Avatar,
@@ -53,10 +53,10 @@ interface MessageListProps {
   getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
-  /** Live Chat follows the latest response; saved evidence keeps the reader's position. */
-  autoScroll?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
   savedEvidence?: boolean
+  /** Announce new live/manual messages, not an initial page of historical evidence. */
+  announceUpdates?: boolean
   /** Only show temperature evidence when the viewed target supports runtime temperature. */
   showGenerationInfo?: boolean
   /** Conversation-wide default: render message text as Markdown. */
@@ -131,6 +131,8 @@ interface ScoreOverflowMenuProps {
 const SCORE_TAB_WIDTH_PX = 152
 const SCORE_TAB_GAP_PX = 4
 const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
+// Readers this close to the end keep following new messages; scrolling further up keeps their place.
+const FOLLOW_LATEST_THRESHOLD_PX = 48
 
 function scoreTabLabel({
   score,
@@ -411,10 +413,12 @@ export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, autoScroll = true, savedEvidence = false, showGenerationInfo = false, globalMarkdown = false, onEditConversation,
+  isLoading, savedEvidence = false, announceUpdates = !savedEvidence, showGenerationInfo = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const followedListRef = useRef<HTMLDivElement | null>(null)
+  const followLatestRef = useRef(true)
   const copyMenuId = useId()
   const isCopyConversationDisabled = copyConversationDisabled || Boolean(copyConversationDisabledReason)
 
@@ -438,9 +442,16 @@ export default function MessageList({
     }
   }
 
-  useEffect(() => {
-    if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, autoScroll])
+  // Historical pages keep their reading position; live/manual transcripts follow near the end.
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || savedEvidence) return
+    if (list !== followedListRef.current) {
+      followedListRef.current = list
+      followLatestRef.current = true
+    }
+    if (followLatestRef.current) list.scrollTop = list.scrollHeight
+  }, [messages, savedEvidence])
 
   if (isLoading) {
     return (
@@ -461,7 +472,13 @@ export default function MessageList({
   }
 
   return (
-    <div className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={(event) => {
+    <div ref={listRef} className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list"
+      role={announceUpdates ? 'log' : undefined} aria-live={announceUpdates ? 'polite' : undefined}
+      aria-relevant={announceUpdates ? 'additions text' : undefined} aria-atomic={announceUpdates ? false : undefined}
+      onScroll={(event: UIEvent<HTMLDivElement>) => {
+        const list = event.currentTarget
+        followLatestRef.current = list.scrollHeight - list.clientHeight - list.scrollTop <= FOLLOW_LATEST_THRESHOLD_PX
+      }} onDoubleClick={(event) => {
       if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
       onEditConversation?.()
     }}>
@@ -726,7 +743,6 @@ export default function MessageList({
           </div>
         )
       })}
-      <div ref={messagesEndRef} />
     </div>
   )
 }
