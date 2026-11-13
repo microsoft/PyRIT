@@ -121,6 +121,7 @@ export default function CustomInitializerFiles() {
   }
 
   const handleRegister = async (name: string, scriptContent: string): Promise<boolean> => {
+    const canRetryRefresh = refreshing || statusMessage?.canRetryRefresh === true
     invalidateCatalogReads()
     setRegistering(true)
     setStatusMessage(null)
@@ -128,7 +129,7 @@ export default function CustomInitializerFiles() {
       await initializersApi.register({ name, script_content: scriptContent })
     } catch (error) {
       if (mountedRef.current) {
-        setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+        setStatusMessage({ intent: 'error', text: toApiError(error).detail, canRetryRefresh })
         setRegistering(false)
       }
       return false
@@ -154,6 +155,7 @@ export default function CustomInitializerFiles() {
   }
 
   const handleDelete = async (name: string): Promise<void> => {
+    const canRetryRefresh = refreshing || statusMessage?.canRetryRefresh === true
     invalidateCatalogReads()
     setDeletingName(name)
     setStatusMessage(null)
@@ -162,7 +164,7 @@ export default function CustomInitializerFiles() {
       await reload()
       if (mountedRef.current) setStatusMessage({ intent: 'success', text: `Removed ${name}.` })
     } catch (error) {
-      if (mountedRef.current) setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+      if (mountedRef.current) setStatusMessage({ intent: 'error', text: toApiError(error).detail, canRetryRefresh })
     } finally {
       if (mountedRef.current) setDeletingName(null)
     }
@@ -181,6 +183,7 @@ export default function CustomInitializerFiles() {
             {statusMessage.canRetryRefresh && (
               <Button
                 appearance="secondary"
+                className={styles.noticeDismiss}
                 disabled={refreshing || registering || deletingName !== null}
                 onClick={handleRetryRefresh}
               >
@@ -189,6 +192,7 @@ export default function CustomInitializerFiles() {
             )}
             <Button
               appearance="subtle"
+              className={styles.noticeDismiss}
               icon={<DismissRegular />}
               aria-label="Dismiss notification"
               onClick={() => setStatusMessage(null)}

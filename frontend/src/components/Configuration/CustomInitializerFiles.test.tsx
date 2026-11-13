@@ -227,6 +227,59 @@ describe('CustomInitializerFiles', () => {
     })
   })
 
+  it.each(['register', 'delete'] as const)(
+    'keeps catalog recovery available when %s fails during a retry',
+    async (mutation) => {
+      const user = userEvent.setup()
+      const pendingRetry = deferred<ReturnType<typeof catalog>>()
+      mockedInitializersApi.listCustom.mockReset()
+      mockedInitializersApi.register.mockReset()
+      mockedInitializersApi.unregister.mockReset()
+      mockedInitializersApi.listCustom
+        .mockResolvedValueOnce(catalog())
+        .mockRejectedValueOnce(new Error('Catalog refresh failed'))
+        .mockReturnValueOnce(pendingRetry.promise)
+        .mockResolvedValueOnce(catalog([customInitializer, replacementInitializer]))
+      mockedInitializersApi.register.mockResolvedValueOnce(undefined)
+      if (mutation === 'register') {
+        mockedInitializersApi.register.mockRejectedValueOnce(new Error('Registration failed'))
+      } else {
+        mockedInitializersApi.unregister.mockRejectedValueOnce(new Error('Removal failed'))
+      }
+      renderFiles()
+
+      expect(await screen.findByText(customInitializer.source, { selector: 'label' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+      const firstDialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
+      await user.type(within(firstDialog).getByRole('textbox', { name: /Initializer name/ }), 'replacement_target')
+      await user.type(within(firstDialog).getByRole('textbox', { name: 'Python source' }), 'class Replacement: pass')
+      await user.click(within(firstDialog).getByRole('button', { name: 'Add' }))
+      await user.click(await screen.findByRole('button', { name: 'Retry refresh' }))
+
+      if (mutation === 'register') {
+        await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+        const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
+        await user.type(within(dialog).getByRole('textbox', { name: /Initializer name/ }), 'duplicate')
+        await user.type(within(dialog).getByRole('textbox', { name: 'Python source' }), 'class Duplicate: pass')
+        await user.click(within(dialog).getByRole('button', { name: 'Add' }))
+        await screen.findByText('Registration failed')
+        await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      } else {
+        await user.click(screen.getByRole('button', { name: 'Remove' }))
+        const dialog = screen.getByRole('dialog', { name: 'Remove custom initializer' })
+        await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+        await screen.findByText('Removal failed')
+      }
+
+      await act(async () => {
+        pendingRetry.resolve(catalog([customInitializer, replacementInitializer]))
+        await pendingRetry.promise
+      })
+      await user.click(await screen.findByRole('button', { name: 'Retry refresh' }))
+      expect(await screen.findByText('replacement_target')).toBeInTheDocument()
+    },
+  )
+
   it('keeps the newest runtime catalog when an older GET resolves last', async () => {
     const oldResponse = deferred<ReturnType<typeof catalog>>()
     const newResponse = deferred<ReturnType<typeof catalog>>()
