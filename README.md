@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.2.0/doc/roakey.png" width="150"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.2.1/doc/roakey.png" width="150"></p>
 
 # PyRIT: AI red teaming for models and applications
 
@@ -64,7 +64,7 @@ or [custom targets](https://microsoft.github.io/PyRIT/latest/code/targets/custom
 Read [PyRIT: Democratizing AI Red Teaming Through Open-Source Tooling](https://commandline.microsoft.com/wp-content/uploads/2026/08/PyRIT_Whitepaper_2026.pdf)
 for the design principles and real-world experience behind the toolkit.
 If you use PyRIT in your research, please cite the paper using
-[`CITATION.cff`](https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.2.0/CITATION.cff).
+[`CITATION.cff`](https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.2.1/CITATION.cff).
 
 ## Security
 
