@@ -28,8 +28,6 @@ import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import HelpField from '@/components/HelpField'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
-import CreateTargetDialog from '@/components/Config/CreateTargetDialog'
-import CreateScorerDialog from '@/components/Scorers/CreateScorerDialog'
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import TargetSelect from '@/components/Config/TargetSelect'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
@@ -47,7 +45,7 @@ import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
 import { PRESET_QUERY_PARAM, presetScannerRoutePath } from '@/components/ScenarioPresets/presetRoutes'
 import type { ViewName } from '@/components/Sidebar/Navigation'
-import { attacksApi, scenariosApi } from '@/services/api'
+import { attacksApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
   AddMessageResponse,
@@ -61,13 +59,12 @@ import type {
   ScenarioPresetResponse,
   ScenarioRunSummary,
   ScorerInstance,
-  ScenarioReadiness,
   TargetInstance,
 } from '@/types'
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
-import { resolvedRoleLabel, targetModelName } from '@/utils/targetIdentity'
+import { targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import ScenarioEstimateSection from './ScenarioEstimateSection'
@@ -97,9 +94,11 @@ import {
   MIN_MAX_CONCURRENCY,
   MIN_MAX_RETRIES,
   OBJECTIVE_PARAMETER_NAMES,
+  isScorerOwnedParameter,
   type ScenarioLaunchInput,
   scenarioDynamicParameters,
   supportsParameter,
+  usesDefaultAssertScoring,
 } from './scenarioLaunchRequest'
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 
@@ -358,6 +357,7 @@ function ScenarioLaunchForm({
   labels,
   operationId,
   defaultsReady = false,
+  onNavigate,
   scorers = [],
   scorersLoading = false,
   scorersError = null,
@@ -367,20 +367,9 @@ function ScenarioLaunchForm({
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
   const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
-  const [createdTargets, setCreatedTargets] = useState<Array<{ generation: string; target: TargetInstance }>>([])
-  const [createdScorers, setCreatedScorers] = useState<Array<{ generation: string; scorer: ScorerInstance }>>([])
-  const availableTargets = [...targets, ...createdTargets.filter((entry) => entry.generation === runtime.generation)
-    .map((entry) => entry.target).filter((entry) => !targets.some(
-    (target) => target.target_registry_name === entry.target_registry_name))]
-  const availableScorers = [...scorers, ...createdScorers.filter((entry) => entry.generation === runtime.generation)
-    .map((entry) => entry.scorer).filter((entry) => !scorers.some(
-    (scorer) => scorer.scorer_registry_name === entry.scorer_registry_name))]
-  const [createRole, setCreateRole] = useState<'objective_target' | 'adversarial_target' | 'scoring_target' | null>(null)
-  const [createScorer, setCreateScorer] = useState(false)
-  const [creationGeneration, setCreationGeneration] = useState(runtime.generation)
-  const [scoringTargetName, setScoringTargetName] = useState(initialRun?.scoring_target_name ?? '')
+  const scoringTargetName = initialRun?.scoring_target_name ?? ''
   const scorerError = objectiveScorer && (
-    scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, availableScorers)
+    scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)
   ) ? 'The selected objective scorer is unavailable. Select a scorer or use the scenario default.' : undefined
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
@@ -418,11 +407,12 @@ function ScenarioLaunchForm({
   const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
   const supportsBaseline = supportsParameter(scenario, 'include_baseline')
   const supportsDatasets = supportsParameter(scenario, 'dataset_config')
+  const defaultAssertScoring = usesDefaultAssertScoring(scenario)
   const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
   const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
   const singleTechnique = scenario.max_concrete_techniques === 1
-  const adversarialTargets = availableTargets.filter(
+  const adversarialTargets = targets.filter(
     (target: TargetInstance) => target.capabilities?.supports_multi_turn === true,
   )
 
@@ -502,11 +492,11 @@ function ScenarioLaunchForm({
     && (parameter.name !== 'prompt' || supportsPrompt))
   const unavailableSelection = (
     supportsObjectiveTarget && targetName !== ''
-    && !availableTargets.some((target) => target.target_registry_name === targetName)
+    && !targets.some((target) => target.target_registry_name === targetName)
   ) || (supportsTechniques
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
-  const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
+  const carriedScenarioParamNames = Object.keys(carriedScenarioParams).filter((name) => !isScorerOwnedParameter(scenario, name))
   const presetScenarioParams = useMemo(
     () => ({
       ...carriedScenarioParams,
@@ -619,35 +609,6 @@ function ScenarioLaunchForm({
   const uncheckedRefreshDatasets = refreshDatasets.filter((name) => datasetMetadata.loading || datasetMetadata.error
     || !datasetMetadata.items.some((item) => item.name === name))
 
-
-  const [readinessState, setReadinessState] = useState<{
-    key: string; result?: ScenarioReadiness; error?: string
-  } | null>(null)
-  useEffect(() => {
-    if (!runtime.ready || staleSelection || !estimateRequest || !estimateRequestKey) return
-    const controller = new AbortController()
-    void scenariosApi.readiness(scenario.scenario_name, estimateRequest, controller.signal).then((result) => {
-        if (!controller.signal.aborted) setReadinessState({ key: estimateRequestKey, result })
-      }).catch((failure: unknown) => {
-        if (!controller.signal.aborted) setReadinessState({ key: estimateRequestKey, error: toApiError(failure).detail })
-      })
-    return () => { controller.abort() }
-  }, [estimateRequest, estimateRequestKey, scenario.scenario_name, runtime.ready, staleSelection])
-  const readiness = readinessState?.key === estimateRequestKey ? readinessState.result : undefined
-  const readinessError = readinessState?.key === estimateRequestKey ? readinessState.error : undefined
-  const rolesReady = Boolean(readiness && readiness.issues.length === 0)
-  const needsAdversarial = readiness
-    ? [...readiness.bindings, ...readiness.issues].some((entry) => entry.role === 'adversarial_target')
-    : scenario.uses_default_adversarial_target
-  const defaultScorer = readiness?.bindings.find((entry) => entry.role === 'objective_scorer')
-  const needsScoringTarget = readiness
-    ? [...readiness.bindings, ...readiness.issues].some((entry) => entry.role === 'scoring_target')
-    : !objectiveScorer
-  const roleIssues = (role: string) => readiness?.issues.filter((issue) => issue.role === role)
-    .map((issue) => <Text key={`${issue.component}:${issue.reason}`} role="alert" size={200}>
-      {issue.reason} {issue.remediation}
-    </Text>)
-
   const newAttackContext = useMemo(() => ({
     generation: runtime.generation,
     ready: runtime.ready && defaultsReady && !staleSelection,
@@ -680,12 +641,12 @@ function ScenarioLaunchForm({
     confirmLaunch,
   } = useScenarioLaunch({
     requestResult,
-    submitBlocked: conversationBusy || Boolean(techniqueEditError) || !rolesReady,
+    submitBlocked: conversationBusy || Boolean(techniqueEditError),
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
-      || staleSelection || unavailableSelection || checkingRefreshPolicies || !rolesReady,
+      || staleSelection || unavailableSelection || checkingRefreshPolicies,
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
-      if (requestResult.ok) rememberScanTargets(availableTargets, requestResult.request)
+      if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
       datasetMetadata.reload()
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
@@ -880,7 +841,7 @@ function ScenarioLaunchForm({
                 </MessageBarBody>
               </MessageBar>
             )}
-            {!requestResult.ok && !techniqueEditError && !techniqueSelectionError && (
+            {validationError && !requestResult.ok && (
               <MessageBar intent="warning">
                 <MessageBarBody role="alert">{requestResult.error}</MessageBarBody>
               </MessageBar>
@@ -904,22 +865,6 @@ function ScenarioLaunchForm({
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
               </MessageBar>
             )}
-            {validationError && (
-              <MessageBar intent="warning">
-                <MessageBarBody role="alert">{validationError}</MessageBarBody>
-              </MessageBar>
-            )}
-            {readinessError && <MessageBar intent="error"><MessageBarBody role="alert">
-              {readinessError}
-            </MessageBarBody></MessageBar>}
-            {readiness && readiness.issues.length > 0 && <MessageBar intent="warning">
-              <MessageBarBody role="alert" aria-label="Scan configuration issues">
-                Configure the required scan roles before launching.
-                <ul>{readiness.issues.map((issue) => <li key={`${issue.role}:${issue.component}:${issue.reason}`}>
-                  {issue.role}: {issue.reason} {issue.remediation}
-                </li>)}</ul>
-              </MessageBarBody>
-            </MessageBar>}
 
             <section className={styles.section} aria-label="Scenario description">
               <MarkdownContent
@@ -969,49 +914,32 @@ function ScenarioLaunchForm({
                       onChange={(_, data) => { dispatch({ type: 'setTarget', name: data.value }); setSelectionGeneration(runtime.generation) }}
                       data-testid="scenario-target-select"
                     >
-                      {!availableTargets.some((target) => target.target_registry_name === targetName) && (
+                      {!targets.some((target) => target.target_registry_name === targetName) && (
                         <option value={targetName} disabled>
-                          {availableTargets.length === 0 ? 'No targets configured' : 'Select an available target'}
+                          {targets.length === 0 ? 'No targets configured' : 'Select an available target'}
                         </option>
                       )}
-                      {availableTargets.map((target) => (
+                      {targets.map((target) => (
                         <option key={target.target_registry_name} value={target.target_registry_name}>
                           {targetOptionLabel(target)}
                         </option>
                       ))}
                     </Select>
                   </HelpField>
-                  <Button className={styles.touchTarget} appearance="secondary" icon={<SettingsRegular />}
-                    type="button" onClick={() => { setCreationGeneration(runtime.generation); setCreateRole('objective_target') }}>
-                    Create objective target
-                  </Button>
-                  {roleIssues('objective_target')}
+                  {targets.length === 0 && (
+                    <Button className={styles.touchTarget} appearance="secondary" icon={<SettingsRegular />}
+                      type="button" onClick={() => onNavigate('registry')}>
+                      Configure target to launch
+                    </Button>
+                  )}
                 </>}
                 {objectiveParameters.map(renderScenarioParameter)}
-                {scenario.supports_objective_scorer && <ChatScorerPicker
+                {scenario.supports_objective_scorer && !defaultAssertScoring && <ChatScorerPicker
                   label="Objective scorer" usage="scenario" value={objectiveScorer}
-                  scorers={availableScorers} loading={scorersLoading} error={scorersError}
-                  defaultLabel={defaultScorer ? `Scenario rubric: ${defaultScorer.identifier.class_name}` : 'No configured default scorer'}
+                  scorers={scorers} loading={scorersLoading} error={scorersError}
                   disabled={submitting || previewOpen || !runtime.ready}
                   onChange={(value) => { setObjectiveScorer(value); setSelectionGeneration(runtime.generation) }}
                 />}
-                {scenario.supports_objective_scorer && <Button className={styles.touchTarget} type="button"
-                  disabled={submitting} onClick={() => { setCreationGeneration(runtime.generation); setCreateScorer(true) }}>
-                  Create objective scorer
-                </Button>}
-                {roleIssues('objective_scorer')}
-                {(scoringTargetName !== '' || (!objectiveScorer && needsScoringTarget)) && <>
-                  <TargetSelect label="Scoring Target" targets={availableTargets} value={scoringTargetName}
-                    onChange={(target) => setScoringTargetName(target?.target_registry_name ?? '')}
-                    placeholder={resolvedRoleLabel(readiness, 'scoring_target', availableTargets, 'No configured scoring target')}
-                    hint="Only needed by the scenario's model-based scoring rubric. Deterministic scorers need no target."
-                    disabled={submitting} />
-                  {roleIssues('scoring_target')}
-                  <Button className={styles.touchTarget} type="button" disabled={submitting}
-                    onClick={() => { setCreationGeneration(runtime.generation); setCreateRole('scoring_target') }}>
-                    Create scoring target
-                  </Button>
-                </>}
               </section>
             )}
 
@@ -1073,7 +1001,7 @@ function ScenarioLaunchForm({
             </section>
             )}
 
-            {(generalParameters.length > 0 || needsAdversarial
+            {(generalParameters.length > 0 || scenario.uses_default_adversarial_target
               || supportsConcurrency || supportsRetries) && (
             <section className={styles.section} aria-labelledby="parameters-section-title">
               <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
@@ -1081,7 +1009,7 @@ function ScenarioLaunchForm({
               </Text>
               <div className={styles.dynamicParameters}>
                 {generalParameters.map(renderScenarioParameter)}
-                {needsAdversarial && (
+                {scenario.uses_default_adversarial_target && (
                   <TargetSelect
                     targets={adversarialTargets}
                     value={adversarialTargetName}
@@ -1090,15 +1018,10 @@ function ScenarioLaunchForm({
                     }}
                     label="Adversarial Target"
                     help={HELP_DEFINITIONS.adversarialTarget}
-                    placeholder={resolvedRoleLabel(readiness, 'adversarial_target', availableTargets, 'No configured generation target')}
+                    placeholder="Use server default"
                     disabled={submitting}
                   />
                 )}
-                {needsAdversarial && <Button className={styles.touchTarget} type="button" disabled={submitting}
-                  onClick={() => { setCreationGeneration(runtime.generation); setCreateRole('adversarial_target') }}>
-                  Create adversarial target
-                </Button>}
-                {roleIssues('adversarial_target')}
                 {supportsConcurrency && <HelpField label="Max concurrency" help={HELP_DEFINITIONS.maxConcurrency}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
@@ -1141,7 +1064,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!requestResult.ok || !rolesReady || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
@@ -1149,24 +1072,6 @@ function ScenarioLaunchForm({
             </section>
           </form>
 
-          {createRole && <CreateTargetDialog open existingTargets={availableTargets}
-            onClose={() => setCreateRole(null)} onCreated={(target) => {
-              if (creationGeneration === runtime.generation) {
-                setCreatedTargets((current) => [...current, { generation: runtime.generation, target }])
-                if (createRole === 'objective_target') dispatch({ type: 'setTarget', name: target.target_registry_name })
-                if (createRole === 'scoring_target') setScoringTargetName(target.target_registry_name)
-                if (createRole === 'adversarial_target') dispatch({ type: 'setAdversarialTarget', name: target.target_registry_name })
-              }
-              setCreateRole(null)
-            }} />}
-          {createScorer && <CreateScorerDialog targets={availableTargets} scorers={availableScorers}
-            onClose={() => setCreateScorer(false)} onCreated={(scorer) => {
-              if (creationGeneration === runtime.generation) {
-                setCreatedScorers((current) => [...current, { generation: runtime.generation, scorer }])
-                setObjectiveScorer({ registry_name: scorer.scorer_registry_name, identifier_hash: scorer.identifier.hash })
-              }
-              setCreateScorer(false)
-            }} />}
           <Dialog open={pendingTechnique !== null} onOpenChange={(_, data) => {
             if (!data.open) setPendingTechnique(null)
           }}>
@@ -1208,7 +1113,7 @@ function ScenarioLaunchForm({
           <ScenarioRunPreviewDialog
             open={previewOpen}
             submitting={submitting}
-            confirmDisabled={!rolesReady || submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
+            confirmDisabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok
               || checkingRefreshPolicies}
             onOpenChange={changePreviewOpen}
             onCancel={dismissPreview}
@@ -1221,14 +1126,9 @@ function ScenarioLaunchForm({
               unchecked: uncheckedRefreshDatasets,
             }}
             objectiveTarget={supportsObjectiveTarget ? targetName : null}
-            objectiveScorer={scenario.supports_objective_scorer
-              ? objectiveScorer?.registry_name ?? (defaultScorer
-                ? `${defaultScorer.identifier.class_name} (${defaultScorer.identifier.hash.slice(0, 8)})`
-                : 'Not used') : null}
-            scoringTarget={readiness?.bindings.some((binding) => binding.role === 'scoring_target')
-              ? resolvedRoleLabel(readiness, 'scoring_target', availableTargets, 'Not used') : null}
-            adversarialTarget={readiness?.bindings.some((binding) => binding.role === 'adversarial_target')
-              ? resolvedRoleLabel(readiness, 'adversarial_target', availableTargets, 'Not used') : null}
+            objectiveScorer={scenario.supports_objective_scorer && !defaultAssertScoring
+              ? objectiveScorer?.registry_name ?? 'Use scenario default' : null}
+            adversarialTarget={scenario.uses_default_adversarial_target ? adversarialTargetName || 'Use server default' : null}
             techniques={supportsTechniques || supportsBaseline ? {
               baseline: supportsBaseline && baselineChecked && !isBaselineForbidden,
               names: supportsTechniques ? selectedTechniques : [],
