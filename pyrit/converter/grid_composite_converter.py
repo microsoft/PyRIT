@@ -214,12 +214,20 @@ class GridCompositeConverter(_BaseImageTextConverter):
         """
         Resize an image to the configured tile size.
 
+        Transparent pixels are composited onto a white background so that their hidden RGB values
+        do not leak into the tile.
+
         Args:
             image (Image.Image): The image to resize.
 
         Returns:
             Image.Image: The resized RGB image.
         """
+        if image.has_transparency_data:
+            rgba = image.convert("RGBA")
+            flattened = Image.new("RGB", rgba.size, (255, 255, 255))
+            flattened.paste(rgba, mask=rgba.split()[-1])
+            image = flattened
         return image.convert("RGB").resize(self._tile_size, Image.Resampling.LANCZOS)
 
     def _build_payload_tile(self, *, text: str, background: Image.Image | None) -> Image.Image:

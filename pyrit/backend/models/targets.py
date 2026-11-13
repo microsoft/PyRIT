@@ -12,16 +12,23 @@ from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common import AuthMode
-from pyrit.models import JSONValue, Parameter, TargetCapabilities, TargetIdentifier
+from pyrit.models import GenerationRange, JSONValue, Parameter, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 
 __all__ = [
     "CreateTargetRequest",
+    "DetectTargetCapabilitiesRequest",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
 ]
+
+
+class DetectTargetCapabilitiesRequest(BaseModel):
+    """The target identity selected before starting discovery."""
+
+    expected_hash: str = Field(..., min_length=1, max_length=128)
 
 
 def _default_auth_modes() -> list[AuthMode]:
@@ -97,3 +104,7 @@ class UnregisteredTarget(BaseModel):
 
     identifier: TargetIdentifier
     capabilities: TargetCapabilities
+    generation_ranges: dict[str, GenerationRange] = Field(
+        default_factory=dict,
+        description="Inclusive runtime bounds keyed by generation option name; missing entries mean unknown bounds",
+    )

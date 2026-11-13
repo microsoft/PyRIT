@@ -796,7 +796,7 @@ async def test_get_seed_groups_with_list_filters_matches_decoded_elements(
 
 
 @pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
-async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
+async def test_seed_list_filters_require_explicit_patterns_and_ignore_case(
     sqlite_instance: MemoryInterface, field: str
 ) -> None:
     await sqlite_instance.add_seeds_to_memory_async(
@@ -804,10 +804,13 @@ async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
         added_by="test",
     )
 
-    for needle in ["ann", "a_n", "a%n", "\u00c9THIQUE"]:
+    for needle in ["ann", "\u00c9THIQUE", "\u00e9thique"]:
         result = await sqlite_instance.get_seeds_async(**{field: [needle]})
         assert [seed.value for seed in result] == ["match"]
-    assert await sqlite_instance.get_seeds_async(**{field: ["\u00e9thique"]}) == []
+    for pattern in ["a_n", "a%n"]:
+        assert await sqlite_instance.get_seeds_async(**{field: [pattern]}) == []
+        result = await sqlite_instance.get_seeds_async(**{f"{field}_patterns": [pattern]})
+        assert [seed.value for seed in result] == ["match"]
 
 
 @pytest.mark.parametrize(
@@ -825,8 +828,9 @@ def test_seed_list_substring_filters_decode_json_on_both_dialects(
     assert sql.count(expansion) == 2
     assert sql.count("EXISTS") == 2
     assert " AND " in sql
-    assert needle in compiled.params.values()
-    assert r"\u00e9" in compiled.params.values()
+    assert f"%{needle}%" in compiled.params.values()
+    assert r"%\u00e9%" in compiled.params.values()
+    assert "ESCAPE '/'" in sql
 
 
 async def test_get_seeds_with_substring_filters_groups(sqlite_instance: MemoryInterface):
@@ -1126,7 +1130,19 @@ def _copy_seed_group(group: SeedGroup) -> SeedGroup:
 
 @pytest.mark.parametrize(
     "changed_field",
-    ["objective", "system", "user", "metadata", "role", "sequence", "member_count", "subset", "schema", "conditions"],
+    [
+        "objective",
+        "system",
+        "user",
+        "metadata",
+        "role",
+        "sequence",
+        "member_count",
+        "subset",
+        "schema",
+        "conditions",
+        "is_general_technique",
+    ],
 )
 async def test_add_seed_groups_preserves_complete_distinct_groups_async(
     *, sqlite_instance: MemoryInterface, changed_field: str
@@ -1155,6 +1171,8 @@ async def test_add_seed_groups_preserves_complete_distinct_groups_async(
         changed.prompts[1].response_json_schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
     elif changed_field == "conditions":
         changed.objective.conditions = (AnswerMatches(correct_answer="false claim", correct_answer_label="A"),)
+    elif changed_field == "is_general_technique":
+        changed.prompts[0].is_general_technique = True
     changed = SeedGroup(seeds=changed.seeds)
 
     for group in (original, changed):
@@ -1171,6 +1189,7 @@ async def test_add_seed_groups_preserves_complete_distinct_groups_async(
             "role",
             "sequence",
             "response_json_schema",
+            "is_general_technique",
         }
         assert [seed.model_dump(mode="json", include=fields) for seed in stored.seeds] == [
             seed.model_dump(mode="json", include=fields) for seed in expected.seeds
@@ -2004,6 +2023,65 @@ async def test_get_seed_groups_filter_by_count(sqlite_instance: MemoryInterface)
     # Test without filtering (should return all)
     all_groups = await sqlite_instance.get_seed_groups_async()
     assert len(all_groups) == 2
+
+
+async def test_get_seed_groups_keeps_ungrouped_seeds_when_other_matches_are_grouped(sqlite_instance: MemoryInterface):
+    # Some loaders, like HarmBench, store seeds without a prompt_group_id.
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Text-only objective", dataset_name="text_only")], added_by="test_user"
+    )
+    grouped = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective", dataset_name="grouped"),
+            SeedPrompt(value="Describe this picture", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[grouped], added_by="test_user")
+
+    groups = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in groups) == [
+        ["Describe this picture", "Grouped objective"],
+        ["Text-only objective"],
+    ]
+
+    single_groups = await sqlite_instance.get_seed_groups_async(seed_type="objective", group_length=[1])
+    assert [group.seeds[0].value for group in single_groups] == ["Text-only objective"]
+
+
+async def test_get_seed_groups_keeps_multiple_ungrouped_and_grouped_matches(sqlite_instance: MemoryInterface):
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value="Ungrouped objective 1", dataset_name="text_only"),
+            SeedObjective(value="Ungrouped objective 2", dataset_name="text_only"),
+        ],
+        added_by="test_user",
+    )
+    grouped_one = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective 1", dataset_name="grouped"),
+            SeedPrompt(value="Grouped prompt 1", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    grouped_two = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective 2", dataset_name="grouped"),
+            SeedPrompt(value="Grouped prompt 2", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(
+        prompt_groups=[grouped_one, grouped_two], added_by="test_user"
+    )
+
+    groups = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in groups) == [
+        ["Grouped objective 1", "Grouped prompt 1"],
+        ["Grouped objective 2", "Grouped prompt 2"],
+        ["Ungrouped objective 1"],
+        ["Ungrouped objective 2"],
+    ]
+    # Every seed appears exactly once across all groups.
+    all_ids = [seed.id for group in groups for seed in group.seeds]
+    assert len(all_ids) == len(set(all_ids)) == 6
 
 
 async def test_replace_seeds_for_dataset_async_replaces_all(sqlite_instance: MemoryInterface):

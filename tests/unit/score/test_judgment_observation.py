@@ -163,7 +163,7 @@ class _NegatingPipelineScorer(SelfAskTrueFalseScorer):
     ) -> list[Score]:
         scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
         for score in scores:
-            score.score_value = str(not score.get_value()).lower()
+            score.set_value(not score.get_value())
         return scores
 
 
@@ -175,7 +175,7 @@ class _PureNegatingScorer(SelfAskTrueFalseScorer):
     def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
         score = super()._convert_score(unvalidated)
         if self._invert:
-            score.score_value = str(not score.get_value()).lower()
+            score.set_value(not score.get_value())
         return score
 
 
@@ -187,7 +187,7 @@ class _ReplayableNegatingScorer(_PureNegatingScorer):
 class _UndeclaredNegatingScorer(_ReplayableNegatingScorer):
     def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
         score = super()._convert_score(unvalidated)
-        score.score_value = str(not score.get_value()).lower()
+        score.set_value(not score.get_value())
         return score
 
 

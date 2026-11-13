@@ -15,6 +15,7 @@ import pytest
 from pyrit.models import ScenarioSuite, ScenarioSuiteEntry
 from pyrit.models.catalog.scenario_suite import SUITE_SCHEMA_VERSION
 from pyrit.registry import ScenarioSuiteConflictError, ScenarioSuiteStorage
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -95,7 +96,7 @@ def test_failed_atomic_replace_preserves_previous_suite(tmp_path: Path) -> None:
     created = storage.save_suite(suite=_suite(description="original"), expected_version=None)
 
     with patch("os.replace", side_effect=OSError(28, "No space left on device")):
-        with pytest.raises(OSError):
+        with pytest.raises(DocumentStorageUnavailableError):
             storage.save_suite(suite=_suite(description="replacement"), expected_version=created.version)
 
     loaded = storage.load_suite("weekly")
@@ -112,7 +113,7 @@ def test_local_lock_excludes_a_second_writer(tmp_path: Path) -> None:
     real_replace = ScenarioSuiteStorage._replace_file
 
     def replace_after_competitor_times_out(*, path: Path, content: bytes) -> None:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(DocumentStorageUnavailableError):
             competitor.save_suite(suite=_suite(description="racer"), expected_version=created.version)
         real_replace(path=path, content=content)
 
@@ -136,6 +137,20 @@ def test_list_and_delete_suites(tmp_path: Path) -> None:
     assert sorted(storage.list_suites()) == ["nightly_suite", "weekly"]
     assert storage.delete_suite("weekly") is True
     assert storage.delete_suite("weekly") is False
+
+
+def test_delete_with_a_stale_version_is_a_conflict_and_keeps_the_suite(tmp_path: Path) -> None:
+    """Test that a suite delete confirmed against an old read cannot discard an edit made since."""
+    storage = ScenarioSuiteStorage(source=str(tmp_path))
+    first = storage.save_suite(suite=_suite(description="first"), expected_version=None)
+    second = storage.save_suite(suite=_suite(description="second"), expected_version=first.version)
+
+    with pytest.raises(ScenarioSuiteConflictError, match="Scenario suite 'weekly' could not be deleted") as error:
+        storage.delete_suite("weekly", expected_version=first.version)
+
+    assert error.value.actual_version == second.version
+    assert storage.delete_suite("weekly", expected_version=second.version) is True
+    assert storage.load_suite("weekly") is None
 
 
 def test_default_source_is_under_configuration_directory(tmp_path: Path) -> None:

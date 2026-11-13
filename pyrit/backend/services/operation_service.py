@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
+    AttackFindingItem,
+    AttackFindingListResponse,
     EvidenceAvailability,
     FindingCreateRequest,
     FindingEvidenceAttachResponse,
@@ -186,7 +188,13 @@ class OperationService:
         return saved
 
     async def list_findings_async(
-        self, *, operation_id: UUID, limit: int, offset: int, title_query: str | None = None
+        self,
+        *,
+        operation_id: UUID,
+        limit: int,
+        offset: int,
+        title_query: str | None = None,
+        title_pattern: str | None = None,
     ) -> FindingListResponse:
         """
         Read one page of an operation's findings and whether there is a next page.
@@ -196,7 +204,11 @@ class OperationService:
         """
         await self.get_async(operation_id)
         findings = await CentralMemory.get_memory_instance().get_findings_async(
-            operation_id=operation_id, limit=limit + 1, offset=offset, title_query=title_query
+            operation_id=operation_id,
+            limit=limit + 1,
+            offset=offset,
+            title_query=title_query,
+            title_pattern=title_pattern,
         )
         has_more = len(findings) > limit
         page = findings[:limit]
@@ -381,6 +393,30 @@ class OperationService:
             )
         except LookupError as exc:
             raise FindingEvidenceNotFoundError(str(exc)) from exc
+
+    async def list_attack_findings_async(self, attack_result_id: UUID) -> AttackFindingListResponse:
+        """
+        Read every finding that links an attack as evidence, across all Operations.
+
+        An attack with no linked findings, including one that is not saved yet, has an empty list.
+
+        Returns:
+            AttackFindingListResponse: The linked findings with their Operation names and evidence links.
+        """
+        memory = CentralMemory.get_memory_instance()
+        linked = await memory.get_findings_for_attack_result_async(attack_result_id=attack_result_id)
+        operation_ids = list({finding.operation_id for finding, _ in linked})
+        operations = await memory.get_operations_async(operation_ids=operation_ids) if operation_ids else []
+        names = {operation.id: operation.name for operation in operations}
+        return AttackFindingListResponse(
+            attack_result_id=attack_result_id,
+            items=[
+                AttackFindingItem(
+                    **finding.model_dump(), operation_name=names.get(finding.operation_id, ""), evidence_id=evidence.id
+                )
+                for finding, evidence in linked
+            ],
+        )
 
     async def _require_finding_async(self, *, operation_id: UUID, finding_id: UUID) -> Finding:
         finding = await CentralMemory.get_memory_instance().get_finding_async(
