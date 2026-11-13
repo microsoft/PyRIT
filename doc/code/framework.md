@@ -215,7 +215,6 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 
 **Responsibility**: Tell the attack what happened. Was this blocked? Was the objective achieved? Was this tool called? Was this file written?
 
-- Base an attack's decisions about success and strategy on scores.
 - Score the evidence a `Scorable` identifies (a message, a trace, a file location, or a program run) against an optional `ScoringExpectation`: the objective and its typed conditions.
 - Build on a result family: `TrueFalseScorer`, `FloatScaleScorer`, or `MultiLabelTrueFalseScorer` for independent labeled verdicts, where `TrueFalseScoreSelector` picks the verdict an attack uses. `MessageScorer` adds message handling. Declare the evidence a scorer reads, such as roles and data types, instead of making callers filter it.
 - Score what the target actually produced. Simulated and injected messages are excluded unless a scorer explicitly selects them.
@@ -296,8 +295,8 @@ These modules support every component.
 **Responsibility**: Answer questions across stored results. Which technique works best? How often did an objective succeed? Which responses match known content?
 
 - Work after the fact, on stored results. Decisions during an attack are a scorer's job.
-- Implement each statistic once and share it across the SDK, backend, reports, and GUI (for example, `compute_outcome_statistics` and `compute_scenario_statistics`). Surfaces display these numbers; they don't recompute them. When memory must also aggregate in SQL for performance, a parity test keeps the two in step.
-- Get data from memory; analytics owns the calculations.
+- Implement each statistic once and share it across the SDK, backend, reports, and GUI (for example, `compute_outcome_statistics` and `compute_scenario_statistics`). When memory must also aggregate in SQL for performance, a parity test keeps the two in step.
+- Get data from memory; analytics owns the calculations. Don't duplicate them in the backend, CLI, GUI, or elsewhere in the SDK.
 
 ## Auth
 
@@ -358,7 +357,7 @@ These patterns cut across components. Use them instead of inventing a local vari
 - **Pass in built components.** Attacks, scorers, converters, and targets accept the components they use as objects: a scorer rather than scorer settings, a target rather than an endpoint, and a `SeedPrompt` or seed rather than a YAML path. A component may build its own default, as Crescendo builds a default objective scorer, as long as a caller can pass an object that replaces it.
 - **Match requirements to capabilities, not types.** Components declare what they need and what they offer: target requirements and capabilities, seed group requirements, scorer condition types and evidence, and converter input and output types. Shared checks, such as `check_target_compatibility` and `filter_seed_groups`, match them before any model call, then adapt, skip, or fail according to the caller's policy. Don't branch on a component's concrete class or class name; checking data types or abstract families is fine.
 - **Make identifiers complete and stable.** A component's identifier deterministically records every setting that shapes its output. It leaves out runtime settings, such as rate limits, retries, and timeouts, and never holds a credential, so rotating a key keeps the identity. Results record the identifiers of what produced them, even on error. Identity is fixed at construction: to change an identity-bearing setting, build a new instance.
-- **Resolve defaults in one order.** An explicit argument wins, then an initializer default (`@apply_defaults`), then the environment variable that the class names, read at construction through `default_values`, then a declared default or an error. Components don't read `os.environ` anywhere else; setup, the backend, and the CLI read process settings at startup.
+- **Resolve defaults in one order.** An explicit argument wins, then an initializer default (`@apply_defaults`), then the environment variable that the class names, read at construction, then a declared default or an error. Components don't read `os.environ` anywhere else; setup, the backend, and the CLI read process settings at startup.
 - **Give data PyRIT queries a typed field.** If memory queries, filters, or sorts by a value, make it a typed field on the narrowest model that owns it (`MessagePiece`, not `Message`). Other structured data travels in metadata through a value object (below). Labels are user tags: PyRIT stores and filters them for users but never derives behavior from them.
 - **Let one value object own each metadata key.** A small model in `pyrit.models` declares a namespaced key and is the only code that reads or writes it, through `to_metadata()` and `from_metadata()`; see `ToolExecutionMetadata`. A missing key, or a legacy value from older rows, reads as unset.
 - **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory.
