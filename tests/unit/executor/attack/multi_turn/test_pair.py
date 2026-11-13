@@ -27,7 +27,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
 )
-from pyrit.models import ComponentIdentifier
+from pyrit.models import AttackOutcome, ComponentIdentifier
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -202,6 +202,40 @@ class TestPAIRAttackInit:
         result = attack.get_attack_scoring_config()
         assert isinstance(result, TAPAttackScoringConfig)
         assert result.threshold == 0.85
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPAIRErrorOutcome:
+    """PAIR inherits TAP's ERROR reporting when every branch crashed before a score (#4154)."""
+
+    async def test_pair_reports_error_when_no_branch_was_scored_async(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        context = attack._context_type(params=AttackParameters(objective="Test objective"))
+        context.tree_visualization.create_node("root", "root")
+        context.node_errors = ["Execution error: simulated crash", "JSON parsing error: bad payload"]
+
+        result = await attack._create_failure_result_async(context)
+
+        assert result.outcome == AttackOutcome.ERROR
+        assert "2 branches failed to execute" in result.outcome_reason
+        assert result.error_message == "JSON parsing error: bad payload"
+        assert result.error_type == "JSON parsing error"
+
+    async def test_pair_reports_failure_when_no_branch_errored_async(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        context = attack._context_type(params=AttackParameters(objective="Test objective"))
+        context.tree_visualization.create_node("root", "root")
+
+        result = await attack._create_failure_result_async(context)
+
+        assert result.outcome == AttackOutcome.FAILURE
+        assert result.error_message is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
