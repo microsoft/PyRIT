@@ -92,6 +92,10 @@ def _markdown_paths(paths: tuple[FindingReportPath, ...]) -> str:
         steps = PATH_STEP_SEPARATOR.join(_markdown_step(step) for step in path.steps)
         # The bold name keeps authored text from starting a nested list inside the item.
         lines.append(f"{index}. **{_markdown_inline(path.name)}** ({path.status}): {steps}")
+        if path.description:
+            lines.append(
+                _markdown_sub_item(_markdown_field(FindingReportField(label="Description", value=path.description)))
+            )
     return "\n".join(lines)
 
 

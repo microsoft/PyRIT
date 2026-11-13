@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 
 import {
-  Badge, Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
   Field, Input, MessageBar, MessageBarBody, Select, Text,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowDownRegular, ArrowUpRegular, DismissRegular } from '@fluentui/react-icons'
@@ -10,7 +10,7 @@ import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { FindingListItem } from '@/types'
 import { generateClientId } from '@/utils/clientId'
-import { findingPathName, isFindingPathComplete } from '@/utils/findingTree'
+import { findingPathName } from '@/utils/findingTree'
 
 import { useFindingPathsDialogStyles } from './FindingPathsDialog.styles'
 
@@ -42,7 +42,6 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
   const byId = new Map(subFindings.map(subFinding => [subFinding.id, subFinding]))
-  const demonstrated = new Map(subFindings.map(subFinding => [subFinding.id, subFinding.demonstrated]))
   const canSave = drafts.every(draft => draft.steps.length > 0)
 
   const update = (key: string, change: (draft: PathDraft) => PathDraft): void => {
@@ -86,15 +85,11 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
 
   const renderPath = (draft: PathDraft, index: number): React.ReactNode => {
     const label = findingPathName(draft, index)
-    const complete = isFindingPathComplete(draft, demonstrated)
     const available = subFindings.filter(subFinding => !draft.steps.includes(subFinding.id))
     return (
       <fieldset key={draft.key} className={styles.path}>
         <legend className={styles.legend}>
           {label}
-          {draft.steps.length > 0 && (
-            <Badge appearance="tint" color={complete ? 'success' : 'warning'}>{complete ? 'Complete' : 'Partial'}</Badge>
-          )}
         </legend>
         <Field label="Name" hint="Optional">
           <Input value={draft.name} disabled={saving} placeholder={`Path ${index + 1}`} autoComplete="off"

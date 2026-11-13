@@ -17,6 +17,10 @@ export interface FindingTreeRow<T extends FindingNode> {
 function bySubFindingOrder(first: FindingNode, second: FindingNode): number {
   const created = Date.parse(first.created_at) - Date.parse(second.created_at)
   if (created !== 0) return created
+  // Date.parse discards the API timestamp's sub-millisecond precision.
+  const firstFraction = first.created_at.match(/\.(\d+)/)?.[1]?.padEnd(6, '0') ?? '000000'
+  const secondFraction = second.created_at.match(/\.(\d+)/)?.[1]?.padEnd(6, '0') ?? '000000'
+  if (firstFraction !== secondFraction) return firstFraction < secondFraction ? -1 : 1
   return first.id < second.id ? -1 : first.id > second.id ? 1 : 0
 }
 
@@ -69,13 +73,6 @@ export function findingDescendantIds<T extends FindingNode>(
     }
   }
   return descendants
-}
-
-/** Whether every step of a path is a demonstrated sub-finding. Unknown steps count as not demonstrated. */
-export function isFindingPathComplete(
-  path: Pick<FindingPath, 'steps'>, demonstrated: ReadonlyMap<string, boolean>,
-): boolean {
-  return path.steps.length > 0 && path.steps.every(step => demonstrated.get(step) === true)
 }
 
 /** A path's name, or its position when it has none. */

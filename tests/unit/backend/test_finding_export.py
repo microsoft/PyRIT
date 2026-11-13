@@ -1174,6 +1174,34 @@ async def test_docx_export_writes_sub_findings_depth_first(
     )
 
 
+@pytest.mark.parametrize("export_format", FORMATS)
+async def test_export_preserves_path_description(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str], export_format: str
+) -> None:
+    operation, named = await _save_decomposed_findings_async(sqlite_instance)
+    description = "Requires *operator* access.\n# Retain this prerequisite."
+    await sqlite_instance.replace_finding_paths_async(
+        operation_id=operation.id,
+        finding_id=named["Data theft"].id,
+        paths=(DecompositionPath(name="Documented path", description=description, steps=(named["Recon"].id,)),),
+    )
+
+    response = _export(
+        headers=compatibility_headers,
+        operation_id=operation.id,
+        finding_ids=[named["Data theft"].id],
+        export_format=export_format,
+    )
+
+    assert response.status_code == 200
+    if export_format == "markdown":
+        text = response.content.decode("utf-8")
+        assert r"Requires \*operator\* access." in text
+        assert r"\# Retain this prerequisite." in text
+    else:
+        assert description in "\n".join(_paragraphs(response.content))
+
+
 async def test_export_counts_sub_findings_toward_the_limit(
     sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
 ) -> None:

@@ -1,5 +1,5 @@
 import {
-  findingChildren, findingDescendantIds, findingPathName, flattenFindingTree, isFindingPathComplete,
+  findingChildren, findingDescendantIds, findingPathName, flattenFindingTree,
 } from './findingTree'
 
 const AT = (minute: number): string => `2026-11-06T12:${String(minute).padStart(2, '0')}:00Z`
@@ -24,6 +24,12 @@ describe('findingTree', () => {
     expect(findingChildren([ROOT, later, earlier]).get('root')?.map(finding => finding.id)).toEqual(['a', 'b'])
   })
 
+  it('preserves microseconds before breaking creation-time ties', () => {
+    const earlier = { id: 'b', parent_finding_id: 'root', created_at: '2026-11-06T12:00:00.000100Z' }
+    const later = { id: 'a', parent_finding_id: 'root', created_at: '2026-11-06T12:00:00.000900+00:00' }
+    expect(findingChildren([ROOT, later, earlier]).get('root')?.map(finding => finding.id)).toEqual(['b', 'a'])
+  })
+
   it('treats a finding whose parent is not listed as a root', () => {
     const children = findingChildren([FIRST, NESTED])
     expect(children.get(null)?.map(finding => finding.id)).toEqual(['first'])
@@ -41,14 +47,6 @@ describe('findingTree', () => {
       id: `node-${index}`, parent_finding_id: index === 0 ? null : `node-${index - 1}`, created_at: AT(0),
     }))
     expect(flattenFindingTree(chain).at(-1)).toEqual({ finding: chain.at(-1), depth: 19_999 })
-  })
-
-  it('completes a path only when every step was demonstrated', () => {
-    const demonstrated = new Map([['a', true], ['b', false]])
-    expect(isFindingPathComplete({ steps: ['a'] }, demonstrated)).toBe(true)
-    expect(isFindingPathComplete({ steps: ['a', 'b'] }, demonstrated)).toBe(false)
-    expect(isFindingPathComplete({ steps: ['a', 'missing'] }, demonstrated)).toBe(false)
-    expect(isFindingPathComplete({ steps: [] }, demonstrated)).toBe(false)
   })
 
   it('names an unnamed path by its position', () => {

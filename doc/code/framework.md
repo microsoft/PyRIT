@@ -147,8 +147,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   `DecompositionPath`s (`pyrit.models.decomposition`) are ordered chains of its direct children.
   Memory stores and deduplicates each tree as one unit; executing paths belongs to an attack,
   not the dataset. Operator-written findings use the same shape (`Finding.parent_finding_id` and
-  `Finding.paths`) without being linked to objectives; a finding path is complete only when every
-  step is a demonstrated sub-finding, and that status is derived, never stored.
+  `Finding.paths`) without being linked to objectives.
 - `AttackSeedGroup.adversarial_prompts` associates named adversarial-chat `SeedPrompt`
   inputs with the objective. They are not application messages. Attack techniques bind
   them when constructing attacks; memory preserves the association.

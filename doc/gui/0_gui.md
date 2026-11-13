@@ -309,8 +309,8 @@ they were added. Each finding keeps its own severity, and turning off
 **Demonstrated** marks a step that was attempted but not achieved. **Edit
 paths** records the ordered ways a finding's direct sub-findings demonstrate
 it, for example *recon → obtain credentials → pull records* and *recon →
-phish an admin → pull records*. A path shows as **Complete** when every step
-was demonstrated and **Partial** otherwise. Deleting a finding also deletes its
+phish an admin → pull records*. A saved path shows as **Complete** when every
+step was demonstrated and **Partial** otherwise. Deleting a finding also deletes its
 sub-findings; a sub-finding that a path uses can't be deleted or moved until
 you remove it from that path.
 
@@ -324,8 +324,8 @@ you remove it from that path.
 **Export findings** on the operation page downloads the findings you select as
 one Word or Markdown document to paste into a report. Selecting a finding
 includes its sub-findings, numbered under it in the order they were added (1,
-1.1, 1.2, …), with its paths and any steps that were not demonstrated. Evidence
-appears as links to the attacks in PyRIT, without transcripts or media. Nothing
+1.1, 1.2, …), with its paths, their saved descriptions, and any steps that were not
+demonstrated. Evidence appears as links to the attacks in PyRIT, without transcripts or media. Nothing
 is redacted, so store and share exported files with care.
 
 ![Operations page with a test operation](images/operations.png)

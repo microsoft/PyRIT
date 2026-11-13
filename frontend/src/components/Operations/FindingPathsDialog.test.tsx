@@ -34,16 +34,16 @@ beforeEach(() => {
 })
 
 describe('FindingPathsDialog', () => {
-  it('derives completeness from each step and keeps the path description', async () => {
+  it('keeps demonstrated steps and descriptions without predicting the saved verdict', async () => {
     const user = userEvent.setup()
     const onSaved = jest.fn()
     jest.mocked(operationsApi.replaceFindingPaths).mockResolvedValue(PARENT)
     renderDialog({ onSaved })
     const path = screen.getByRole('group', { name: /Only way/ })
-    expect(within(path).getByText('Complete')).toBeInTheDocument()
+    expect(within(path).queryByText(/^(Complete|Partial)$/)).not.toBeInTheDocument()
 
     await user.selectOptions(within(path).getByRole('combobox', { name: 'Add step' }), CREDS.title)
-    expect(within(path).getByText('Partial')).toBeInTheDocument()
+    expect(within(path).queryByText(/^(Complete|Partial)$/)).not.toBeInTheDocument()
     expect(within(path).getByText('(not demonstrated)', { exact: false })).toBeInTheDocument()
     expect(within(path).getByRole('combobox', { name: 'Add step' })).toBeDisabled()
     expect(within(path).getByText('Every sub-finding is already a step of this path.')).toBeInTheDocument()
