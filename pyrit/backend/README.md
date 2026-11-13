@@ -595,10 +595,10 @@ not additional results.
 Available flat execution rows remain usable while relationships load or if the
 hierarchy request fails, with an explicit loading/error notice.
 
-Clicking a result with a main conversation opens the existing chat view and
-preserves scenario-run provenance for its return breadcrumb. Conversationless
-compound results expand their children instead. A separate Details action reuses
-the existing metadata dialog. Hierarchy requests do not load transcript bodies;
+Clicking a result row or pressing Enter on it opens the attack details dialog.
+An explicit expansion button shows a compound result's saved children. The separate
+Conversation link opens Chat and preserves scenario-run provenance for its return
+breadcrumb. Hierarchy requests do not load transcript bodies;
 the Chat viewer loads saved evidence through the bounded conversation reads above.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
