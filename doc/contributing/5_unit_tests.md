@@ -1,19 +1,16 @@
 # 5. Unit Tests
 
-All new functionality should have unit test coverage. These are found in the `tests/unit` directory.
+All new functionality needs unit tests in `tests/unit`. These rules apply the [test principles](../code/framework.md#tests).
 
-Testing is an art to get right! But here are some best practices in terms of unit testing in PyRIT, and some potential concepts to familiarize yourself with as you're writing these tests.
+- **Test one behavior per test.** Name the test for that behavior. Use `pytest.mark.parametrize` to check the same behavior across inputs.
+- **Make tests deterministic.** Don't make network calls, sleep, or assert wall-clock deadlines; coordinate concurrent work with events (see below). Declare every fixture a test needs, including memory, and never rely on state another test left behind.
+- **Fix flaky tests at the cause.** Don't hide a flake with retries, skips, or longer timeouts. A timeout that only prevents a hang uses the shared watchdogs described below.
+- **Test through public interfaces.** Cover normal behavior, boundaries, and failures. Don't test private helpers, our dependencies, or permutations that exercise the same code path.
+- **Mock external services, not the logic under test.** Use `MagicMock` and `AsyncMock` (with `spec=` when the real class has a fixed shape) and `patch` for external calls. Isolate memory with `sqlite_instance` for a real, isolated SQLite database, or `patch_central_database` when patching `CentralMemory`; never touch a shared or persistent database.
+- **Reuse shared helpers.** Use fixtures, `unit.mocks`, and `integration.mocks` instead of building your own.
+- **Get coverage from unit tests.** Don't rely on notebooks or integration tests for it.
 
-- Make a test that checks one thing and one thing only.
-- Use `fixtures` generally, and specifically, if you're using something across classes, use `unit.mocks` or `integration.mocks`.
-- Memory isolation: Use `sqlite_instance` for a real, isolated SQLite database, or `patch_central_database` when patching CentralMemory access.
-- Code coverage and functionality should be checked with unit tests. Notebooks and integration tests should not be relied on for coverage.
-- `MagicMock` and `AsyncMock`: these are the preferred way to mock calls.
-- `with patch` is acceptable to patch external calls.
-- Don't write to the actual database, use a `MagicMock` for the memory object or use `patch_central_database` as the database connection.
-
-
-Not all of our current tests follow these practices (we're working on it!) But for some good examples, see [test_tts_send_prompt_file_save_async](../../tests/unit/prompt_target/target/test_tts_target.py), which has many of these best practices incorporated in the test.
+For an example that follows most of these rules, see [test_tts_send_prompt_file_save_async](../../tests/unit/prompt_target/target/test_tts_target.py).
 
 ## Async timing and cancellation
 
