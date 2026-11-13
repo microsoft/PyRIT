@@ -56,16 +56,12 @@ from pyrit.backend.services import AttackService
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
-from pyrit.backend.services.saved_entries import (
-    NotSaveableError,
-    SavedEntryConflictError,
-    SavedEntryRemovalError,
-    SavedEntryStorageError,
-)
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:

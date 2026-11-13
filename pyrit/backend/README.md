@@ -90,7 +90,9 @@ A created target is Temporary: a restart or a configuration apply removes it. Wi
 left on), the target is saved under `registry_recipes_source` and restored at every start, and the signed-in user is
 recorded as the one who saved it. A saved target can't hold or use a key: it signs in with Microsoft Entra ID
 (`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI target's empty `headers`
-is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`.
+is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save
+itself is the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a
+target the same way; the API adds the signed-in user, the configured source, and the responses below.
 
 | A request with `persist` that... | Gets |
 |---|---|
