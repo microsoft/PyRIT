@@ -6,6 +6,7 @@ Error handling middleware for RFC 7807 compliant responses.
 """
 
 import logging
+import traceback
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
 from pyrit.backend.models import FieldError, ProblemDetail
+from pyrit.common.azure_storage import redact_urls
 from pyrit.exceptions.analytics_exception import AnalyticsException
 from pyrit.exceptions.dataset_exception import DatasetAPIException
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
@@ -201,13 +203,16 @@ def register_error_handlers(app: FastAPI) -> None:
         """
         Handle stored documents that can't be read or written as 503 Service Unavailable.
 
-        The log names the storage location, without credentials, and the reason. It leaves out the traceback,
-        since the error behind it can carry a SAS URL. The response never carries a path or URL.
+        The log names the storage location, without credentials, and the reason, with the traceback at debug
+        level. URL credentials are removed from the traceback, since the error behind it can carry a SAS URL.
+        The response never carries a path or URL.
 
         Returns:
             JSONResponse: RFC 7807 problem detail response with 503 status.
         """
         logger.warning(f"{exc} ({request.method} {request.url.path})")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Storage error details:\n{redact_urls(''.join(traceback.format_exception(exc)).rstrip())}")
         if isinstance(exc, DocumentUnreadableError):
             detail = f"{exc.label} '{exc.name}' can't be read: {exc.reason}"
         else:
