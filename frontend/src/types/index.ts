@@ -1246,13 +1246,9 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
-/**
- * The fields a score popover shows, independent of where the score was recorded,
- * so scan results do not need to fabricate a message-piece score.
- */
+/** Message-score fields displayed by ScoreDetails. */
 export interface ScoreSummary {
   scorer: string
-  scoreType: string
   value?: string | null
   status?: string
   rationale?: string | null
