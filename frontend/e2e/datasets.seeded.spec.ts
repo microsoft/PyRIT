@@ -67,6 +67,23 @@ test.describe("dataset examples against the real backend @seeded", () => {
     expect(postRequests).toEqual([]);
   });
 
+  test("browses and returns to a saved Chat while target verification gates sending @seeded", async ({ page }) => {
+    const mutations: string[] = [];
+    page.on("request", (outgoing) => {
+      if (!["GET", "HEAD", "OPTIONS"].includes(outgoing.method())) mutations.push(new URL(outgoing.url()).pathname);
+    });
+    const path = "/attack/chat/11111111-1111-4111-8111-111111111111";
+    await page.goto(path);
+    await expect(page.getByTestId("target-resolution-legacy-banner")).toBeVisible();
+    const origin = page.url();
+    await page.getByRole("button", { name: "Browse seed prompts from composer" }).click();
+    await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
+    await page.getByRole("link", { name: "Return to Chat" }).click();
+    await expect(page).toHaveURL(origin);
+    await expect(page.getByTestId("target-resolution-legacy-banner")).toBeVisible();
+    expect(mutations).toEqual([]);
+  });
+
   for (const width of [390, 1280]) {
     test(`keeps a nonempty draft and target on a keyboard round trip at ${width}px @seeded`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
