@@ -4,10 +4,14 @@
 """Private construction, reconstruction, lifetime, and provenance regressions."""
 
 import asyncio
+import importlib.abc
+import importlib.util
+import sys
 import threading
 import uuid
-from collections.abc import Iterator
-from types import ModuleType
+from collections.abc import Iterator, Sequence
+from importlib.machinery import ModuleSpec
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -125,6 +129,26 @@ class _ForwardedConverter(LLMGenericTextConverter):
         super().__init__(**kwargs)
 
 
+class _TorchStandIn(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Stand in for torch, noting the thread that first imports it and the one that first checks for CUDA."""
+
+    def __init__(self) -> None:
+        self.first_threads: dict[str, threading.Thread] = {}
+
+    def find_spec(
+        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> ModuleSpec | None:
+        return importlib.util.spec_from_loader(fullname, self) if fullname == "torch" else None
+
+    def exec_module(self, module: ModuleType) -> None:
+        self.first_threads.setdefault("import", threading.current_thread())
+        module.cuda = SimpleNamespace(is_available=self._is_available)  # type: ignore[attr-defined]
+
+    def _is_available(self) -> bool:
+        self.first_threads.setdefault("cuda", threading.current_thread())
+        return True
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestTemporaryComponents:
     @pytest.mark.parametrize("register", [True, False])
@@ -132,10 +156,10 @@ class TestTemporaryComponents:
         request_loop = asyncio.get_running_loop()
         constructed: list[HuggingFaceChatTarget] = []
         registry = TargetRegistry.get_registry_singleton()
-        factory = registry.create_instance_from_external_input
+        factory = registry.create_instance_async
 
-        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
-            target = factory(name, params=params, allowed_path_params=allowed_path_params)
+        async def create(**kwargs: Any) -> HuggingFaceChatTarget:
+            target = await factory(**kwargs)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
             return target
@@ -143,7 +167,7 @@ class TestTemporaryComponents:
         with (
             patch.dict("sys.modules", {"torch": ModuleType("torch")}),
             patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock) as load,
-            patch.object(registry, "create_instance_from_external_input", side_effect=create),
+            patch.object(registry, "create_instance_async", side_effect=create),
         ):
             response = await TargetService().create_target_async(
                 request=CreateTargetRequest(
@@ -159,6 +183,64 @@ class TestTemporaryComponents:
             load.assert_awaited_once()
             assert response.identifier.class_name == "HuggingFaceChatTarget"
             assert registry.instances.get_names() == (["local-model"] if register else [])
+
+    @pytest.mark.parametrize(
+        ("use_cuda", "steps"), [(False, ["import"]), ("false", ["import"]), (True, ["cuda", "import"])]
+    )
+    async def test_hugging_face_imports_torch_off_the_request_loop_async(
+        self, use_cuda: bool | str, steps: list[str]
+    ) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": use_cuda, "hf_access_token": "test-only-token"},
+                )
+            )
+            target = TargetRegistry.get_registry_singleton().instances.get("local-model")
+            assert isinstance(target, HuggingFaceChatTarget)
+            await target.load_model_and_tokenizer_task
+
+        assert sorted(torch.first_threads) == steps
+        assert threading.current_thread() not in torch.first_threads.values()
+        assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
+
+    async def test_hugging_face_without_torch_reports_the_constructor_error_async(self) -> None:
+        with patch.dict("sys.modules", {"torch": None}), pytest.raises(RuntimeError, match="Could not import torch"):
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": True, "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert TargetRegistry.get_registry_singleton().instances.get_names() == []
+
+    async def test_hugging_face_use_cuda_that_is_not_a_boolean_is_refused_without_a_cuda_check_async(self) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            pytest.raises(ValueError, match="expects bool"),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": "maybe", "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert "cuda" not in torch.first_threads
 
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
