@@ -561,6 +561,113 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     assert metrics.krippendorff_alpha_combined == 1.0
     assert metrics.krippendorff_alpha_humans == 1.0
     assert metrics.krippendorff_alpha_model == 1.0
+    assert metrics.krippendorff_alpha_gold_model == 1.0
+
+
+def test_compute_harm_metrics_gold_model_alpha_ignores_num_scorer_trials(mock_harm_scorer):
+    """A scorer that ignores the response must not appear more reliable just because it was run more times."""
+    rng = np.random.default_rng(0)
+    levels = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    num_responses = 80
+    human_scores = levels[rng.integers(0, len(levels), num_responses)][None, :]
+    scorer_output = levels[rng.integers(0, len(levels), num_responses)]
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+
+    metrics_by_trials = {}
+    gold_model_alphas = []
+    for trials in (1, 3, 5, 10):
+        metrics = evaluator._compute_metrics(
+            all_human_scores=human_scores,
+            all_model_scores=np.tile(scorer_output, (trials, 1)),
+            num_scorer_trials=trials,
+        )
+        metrics_by_trials[trials] = metrics
+        gold_model_alphas.append(metrics.krippendorff_alpha_gold_model)
+        assert metrics.mean_absolute_error == pytest.approx(0.381, abs=1e-3)
+
+    # The gold-vs-model alpha is two rows (gold, median model), so it is invariant.
+    assert gold_model_alphas == pytest.approx([gold_model_alphas[0]] * len(gold_model_alphas))
+    assert metrics_by_trials[10].krippendorff_alpha_combined > gold_model_alphas[0]
+    assert gold_model_alphas[0] == pytest.approx(0.0857, abs=1e-4)
+
+
+def test_compute_harm_metrics_gold_model_alpha_ignores_float_noise(mock_harm_scorer):
+    """The median of 0.2 and 0.4 is 0.30000000000000004; that must still match gold 0.3."""
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.3, 0.3, 0.3, 0.3]])
+    all_model_scores = np.array([[0.2, 0.2, 0.2, 0.2], [0.4, 0.4, 0.4, 0.4]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores,
+        all_model_scores=all_model_scores,
+        num_scorer_trials=2,
+    )
+    assert metrics.mean_absolute_error == 0.0
+    assert metrics.krippendorff_alpha_gold_model == 1.0
+
+
+@pytest.mark.parametrize("repetitions", [1, 2, 5])
+@pytest.mark.parametrize(
+    ("human_scores", "model_scores", "expected_alpha", "expected_mae"),
+    [
+        pytest.param(
+            [[0.25, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            [[0.2, 0.3, 0.3, 0.3, 0.1, 0.5], [0.4, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            0.8713450292397661,
+            0.05 / 6,
+            id="cross-item-model-median-noise",
+        ),
+        pytest.param(
+            [[0.2, 0.9, 0.9, 0.5, 0.3]],
+            [[0.9, 0.9, 0.9, 0.5, 0.3]] * 3,
+            0.3832167832167833,
+            0.14,
+            id="exact-model-values",
+        ),
+        pytest.param(
+            [[0.2, 0.3, 0.3, 0.3, 0.1, 0.5], [0.4, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            [[0.25, 0.3, 0.3, 0.3, 0.1, 0.5]],
+            0.8713450292397661,
+            0.05 / 6,
+            id="cross-item-gold-median-noise",
+        ),
+        pytest.param(
+            [[0.3, 0.3000000001, 0.3, 0.3000000001]],
+            [[0.3000000001, 0.3, 0.3000000001, 0.3]],
+            -0.75,
+            1e-10,
+            id="preserve-fine-score-levels",
+        ),
+    ],
+)
+def test_compute_harm_metrics_gold_model_alpha_normalizes_categories(
+    mock_harm_scorer, human_scores, model_scores, expected_alpha, expected_mae, repetitions
+):
+    """Normalize categories across both rows without reconstructing or coarsening scores."""
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_model_scores = np.tile(model_scores, (repetitions, 1))
+    metrics = evaluator._compute_metrics(
+        all_human_scores=np.array(human_scores),
+        all_model_scores=all_model_scores,
+        num_scorer_trials=len(all_model_scores),
+    )
+    assert metrics.krippendorff_alpha_gold_model == pytest.approx(expected_alpha)
+    assert metrics.mean_absolute_error == pytest.approx(expected_mae, abs=1e-16)
+
+
+@pytest.mark.parametrize("start", [0.0, 0.3, np.nextafter(np.nextafter(1.0, 0.0), 0.0)])
+def test_compute_harm_metrics_gold_model_alpha_does_not_chain_adjacent_values(mock_harm_scorer, start):
+    """A one-ULP group must not swallow a third value, including at score boundaries."""
+    middle = np.nextafter(start, 1.0)
+    end = np.nextafter(middle, 1.0)
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    metrics = evaluator._compute_metrics(
+        all_human_scores=np.array([[start, middle, end, start]]),
+        all_model_scores=np.array([[end, middle, start, end]]),
+        num_scorer_trials=1,
+    )
+    # start and middle share a category, but end remains distinct. Chaining
+    # would collapse all three and incorrectly report perfect agreement.
+    assert metrics.krippendorff_alpha_gold_model == pytest.approx(-0.4)
 
 
 def test_compute_harm_metrics_reports_constant_guess_baseline(mock_harm_scorer):
