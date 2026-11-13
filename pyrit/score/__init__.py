@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+    from pyrit.score.observation.redaction import RedactionPolicy
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
         CallableResponseHandler,
@@ -191,6 +192,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PhysicsConsistencyScorer": "pyrit.score.true_false.physics_consistency_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
+    "RedactionPolicy": "pyrit.score.observation.redaction",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",

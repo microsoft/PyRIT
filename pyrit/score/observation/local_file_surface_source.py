@@ -28,9 +28,11 @@ from pyrit.models import (
     SurfaceMatch,
     SurfaceObservationPayload,
 )
+from pyrit.score.observation.redaction import _redact_surface_entry
 
 if TYPE_CHECKING:
     from pyrit.models import SurfaceScorable
+    from pyrit.score.observation.redaction import RedactionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,7 @@ class LocalFileSurfaceSource:
         max_content_bytes: int = 1_000_000,
         max_read_bytes: int = 16_000_000,
         max_listed_entries: int = 100_000,
+        redaction: RedactionPolicy | None = None,
     ) -> None:
         """
         Initialize bounded acquisition under one root directory.
@@ -111,6 +114,8 @@ class LocalFileSurfaceSource:
             max_read_bytes (int): The most bytes read and hashed across one acquisition. A
                 file cut short by this budget has no digest and leaves coverage incomplete.
             max_listed_entries (int): The most directory entries one acquisition examines.
+            redaction (RedactionPolicy | None): Withholds sensitive file text when an entry is
+                written, including baseline entries. Off by default.
 
         Raises:
             ValueError: If a limit is not positive.
@@ -122,6 +127,7 @@ class LocalFileSurfaceSource:
         self._max_content_bytes = max_content_bytes
         self._max_read_bytes = max_read_bytes
         self._max_listed_entries = max_listed_entries
+        self._redaction = redaction
 
     def get_identifier(self) -> ComponentIdentifier:
         """
@@ -140,6 +146,7 @@ class LocalFileSurfaceSource:
                 "max_read_bytes": self._max_read_bytes,
                 "max_listed_entries": self._max_listed_entries,
             },
+            children={"redaction": self._redaction.get_identifier() if self._redaction else None},
         )
 
     async def acquire_async(self, *, scorable: SurfaceScorable) -> Observation:
@@ -484,6 +491,15 @@ class LocalFileSurfaceSource:
         entries: tuple[SurfaceEntry, ...] = (),
         baseline: SurfaceBaseline | None = None,
     ) -> Observation:
+        entries = tuple(_redact_surface_entry(entry=entry, policy=self._redaction) for entry in entries)
+        if baseline is not None and self._redaction is not None:
+            baseline = baseline.model_copy(
+                update={
+                    "entries": tuple(
+                        _redact_surface_entry(entry=entry, policy=self._redaction) for entry in baseline.entries
+                    )
+                }
+            )
         return Observation(
             source_identifier=self.get_identifier(),
             acquisition=acquisition,

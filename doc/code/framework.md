@@ -220,6 +220,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Score what the target actually produced. Simulated and injected messages are excluded unless a scorer explicitly selects them.
 - Compose instead of special-casing. A condition-based leaf checks exactly one condition type, and a leaf configured through its constructor takes none. Composites and wrappers, such as `TrueFalseCompositeScorer` and `TrueFalseInverterScorer`, combine results and route conditions. Every condition must reach a leaf that supports it.
 - Acquire evidence through injected sources and clients (traces, file surfaces, program execution), and judge what they return. The caller owns the environment: isolation, workspaces, and sandboxes.
+- Surface sources accept an opt-in `RedactionPolicy` that withholds sensitive file text when they write evidence. Withheld text is recorded as withheld, so a criterion that needs it is undetermined rather than false.
 - Report evidence that couldn't be acquired or judged as undetermined, never as false.
 - Record what was judged (the expectation and, where captured, an `Observation` of the evidence) so a score can be audited, matched, or replayed without calling the target again.
 - **Does not own**: acting on its result (the attack branches) or aggregating across runs (analytics). A scorer may call a target to judge, but it never sends the attack's objective prompt or manages the conversation.

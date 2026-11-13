@@ -25,7 +25,9 @@ class SurfaceEntry(BaseModel):
     ``None`` when the source stopped reading before the end, for example on a read budget,
     so a digest is never claimed for bytes that were not hashed. ``content`` retains at most
     the source's configured limit and is ``None`` when the bytes are not UTF-8 text, so a
-    criterion that needs the text can tell "absent" from "not retained".
+    criterion that needs the text can tell "absent" from "not retained". ``content_redacted``
+    records that a redaction policy withheld the text when the source wrote the entry. It is
+    omitted from serialized evidence when false, so unredacted evidence keeps its stored form.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -36,6 +38,7 @@ class SurfaceEntry(BaseModel):
     modified_at: AwareDatetime
     content: str | None = None
     content_truncated: bool = False
+    content_redacted: bool = Field(default=False, exclude_if=lambda redacted: not redacted)
 
     @model_validator(mode="after")
     def _validate_retained_content(self) -> SurfaceEntry:
@@ -46,9 +49,11 @@ class SurfaceEntry(BaseModel):
             SurfaceEntry: The validated entry.
 
         Raises:
-            ValueError: If truncation is claimed without retained text, or text from an
-                incomplete read is presented as the whole content.
+            ValueError: If truncation is claimed without retained text, text from an
+                incomplete read is presented as the whole content, or redacted text is retained.
         """
+        if self.content_redacted and (self.content is not None or self.content_truncated):
+            raise ValueError("A redacted surface entry must not retain its text.")
         if self.content_truncated and self.content is None:
             raise ValueError("A truncated surface entry must retain the text it kept.")
         if self.sha256 is None and self.content is not None and not self.content_truncated:
