@@ -18,7 +18,14 @@ from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions import ScenarioRunInProgressException
-from pyrit.executor.attack import AttackExecutorResult, AttackStrategy, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import (
+    AttackExecutorResult,
+    AttackStrategy,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
+)
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -78,6 +85,7 @@ async def save_attack_results_to_memory_async(attack_results):
 def _make_identifiable_mock_attack() -> MagicMock:
     """Create a mock attack with a valid canonical identifier for run-plan construction."""
     attack = MagicMock(spec=AttackStrategy)
+    attack.IS_COMPOUND = False
     attack.get_identifier.return_value = ComponentIdentifier(
         class_name="MockAttack",
         class_module="tests.unit.scenario.core.test_scenario",
@@ -130,6 +138,7 @@ def _make_mock_atomic_attacks(count: int = 6):
     mock_attack.get_attack_scoring_config.return_value = MagicMock()
     for i in range(count):
         run = MagicMock(spec=AtomicAttack)
+        run.attack_technique.attack.IS_COMPOUND = False
         run.group_kind = ScenarioRunPlanGroupKind.ATTACK
         run.seed_group_adaptations = {}
         run.atomic_attack_name = f"attack_run_{i}"
@@ -159,6 +168,7 @@ def mock_atomic_attacks():
     mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
     run1 = MagicMock(spec=AtomicAttack)
+    run1.attack_technique.attack.IS_COMPOUND = False
     run1.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run1.seed_group_adaptations = {}
     run1.atomic_attack_name = "attack_run_1"
@@ -169,6 +179,7 @@ def mock_atomic_attacks():
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
+    run2.attack_technique.attack.IS_COMPOUND = False
     run2.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run2.seed_group_adaptations = {}
     run2.atomic_attack_name = "attack_run_2"
@@ -179,6 +190,7 @@ def mock_atomic_attacks():
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
+    run3.attack_technique.attack.IS_COMPOUND = False
     run3.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run3.seed_group_adaptations = {}
     run3.atomic_attack_name = "attack_run_3"
@@ -697,6 +709,36 @@ class TestScenarioInitialization:
 class TestScenarioInitialization2:
     """Tests for Scenario initialize_async method."""
 
+    @pytest.mark.parametrize("compound", [False, True])
+    async def test_run_plan_records_strategy_topology_and_preserves_it_on_resume(
+        self, mock_objective_target, compound: bool
+    ) -> None:
+        seed = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+        strategy = PromptSendingAttack(objective_target=mock_objective_target)
+        if compound:
+            strategy = SequentialAttack(
+                objective_target=mock_objective_target,
+                child_attacks=[SequentialChildAttack(strategy=strategy, seed_group=seed)],
+            )
+        atomic = AtomicAttack(
+            atomic_attack_name="topology", attack_technique=AttackTechnique(attack=strategy), seed_groups=[seed]
+        )
+        scenario = ConcreteScenario(name="Topology", version=1, atomic_attacks_to_return=[atomic])
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+        [stored] = await scenario._memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id])
+        payload = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+        assert payload["atomic_groups"][0]["is_compound"] is compound
+        resumed = ConcreteScenario(
+            name="Topology",
+            version=1,
+            atomic_attacks_to_return=[atomic],
+            scenario_result_id=scenario._scenario_result_id,
+        )
+        resumed.set_params_from_args(args={"objective_target": mock_objective_target})
+        await resumed.initialize_async()
+        assert resumed._build_run_plan().model_dump(mode="json", exclude_none=True) == payload
+
     async def test_initialize_async_populates_atomic_attacks(self, mock_atomic_attacks, mock_objective_target):
         """Test that initialize_async populates atomic attacks."""
         scenario = ConcreteScenario(
@@ -724,6 +766,7 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.attack_technique.attack.IS_COMPOUND = False
         atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_attack.seed_group_adaptations = {}
         atomic_attack.atomic_attack_name = "duplicate_attack"
@@ -759,6 +802,7 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.attack_technique.attack.IS_COMPOUND = False
         atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_attack.seed_group_adaptations = {}
         atomic_attack.atomic_attack_name = "unique_attack"
@@ -817,6 +861,7 @@ class TestScenarioInitialization2:
         assert stored.metadata == {
             "scenario_owned": "value",
             "scheduler_managed_by": "test",
+            "scenario_role_references_v1": stored.metadata["scenario_role_references_v1"],
         }
 
     async def test_initialize_async_requires_objective_target(self):
@@ -1165,6 +1210,7 @@ class TestScenarioProperties:
         mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
         single_run_mock = MagicMock(spec=AtomicAttack)
+        single_run_mock.attack_technique.attack.IS_COMPOUND = False
         single_run_mock.group_kind = ScenarioRunPlanGroupKind.ATTACK
         single_run_mock.seed_group_adaptations = {}
         single_run_mock.atomic_attack_name = "attack_1"
@@ -1189,6 +1235,7 @@ class TestScenarioProperties:
         many_runs = []
         for i in range(10):
             run = MagicMock(spec=AtomicAttack)
+            run.attack_technique.attack.IS_COMPOUND = False
             run.group_kind = ScenarioRunPlanGroupKind.ATTACK
             run.seed_group_adaptations = {}
             run.atomic_attack_name = f"attack_{i}"
@@ -1569,6 +1616,7 @@ class TestGetDefaultObjectiveScorer:
         mock_scorer.__class__ = TrueFalseScorer
         # A scorer with no LLM-backed leaf returns itself rather than a copy.
         mock_scorer.with_scorer_block_policy.return_value = mock_scorer
+        mock_scorer.get_chat_target.return_value = None
 
         mock_entry = MagicMock()
         mock_entry.instance = mock_scorer
@@ -1580,6 +1628,7 @@ class TestGetDefaultObjectiveScorer:
         # Mock self with _get_additional_scoring_questions returning empty sequence
         mock_self = MagicMock()
         mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = True
+        mock_self.params = {}
         mock_self._apply_scorer_block_policy = functools.partial(Scenario._apply_scorer_block_policy, mock_self)
         type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
 
@@ -1629,6 +1678,7 @@ class TestGetDefaultObjectiveScorer:
 
         mock_self = MagicMock()
         mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = raise_if_blocks
+        mock_self.params = {}
         mock_self._apply_scorer_block_policy = functools.partial(Scenario._apply_scorer_block_policy, mock_self)
         type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
 

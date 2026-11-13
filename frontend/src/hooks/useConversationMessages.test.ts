@@ -55,6 +55,54 @@ describe('useConversationMessages', () => {
     ))
   })
 
+  it('should retain a long live window and split turn through saved paging while rejecting a late live response', async () => {
+    jest.mocked(backendMessagesToFrontend).mockImplementation(
+      jest.requireActual<typeof import('@/utils/messageMapper')>('@/utils/messageMapper').backendMessagesToFrontend,
+    )
+    const full: ConversationMessagesResponse = {
+      conversation_id: 'main', target_response_status: null,
+      messages: [{
+        role: 'assistant', turn_number: 1, created_at: '2026-01-01T00:00:00Z',
+        message_pieces: Array.from({ length: 122 }, (_value: unknown, index: number) => ({
+          id: `piece-${index}`, original_value: `Piece ${index}`, converted_value: `Piece ${index}`,
+          original_value_data_type: 'text', converted_value_data_type: 'text', scores: [], response_error: 'none',
+        })),
+      }],
+    }
+    const lateLive = deferred<ConversationMessagesResponse>()
+    const continuation = deferred<ConversationMessagesResponse>()
+    getMessages.mockResolvedValueOnce(full).mockReturnValueOnce(lateLive.promise).mockResolvedValueOnce({
+      ...full, messages: full.messages.map((message: BackendMessage) => ({ ...message, message_pieces: message.message_pieces.slice(0, 100) })),
+      pagination: { limit: 100, has_more: true, next_cursor: 'saved-next' }, partial_message_sequences: [1],
+    }).mockReturnValueOnce(continuation.promise)
+    const { result, rerender } = renderMessages()
+    await waitFor(() => { expect(result.current.messages[0]?.content).toContain('Piece 121') })
+    let refresh = Promise.resolve()
+    act(() => { refresh = result.current.loadConversation('attack', 'main') })
+    rerender({ messagePageSize: 100 })
+    await waitFor(() => { expect(getMessages).toHaveBeenLastCalledWith('attack', 'main', { limit: 100, cursor: 'saved-next' }) })
+    expect(result.current.messages[0].content).toContain('Piece 121')
+    expect(result.current.isTranscriptIncomplete).toBe(true)
+    await act(async () => {
+      continuation.resolve({
+        ...full, messages: full.messages.map((message: BackendMessage) => ({ ...message, message_pieces: message.message_pieces.slice(100) })),
+        pagination: { limit: 100, has_more: false, next_cursor: null }, partial_message_sequences: [],
+      })
+    })
+    expect(result.current.loadedPieceCount).toBe(122)
+    expect(result.current.isTranscriptIncomplete).toBe(false)
+    expect(result.current.messages[0].content).toContain('Piece 121')
+    expect(result.current.messages[0].isPartial).toBe(false)
+    await act(async () => {
+      lateLive.resolve({ ...full, messages: [{ ...full.messages[0], message_pieces: [{
+        ...full.messages[0].message_pieces[0], original_value: 'Stale live data', converted_value: 'Stale live data',
+      }] }] })
+      await refresh
+    })
+    expect(result.current.loadedPieceCount).toBe(122)
+    expect(result.current.messages[0].content).not.toContain('Stale live data')
+  })
+
   it('polls an injected saved-conversation reader without changing manual send ownership', async () => {
     jest.useFakeTimers()
     const readConversation = jest.fn().mockResolvedValue(transcript('main', [1]))
@@ -107,12 +155,32 @@ describe('useConversationMessages', () => {
     expect(result.current.awaitingConversationLoad).toBe(false)
   })
 
-  it('should not load or report a load gap for a conversation that is sending', () => {
-    const { result } = renderMessages({ sendingConversations: new Set(['main']), isSendInFlight: () => true })
+  it('should reload a sending conversation after another conversation has loaded', async () => {
+    const returnLoad = deferred<ConversationMessagesResponse>()
+    getMessages
+      .mockResolvedValueOnce(transcript('main'))
+      .mockReturnValueOnce(returnLoad.promise)
+    const sendingConversations = new Set(['main'])
+    const isSendInFlight = (conversationId: string): boolean => conversationId === 'main'
+    const { result, rerender } = renderMessages()
 
-    expect(getMessages).not.toHaveBeenCalled()
-    expect(result.current.awaitingConversationLoad).toBe(false)
-    expect(result.current.isLoadingMessages).toBe(false)
+    await act(async () => { /* the initial load of main resolves through the first mock */ })
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+    // The send flow holds another conversation (marked loaded), replacing
+    // whatever view the hook held before; switching to it stays skipped.
+    act(() => { result.current.markConversationLoaded('branch') })
+    rerender({ activeConversationId: 'branch', sendingConversations, isSendInFlight })
+    expect(getMessages).toHaveBeenCalledTimes(1)
+
+    // Returning to the sending conversation must fetch server state: the
+    // hook holds branch, so keeping the skip would render branch's view
+    // under main's URL with no loading state until the send completes.
+    rerender({ activeConversationId: 'main', sendingConversations, isSendInFlight })
+    await waitFor(() => expect(getMessages).toHaveBeenLastCalledWith('attack', 'main'))
+    await act(async () => { returnLoad.resolve(transcript('main', [2])) })
+    expect(contents(result.current.messages)).toEqual(['main:2'])
+    expect(result.current.loadedConversationId).toBe('main')
   })
 
   it('should ignore a stale response after navigating to another conversation', async () => {
@@ -206,25 +274,64 @@ describe('useConversationMessages', () => {
     expect(getMessages.mock.calls).toEqual([['attack', 'main'], ['attack', 'main']])
   })
 
-  it('should skip loaded or sending conversations unless a forced load is requested', async () => {
-    getMessages.mockResolvedValue(transcript('main'))
+  it('should load a sending conversation when another one is loaded', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main')).mockResolvedValueOnce(transcript('branch'))
     const isSendInFlight = (conversationId: string): boolean => conversationId === 'branch'
     const sendingConversations = new Set(['branch'])
     const { result, rerender } = renderMessages({ isSendInFlight, sendingConversations })
     await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
     expect(getMessages).toHaveBeenCalledTimes(1)
 
+    // A sending conversation must load when another conversation's transcript is
+    // on screen; without the fetch, the other conversation keeps rendering under
+    // this conversation's URL until the send completes. The send pipeline layers
+    // its pending messages on top of the fetched transcript.
     rerender({ activeConversationId: 'branch', isSendInFlight, sendingConversations })
-    rerender({ activeConversationId: 'main', isSendInFlight, sendingConversations })
-    expect(getMessages).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('branch'))
+    expect(getMessages).toHaveBeenCalledTimes(2)
 
-    getMessages.mockResolvedValueOnce(transcript('branch'))
+    // Returning to main re-fetches it: loading branch replaced the held
+    // transcript, and nothing caches per-conversation transcripts here.
+    rerender({ activeConversationId: 'main', isSendInFlight, sendingConversations })
+    expect(getMessages).toHaveBeenCalledTimes(3)
+    expect(getMessages).toHaveBeenLastCalledWith('attack', 'main')
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+  })
+
+  it('should report a load gap when returning to a sending conversation while another is held', () => {
+    getMessages.mockReturnValue(new Promise(() => {}))
+    const sendingConversations = new Set(['main'])
+    const isSendInFlight = (conversationId: string): boolean => conversationId === 'main'
+    const { result, rerender } = renderMessages({ activeConversationId: 'branch', sendingConversations, isSendInFlight })
+    act(() => { result.current.markConversationLoaded('branch') })
+
+    rerender({ activeConversationId: 'main', sendingConversations, isSendInFlight })
+
+    expect(result.current.awaitingConversationLoad).toBe(true)
+  })
+
+  it('should not refetch a conversation the hook already holds', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main'))
+    const { result, rerender } = renderMessages()
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+    act(() => { result.current.markConversationLoaded('branch') })
+    rerender({ activeConversationId: 'branch' })
+
+    expect(getMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('should load a held conversation when a forced load is requested', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main')).mockResolvedValueOnce(transcript('branch'))
+    const { result, rerender } = renderMessages()
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+    act(() => { result.current.markConversationLoaded('branch') })
     act(() => { result.current.requestForcedLoad() })
-    rerender({ activeConversationId: 'branch', isSendInFlight, sendingConversations })
+    rerender({ activeConversationId: 'branch' })
 
     expect(getMessages).toHaveBeenCalledTimes(2)
     expect(getMessages).toHaveBeenLastCalledWith('attack', 'branch')
-    await waitFor(() => expect(result.current.loadedConversationId).toBe('branch'))
   })
 
   it('should let a claimed send read supersede an older load and yield to a newer claim', async () => {
