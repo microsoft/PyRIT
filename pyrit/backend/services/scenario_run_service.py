@@ -20,6 +20,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -40,6 +41,7 @@ from pyrit.backend.models import (
     ScenarioRunListResponse,
     filter_sensitive_fields,
 )
+from pyrit.backend.services.live_attack_reader import LiveAttack
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -99,8 +101,10 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary, RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
+from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
+from pyrit.registry.instance_registry import SavedEntryReplacementError, record_saved_entry_refusals
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
@@ -123,12 +127,14 @@ _RESTART_INTERRUPTION_REASON = (
 _SHUTDOWN_INTERRUPTION_REASON = "The backend process shut down before this scenario run completed."
 _USER_CANCELLATION_REASON = "Run was cancelled by user"
 _LAUNCH_REQUEST_METADATA_KEY = "scenario_launch_request_v1"
-_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v1"
+_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v2"
+_LEGACY_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v1"
 _RESERVED_INITIAL_METADATA_KEYS = frozenset(
     {
         _SCHEDULER_METADATA_KEY,
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
+        _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
         SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -142,6 +148,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "scenario_name",
     "target_name",
     "adversarial_target_name",
+    "scoring_target_name",
     "techniques",
     "technique_override",
     "objective_scorer",
@@ -155,7 +162,14 @@ _LAUNCH_REQUEST_FIELDS = (
 )
 # Fields added after the first saved launch records; older records omit them.
 _OPTIONAL_LAUNCH_FIELDS = frozenset(
-    {"adversarial_target_name", "datasets", "max_dataset_size", "technique_override", "objective_scorer"}
+    {
+        "adversarial_target_name",
+        "scoring_target_name",
+        "datasets",
+        "max_dataset_size",
+        "technique_override",
+        "objective_scorer",
+    }
 )
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
@@ -178,6 +192,10 @@ _STARTED_AT_ADAPTER = TypeAdapter(datetime)
 
 class ScenarioRunConflictError(ValueError):
     """A saved run cannot be admitted to the scheduler in its current state."""
+
+
+class SavedEntryLaunchConflictError(ScenarioRunConflictError):
+    """A launch script would replace an entry rebuilt from a saved recipe."""
 
 
 class ScenarioRunNotFoundError(ValueError):
@@ -365,6 +383,18 @@ class ScenarioRunService:
         if metadata.scenario_version != stored.scenario_version:
             raise ScenarioRunConflictError("The scenario version changed. Start a new configuration explicitly.")
         references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY)
+        if isinstance(references, dict):
+            readiness = self._configuration_resolver.resolve_readiness(
+                scenario_name=request.scenario_name,
+                request=request,
+            )
+            current_references = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
+            if readiness.issues or current_references != references:
+                raise ScenarioRunConflictError(
+                    "The saved scan dependencies changed or are unavailable. Review a new configuration explicitly."
+                )
+            return
+        references = stored.metadata.get(_LEGACY_LAUNCH_REFERENCES_METADATA_KEY)
         original_scorer_hash = references.get("objective_scorer_hash") if isinstance(references, dict) else None
         current_scorer = self._launch_objective_scorer_identifier(request=request, metadata=metadata)
         if request.objective_scorer is not None:
@@ -423,9 +453,13 @@ class ScenarioRunService:
         """
         if request.objective_scorer is not None:
             return request.objective_scorer.identifier_hash
-        scorer_identifier = metadata.default_objective_scorer_identifier
-        scorer_hash = getattr(scorer_identifier, "hash", None)
-        return scorer_hash if isinstance(scorer_hash, str) else None
+        identifier = metadata.default_objective_scorer_identifier
+        if identifier is not None and isinstance(identifier.hash, str):
+            return identifier.hash
+        readiness = self._configuration_resolver.resolve_readiness(scenario_name=request.scenario_name, request=request)
+        return next(
+            (binding.identifier.hash for binding in readiness.bindings if binding.role == "objective_scorer"), None
+        )
 
     @staticmethod
     def _selected_launch_factories(
@@ -962,9 +996,14 @@ class ScenarioRunService:
                 owner=request.scenario_name,
             )
         await self._run_initializers_async(request=request)
+        reference_issues, _, _ = await run_legacy_sync_async(
+            self._configuration_resolver.resolve_named_roles,
+            scenario_name=request.scenario_name,
+            request=request,
+        )
+        if reference_issues:
+            raise ScenarioConfigurationError(issues=reference_issues)
         declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
-        if "objective_target" in declared_names and not request.target_name:
-            raise ValueError(f"Scenario '{request.scenario_name}' requires an objective target.")
         objective_target = (
             self._configuration_resolver.resolve_target(target_name=request.target_name)
             if request.target_name is not None
@@ -979,6 +1018,7 @@ class ScenarioRunService:
                 scenario_name=request.scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
@@ -992,12 +1032,20 @@ class ScenarioRunService:
                 memory_labels=request.labels,
             )
             init_kwargs["operation_id"] = request.operation_id
+            metadata = dict(
+                initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
+            )
+            if request.scenario_result_id:
+                stored = await self._memory.get_scenario_result_header_async(
+                    scenario_result_id=request.scenario_result_id,
+                )
+                references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY) if stored is not None else None
+                if isinstance(references, dict):
+                    metadata["scenario_expected_role_references_v1"] = references
             scenario = await self._initialize_scenario_async(
                 request=request,
                 init_kwargs=init_kwargs,
-                initial_metadata=(
-                    initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
-                ),
+                initial_metadata=metadata,
             )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
@@ -1216,7 +1264,8 @@ class ScenarioRunService:
             if queued is not None:
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
-                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
+                    # A failed handoff can leave a queued run IN_PROGRESS, but it has no task until the retry starts it.
+                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=ScenarioRunState.CANCELLED,
                     error_message=_USER_CANCELLATION_REASON,
                     error_type="CancelledError",
@@ -1436,6 +1485,10 @@ class ScenarioRunService:
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
             },
         )
+        self._launch_scheduled_run_locked(scheduled=scheduled)
+
+    def _launch_scheduled_run_locked(self, *, scheduled: _ActiveTask) -> None:
+        """Make a run persisted as IN_PROGRESS the active run and create its execution task."""
         self._active_scenario_result_id = scheduled.scenario_result_id
         self._active_tasks[scheduled.scenario_result_id] = scheduled
         # A queued run starts from the previous run's handoff, so give it its own admitted caller.
@@ -1460,17 +1513,34 @@ class ScenarioRunService:
                 persisted = await self._memory.get_scenario_result_header_async(
                     scenario_result_id=next_run.scenario_result_id
                 )
-                if persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
+                if persisted is not None and self._is_start_persisted(run=next_run, persisted=persisted):
+                    self._launch_scheduled_run_locked(scheduled=next_run)
+                elif persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
                     self._queue_revision += 1
                     continue
-                await self._start_scheduled_run_locked_async(scheduled=next_run)
+                else:
+                    await self._start_scheduled_run_locked_async(scheduled=next_run)
                 self._queued_runs.popleft()
                 self._release_completed_task(scenario_result_id=scenario_result_id)
                 return
             self._active_scenario_result_id = None
             self._release_completed_task(scenario_result_id=scenario_result_id)
             self._queue_revision += 1
+
+    @staticmethod
+    def _is_start_persisted(*, run: _ActiveTask, persisted: ScenarioResult) -> bool:
+        """
+        Check whether an earlier handoff attempt saved this run's start before reporting a failure.
+
+        Returns:
+            bool: True if the row is IN_PROGRESS with the start time this scheduler wrote for the run.
+        """
+        return (
+            run.started_at is not None
+            and persisted.scenario_run_state == ScenarioRunState.IN_PROGRESS
+            and ScenarioRunService._load_started_at(scenario_result=persisted) == run.started_at
+        )
 
     def _release_completed_task(self, *, scenario_result_id: str) -> None:
         """Release executable state while retaining bounded terminal error evidence."""
@@ -1600,6 +1670,7 @@ class ScenarioRunService:
 
         Raises:
             ValueError: If an initializer name is not found in the registry.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
         if not request.initializers:
             return
@@ -1613,7 +1684,42 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            await instance.initialize_async()
+            # The registries refuse to replace a saved entry; the record also catches a refusal
+            # that the script itself caught, which would leave the saved entry in its place.
+            with record_saved_entry_refusals() as refusals:
+                try:
+                    await instance.initialize_async()
+                except SavedEntryReplacementError as error:
+                    refusals.append((error.kind, error.name))
+                except Exception as error:
+                    # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
+                    if refusals:
+                        raise self._saved_entry_conflict(
+                            initializer_name=initializer_name, refusals=refusals
+                        ) from error
+                    raise
+            if refusals:
+                raise self._saved_entry_conflict(initializer_name=initializer_name, refusals=refusals)
+
+    @staticmethod
+    def _saved_entry_conflict(
+        *, initializer_name: str, refusals: list[tuple[str, str]]
+    ) -> SavedEntryLaunchConflictError:
+        """
+        Describe the saved entries a launch script would have replaced.
+
+        Args:
+            initializer_name (str): The launch script's name.
+            refusals (list[tuple[str, str]]): The kind and name of each saved entry that was refused.
+
+        Returns:
+            SavedEntryLaunchConflictError: The error to raise.
+        """
+        entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
+        return SavedEntryLaunchConflictError(
+            f"The launch script '{initializer_name}' would replace the saved {entries}. "
+            "Leave that script out of the launch."
+        )
 
     async def _initialize_scenario_async(
         self,
@@ -1700,33 +1806,41 @@ class ScenarioRunService:
             launch_request["include_baseline"] = (
                 baseline if baseline is not None else scenario_class.BASELINE_ATTACK_POLICY.value == "enabled"
             )
-        references = (
-            {
-                _LAUNCH_REFERENCES_METADATA_KEY: await run_legacy_sync_async(
-                    self._capture_launch_references,
-                    request=request,
-                    scenario_class=scenario_class,
-                    init_kwargs=init_kwargs,
-                )
-            }
-            if request.scenario_result_id is None
-            else {}
-        )
         return await scenario_registry.create_and_initialize_async(
             request.scenario_name,
             scenario_params=request.scenario_params or {},
             scenario_result_id=request.scenario_result_id or None,
             constructor_kwargs=self._configuration_resolver.resolve_constructor_kwargs(
-                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+                scenario_class=scenario_class,
+                objective_scorer=request.objective_scorer,
+            ),
+            configuration_metadata=partial(
+                self._resolved_role_metadata,
+                expected_references=(initial_metadata or {}).get("scenario_expected_role_references_v1"),
             ),
             initial_metadata={
                 **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,
-                **references,
             },
             **init_kwargs,
         )
+
+    @staticmethod
+    def _resolved_role_metadata(
+        scenario: Scenario,
+        *,
+        expected_references: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        readiness = scenario.get_readiness()
+        if readiness.issues:
+            raise ScenarioConfigurationError(issues=readiness.issues)
+        references = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
+        if expected_references is not None and references != expected_references:
+            raise ScenarioRunConflictError(
+                "The scan dependencies changed after preflight or since the saved run. Review a new configuration."
+            )
+        return {_LAUNCH_REFERENCES_METADATA_KEY: references}
 
     async def _execute_run_async(self, *, scenario_result_id: str) -> None:
         """
@@ -2569,6 +2683,21 @@ class ScenarioRunService:
             active_scenario_result_id=active_scenario_result_id,
         )
 
+    def find_live_attack(self, *, attack_result_id: str) -> LiveAttack | None:
+        """
+        Find an attack that an active scan is still running.
+
+        Returns:
+            LiveAttack | None: The running attack and its scan, or None when no active scan is running it
+                or it has not started an objective conversation yet.
+        """
+        for scenario_result_id in list(self._active_tasks):
+            snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+            for execution in snapshot.executions:
+                if execution.attack_result_id == attack_result_id:
+                    return LiveAttack.from_execution(scenario_result_id=scenario_result_id, execution=execution)
+        return None
+
     def _load_run_plan(self, *, scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
         """
         Load a validated plan from scenario metadata.
@@ -2708,6 +2837,7 @@ class ScenarioRunService:
                 ScenarioActiveConversation(
                     attack_result_id=execution.attack_result_id,
                     conversation_id=conversation_id,
+                    conversation_ids=list(execution.conversation_ids),
                     atomic_attack_name=attribution.parent_collection,
                     seed_group_id=attribution.seed_group_id,
                     objective=execution.objective,
@@ -3263,6 +3393,19 @@ _service_instance: ScenarioRunService | None = None
 def peek_scenario_run_service() -> ScenarioRunService | None:
     """Return the existing service without constructing one for lifecycle inspection."""
     return _service_instance
+
+
+def find_live_attack(attack_result_id: str) -> LiveAttack | None:
+    """
+    Find a running scan attack in the current service, without constructing one.
+
+    Resolves the service on every call, so the lookup stays valid across service resets.
+
+    Returns:
+        LiveAttack | None: The running attack, or None when no active scan is running it.
+    """
+    service = peek_scenario_run_service()
+    return service.find_live_attack(attack_result_id=attack_result_id) if service is not None else None
 
 
 async def reset_scenario_run_service_async() -> None:

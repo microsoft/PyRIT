@@ -277,6 +277,7 @@ class ScenarioService:
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 include_baseline=request.include_baseline,
             )
             constructor_kwargs = resolver.resolve_constructor_kwargs(
@@ -558,6 +559,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,

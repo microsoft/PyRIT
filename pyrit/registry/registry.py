@@ -32,7 +32,7 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
+from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry, SupportsIdentifier
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from types import ModuleType
     from typing import Self
 
-    from pyrit.models import ComponentIdentifier, ComponentType, Identifiable, Parameter
+    from pyrit.models import ComponentIdentifier, ComponentType, Parameter
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +68,12 @@ class ReconstructionContext(Protocol):
 
 
 T = TypeVar("T")
-InstanceT = TypeVar("InstanceT", bound="Identifiable")
+InstanceT = TypeVar("InstanceT", bound=SupportsIdentifier)
 MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
-def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
+def _get_metadata_value(metadata: Any, *, key: str) -> tuple[bool, Any]:
     """
     Get a value from a metadata object by key.
 
@@ -125,7 +125,7 @@ def _matches_filters(
     """
     if include_filters:
         for key, filter_value in include_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 return False
             if isinstance(actual_value, (list, tuple)):
@@ -136,7 +136,7 @@ def _matches_filters(
 
     if exclude_filters:
         for key, filter_value in exclude_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 continue
             if isinstance(actual_value, (list, tuple)):
@@ -762,12 +762,7 @@ class Registry(ABC, Generic[T, MetadataT]):
         return cls(**resolved)
 
     def create_instance_from_external_input(
-        self,
-        name: str,
-        *,
-        params: Mapping[str, object],
-        allowed_path_params: frozenset[str] = frozenset(),
-        server_params: Mapping[str, object] | None = None,
+        self, name: str, *, params: Mapping[str, object], allowed_path_params: frozenset[str] = frozenset()
     ) -> T:
         """
         Build a configured instance from external input such as a REST or CLI request.
@@ -784,10 +779,6 @@ class Registry(ABC, Generic[T, MetadataT]):
             params (Mapping[str, object]): Constructor arguments from the external caller.
             allowed_path_params (frozenset[str]): Parameters that can name a server file
                 or folder but that the caller has made safe. Defaults to none.
-            server_params (Mapping[str, object] | None): Constructor arguments the server
-                chooses, such as a credential provider. They are never taken from the
-                external caller and replace any external argument with the same name.
-                Defaults to None.
 
         Returns:
             T: The constructed instance.
@@ -807,7 +798,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             seam_base_type=self._seam_base_type(),
             allowed_path_params=allowed_path_params,
         )
-        return cls(**{**resolved, **(server_params or {})})
+        return cls(**resolved)
 
     def __contains__(self, name: str) -> bool:
         """

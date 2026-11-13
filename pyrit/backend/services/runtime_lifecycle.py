@@ -7,7 +7,8 @@ import asyncio
 import logging
 import os
 import uuid
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
@@ -15,6 +16,7 @@ from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.scenario_suite_execution_service import peek_scenario_suite_execution_service
 from pyrit.backend.services.service_lifecycle import (
@@ -26,9 +28,13 @@ from pyrit.backend.services.service_lifecycle import (
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
+
+if TYPE_CHECKING:
+    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,8 @@ class RuntimeLifecycle:
         self.version: str | None = None
         self.outcome = "starting"
         self.message = ""
+        self.restore_failures: list[RestoreFailure] = []
+        self.restore_ignored: list[IgnoredRecipeFile] = []
         self.operations: set[asyncio.Task[None]] = set()
         self.management_operations: set[asyncio.Task[None]] = set()
         self.target_cleanup_active = False
@@ -76,6 +84,8 @@ class RuntimeLifecycle:
             "message": self.message,
             "enabled": self.topology_supported,
             "applying": self.apply_task is not None and not self.apply_task.done(),
+            "restore_failures": [failure.model_dump(mode="json") for failure in self.restore_failures],
+            "restore_ignored": [file.model_dump(mode="json") for file in self.restore_ignored],
         }
 
     async def _load_async(self) -> ConfigurationLoader:
@@ -120,6 +130,52 @@ class RuntimeLifecycle:
         self.generation = str(uuid.uuid4())
         self.state, self.outcome, self.message = "ready", "success", "PyRIT is ready."
 
+    async def _restore_saved_entries_async(self, config: ConfigurationLoader) -> bool:
+        """
+        Rebuild saved registry entries after the startup scripts have registered theirs.
+
+        A failure keeps the runtime not ready, since a scan that would have used a missing entry
+        could quietly fall back to a different one. Fixing or deleting the stored file, then applying
+        or restarting, recovers.
+
+        Args:
+            config (ConfigurationLoader): The loaded configuration naming the storage source.
+
+        Returns:
+            bool: Whether every saved entry was restored.
+        """
+        restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
+        # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, through
+        # the API's create for each kind, because a constructor such as HuggingFaceChatTarget's starts a task
+        # on it; the target's create_async does its slow setup, such as importing torch, in a worker thread first.
+        saved = await asyncio.to_thread(restorer.read)
+        report = await restorer.restore_async(
+            saved=saved, build_async=partial(build_saved_entry_async, upload_directory=config.target_upload_directory)
+        )
+        self.restore_failures, self.restore_ignored = report.failures, report.ignored
+        if not report.failures:
+            return True
+        self.state, self.outcome = "failed", "restore-failed"
+        next_step = (
+            "apply the configuration or restart the backend"
+            if config.enable_live_reinitialization and self.topology_supported
+            else "restart the backend"
+        )
+        unread = sorted({failure.kind.value for failure in report.failures if failure.name is None})
+        if unread:
+            self.message = (
+                f"The saved {' and '.join(unread)} couldn't be read, so no saved entries were restored. "
+                f"Check that the backend can read registry_recipes_source, then {next_step}."
+            )
+        else:
+            count = len(report.failures)
+            self.message = (
+                f"{count} saved registry {'entry' if count == 1 else 'entries'} couldn't be restored. "
+                f"Fix or delete the files named in the server log or GET /api/config/runtime, then {next_step}."
+            )
+        logger.error("PyRIT isn't ready: %s", self.message)
+        return False
+
     async def startup_async(self) -> None:
         """Keep management alive even when parsing or initialization fails."""
         self.app.state.allow_custom_initializers = False
@@ -138,7 +194,8 @@ class RuntimeLifecycle:
             await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
-            self._publish(config)
+            if await self._restore_saved_entries_async(config):
+                self._publish(config)
         except Exception:
             self.state, self.outcome = "restart-required", "initialization-failed"
             self.message = "PyRIT setup failed. Repair saved configuration, then restart the backend."
@@ -159,7 +216,7 @@ class RuntimeLifecycle:
                 "outcome": "unsupported",
                 "message": ("Reinitialization requires one backend worker and one replica."),
             }
-        if self.state in ("failed", "restart-required"):
+        if self.state == "restart-required":
             return {**self.status(), "outcome": "restart-required"}
         if (self.apply_task and not self.apply_task.done()) or self.edit_lock.locked() or self.management_operations:
             return {**self.status(), "outcome": "busy"}
@@ -180,7 +237,9 @@ class RuntimeLifecycle:
                 if not config.enable_live_reinitialization:
                     self.outcome = "unsupported"
                     self.message = (
-                        "Set enable_live_reinitialization: true in the saved configuration to use live apply."
+                        "Live apply is off. Restart the backend to restore the saved entries again."
+                        if previous_state == "failed"
+                        else "Set enable_live_reinitialization: true in the saved configuration to use live apply."
                     )
                     return
                 # Type compatibility is checked before contacting environment sources.
@@ -216,11 +275,14 @@ class RuntimeLifecycle:
                     return
 
                 mutated = True
+                # The restore report describes the runtime being replaced.
+                self.restore_failures, self.restore_ignored = [], []
                 await close_services_async()
                 await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
                 self.version = current_version
-                self._publish(config)
+                if await self._restore_saved_entries_async(config):
+                    self._publish(config)
             except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",

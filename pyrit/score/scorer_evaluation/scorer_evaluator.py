@@ -30,6 +30,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     find_objective_metrics_by_eval_hash,
     replace_evaluation_results,
 )
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -83,7 +84,12 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             scorer (Scorer): The scorer to evaluate.
+
+        Raises:
+            ValueError: If a multi-label scorer has no explicit single-label projection.
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Select a label with TrueFalseScoreSelector before evaluating a multi-label scorer.")
         self.scorer = scorer
 
     @classmethod
@@ -773,6 +779,31 @@ class HarmScorerEvaluator(ScorerEvaluator):
                 reliability_data=all_model_scores, level_of_measurement="ordinal"
             )
 
+        # Human-vs-scorer agreement on the same pair that MAE compares: the gold
+        # label and the per-response median model score. Unlike the combined
+        # alpha, this has exactly two rows, so repeating the scorer trials does
+        # not turn agreement with itself into extra raters.
+        krippendorff_alpha_gold_model = None
+        if num_responses > 0:
+            # Ordinal categories are shared across items and both rows. Merge
+            # adjacent floating-point values (e.g. 0.3 and the median of 0.2 and
+            # 0.4), rather than reconstructing model scores from rounded diffs.
+            # Limit each group to one ULP from its first value: decimal rounding
+            # would discard fine score levels, and chaining could merge more.
+            gold_model_scores = np.vstack((gold_scores, median_model_scores))
+            categories, inverse = np.unique(gold_model_scores, return_inverse=True)
+            normalized_categories = categories.copy()
+            representative = categories[0]
+            for index, category in enumerate(categories[1:], start=1):
+                if category <= np.nextafter(representative, np.inf):
+                    normalized_categories[index] = representative
+                else:
+                    representative = category
+            krippendorff_alpha_gold_model = krippendorff_alpha(
+                reliability_data=normalized_categories[inverse].reshape(gold_model_scores.shape),
+                level_of_measurement="ordinal",
+            )
+
         # A scorer that ignored the response would do best by always returning the median gold score.
         baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
 
@@ -789,6 +820,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             ),
             krippendorff_alpha_humans=krippendorff_alpha_humans,
             krippendorff_alpha_model=krippendorff_alpha_model,
+            krippendorff_alpha_gold_model=krippendorff_alpha_gold_model,
             contested_threshold=contested_threshold,
             num_unanimous_responses=num_unanimous_responses,
             num_contested_responses=num_contested_responses,
@@ -887,10 +919,21 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         num_responses = all_human_scores.shape[1]
         num_human_raters = all_human_scores.shape[0]
 
+        # A scorer that ignored the response would do best on accuracy by always returning the more
+        # common gold label, and best on F1 by always answering true (always-false has an F1 of 0).
+        baseline_accuracy: float | None = None
+        baseline_f1_score: float | None = None
+        if gold_scores.size:
+            num_gold_true = int(np.sum(gold_scores == 1))
+            baseline_accuracy = max(num_gold_true, gold_scores.size - num_gold_true) / gold_scores.size
+            baseline_f1_score = 2 * num_gold_true / (gold_scores.size + num_gold_true)
+
         return ObjectiveScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
             accuracy=accuracy,
+            baseline_accuracy=baseline_accuracy,
+            baseline_f1_score=baseline_f1_score,
             accuracy_standard_error=np.sqrt(accuracy * (1 - accuracy) / gold_scores.size),
             precision=precision,
             recall=recall,

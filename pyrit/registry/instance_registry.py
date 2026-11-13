@@ -14,25 +14,48 @@ instances" (``SupportsInstances``) or just "an instance registry"
 (``InstanceRegistry[T]``) without depending on a concrete class, and a registry
 that does not hold instances simply has no ``.instances`` attribute.
 
-Stored items must implement ``Identifiable`` so per-instance metadata can be
-derived from ``get_identifier()``. This module imports no ``pyrit.backend`` code,
+Stored items must provide ``get_identifier()`` (``SupportsIdentifier``), which
+``Identifiable`` components do and observation sources do structurally, so
+per-instance metadata can be derived from it. This module imports no ``pyrit.backend`` code,
 so it can be reused anywhere (forms, agents, attack strategies).
 """
 
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.models import ComponentIdentifier, Identifiable
-
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
+    from pyrit.models import ComponentIdentifier
     from pyrit.registry.tag_query import TagQuery
 
-T = TypeVar("T", bound=Identifiable)  # The type of items stored
+
+class SupportsIdentifier(Protocol):
+    """Anything that reports its behavioral identity, the one capability the instance container needs."""
+
+    def get_identifier(self) -> ComponentIdentifier:
+        """Return the component's identifier."""
+        ...
+
+
+T = TypeVar("T", bound=SupportsIdentifier)  # The type of items stored
+
+#: Entry metadata naming the kind of saved recipe an entry was rebuilt from, such as ``"targets"``.
+SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
+
+_saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
+
+# The kind and name of the saved entry being rebuilt in this context, so registering that name marks the entry.
+_saved_entry_registration: ContextVar[tuple[str, str] | None] = ContextVar("_saved_entry_registration", default=None)
+
+
+class RegistryNameTakenError(ValueError):
+    """A name is already registered, so another entry can't take it."""
 
 
 @dataclass
@@ -57,19 +80,111 @@ class RegistryEntry(Generic[T]):
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class SavedEntryReplacementError(RuntimeError):
+    """
+    Raised when code registers an entry under the name of an entry rebuilt from a saved recipe.
+
+    It isn't a ``ValueError``, so a startup script that skips the entries it can't build doesn't
+    swallow it.
+    """
+
+    def __init__(self, *, kind: str, name: str) -> None:
+        """
+        Describe the saved entry that would have been replaced.
+
+        Args:
+            kind (str): The saved recipe kind, such as ``"targets"``.
+            name (str): The entry's name.
+        """
+        super().__init__(f"Saved {kind.removesuffix('s')} '{name}' can't be replaced.")
+        self.kind = kind
+        self.name = name
+
+
+def refuse_saved_entry(entry: RegistryEntry[Any] | None) -> None:
+    """
+    Refuse to replace, or stand in for, an entry rebuilt from a saved recipe.
+
+    Args:
+        entry (RegistryEntry[Any] | None): The entry registered under the name, if any.
+
+    Raises:
+        SavedEntryReplacementError: If the entry was rebuilt from a saved recipe.
+    """
+    kind = _record_saved_entry_refusal(entry)
+    if entry is not None and kind is not None:
+        raise SavedEntryReplacementError(kind=kind, name=entry.name)
+
+
+def _record_saved_entry_refusal(entry: RegistryEntry[Any] | None) -> str | None:
+    """
+    Record a refused use of an entry rebuilt from a saved recipe, when refusals are being recorded.
+
+    Args:
+        entry (RegistryEntry[Any] | None): The entry registered under the name, if any.
+
+    Returns:
+        str | None: The entry's saved recipe kind, or None when it wasn't rebuilt from a saved recipe.
+    """
+    if entry is None or SAVED_ENTRY_METADATA_KEY not in entry.metadata:
+        return None
+    kind = str(entry.metadata[SAVED_ENTRY_METADATA_KEY])
+    refusals = _saved_entry_refusals.get()
+    if refusals is not None:
+        refusals.append((kind, entry.name))
+    return kind
+
+
+@contextmanager
+def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None]:
+    """
+    Collect the saved entries that code run in this context tried to replace.
+
+    The list holds every refusal, including ones the code caught itself.
+
+    Yields:
+        list[tuple[str, str]]: The kind and name of each saved entry that was refused.
+    """
+    refusals: list[tuple[str, str]] = []
+    token = _saved_entry_refusals.set(refusals)
+    try:
+        yield refusals
+    finally:
+        _saved_entry_refusals.reset(token)
+
+
+@contextmanager
+def saved_entry_registration(*, kind: str, name: str) -> Generator[None, None, None]:
+    """
+    Mark the entry registered under ``name`` in this context as rebuilt from a saved recipe.
+
+    Args:
+        kind (str): The saved recipe kind, such as ``"targets"``.
+        name (str): The saved entry's name.
+
+    Yields:
+        None: Control returns to the caller while the mark applies.
+    """
+    token = _saved_entry_registration.set((kind, name))
+    try:
+        yield
+    finally:
+        _saved_entry_registration.reset(token)
+
+
 @runtime_checkable
 class InstanceRegistry(Protocol[T]):
     """
     Typed instance-container capability a registry exposes as ``.instances``.
 
     Holds named, pre-configured instances that callers register and retrieve by
-    name, list, tag, and filter. Stored items must implement ``Identifiable``.
+    name, list, tag, and filter. Stored items must provide ``get_identifier()``.
     ``DefaultInstanceRegistry`` is the concrete default implementation; expressing
     the surface as a protocol lets callers depend on the capability rather than a
     concrete class.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     @property
@@ -167,7 +282,7 @@ class SupportsInstances(Protocol[T]):
         capability is part of the foundation rather than a later additive change.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     instances: InstanceRegistry[T]
@@ -182,7 +297,7 @@ class DefaultInstanceRegistry(Generic[T]):
     that.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     def __init__(
@@ -277,8 +392,10 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
-            ValueError: If the name is reserved or already registered and ``replace``
-                is False.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered and ``replace`` is False.
+            SavedEntryReplacementError: If ``replace`` would replace an entry rebuilt
+                from a saved recipe.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -289,17 +406,23 @@ class DefaultInstanceRegistry(Generic[T]):
 
         if name is None:
             name = instance.get_identifier().unique_name
+        entry_metadata = dict(metadata or {})
+        restoring = _saved_entry_registration.get()
+        if restoring is not None and restoring[1] == name:
+            entry_metadata[SAVED_ENTRY_METADATA_KEY] = restoring[0]
         entry = RegistryEntry(
             name=name,
             instance=instance,
             tags=self._normalize_tags(tags),
-            metadata=metadata or {},
+            metadata=entry_metadata,
         )
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if not replace:
                 self.validate_name_available(name)
+            else:
+                refuse_saved_entry(self._registry_items.get(name))
             self._registry_items[name] = entry
             self._metadata_cache = None
             self._instance_version += 1
@@ -325,13 +448,16 @@ class DefaultInstanceRegistry(Generic[T]):
             name (str): The proposed registry name.
 
         Raises:
-            ValueError: If the name is reserved or already registered.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered.
         """
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if name in self._registry_items:
-                raise ValueError(f"Instance '{name}' already exists")
+                # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
+                _record_saved_entry_refusal(self._registry_items[name])
+                raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """
@@ -528,7 +654,7 @@ class DefaultInstanceRegistry(Generic[T]):
 
     def _build_metadata(self, instance: T) -> ComponentIdentifier:
         """
-        Build metadata for an item via its ``Identifiable`` interface.
+        Build metadata for an item via its ``get_identifier()``.
 
         Args:
             instance (T): The item.

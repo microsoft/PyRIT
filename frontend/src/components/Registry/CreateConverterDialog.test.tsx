@@ -505,7 +505,7 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
   })
 
-  it('offers upload or server path input for every Path parameter', async () => {
+  it.each(['Path', 'Path | None'])('offers uploads for %s parameters', async (typeName: string) => {
     mockedConvertersApi.listConverterTypes.mockResolvedValue({
       items: [{
         converter_type: 'PathConverter',
@@ -513,7 +513,7 @@ describe('CreateConverterDialog', () => {
         supported_output_types: ['text'],
         parameters: [{
           name: 'source',
-          type_name: 'Path',
+          type_name: typeName,
           required: true,
           default: null,
           choices: null,
@@ -532,6 +532,22 @@ describe('CreateConverterDialog', () => {
       'Upload a file or enter a server path',
     )
     expect(screen.getByRole('button', { name: 'Upload' })).toBeInTheDocument()
+  })
+
+  it('keeps nullable numeric and boolean parameters editable and typed', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'offset', type_name: 'int | None', required: true },
+      { name: 'enabled', type_name: 'bool | None', required: false, default: 'False' },
+    ], 'NullableConverter')
+    renderDialog()
+    await selectConverterType('NullableConverter')
+    await user.type(screen.getByRole('textbox', { name: 'offset *' }), '7')
+    await user.click(screen.getByRole('switch', { name: 'enabled False' }))
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'NullableConverter', params: { offset: 7, enabled: true } }),
+    ))
   })
 
   it.each(['picker', 'drop'])('should preview an image from %s without changing its stored value and restore paths on Remove', async (method: string) => {
