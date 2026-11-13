@@ -15,7 +15,7 @@ Targets can be:
 import asyncio
 import logging
 import uuid
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
@@ -34,12 +34,11 @@ from pyrit.backend.models.targets import (
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
-from pyrit.models import ComponentType, Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
+from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
-    RestoreFailureReason,
     SavedEntryOwner,
     TargetInstance,
 )
@@ -55,21 +54,15 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
     CapabilityDiscoveryError,
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
-from pyrit.registry import TargetRegistry
-from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
-from pyrit.registry.instance_registry import (
-    SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
-    RegistryNameTakenError,
-    registry_entry_origin,
-    saved_entry_owner,
+from pyrit.registry import (
+    SavedEntryConflictError,
+    TargetRegistry,
+    launch_script_class_reason,
+    prepare_saved_params_async,
+    save_then_register_async,
 )
-from pyrit.registry.registry_recipe_rules import (
-    SavedEntryRefusedError,
-    check_saveable_class,
-    check_saved_entry_params,
-)
-from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 logger = logging.getLogger(__name__)
 
@@ -84,31 +77,6 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
-
-
-class SavedTargetConflictError(ValueError):
-    """A target can't be saved under a name that a registered or saved target already has."""
-
-
-class SavedTargetRefusedError(ValueError):
-    """A target can't be saved as asked, though it can still be created without saving it."""
-
-
-class SavedTargetStorageError(RuntimeError):
-    """Saved targets can't be written right now."""
-
-
-def _launch_script_class_reason(target_type: str) -> str:
-    """
-    Explain why a target of a class that a scan's launch script added can't be saved.
-
-    Returns:
-        str: The reason.
-    """
-    return (
-        f"'{target_type}' was added by a scan's launch script, so a saved target of it couldn't be restored "
-        "after a restart."
-    )
 
 
 class TargetService:
@@ -495,7 +463,7 @@ class TargetService:
             tuple[list[AuthMode], str | None]: The saveable auth modes, and the reason when there are none.
         """
         if self._registry.is_temporary_class(target_type):
-            return [], _launch_script_class_reason(target_type)
+            return [], launch_script_class_reason(target_type)
         try:
             auth_modes = check_saveable_class(self._registry.get_class(target_type))
         except SavedEntryRefusedError as error:
@@ -661,10 +629,9 @@ class TargetService:
                 raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution, or
                 creates a target that would authenticate with this server's stored credentials.
-            SavedTargetRefusedError: If a target to save would hold or use a credential, or names a
-                Temporary target.
-            SavedTargetConflictError: If a target to save has the name of a registered or saved target.
-            SavedTargetStorageError: If a target to save can't be written to storage.
+            NotSaveableError: If a target to save would hold or use a credential, or uses a Temporary target.
+            SavedEntryConflictError: If a target to save has the name of a registered or saved target.
+            SavedEntryStorageError: If a target to save can't be written to storage.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -748,8 +715,12 @@ class TargetService:
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
         if request.persist:
-            params = await self._prepare_saved_params_async(
-                target_type=request.type, target_cls=target_cls, params=params, auth_mode=request.auth_mode
+            params = await prepare_saved_params_async(
+                registry=self._registry,
+                type_name=request.type,
+                cls=target_cls,
+                params=params,
+                auth_mode=request.auth_mode,
             )
 
         # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
@@ -760,7 +731,7 @@ class TargetService:
                 self._registry.instances.validate_name_available(target_registry_name)
             except RegistryNameTakenError as error:
                 if request.persist:
-                    raise SavedTargetConflictError(str(error)) from error
+                    raise SavedEntryConflictError(str(error)) from error
                 raise
         if (
             request.source
@@ -812,62 +783,6 @@ class TargetService:
             await release_component_async(target_obj)
             raise
 
-    async def _prepare_saved_params_async(
-        self, *, target_type: str, target_cls: type[PromptTarget], params: dict[str, Any], auth_mode: AuthMode
-    ) -> dict[str, Any]:
-        """
-        Turn off the server values a target to save would read, then refuse what it still can't hold.
-
-        Returns:
-            dict[str, Any]: The parameters to build and save the target with.
-
-        Raises:
-            SavedTargetRefusedError: If the target would hold or use a credential, its class was added by a scan's
-                launch script, or it names a Temporary target.
-            ValueError: If an address the target would use isn't a full http(s) or ws(s) address.
-        """
-        saved_params = dict(params)
-        for name, turned_off in target_cls.server_fallback_parameters.items():
-            if turned_off is not None and saved_params.get(name) in (None, ""):
-                saved_params[name] = turned_off
-        if self._registry.is_temporary_class(target_type):
-            raise SavedTargetRefusedError(
-                f"{_launch_script_class_reason(target_type)} It can still be created without saving it."
-            )
-        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, target_type)
-        if metadata is None:
-            # Restore falls back to the class itself the same way, so saving never checks less than restoring.
-            metadata = await asyncio.to_thread(self._registry.get_class_metadata, target_cls)
-        parameters = metadata.parameters
-        try:
-            check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params, auth_mode=auth_mode)
-        except SavedEntryRefusedError as error:
-            # The address needs fixing; creating the target without saving it wouldn't make it usable.
-            if error.reason is RestoreFailureReason.INVALID_RECIPE:
-                raise ValueError(str(error)) from error
-            raise SavedTargetRefusedError(f"{error} It can still be created without saving it.") from error
-        self._refuse_temporary_references(parameters=parameters, params=saved_params)
-        return saved_params
-
-    def _refuse_temporary_references(self, *, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
-        """
-        Refuse a target to save that uses a Temporary target, which won't exist after a restart.
-
-        Raises:
-            SavedTargetRefusedError: If a target parameter names a Temporary target.
-        """
-        for parameter in parameters:
-            if parameter.reference is None or parameter.reference.component_type is not ComponentType.TARGET:
-                continue
-            value = params.get(parameter.name)
-            for name in value if isinstance(value, list) else [value]:
-                entry = self._registry.instances.get_entry(name) if isinstance(name, str) else None
-                if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
-                    raise SavedTargetRefusedError(
-                        f"Uses temporary target '{name}', which won't exist after a restart. "
-                        "It can still be created without saving it."
-                    )
-
     async def _save_and_register_async(
         self,
         *,
@@ -881,19 +796,17 @@ class TargetService:
         recipes_source: str | None,
     ) -> TargetInstance:
         """
-        Save the target's recipe, then register the target as a saved entry.
+        Save the target's recipe through the registry library, then return the saved target.
 
-        The recipe is written only if no saved target has the name, so of two saves under one name
-        only one succeeds. If registering then fails, the recipe is deleted again. The recipe names
-        the class by the registry name the request used, which restore looks up, and keeps the auth
-        mode apart from the parameters, as the create request does.
+        The recipe names the class by the registry name the request used, which restore looks up, and keeps the
+        auth mode apart from the parameters, as the create request does.
 
         Returns:
             TargetInstance: The saved target.
 
         Raises:
-            SavedTargetConflictError: If a saved or registered target already has the name.
-            SavedTargetStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+            SavedEntryConflictError: If a saved or registered target already has the name.
+            SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
         # The user saving the target is the one asking, so the response marks it as theirs.
         target = self._build_instance_from_object(
@@ -911,57 +824,14 @@ class TargetService:
             params={key: value for key, value in params.items() if key not in auth_parameters},
             owner=owner,
         )
-        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
-        try:
-            await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
-        except DocumentConflictError as error:
-            raise SavedTargetConflictError(f"A saved target named '{name}' already exists.") from error
-        except DocumentStorageUnavailableError as error:
-            logger.error(
-                "Saved target '%s' couldn't be written to %s (%s). If the write reached storage anyway, the "
-                "target is restored at the next start.",
-                name,
-                storage.display_source,
-                error.reason,
-            )
-            raise SavedTargetStorageError("Saved targets can't be written right now.") from error
-        try:
-            self._registry.instances.register(
-                target_obj,
-                name=name,
-                metadata={
-                    SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TARGETS.value,
-                    SAVED_ENTRY_OWNER_METADATA_KEY: owner,
-                },
-            )
-        except Exception as error:
-            if not await self._delete_recipe_async(storage=storage, name=name):
-                raise SavedTargetStorageError("Saved targets can't be written right now.") from error
-            if isinstance(error, RegistryNameTakenError):
-                raise SavedTargetConflictError(str(error)) from error
-            raise
+        await save_then_register_async(
+            kind=RegistryRecipeKind.TARGETS,
+            name=name,
+            recipe=recipe,
+            register=lambda metadata: self._registry.instances.register(target_obj, name=name, metadata=metadata),
+            source=recipes_source,
+        )
         return target
-
-    @staticmethod
-    async def _delete_recipe_async(*, storage: RegistryRecipeStorage, name: str) -> bool:
-        """
-        Delete a recipe whose target couldn't be registered.
-
-        Returns:
-            bool: False if the recipe couldn't be deleted, which is logged for an operator to fix.
-        """
-        try:
-            await asyncio.to_thread(storage.delete_recipe, name)
-        except Exception as error:
-            logger.error(
-                "Saved target '%s' couldn't be registered, and its saved recipe in %s couldn't be deleted (%s). "
-                "Delete it there, or the target is restored at the next start.",
-                name,
-                storage.display_source,
-                error.reason if isinstance(error, DocumentStorageUnavailableError) else type(error).__name__,
-            )
-            return False
-        return True
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool
