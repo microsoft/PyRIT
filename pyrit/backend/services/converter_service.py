@@ -112,7 +112,7 @@ class ConverterService:
                 from pyrit.registry.resolution import project_parameter_value
 
                 for parameter in metadata.parameters if metadata else []:
-                    if not parameter.is_external_input or parameter.sensitive:
+                    if not parameter.is_external_input or parameter.sensitive or parameter.copy_locked:
                         continue
                     try:
                         value = project_parameter_value(
