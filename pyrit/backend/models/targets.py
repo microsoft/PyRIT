@@ -117,7 +117,8 @@ class CreateTargetRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateTargetRequest":
-        if self.register and self.name is None:
+        # A copy is never registered, so the source check reports a registered copy instead.
+        if self.register and self.name is None and self.source is None:
             raise ValueError("name is required when register=true")
         return self
 
