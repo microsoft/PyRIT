@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 # validation; a target should check for content filtering first.
 DEFAULT_VALID_FINISH_REASONS: frozenset[str] = frozenset({"stop", "length", "content_filter", "tool_calls"})
 
+#: ``prompt_metadata`` key that holds the model's reasoning text (see ``capture_reasoning_content``).
+REASONING_CONTENT_METADATA_KEY = "reasoning_content"
+
+# Message fields that carry reasoning text in Chat Completions responses. Neither is part of the
+# OpenAI schema, so providers settled on two names: ``reasoning_content`` (DeepSeek, LiteLLM, xAI,
+# Qwen, older vLLM) and ``reasoning`` (OpenRouter, Ollama, newer vLLM).
+_REASONING_CONTENT_FIELDS: tuple[str, ...] = ("reasoning_content", "reasoning")
+
 
 def get_finish_reason(*, response: ChatCompletion) -> str | None:
     """
@@ -305,9 +313,10 @@ def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any
 
     Captures token usage (see ``capture_token_usage``) together with the first choice's
     ``finish_reason``, which records why generation stopped — ``stop``, ``length`` (token limit),
-    ``content_filter`` or ``tool_calls``. Both come from the same response object, so capturing them
-    together keeps every call site consistent: success, truncation, and content filter all record
-    the same set of keys. Applies to every ``usage``-plus-``choices`` response shape: Chat
+    ``content_filter`` or ``tool_calls`` — and any reasoning text the model returned (see
+    ``capture_reasoning_content``). All of them come from the same response object, so capturing
+    them together keeps every call site consistent: success, truncation, and content filter all
+    record the same set of keys. Applies to every ``usage``-plus-``choices`` response shape: Chat
     Completions, Completions, and the LiteLLM responses modeled on them.
 
     Args:
@@ -326,6 +335,57 @@ def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any
     choices = getattr(response, "choices", None)
     finish_reason = get_finish_reason(response=response) if choices else None
     set_response_metadata(pieces=pieces, finish_reason=finish_reason)
+    capture_reasoning_content(pieces=pieces, response=response)
+
+
+def extract_reasoning_content(response: Any) -> str | None:
+    """
+    Extract the reasoning text a model returned next to its answer.
+
+    Reasoning models served over Chat Completions return their chain of thought in a message
+    field outside ``content``. The field is not part of the OpenAI schema, so its name depends
+    on the provider (see ``_REASONING_CONTENT_FIELDS``); the first non-empty string wins.
+
+    Args:
+        response (Any): The Chat Completions response object.
+
+    Returns:
+        str | None: The reasoning text, or None when the response carries none.
+    """
+    try:
+        message = response.choices[0].message
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+    for field in _REASONING_CONTENT_FIELDS:
+        value = getattr(message, field, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def capture_reasoning_content(*, pieces: list[MessagePiece], response: Any) -> None:
+    """
+    Copy the model's reasoning text into the first piece's metadata.
+
+    The reasoning is stored under ``prompt_metadata["reasoning_content"]`` rather than as a piece
+    of its own, so it is kept in memory for scoring and review but is never sent back to the
+    model as conversation history. Response pieces inherit the request's metadata, so the key is
+    cleared from every piece first; a response without reasoning then records none.
+
+    Args:
+        pieces (list[MessagePiece]): The constructed response pieces.
+        response (Any): The Chat Completions response object.
+    """
+    if not pieces:
+        return
+
+    for piece in pieces:
+        piece.prompt_metadata.pop(REASONING_CONTENT_METADATA_KEY, None)
+
+    reasoning = extract_reasoning_content(response)
+    if reasoning:
+        pieces[0].prompt_metadata[REASONING_CONTENT_METADATA_KEY] = reasoning
 
 
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:

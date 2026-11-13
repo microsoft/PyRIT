@@ -761,6 +761,57 @@ async def test_token_limit_truncation_with_no_content_does_not_raise(target, lit
 
 
 # ---------------------------------------------------------------------------
+# Reasoning text (``message.reasoning_content``)
+# ---------------------------------------------------------------------------
+
+
+async def test_reasoning_content_is_stored_in_response_metadata(target, litellm_stub):
+    response = _mock_response("The answer is 4.")
+    response.choices[0].message.reasoning_content = "2 + 2 is 4."
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    pieces = result[0].message_pieces
+    assert [piece.converted_value for piece in pieces] == ["The answer is 4."]
+    assert pieces[0].prompt_metadata["reasoning_content"] == "2 + 2 is 4."
+
+
+async def test_reasoning_content_absent_when_model_returns_none(target, litellm_stub):
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("The answer is 4."))
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    assert "reasoning_content" not in result[0].message_pieces[0].prompt_metadata
+
+
+async def test_reasoning_content_kept_when_token_limit_leaves_no_answer(target, litellm_stub):
+    """The whole budget went to reasoning: the answer is empty, but the reasoning is still recorded."""
+    response = _mock_response(content=None, finish_reason="length")
+    response.choices[0].message.reasoning_content = "Let me think about this step by step"
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    piece = result[0].message_pieces[0]
+    assert piece.response_error == "empty"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["reasoning_content"] == "Let me think about this step by step"
+
+
+async def test_reasoning_content_kept_when_response_is_content_filtered(target, litellm_stub):
+    response = _mock_response(content="partial answer", finish_reason="content_filter")
+    response.choices[0].message.reasoning_content = "The user is asking for"
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message("bad prompt"))
+
+    piece = result[0].message_pieces[0]
+    assert piece.converted_value_data_type == "error"
+    assert piece.prompt_metadata["reasoning_content"] == "The user is asking for"
+
+
+# ---------------------------------------------------------------------------
 # Exception translation
 # ---------------------------------------------------------------------------
 
