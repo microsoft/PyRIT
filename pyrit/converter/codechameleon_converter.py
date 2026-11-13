@@ -4,7 +4,6 @@
 import inspect
 import json
 import pathlib
-import re
 import textwrap
 from collections.abc import Callable
 from typing import Any
@@ -151,10 +150,6 @@ class CodeChameleonConverter(Converter):
             elif isinstance(element, str):
                 output_text += str(element) + "\n"
         output_text += "```\n"
-        illegal_chars = re.findall(r"\\\d+", output_text)  # If using regex, use named groups
-        if len(illegal_chars) > 0:
-            # Prevent 'invalid group reference' errors during convert when applying .yaml template with re.sub
-            raise ValueError(f"Illegal character sequence in user decrypt function! Invalid chars: {illegal_chars}")
         return output_text
 
     def _encrypt_binary_tree(self, sentence: str) -> str:

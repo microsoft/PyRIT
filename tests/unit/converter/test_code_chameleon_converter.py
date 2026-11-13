@@ -34,6 +34,36 @@ async def test_codechameleon_converter_custom_encrypt_decrypt() -> None:
     assert output.output_type == "text"
 
 
+def _swap_word_pairs(text: str) -> str:
+    return re.sub(r"(\S+) (\S+)", r"\2 \1", text)
+
+
+async def test_codechameleon_converter_custom_decrypt_with_backreferences() -> None:
+    converter = CodeChameleonConverter(
+        encrypt_type="custom",
+        encrypt_function=_swap_word_pairs,
+        decrypt_function=["import re", "SEPARATOR = '\\0'", _swap_word_pairs],
+    )
+    output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
+
+    assert (
+        "```python\nimport re\nSEPARATOR = '\\0'\n"
+        "def _swap_word_pairs(text: str) -> str:\n"
+        '    return re.sub(r"(\\S+) (\\S+)", r"\\2 \\1", text)\n\n```\n'
+    ) in output.output_text
+    assert "\nThe encrypted_problem you need to solve is: to How down cut tree? a\n" in output.output_text
+
+    code_match = re.search(
+        r"The following is the decryption function\.\s*```python\n(.*?)\n```", output.output_text, re.DOTALL
+    )
+    assert code_match is not None
+    namespace: dict[str, object] = {}
+    exec(code_match.group(1), namespace)
+    decryption = namespace["_swap_word_pairs"]
+    assert callable(decryption)
+    assert decryption("to How down cut tree? a") == "How to cut down a tree?"
+
+
 async def test_codechameleon_converter_reverse_encrypt_decrypt() -> None:
     converter = CodeChameleonConverter(encrypt_type="reverse")
     output = await converter.convert_async(prompt="How to cut down a tree?", input_type="text")
