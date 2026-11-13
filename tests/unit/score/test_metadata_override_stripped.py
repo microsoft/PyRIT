@@ -26,7 +26,7 @@ from pyrit.models import (
     ScoringExpectation,
     UnvalidatedScore,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import (
     CallableResponseHandler,
     FloatScaleThresholdScorer,
@@ -92,6 +92,14 @@ def _target(*, metadata_key: str, override: str | float) -> MagicMock:
         metadata_key: {"original_float_value": override, "judge_confidence": 0.9},
     }
     target = MagicMock(spec=PromptTarget)
+    target.configuration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_system_prompt=True,
+            supports_multi_turn=True,
+            supports_editable_history=True,
+            supports_json_schema=True,
+        )
+    )
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.set_system_prompt_async = AsyncMock()
     target.send_prompt_async = AsyncMock(

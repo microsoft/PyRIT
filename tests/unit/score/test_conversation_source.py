@@ -25,7 +25,7 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import (
     MessageScorer,
     NonReplayableObservationError,
@@ -225,6 +225,14 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
 ) -> None:
     message = await store_message_async(MessagePiece(role="assistant", original_value=text).to_message())
     target = MagicMock(spec=PromptTarget)
+    target.configuration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_system_prompt=True,
+            supports_multi_turn=True,
+            supports_editable_history=True,
+            supports_json_schema=True,
+        )
+    )
     target.get_identifier.return_value = get_mock_target_identifier("ConversationJudge")
     target.send_prompt_async = AsyncMock(
         return_value=[

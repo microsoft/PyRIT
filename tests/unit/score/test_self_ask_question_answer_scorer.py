@@ -36,6 +36,14 @@ pytestmark = pytest.mark.usefixtures("patch_central_database")
 @pytest.fixture
 def mock_chat_target(patch_central_database):
     target = MagicMock(spec=PromptTarget)
+    target.configuration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_system_prompt=True,
+            supports_multi_turn=True,
+            supports_editable_history=True,
+            supports_json_schema=True,
+        )
+    )
     target.get_identifier.return_value = ComponentIdentifier(class_name="MockChatTarget", class_module="mock")
     return target
 
