@@ -46,6 +46,10 @@ class AzureSpeechTextToAudioConverter(Converter):
     # An empty key reads AZURE_SPEECH_KEY, or else signs in with this server's Azure identity.
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"azure_speech_key": None})
 
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"azure_speech_region", "azure_speech_key", "azure_speech_resource_id"}
+    )
+
     #: Supported audio formats for output.
     AzureSpeechAudioFormat = Literal["wav", "mp3"]
 
