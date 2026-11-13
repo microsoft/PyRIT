@@ -6559,16 +6559,24 @@ class MemoryInterface(abc.ABC):
         # If we have filtered seeds, we want to get all seeds in the same group
         # This allows us to filter by one modality (e.g. audio) and get the whole group (e.g. audio + text)
         if seeds:
-            related_prompt_group_ids = {seed.prompt_group_id for seed in seeds if seed.prompt_group_id}
+            # In match order, so the groups keep that order when they are read back in chunks.
+            related_prompt_group_ids = list(
+                dict.fromkeys(seed.prompt_group_id for seed in seeds if seed.prompt_group_id)
+            )
             if related_prompt_group_ids:
                 # Seeds without a group can't be found by group ID, so keep them as matched.
                 ungrouped_seeds = [seed for seed in seeds if not seed.prompt_group_id]
-                seeds = [
-                    *self._dispatch_memory_operation(
-                        "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
-                    ),
-                    *ungrouped_seeds,
+                # One query per chunk, so a large match stays under the backend's bind variable limit.
+                grouped_seeds = [
+                    seed
+                    for start in range(0, len(related_prompt_group_ids), self._MAX_BIND_VARS)
+                    for seed in self._dispatch_memory_operation(
+                        "get_seeds",
+                        self._execute_get_seeds,
+                        prompt_group_ids=related_prompt_group_ids[start : start + self._MAX_BIND_VARS],
+                    )
                 ]
+                seeds = [*grouped_seeds, *ungrouped_seeds]
 
         # Deduplicate seeds to ensure we don't have duplicate prompts in the groups
         if seeds:
