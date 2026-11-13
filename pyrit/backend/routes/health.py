@@ -13,30 +13,31 @@ from fastapi import APIRouter, Request, Response
 router = APIRouter()
 
 
-def _runtime_readiness(request: Request) -> dict[str, str | bool]:
+def _runtime_readiness(request: Request) -> dict[str, str | bool | int]:
     runtime = getattr(request.app.state, "runtime_lifecycle", None)
     if runtime is None:
-        return {"ready": False, "state": "failed", "generation": ""}
+        return {"ready": False, "state": "failed", "generation": "", "restore_failures": 0}
     return {
         "ready": runtime.reported_state == "ready",
         "state": runtime.reported_state,
         "generation": runtime.generation,
+        "restore_failures": len(runtime.restore_failures),
     }
 
 
 @router.get("/runtime")
-async def runtime_readiness_async(request: Request) -> dict[str, str | bool]:
+async def runtime_readiness_async(request: Request) -> dict[str, str | bool | int]:
     """
-    Expose readiness and generation without administrative details.
+    Expose readiness, generation, and how many saved entries couldn't be restored, without details.
 
     Returns:
-        dict[str, str | bool]: Lightweight runtime readiness.
+        dict[str, str | bool | int]: Lightweight runtime readiness.
     """
     return _runtime_readiness(request)
 
 
 @router.get("/health")
-async def health_check_async(*, request: Request, response: Response) -> dict[str, str | bool | None]:
+async def health_check_async(*, request: Request, response: Response) -> dict[str, str | bool | int | None]:
     """
     Check the health status of the backend service.
 
@@ -48,7 +49,7 @@ async def health_check_async(*, request: Request, response: Response) -> dict[st
     deployment checks use the readiness fields instead.
 
     Returns:
-        dict[str, str | bool | None]: Health status, timestamp, runtime readiness, and serving ACA revision.
+        dict[str, str | bool | int | None]: Health status, timestamp, runtime readiness, and serving ACA revision.
     """
     readiness = _runtime_readiness(request)
     response.headers["Cache-Control"] = "no-store"
