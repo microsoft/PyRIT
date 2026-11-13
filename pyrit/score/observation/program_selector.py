@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection
 
 _OPENING_FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+_COMMENT_START = re.compile(r"^ {0,3}<!--")
 _LINE_ENDING = re.compile(r"\r\n|\n|\r")
 
 
@@ -54,10 +55,11 @@ class FencedCodeBlockSelector:
     Select the one fenced code block whose info string names an accepted language.
 
     Fences follow Markdown: three or more backticks or tildes, indented at most three spaces,
-    closed by a fence of the same character that is at least as long. The language is the first
-    word of the info string, compared without case. Prose, untagged blocks, indented code, and
-    blocks in other languages are never run. Text with no accepted block, more than one, an empty
-    one, or any unclosed fence has no program to select.
+    closed by a fence of the same character that is at least as long. The fence's indentation is
+    removed from each line with tabs counted to four-column stops, as Markdown does. The language is
+    the first word of the info string, compared without case. Prose, untagged blocks, indented code,
+    fence-like lines inside an HTML comment, and blocks in other languages are never run. Text with
+    no accepted block, more than one, an empty one, or any unclosed fence has no program to select.
     """
 
     def __init__(self, *, languages: Collection[str]) -> None:
@@ -105,6 +107,11 @@ class FencedCodeBlockSelector:
         lines = _LINE_ENDING.split(text)
         index = 0
         while index < len(lines):
+            comment = _COMMENT_START.match(lines[index])
+            if comment is not None:
+                # Markdown reads everything up to the line that closes the comment as HTML, so no fence opens in it.
+                index = _skip_comment(lines, index, start=comment.end())
+                continue
             opening = _OPENING_FENCE.match(lines[index])
             index += 1
             if opening is None:
@@ -115,8 +122,7 @@ class FencedCodeBlockSelector:
             closing = re.compile(rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$")
             content: list[str] = []
             while index < len(lines) and closing.match(lines[index]) is None:
-                line = lines[index]
-                content.append(line[min(indent, len(line) - len(line.lstrip(" "))) :])
+                content.append(_remove_indent(lines[index], indent))
                 index += 1
             if index == len(lines):
                 raise ProgramSelectionError("the text has an unclosed code fence, so its code may be incomplete")
@@ -132,3 +138,47 @@ class FencedCodeBlockSelector:
         if not blocks[0].strip():
             raise ProgramSelectionError(f"the {accepted} code block is empty")
         return blocks[0]
+
+
+def _skip_comment(lines: list[str], index: int, *, start: int) -> int:
+    """
+    Return the index of the first line after an HTML comment that opens on ``lines[index]``.
+
+    The comment ends on the first line holding ``-->`` after the opening ``<!--``. A comment that never closes
+    runs to the end of the text, as Markdown reads it.
+
+    Returns:
+        int: The index of the line after the comment, or ``len(lines)`` if it never closes.
+    """
+    if "-->" in lines[index][start:]:
+        return index + 1
+    for later in range(index + 1, len(lines)):
+        if "-->" in lines[later]:
+            return later + 1
+    return len(lines)
+
+
+def _remove_indent(line: str, width: int) -> str:
+    """
+    Remove up to ``width`` columns of leading indentation, counting tabs to four-column stops.
+
+    A tab that reaches past ``width`` keeps the columns it does not use as spaces, so the code's own
+    indentation is unchanged.
+
+    Returns:
+        str: The line without the removed indentation.
+    """
+    column = 0
+    for position, character in enumerate(line):
+        if column >= width:
+            return line[position:]
+        if character == " ":
+            column += 1
+        elif character == "\t":
+            stop = column + 4 - column % 4
+            if stop > width:
+                return " " * (stop - width) + line[position + 1 :]
+            column = stop
+        else:
+            return line[position:]
+    return ""

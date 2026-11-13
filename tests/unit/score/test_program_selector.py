@@ -93,6 +93,12 @@ def _scorer(sandbox: _RecordingSandbox, *, selector: ProgramSelector | None = _P
         ("```python\nprint(1)\n```   ", "print(1)\n"),
         ("```json\n{}\n```\n```python\nprint(1)\n```\n```\nuntagged\n```", "print(1)\n"),
         (_MIXED, "import sys\nprint(int(sys.argv[1]) ** 2)\n"),
+        ("   ```python\n   if True:\n\tprint(1)\n    print(2)\n   ```", "if True:\n print(1)\n print(2)\n"),
+        ("  ```python\n \tprint(1)\n  ```", "  print(1)\n"),
+        ("```python\n\tprint(1)\n```", "\tprint(1)\n"),
+        ("<!--\n```python\nprint('hidden')\n```\n-->\n```python\nprint(1)\n```", "print(1)\n"),
+        ("<!-- note --> \n```python\nprint(1)\n```", "print(1)\n"),
+        ("```python\n<!--\nprint(1)\n```", "<!--\nprint(1)\n"),
     ],
 )
 def test_selects_the_one_accepted_block(text: str, program: str) -> None:
@@ -115,6 +121,8 @@ def test_selects_the_one_accepted_block(text: str, program: str) -> None:
         ("```python\nprint(1)\n```\n```bash\necho 1\n", "unclosed code fence"),
         ("```python\n   \n```", "code block is empty"),
         ("```python\n```", "code block is empty"),
+        ("<!--\n```python\nprint('hidden')\n```\n-->", "no py or python code block"),
+        ("   <!-- start\n```python\nprint('hidden')\n```", "no py or python code block"),
     ],
 )
 def test_refuses_text_without_exactly_one_program(text: str, reason: str) -> None:
