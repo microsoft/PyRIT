@@ -320,7 +320,7 @@ test('browses compound results in the existing attack-group table with stable to
   await expect(table.getByText('Step 1', { exact: true })).toBeVisible()
   await expect(row('#2')).toContainText('Unresolved reference')
   await expect(row('#4')).toContainText('Unresolved reference')
-  await expect(row('Step 5').getByRole('cell').nth(2)).toHaveText('True')
+  await expect(row('Step 5').getByRole('cell', { name: 'Attack outcome', exact: true })).toHaveText('True')
   await expect(section.getByText('Showing 200 of 520 saved child positions')).toBeVisible()
 
   for (const shown of [400, 520]) {
@@ -348,12 +348,13 @@ test('browses compound results in the existing attack-group table with stable to
   await expect(section.getByText('Nested step 2', { exact: true })).toBeVisible()
   expect(await totals.textContent()).toBe(before)
 
-  await section.getByRole('button', { name: 'Open details for #5 sequential: Step 5' }).click()
+  const detailsRow = section.getByRole('row', { name: 'View attack details for #5 sequential: Step 5' })
+  await detailsRow.click()
   const dialog = page.getByRole('dialog', { name: 'sequential' })
   await expect(dialog.getByText('Step 5', { exact: true })).toBeVisible()
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Close attack details', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(section.getByRole('button', { name: 'Open details for #5 sequential: Step 5' })).toBeFocused()
+  await expect(detailsRow).toBeFocused()
 
   await page.getByRole('heading', { name: 'Atomic attack groups', exact: true }).evaluate((heading) =>
     heading.scrollIntoView({ block: 'start' }),
@@ -371,8 +372,8 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   const section = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
   await expect(section.getByRole('button', { name: 'Collapse attacks in Sequential' })).toHaveAttribute('aria-expanded', 'true')
   await section.getByRole('button', { name: 'Expand children of sequential: Sequential parent' }).click()
-  const row = section.getByRole('row', { name: 'View conversation for #5 sequential: Step 5' })
-  const chatLink = row.getByRole('link', { name: 'Step 5', exact: true })
+  const row = section.getByRole('row', { name: 'View attack details for #5 sequential: Step 5' })
+  const chatLink = row.getByRole('link', { name: 'Conversation', exact: true })
   await expect(chatLink).toHaveAttribute('href', new RegExp(`\\?scenarioResultId=${scenarioResultId}$`))
   await chatLink.click()
 
@@ -403,7 +404,7 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await expect(page).toHaveURL(run)
   const groups = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
   await expect(groups.getByText('2 groups, 524 executions', { exact: true })).toBeVisible()
-  const single = groups.getByRole('row', { name: 'View conversation for single: Single-turn attempt' })
+  const single = groups.getByRole('row', { name: 'View attack details for single: Single-turn attempt' })
   const collapseSingle = groups.getByRole('button', { name: 'Collapse attacks in Single turn' })
   await expect(collapseSingle).toHaveAttribute('aria-expanded', 'true')
   await expect(single).toBeVisible()
@@ -412,6 +413,9 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await groups.getByRole('button', { name: 'Expand attacks in Single turn' }).click()
   await single.focus()
   await page.keyboard.press('Enter')
+  const singleDetails = page.getByRole('dialog', { name: 'single' })
+  await expect(singleDetails).toBeVisible()
+  await singleDetails.getByRole('link', { name: 'Open conversation' }).click()
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Back to scan', exact: true }).click()
   await expect(page).toHaveURL(run)
@@ -708,8 +712,11 @@ test('owns pending continuations across rapid selection, attack navigation and u
   await expect(page).toHaveURL(run)
   const groups = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
   await expect(groups.getByRole('button', { name: 'Collapse attacks in Single turn' })).toHaveAttribute('aria-expanded', 'true')
-  await groups.getByRole('row', { name: 'View conversation for single: Single-turn attempt' }).focus()
+  await groups.getByRole('row', { name: 'View attack details for single: Single-turn attempt' }).focus()
   await page.keyboard.press('Enter')
+  const details = page.getByRole('dialog', { name: 'single' })
+  await expect(details).toBeVisible()
+  await details.getByRole('link', { name: 'Open conversation', exact: true }).click()
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()
   await controlSavedRead(page, 'release_messages')
   expect((await unmounted).status()).toBe(200)
