@@ -775,8 +775,11 @@ class TargetService:
         target_obj = (
             await self.build_from_source_async(request.source)
             if request.source
-            else self._registry.create_instance_from_external_input(
-                request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
+            else await self._registry.create_instance_async(
+                name=request.type,
+                params=params,
+                external_input=True,
+                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
             )
         )
         if not request.register:
