@@ -5,11 +5,11 @@
 Tests for backend initializer service and routes.
 """
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import AzureError
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -26,6 +26,7 @@ from pyrit.backend.models.initializers import (
 from pyrit.backend.services import InitializerService, get_initializer_service
 from pyrit.models import Parameter
 from pyrit.registry import InitializerMetadata
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 
 @pytest.fixture
@@ -470,13 +471,20 @@ class TestCustomInitializerRoutes:
         self,
         client_with_custom_initializers_enabled: TestClient,
         operation: str,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Test Blob failures are returned without exposing Azure SDK details."""
-        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+        """Test that the log names the storage location and the response doesn't."""
+        error = DocumentStorageUnavailableError(
+            label="Custom initializer", source="/srv/initializers", reason="Permission denied"
+        )
+        with (
+            patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service,
+            caplog.at_level(logging.WARNING, logger="pyrit.backend.middleware.error_handlers"),
+        ):
             mock_service = MagicMock()
-            mock_service.list_custom_initializers_async = AsyncMock(side_effect=AzureError("credential details"))
-            mock_service.register_initializer_async = AsyncMock(side_effect=AzureError("credential details"))
-            mock_service.unregister_initializer_async = AsyncMock(side_effect=AzureError("credential details"))
+            mock_service.list_custom_initializers_async = AsyncMock(side_effect=error)
+            mock_service.register_initializer_async = AsyncMock(side_effect=error)
+            mock_service.unregister_initializer_async = AsyncMock(side_effect=error)
             mock_get_service.return_value = mock_service
             if operation == "list":
                 response = client_with_custom_initializers_enabled.get("/api/initializers/custom")
@@ -489,7 +497,29 @@ class TestCustomInitializerRoutes:
                 response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
 
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-        assert response.json()["detail"] == "Custom initializer storage is temporarily unavailable"
+        assert response.json()["detail"] == "Custom initializer storage is unavailable"
+        assert "/srv/initializers" not in response.text
+        assert "Custom initializer storage at /srv/initializers is unavailable: Permission denied" in caplog.text
+
+    def test_deleting_a_script_that_cant_be_read_returns_503_with_the_reason(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
+        error = DocumentUnreadableError(
+            label="Custom initializer",
+            source="/srv/initializers",
+            name="custom",
+            file_name="custom.py",
+            reason="Not a regular file",
+        )
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.unregister_initializer_async = AsyncMock(side_effect=error)
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "Custom initializer 'custom' can't be read: Not a regular file"
 
     def test_post_root_still_registers_runtime_initializer(
         self, client_with_custom_initializers_enabled: TestClient

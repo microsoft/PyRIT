@@ -213,6 +213,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.requirements = TechniqueRequirements()
     technique_instance = MagicMock(spec=AttackTechnique)
     technique_instance.attack = MagicMock(spec=AttackStrategy)
+    technique_instance.attack.IS_COMPOUND = False
     technique_instance.seed_technique = seed_technique
     technique_instance.requirements = factory.requirements
     technique_instance.get_identifier.return_value = ComponentIdentifier(
@@ -569,7 +570,8 @@ class TestAdversarialBenchmarkInit:
         default_scorer = MagicMock(spec=TrueFalseScorer)
         with patch.object(AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer):
             bench = AdversarialBenchmark()
-        assert bench._objective_scorer is default_scorer
+            assert bench._configured_objective_scorer is None
+            assert bench._objective_scorer is default_scorer
         assert bench.uses_default_adversarial_target is False
 
     def test_construct_with_explicit_objective_scorer(self):
@@ -611,6 +613,10 @@ class TestAdversarialBenchmarkInit:
 
     async def test_initialize_without_selection_resolves_default_before_empty_build_failure_async(self) -> None:
         """Omitting ``scenario_techniques`` resolves exactly the approved benchmark defaults."""
+        adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        adversarial_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockAdversarialTarget", class_module="pyrit.test"
+        )
         objective_target = MagicMock(spec=PromptTarget)
         objective_target.get_identifier.return_value = ComponentIdentifier(
             class_name="MockObjectiveTarget", class_module="pyrit.test"
@@ -2197,6 +2203,7 @@ def _make_exact_cached_result(
 
 def _make_cache_reuse_candidate(*, seed_groups: list[AttackSeedGroup]) -> MagicMock:
     candidate = MagicMock(spec=AtomicAttack)
+    candidate.attack_technique.attack.IS_COMPOUND = False
     candidate.atomic_attack_name = "attack_a"
     candidate.display_group = "adv_target"
     candidate.technique_name = None
@@ -2494,6 +2501,7 @@ class TestReusableCachedResults:
         bench._memory_labels = {"pipeline_build_id": "42"}
         bench._precomputed_cached_results = {"attack_a": [source_result]}
         candidate = MagicMock(spec=AtomicAttack)
+        candidate.attack_technique.attack.IS_COMPOUND = False
         candidate.atomic_attack_name = "attack_a"
         candidate.technique_eval_hash = "technique-hash"
         candidate.seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]

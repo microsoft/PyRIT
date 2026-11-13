@@ -7,6 +7,15 @@ authors = [
 ]
 readme = "README.md"
 license = "MIT"
+license-files = [
+    "LICENSE",
+    "LICENSES/Apache-2.0.txt",
+    "LICENSES/ComicJailbreak-MIT.txt",
+    "LICENSES/PromptInject-MIT.txt",
+    "THIRD_PARTY_NOTICES.txt",
+    "third_party/garak-provenance.json",
+    "third_party/promptinject-provenance.json",
+]
 keywords = [
     "llm",
     "ai-safety",
@@ -27,6 +36,7 @@ classifiers = [
 requires-python = ">=3.11, <3.15"
 dependencies = [
     "aiofiles>=24,<26",
+    "aiohttp>=3.13.4",
     "aioodbc>=0.5.0",
     "aiosqlite>=0.21.0",
     "alembic>=1.16.0",
@@ -64,6 +74,7 @@ dependencies = [
     "pypinyin>=0.55.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
     "regex>=2024.11.6",
     "segno>=1.6.6",
@@ -320,16 +331,6 @@ backend-path = ["."]
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
-
-[tool.setuptools]
-license-files = [
-    "LICENSE",
-    "LICENSES/Apache-2.0.txt",
-    "LICENSES/PromptInject-MIT.txt",
-    "THIRD_PARTY_NOTICES.txt",
-    "third_party/garak-provenance.json",
-    "third_party/promptinject-provenance.json",
-]
 
 [tool.setuptools.package-data]
 pyrit = [
