@@ -31,7 +31,8 @@ const METRIC_LABELS: Record<string, string> = {
   recall: 'Recall',
   mean_absolute_error: 'Mean absolute error',
   mae_standard_error: 'MAE std error',
-  krippendorff_alpha_combined: 'Agreement (Krippendorff alpha)',
+  krippendorff_alpha_combined: 'Combined alpha (humans + trials)',
+  krippendorff_alpha_gold_model: 'Gold vs model alpha',
   average_score_time_seconds: 'Average score time',
 }
 
@@ -44,7 +45,10 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
   accuracy: 'The share of evaluated cases scored correctly.',
   f1_score: 'The harmonic mean of precision and recall.',
   mean_absolute_error: 'The average absolute difference from human ratings. Lower is better.',
-  krippendorff_alpha_combined: "Krippendorff's alpha for agreement between human and model ratings.",
+  krippendorff_alpha_combined: "Krippendorff's alpha over the human ratings and every scoring trial together. "
+    + "Each trial counts as an extra rater, so it rises with the number of trials even when the scorer's answers don't change.",
+  krippendorff_alpha_gold_model: "Krippendorff's alpha between the gold (median human) label and the scorer's median score "
+    + 'per response. It does not depend on the number of trials.',
   average_score_time_seconds: 'The average seconds per scored item during the recorded evaluation.',
 }
 

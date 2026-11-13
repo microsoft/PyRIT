@@ -1,6 +1,6 @@
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
 
-import { resolveChatScorerReference } from './scorerPresentation'
+import { resolveChatScorerReference, scorerMetricDescription, scorerMetricLabel } from './scorerPresentation'
 
 const REFERENCE: RegisteredComponentReference = { registry_name: 'registered', identifier_hash: 'full-hash' }
 const SCORER: ScorerInstance = {
@@ -28,5 +28,14 @@ describe('resolveChatScorerReference', () => {
     { name: 'criteria-dependent', scorers: [{ ...SCORER, chat_scoring_disabled_reason: 'Requires tool criteria.' }] },
   ])('ignores $name saved scorer references', ({ scorers }: { scorers: ScorerInstance[] }) => {
     expect(resolveChatScorerReference(REFERENCE, scorers)).toBeUndefined()
+  })
+})
+
+describe('Krippendorff alpha labels', () => {
+  it('names the combined alpha after what it pools and labels the gold-vs-model alpha', () => {
+    expect(scorerMetricLabel('krippendorff_alpha_combined')).toBe('Combined alpha (humans + trials)')
+    expect(scorerMetricDescription('krippendorff_alpha_combined')).toContain('rises with the number of trials')
+    expect(scorerMetricLabel('krippendorff_alpha_gold_model')).toBe('Gold vs model alpha')
+    expect(scorerMetricDescription('krippendorff_alpha_gold_model')).toContain('does not depend on the number of trials')
   })
 })

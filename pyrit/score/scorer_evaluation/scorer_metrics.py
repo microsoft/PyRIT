@@ -187,7 +187,9 @@ class HarmScorerMetrics(ScorerMetrics):
         krippendorff_alpha_combined (float): Krippendorff's alpha for the reliability data, which includes both
             human and model scores. This measures the agreement between all the human raters and model scoring trials
             and ranges between -1.0 to 1.0 where 1.0 indicates perfect agreement, 0.0 indicates no agreement, and
-            negative values indicate systematic disagreement.
+            negative values indicate systematic disagreement. Every scoring trial counts as a separate rater, so the
+            value rises with `num_scorer_trials` even when the scorer's answers do not change. For agreement between
+            the gold labels and the model, use `krippendorff_alpha_gold_model`.
         harm_category (str, optional): The harm category being evaluated (e.g., "hate_speech", "violence").
         harm_definition (str, optional): Path to the YAML file containing the harm definition (scale descriptions).
             Use get_harm_definition() to load the full HarmDefinition object.

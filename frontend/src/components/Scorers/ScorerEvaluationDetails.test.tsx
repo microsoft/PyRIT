@@ -48,7 +48,7 @@ describe('ScorerEvaluationDetails', () => {
     await user.click(screen.getByRole('button', { name: 'Evaluation metrics for scale' }))
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByRole('group', { name: 'Mean absolute error' })).toHaveTextContent('0.0000')
-    expect(within(dialog).getByRole('group', { name: 'Agreement (Krippendorff alpha)' })).toHaveTextContent('0.8000')
+    expect(within(dialog).getByRole('group', { name: 'Combined alpha (humans + trials)' })).toHaveTextContent('0.8000')
     expect(within(dialog).getByRole('group', { name: 'Num responses' })).toHaveTextContent('25')
     expect(within(dialog).getByRole('group', { name: 'Custom standard error' })).toHaveTextContent('Unavailable')
     expect(within(dialog).queryByRole('group', { name: 'Accuracy' })).not.toBeInTheDocument()

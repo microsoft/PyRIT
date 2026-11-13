@@ -122,7 +122,7 @@ describe('ScorerRegistry', () => {
     </UserPreferencesProvider></FluentProvider>)
     const scale = screen.getByRole('table', { name: 'Float-scale scorers' })
     expect(within(scale).getAllByRole('columnheader').map((cell: HTMLElement) => cell.textContent)).toEqual([
-      'Name', 'Type', 'Scorable', 'MAE', 'Agreement', 'Avg time',
+      'Name', 'Type', 'Scorable', 'MAE', 'Combined alpha', 'Avg time',
     ])
     const scaleCells = within(within(scale).getAllByRole('row')[1]).getAllByRole('cell')
     expect(scaleCells.slice(2).map((cell: HTMLElement) => cell.textContent)).toEqual(['Message', '0.1200', '0.8000', 'n/a'])
@@ -180,9 +180,9 @@ describe('ScorerRegistry', () => {
     expect(names(binary)).toEqual(['d_tied', 'c_slow', 'b_fast', 'a_missing'])
     await user.click(within(scale).getByRole('button', { name: 'MAE', exact: true }))
     expect(names(scale)).toEqual(['z_low_mae', 'a_high_mae'])
-    await user.click(within(scale).getByRole('button', { name: 'Agreement', exact: true }))
+    await user.click(within(scale).getByRole('button', { name: 'Combined alpha', exact: true }))
     expect(names(scale)).toEqual(['z_low_mae', 'a_high_mae'])
-    await user.click(within(scale).getByRole('button', { name: 'Agreement', exact: true }))
+    await user.click(within(scale).getByRole('button', { name: 'Combined alpha', exact: true }))
     expect(names(scale)).toEqual(['a_high_mae', 'z_low_mae'])
     expect(names(binary)).toEqual(['d_tied', 'c_slow', 'b_fast', 'a_missing'])
     expect(entries.map((entry: ScorerInstance) => entry.scorer_registry_name)).toEqual(originalOrder)
