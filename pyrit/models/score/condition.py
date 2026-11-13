@@ -207,6 +207,10 @@ class ToolsCalledInOrder(Condition):
     the next listed tool started. Other tools, and further attempts of the listed tools, may run
     in between. Success is not required. Overlapping or unfinished attempts do not establish an
     order in either direction.
+
+    Each tool may be named only once, so an order that returns to a tool (for example
+    ``read_file`` then ``send_email`` then ``read_file`` again) is out of scope. Distinct names
+    keep each tool's attempts in a single pool, which keeps the match sound.
     """
 
     condition_type: Literal["tools_called_in_order"] = "tools_called_in_order"

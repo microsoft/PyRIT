@@ -213,6 +213,32 @@ def test_negative_tolerance_is_rejected(tolerance: timedelta) -> None:
         )
 
 
+@pytest.mark.parametrize("tolerance", [timedelta(seconds=-1), timedelta(microseconds=-1)])
+def test_negative_tolerance_is_rejected_by_the_matcher_too(tolerance: timedelta) -> None:
+    payload = _payload(("read", 0, 1), ("send", 1, 2), complete=True)
+
+    with pytest.raises(ValueError, match="must not be negative"):
+        match_tools_called_in_order(
+            condition=_order("read", "send"),
+            payload=payload,
+            acquisition=Acquisition.COMPLETE,
+            clock_skew_tolerance=tolerance,
+        )
+
+
+def test_presence_and_order_scorers_are_siblings_sharing_the_scope_version() -> None:
+    source = OtelTraceSource(trace_client=InMemoryTraceClient())
+    order = OtelToolCallOrderScorer(source=source)
+    presence = OtelToolCallScorer(source=source)
+
+    assert not isinstance(order, OtelToolCallScorer)
+    assert not isinstance(presence, OtelToolCallOrderScorer)
+    assert (
+        order.get_identifier().params["message_scope_version"]
+        == presence.get_identifier().params["message_scope_version"]
+    )
+
+
 def test_scorer_declares_only_the_order_condition() -> None:
     scorer = OtelToolCallOrderScorer(source=OtelTraceSource(trace_client=InMemoryTraceClient()))
 

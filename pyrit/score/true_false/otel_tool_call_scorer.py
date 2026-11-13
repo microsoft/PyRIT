@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from abc import abstractmethod
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation, ToolExecution
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
+
+# Versions the shared message-to-trace scope resolution; both trace scorers stamp it on their identifiers.
+_MESSAGE_SCOPE_VERSION = 2
 
 _UNLINKED_REQUESTS_REASON = (
     "One or more requests in this conversation carry no trace link, so tool calls outside the "
@@ -109,6 +113,12 @@ def _ordered_chain_exists(*, runs: Sequence[Sequence[ToolExecution]], tolerance:
     return True
 
 
+def _check_clock_skew_tolerance(tolerance: timedelta) -> None:
+    seconds = tolerance.total_seconds()
+    if seconds < 0 or not math.isfinite(seconds):
+        raise ValueError("clock_skew_tolerance must not be negative.")
+
+
 def match_tools_called_in_order(
     *,
     condition: ToolsCalledInOrder,
@@ -126,7 +136,11 @@ def match_tools_called_in_order(
 
     Returns:
         bool | None: True for an observed order, false for a complete contradiction, otherwise None.
+
+    Raises:
+        ValueError: If the tolerance is negative or not finite.
     """
+    _check_clock_skew_tolerance(clock_skew_tolerance)
     if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
         return None
     runs = [[event for event in payload.events if event.name == tool.name] for tool in condition.tools]
@@ -138,22 +152,32 @@ def match_tools_called_in_order(
     return None if _ordered_chain_exists(runs=runs, tolerance=clock_skew_tolerance, definite=False) else False
 
 
-class OtelToolCallScorer(TrueFalseScorer):
-    """Score actual tool invocations, not requested calls or response claims."""
+class _OtelToolEvidenceScorer(TrueFalseScorer):
+    """
+    Shared trace-evidence pipeline for the tool scorers; each concrete leaf declares its own condition.
+
+    The leaves are siblings rather than one subclassing the other, so an ``isinstance`` check on
+    one never matches the other.
+    """
 
     SUPPORTED_SCORABLE_TYPES = (MessageScorable, TraceScorable)
-    CONDITION_TYPE = ToolsCalled
 
     def __init__(self, *, source: ObservationSource[TraceScorable]) -> None:
         """Initialize with a condition-independent, caller-configured trace source."""
         super().__init__()
         self._source = source
 
-    def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(
-            params={"matching_version": 1, "message_scope_version": 2},
-            children={"source": self._source.get_identifier()},
-        )
+    @abstractmethod
+    def _build_identifier(self) -> ComponentIdentifier: ...
+
+    @abstractmethod
+    def _score_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]: ...
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, (MessageScorable, TraceScorable)):
@@ -185,6 +209,18 @@ class OtelToolCallScorer(TrueFalseScorer):
                 score.set_value(None)
                 score.score_rationale = f"{score.score_rationale} {_UNLINKED_REQUESTS_REASON}"
         return scores
+
+
+class OtelToolCallScorer(_OtelToolEvidenceScorer):
+    """Score actual tool invocations, not requested calls or response claims."""
+
+    CONDITION_TYPE = ToolsCalled
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(
+            params={"matching_version": 1, "message_scope_version": _MESSAGE_SCOPE_VERSION},
+            children={"source": self._source.get_identifier()},
+        )
 
     def _score_observation(
         self,
@@ -220,7 +256,7 @@ class OtelToolCallScorer(TrueFalseScorer):
         ]
 
 
-class OtelToolCallOrderScorer(OtelToolCallScorer):
+class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
     """
     Score the relative order of actual tool invocations from the same evidence as ``OtelToolCallScorer``.
 
@@ -239,9 +275,7 @@ class OtelToolCallOrderScorer(OtelToolCallScorer):
         Raises:
             ValueError: If the tolerance is negative or not finite.
         """
-        seconds = clock_skew_tolerance.total_seconds()
-        if seconds < 0 or not math.isfinite(seconds):
-            raise ValueError("clock_skew_tolerance must not be negative.")
+        _check_clock_skew_tolerance(clock_skew_tolerance)
         self._clock_skew_tolerance = clock_skew_tolerance
         super().__init__(source=source)
 
@@ -249,7 +283,7 @@ class OtelToolCallOrderScorer(OtelToolCallScorer):
         return self._create_identifier(
             params={
                 "matching_version": 1,
-                "message_scope_version": 2,
+                "message_scope_version": _MESSAGE_SCOPE_VERSION,
                 "clock_skew_tolerance_seconds": self._clock_skew_tolerance.total_seconds(),
             },
             children={"source": self._source.get_identifier()},
