@@ -33,8 +33,8 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     TargetRegistry,
 )
-from pyrit.scenario.airt import Multilingual
-from pyrit.scenario.foundry import FoundryTechnique
+from pyrit.scenario.scenarios.airt import Multilingual
+from pyrit.scenario.scenarios.foundry import FoundryTechnique
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
 from pyrit.setup.initializers import (
@@ -98,7 +98,9 @@ def test_explicit_all_and_default_family_selections() -> None:
     assert not any(preset.show_in_scanner for preset in defaults)
     assert all(preset.datasets == defaults[0].datasets for preset in defaults)
     assert defaults[0].datasets.max_total == defaults[0].datasets.max_per_dataset == "all"
-    assert [source.name for source in defaults[0].datasets.sources] == ["airt_harms"]
+    sources = defaults[0].datasets.sources
+    assert sources is not None
+    assert [source.name for source in sources] == ["airt_harms"]
 
 
 @pytest.mark.usefixtures("catalogs")
