@@ -8,11 +8,22 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
+import copy
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    GetJsonSchemaHandler,
+    computed_field,
+    field_serializer,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import (
@@ -23,10 +34,12 @@ from pyrit.backend.models.common import (
     PaginationInfo,
     TextStr,
 )
+from pyrit.common import print_deprecation_message
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
+    ComponentIdentifier,
     ConversationReference,
     ConversationSummary,
     Message,
@@ -34,6 +47,7 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
     Score,
+    TargetCapabilities,
 )
 from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
 from pyrit.models.results.attack_result import ManualContinuation, ScoringFailure, normalize_legacy_attack_attribution
@@ -44,10 +58,13 @@ class TargetInfo(BaseModel):
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     target_registry_name: str | None = Field(None, description="Registry alias used to create the attack")
+    identifier: ComponentIdentifier | None = Field(None, description="Persisted target identity for inspection")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
     binding: TargetBinding | None = None
+    capabilities: TargetCapabilities | None = None
+    supports_history_replay: bool | None = None
 
 
 class ScoreView(Score):
@@ -248,6 +265,10 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     )
     chat_scorer_inherited: bool = Field(default=False, description="Uses the scan's registered original scorer")
     execution_read_only: bool = Field(default=False, description="Execution changes require a manual continuation")
+    in_progress: bool = Field(
+        default=False, description="The attack is still running in a scan; its result is not saved yet"
+    )
+    scenario_result_id: str | None = Field(default=None, description="The scan run that produced this attack")
 
     @computed_field
     @property
@@ -305,13 +326,21 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         if not target_id:
             return None
         target_registry_name = self.metadata.get("target_registry_name")
+        binding = TargetBinding.from_metadata(self.metadata)
+        saved = self.metadata.get("target_capabilities")
+        capabilities = TargetCapabilities.model_validate(saved) if saved is not None else None
+        if binding is not None:
+            capabilities = binding.capabilities
         return TargetInfo(
             target_type=target_id.class_name,
             target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
+            identifier=target_id,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
-            binding=TargetBinding.from_metadata(self.metadata),
+            binding=binding,
+            capabilities=capabilities,
+            supports_history_replay=self.metadata.get("target_supports_history_replay"),
         )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -345,6 +374,10 @@ class AttackMetadata(BaseModel):
     chat_scorer: RegisteredComponentReference | None = None
     chat_scorer_inherited: bool = False
     execution_read_only: bool = False
+    in_progress: bool = Field(
+        default=False, description="The attack is still running in a scan; its result is not saved yet"
+    )
+    scenario_result_id: str | None = Field(default=None, description="The scan run that produced this attack")
     manual_continuation: ManualContinuation | None = None
     last_response_message_piece_id: str | None = None
     related_conversation_count: int = Field(..., ge=0, description="Number of pruned conversations, excluding main")
@@ -529,6 +562,44 @@ class _AttackAttributionInput(BaseModel):
         return normalized
 
 
+_TARGET_BINDING_LIMITED_FIELDS = ("source_name", "source_hash", "effective_hash")
+
+
+def _limit_target_binding(binding: TargetBinding) -> TargetBinding:
+    """
+    Apply the identifier limit to a binding a caller sends.
+
+    Saved bindings are read without this limit, so attacks saved before it keep loading.
+
+    Returns:
+        TargetBinding: The unchanged binding.
+
+    Raises:
+        ValueError: If a name or hash is longer than the identifier limit.
+    """
+    if any(len(getattr(binding, field)) > MAX_IDENTIFIER_LENGTH for field in _TARGET_BINDING_LIMITED_FIELDS):
+        raise ValueError(f"Target binding names and hashes are limited to {MAX_IDENTIFIER_LENGTH} characters.")
+    return binding
+
+
+class _TargetBindingInputSchema:
+    """Show the identifier limit in the schema of a binding a caller sends."""
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Return the binding schema with the limit, described inline for request fields only."""
+        schema = handler(core_schema)
+        if handler.mode != "validation":
+            return schema
+        # Saved bindings are read without the limit, so the shared definition stays unchanged.
+        limited = copy.deepcopy(handler.resolve_ref_schema(schema))
+        for field in _TARGET_BINDING_LIMITED_FIELDS:
+            limited["properties"][field]["maxLength"] = MAX_IDENTIFIER_LENGTH
+        return limited
+
+
+TargetBindingInput = Annotated[TargetBinding, AfterValidator(_limit_target_binding), _TargetBindingInputSchema()]
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
@@ -536,7 +607,11 @@ class _AttackAttributionInput(BaseModel):
 
 class CreateAttackRequest(_AttackAttributionInput):
     """
-    Request to create a new attack.
+    Request to create a new manual attack.
+
+    ``objective`` is the goal, not the strategy type or a display name.
+    The deprecated ``name`` input aliases ``objective`` when it is omitted
+    or null. If both are non-null, they must match exactly, including empty strings.
 
     For branching from an existing conversation into a new attack, provide
     ``source_conversation_id`` and ``cutoff_index``.  The backend will
@@ -545,8 +620,14 @@ class CreateAttackRequest(_AttackAttributionInput):
     supplied in ``labels`` (typically the current operator's labels).
     """
 
-    name: TextStr | None = Field(None, description="Attack name/label")
-    target_binding: TargetBinding | None = None
+    objective: TextStr | None = Field(None, description="Attack objective; omitted or null means no objective")
+    name: TextStr | None = Field(
+        None,
+        description="Deprecated input alias for objective, not a display name or strategy type. "
+        "Used when objective is omitted or null; non-null values must match when both are supplied.",
+        json_schema_extra={"deprecated": True},
+    )
+    target_binding: TargetBindingInput | None = None
     chat_scorer: RegisteredComponentReference | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
@@ -565,6 +646,28 @@ class CreateAttackRequest(_AttackAttributionInput):
     prepended_conversation: list[MessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
+
+    @model_validator(mode="after")
+    def _normalize_legacy_objective(self) -> "CreateAttackRequest":
+        """
+        Normalize the deprecated name input.
+
+        Returns:
+            The request with its resolved objective.
+
+        Raises:
+            ValueError: If non-null name and objective values disagree.
+        """
+        if self.name is not None:
+            print_deprecation_message(
+                old_item="CreateAttackRequest.name",
+                new_item="CreateAttackRequest.objective",
+                removed_in="1.4.0",
+            )
+            if self.objective is not None and self.objective != self.name:
+                raise ValueError("name and objective must match when both are supplied")
+            self.objective = self.name
+        return self
 
 
 class CreateAttackResponse(BaseModel):
@@ -665,7 +768,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: IdentifierStr | None = None
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
     reuse_unsent_conversation: bool = False
     expected_source_piece_ids: list[uuid.UUID] | None = None
@@ -757,7 +860,7 @@ class AddMessageRequest(MessageRequest):
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     converter_ids: list[IdentifierStr] | None = Field(
         None,
         max_length=MAX_ITEMS,

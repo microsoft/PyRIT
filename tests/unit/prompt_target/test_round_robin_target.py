@@ -1,14 +1,95 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+from contextlib import ExitStack
+from functools import partial
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
-from pyrit.models import Message
+from pyrit.models import CapabilityName, Message
 from pyrit.prompt_target import RoundRobinTarget, TargetCapabilities, TargetConfiguration
 
 # ── Construction validation ──────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [None, ValueError, asyncio.CancelledError])
+async def test_dispatch_capabilities_are_scoped_and_restored_async(error: type[BaseException] | None) -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    parent = RoundRobinTarget(targets=children)
+    parent.apply_capabilities(capabilities=parent.capabilities.model_copy(update={"supports_json_output": True}))
+    configurations = [child.configuration for child in children]
+    identifiers = [child.get_identifier().hash for child in children]
+
+    async def send_async(*, target: MockPromptTarget, normalized_conversation: list[Message]) -> list[Message]:
+        config = target._get_json_response_config(message_piece=normalized_conversation[-1].get_piece())
+        assert config.enabled
+        index = children.index(target)
+        assert target.configuration is configurations[index]
+        assert not target.configuration.capabilities.supports_json_output
+        assert target.get_identifier().hash == identifiers[index]
+        assert all(not other.capabilities.supports_json_output for other in children if other is not target)
+        if error is not None:
+            raise error("Dispatch interrupted")
+        return [Message.from_prompt(role="assistant", prompt="{}")]
+
+    with ExitStack() as stack:
+        for child in children:
+            stack.enter_context(
+                patch.object(
+                    child, "_send_prompt_to_target_async", new=AsyncMock(side_effect=partial(send_async, target=child))
+                )
+            )
+        message = Message.from_prompt(role="user", prompt="Return JSON.")
+        message.get_piece().prompt_metadata["response_format"] = "json"
+        if error is None:
+            await parent.send_prompt_async(message=message)
+        else:
+            with pytest.raises(error):
+                await parent.send_prompt_async(message=message)
+        for child in children:
+            assert not child.capabilities.supports_json_output
+            with pytest.raises(ValueError, match="JSON response format"):
+                await child.send_prompt_async(message=message)
+    assert all(child.configuration is original for child, original in zip(children, configurations, strict=True))
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_dispatch_capabilities_do_not_leak_to_concurrent_child_send_async() -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    parent = RoundRobinTarget(targets=children)
+    parent.apply_capabilities(capabilities=parent.capabilities.model_copy(update={"supports_json_output": True}))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = children[0].configuration
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        config = children[0]._get_json_response_config(message_piece=normalized_conversation[-1].get_piece())
+        assert config.enabled
+        entered.set()
+        await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        return [Message.from_prompt(role="assistant", prompt="{}")]
+
+    with patch.object(children[0], "_send_prompt_to_target_async", new=AsyncMock(side_effect=send_async)):
+        message = Message.from_prompt(role="user", prompt="Return JSON.")
+        message.get_piece().prompt_metadata["response_format"] = "json"
+        sending = asyncio.create_task(parent.send_prompt_async(message=message))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            assert children[0].configuration is original
+            assert not children[0].capabilities.supports_json_output
+            with pytest.raises(ValueError, match="JSON response format"):
+                await children[0].send_prompt_async(message=message)
+        finally:
+            release.set()
+            responses = await sending
+        assert responses[0].get_piece().original_value == "{}"
+    assert children[0].configuration is original
+    assert not children[0].capabilities.supports_json_output
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -87,6 +168,62 @@ def test_init_succeeds_with_weights():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("capability", list(CapabilityName))
+def test_aggregate_capabilities_requires_every_child_for_feature_support(capability: CapabilityName) -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    target = RoundRobinTarget(targets=children)
+    supported = children[0].capabilities.model_copy(update={capability.value: True})
+    unsupported = supported.model_copy(update={capability.value: False})
+
+    assert target.aggregate_capabilities(child_capabilities=[supported, supported]).includes(capability=capability)
+    assert not target.aggregate_capabilities(child_capabilities=[supported, unsupported]).includes(
+        capability=capability
+    )
+    assert not target.aggregate_capabilities(child_capabilities=[unsupported, supported]).includes(
+        capability=capability
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_aggregate_capabilities_intersects_input_combinations_and_unions_possible_outputs() -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    target = RoundRobinTarget(targets=children)
+    original_configurations = [child.configuration for child in children]
+    first = TargetCapabilities(
+        input_modalities=frozenset({frozenset({"text"}), frozenset({"text", "image_path"}), frozenset({"audio_path"})}),
+        output_modalities=frozenset({frozenset({"text"})}),
+    )
+    second = TargetCapabilities(
+        input_modalities=frozenset({frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "audio_path"})}),
+        output_modalities=frozenset({frozenset({"text", "image_path"})}),
+    )
+
+    result = target.aggregate_capabilities(child_capabilities=[first, second])
+
+    assert result.input_modalities == frozenset({frozenset({"text"})})
+    assert result.output_modalities == frozenset({frozenset({"text"}), frozenset({"text", "image_path"})})
+    assert all(
+        child.configuration is original for child, original in zip(children, original_configurations, strict=True)
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_aggregate_capabilities_rejects_missing_results_and_disjoint_inputs() -> None:
+    target = RoundRobinTarget(targets=[MockPromptTarget(), MockPromptTarget()])
+    with pytest.raises(ValueError, match="every round-robin child"):
+        target.aggregate_capabilities(child_capabilities=[])
+    with pytest.raises(ValueError, match="every round-robin child"):
+        target.aggregate_capabilities(child_capabilities=[TargetCapabilities()])
+    with pytest.raises(ValueError, match="no shared"):
+        target.aggregate_capabilities(
+            child_capabilities=[
+                TargetCapabilities(),
+                TargetCapabilities(input_modalities=frozenset({frozenset({"image_path"})})),
+            ]
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
 def test_configuration_adopted_from_inner_targets():
     """Round-robin adopts the inner targets' shared configuration unchanged."""
     t1, t2 = MockPromptTarget(), MockPromptTarget()
@@ -143,7 +280,7 @@ def test_init_rejects_mismatched_modalities():
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mismatched_policy():
-    from pyrit.prompt_target.common.target_capabilities import (
+    from pyrit.prompt_target import (
         CapabilityHandlingPolicy,
         CapabilityName,
         UnsupportedCapabilityBehavior,
@@ -503,11 +640,7 @@ def test_init_uses_model_name_fallback_for_underlying_model():
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mismatched_normalizer_templates():
     from pyrit.message_normalizer import JsonSchemaNormalizer
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     caps = TargetCapabilities(
         supports_multi_turn=True,
@@ -539,11 +672,7 @@ def test_init_rejects_mismatched_normalizer_templates():
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_accepts_identical_custom_normalizer_templates():
     from pyrit.message_normalizer import JsonSchemaNormalizer
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     caps = TargetCapabilities(
         supports_multi_turn=True,
@@ -573,11 +702,7 @@ def test_init_accepts_identical_custom_normalizer_templates():
 def test_init_rejects_custom_identifiable_normalizers_with_mismatched_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
         def __init__(self, prefix: str):
@@ -616,11 +741,7 @@ def test_init_rejects_custom_identifiable_normalizers_with_mismatched_params():
 def test_init_accepts_custom_identifiable_normalizers_with_matching_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
         def __init__(self, prefix: str):
@@ -659,11 +780,7 @@ def test_init_accepts_custom_identifiable_normalizers_with_matching_params():
 def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
@@ -722,11 +839,7 @@ def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
 def test_init_accepts_delegating_normalizers_with_matching_child_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
@@ -785,11 +898,7 @@ def test_init_accepts_delegating_normalizers_with_matching_child_params():
 def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
@@ -852,11 +961,7 @@ def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_pa
 def test_init_accepts_multi_level_delegating_normalizers_with_matching_leaf_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass

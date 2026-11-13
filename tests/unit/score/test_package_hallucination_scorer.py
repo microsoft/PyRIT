@@ -716,6 +716,33 @@ class TestPackageHallucinationScorerScoring:
                 "hallucinated_packages": hallucinated_packages,
             }
 
+    @pytest.mark.parametrize(
+        ("text", "hallucinated_packages"),
+        [
+            ("from typing_extensions import Self\n", ""),
+            ("import huggingface_hub\n", ""),
+            ("from IPython.display import display\n", ""),
+            ("from langchain_openai import ChatOpenAI\nimport ghost_sdk\n", "ghost_sdk"),
+            ("import Ghost_SDK\n", "Ghost_SDK"),
+        ],
+    )
+    async def test_python_package_names_match_the_normalized_registry_async(
+        self, *, text: str, hallucinated_packages: str
+    ) -> None:
+        # PyPI lists normalized names, so the registry spells these packages with hyphens and in lowercase.
+        scorer = PackageHallucinationScorer(
+            known_packages={"typing-extensions", "huggingface-hub", "ipython", "langchain-openai"},
+            ecosystem=PackageEcosystem.PYTHON,
+        )
+        message = _assistant_piece(text).to_message()
+        message.set_response_not_in_memory()
+        score = (await scorer.score_message_async(message=message))[0]
+        assert score.get_value() is bool(hallucinated_packages)
+        assert score.score_metadata == {
+            "ecosystem": "python",
+            "hallucinated_packages": hallucinated_packages,
+        }
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPackageHallucinationScorerInit:
@@ -776,6 +803,38 @@ class TestAdditionalPackageEcosystems:
         assert references == {"http"}
         assert "http" in scorer._known_packages
 
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "import 'package:flutter/material.dart';",
+            "import 'package:flutter_test/flutter_test.dart';",
+            "import 'package:flutter_localizations/flutter_localizations.dart';",
+            "import 'package:flutter_driver/flutter_driver.dart';",
+            "import 'package:flutter_web_plugins/url_strategy.dart';",
+            "import 'package:integration_test/integration_test.dart';",
+            "import 'package:flutter_gpu/gpu.dart';",
+        ],
+    )
+    async def test_dart_flutter_sdk_packages_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"http"},
+            ecosystem=PackageEcosystem.DART,
+        )
+        code = f"```dart\n{statement}\nimport 'package:http/http.dart';\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_dart_flutter_sdk_packages_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.DART,
+        )
+        code = "```dart\nimport 'package:flutter/material.dart';\nimport 'package:flutter_ghost/ghost.dart';\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "flutter_ghost"
+
     def test_perl_extracts_module_imports(self):
         scorer = PackageHallucinationScorer(
             known_packages=set(),
@@ -813,6 +872,38 @@ class TestAdditionalPackageEcosystems:
         score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "use builtin qw(true false trim);",
+            "use sort 'stable';",
+            "use filetest 'access';",
+            "use Time::gmtime;",
+            "use IPC::SysV qw(IPC_PRIVATE S_IRUSR S_IWUSR);",
+            "use Tie::StdHandle;",
+            "use AnyDBM_File;",
+        ],
+    )
+    async def test_perl_core_modules_and_pragmas_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::MaybeXS"},
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = f"```perl\n{statement}\nuse JSON::MaybeXS;\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_perl_core_modules_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = "```perl\nuse strict;\nuse Time::gmtime;\nuse Time::Ghost;\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "Time::Ghost"
 
     def test_raku_extracts_module_references(self):
         scorer = PackageHallucinationScorer(

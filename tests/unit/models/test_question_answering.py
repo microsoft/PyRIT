@@ -4,7 +4,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.question_answering import (
+from pyrit.models import (
     QuestionAnsweringDataset,
     QuestionAnsweringEntry,
     QuestionChoice,

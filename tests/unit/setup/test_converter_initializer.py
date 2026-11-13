@@ -12,6 +12,7 @@ from unit.mocks import MockPromptTarget
 
 from pyrit.converter import Base64Converter, LeetspeakConverter, ROT13Converter, VariationConverter
 from pyrit.registry import ConverterRegistry, InitializerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
 from pyrit.setup.initializers import ConverterInitializer
 from pyrit.setup.initializers.converters import ConverterConfig
 
@@ -78,6 +79,20 @@ async def test_initialize_replaces_converter_with_current_target() -> None:
     assert isinstance(converter, VariationConverter)
     assert converter._converter_target is current_target
     assert converter._converter_target is not first_target
+
+
+async def test_initialize_does_not_skip_a_saved_converter_it_would_replace() -> None:
+    registry = ConverterRegistry.get_registry_singleton()
+    saved = Base64Converter()
+    registry.instances.register(saved, name="rot13", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+    with (
+        patch.object(ConverterInitializer, "CONFIGS", _get_configs("base64", "rot13")),
+        pytest.raises(SavedEntryReplacementError, match="Saved converter 'rot13'"),
+    ):
+        await ConverterInitializer().initialize_async()
+
+    assert registry.instances.get("rot13") is saved
 
 
 async def test_initialize_skips_converter_without_declared_target() -> None:

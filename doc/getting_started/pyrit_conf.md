@@ -194,6 +194,20 @@ Suites store ordered references to scenario presets and resolve each preset's cu
 
 A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
 
+### `registry_recipes_source`
+
+Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. An Azure URI may include a blob-name prefix:
+
+```yaml
+registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes
+```
+
+Each kind has its own folder under the source (`targets/`, `converters/`, `scorers/`, `techniques/`), with one JSON file per saved entry named after the entry. A file holds the create request the entry was made with, and restore builds the entry through the API's create for its kind; restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/registry_recipes`.
+
+A saved file doesn't record who saved it, so the backend rebuilds every entry in this source as an administrator, at startup and after a live apply. A file here can, for example, make the backend run a model's repository code, or use the server's identity on a storage container that the file names. Write access to this source is administrator authority on the backend: grant it only to principals you already trust as backend administrators, and use a dedicated directory or blob prefix that less-trusted users and services cannot write to.
+
+The backend restores saved entries at startup and after a live apply, once the configured initializers have registered theirs. If any saved entry can't be restored, the backend doesn't become ready (state `failed`, outcome `restore-failed`), so a scan can't quietly run without an entry it expects. Until then, only the configuration and status routes answer; the rest return 503. Administrators see each failure with its reason in `GET /api/config/runtime` and on the GUI's Configuration page; everyone else sees that an administrator has to fix saved entries. Fix or delete the listed files, or, when a folder couldn't be listed, check that the backend can read this source. Then apply the configuration, if `enable_live_reinitialization` is on and the backend runs as one worker and one replica, which live apply requires; otherwise, restart the backend. Files whose names aren't valid entry names (up to 64 lowercase letters, digits, and underscores, starting with a letter) aren't failures and don't block startup; administrators can see them under `restore_ignored` in `GET /api/config/runtime`.
+
 ### `initialization_scripts`
 
 Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.

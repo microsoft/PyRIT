@@ -29,7 +29,7 @@ from sqlalchemy.sql.selectable import CTE
 from pyrit.converter import Base64Converter
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_sql import (
     JsonArrayEmpty,
     JsonIsArray,
@@ -40,7 +40,7 @@ from pyrit.memory.analytics_sql import (
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, Base, TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -59,6 +59,8 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
+from test_support.text_search import LITERAL_CASES, PATTERN_CASES, TEXTS
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, add_legacy_attack_results_async
 
 if TYPE_CHECKING:
@@ -110,19 +112,41 @@ def make_result(
 
 def control() -> QueryControl:
     """Bound correctness queries without imposing a short CI performance limit."""
-    return QueryControl(deadline=time.monotonic() + 120)
+    return QueryControl(deadline=time.monotonic() + TEST_WATCHDOG_SECONDS)
 
 
 def test_correctness_query_control_retains_a_finite_deadline() -> None:
-    with patch.object(time, "monotonic", return_value=100):
+    with patch.object(time, "monotonic", return_value=100) as clock:
         query_control = control()
-        assert query_control.deadline == 220
-    with patch.object(time, "monotonic", return_value=135):
-        query_control.check()
-        assert query_control.remaining == 85
-    with patch.object(time, "monotonic", return_value=220):
-        with pytest.raises(AnalyticsTimeoutException):
+        cancelled_control = control()
+        deadline = 100 + TEST_WATCHDOG_SECONDS
+        assert query_control.deadline == cancelled_control.deadline == deadline
+        assert query_control.cancel_event is not cancelled_control.cancel_event
+        for instant in (135, 221):
+            clock.return_value = instant
             query_control.check()
+            query_control.check()
+            assert query_control.remaining == deadline - instant
+            assert query_control.deadline == deadline
+
+        cancelled_control.cancel()
+        assert cancelled_control.remaining == deadline - 221 > 0
+        assert cancelled_control.deadline == deadline
+        with pytest.raises(AnalyticsTimeoutException):
+            cancelled_control.check()
+        assert not query_control.cancel_event.is_set()
+        query_control.check()
+
+        clock.return_value = deadline - 0.001
+        query_control.check()
+        assert query_control.remaining == pytest.approx(0.001)
+        assert query_control.deadline == deadline
+        for instant in (deadline, deadline + 1):
+            clock.return_value = instant
+            with pytest.raises(AnalyticsTimeoutException):
+                query_control.check()
+            assert query_control.remaining == 0
+            assert query_control.deadline == deadline
 
 
 def predicate(*, name: str, values: list[str | None], kind: str = "value", **options: Any) -> dict[str, Any]:
@@ -1403,7 +1427,7 @@ def test_mssql_facet_search_treats_brackets_as_literal_text(dimension: str) -> N
     query = AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name=dimension), search="[a-z]%_\\")
     compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters)
     compiled = compiler.facet(query).compile(dialect=mssql.dialect())
-    assert "%\\[a-z]\\%\\_\\\\%" in compiled.params.values()
+    assert "%/[a-z]/%/_\\%" in compiled.params.values()
 
 
 @pytest.mark.parametrize("dimension", ["operation", "operator", "scenario", "label", "model"])
@@ -1797,6 +1821,44 @@ async def test_literal_brackets_in_facet_search_match_only_literal_text(sqlite_i
     assert [option.key.value for option in facet.items] == ["[a-z]%_\\"]
 
 
+@pytest.mark.parametrize("dimension", ["label", "targeted_harm_category"])
+@pytest.mark.parametrize("pattern, expected", PATTERN_CASES)
+async def test_facet_pattern_contract_async(
+    *, sqlite_instance: SQLiteMemory, dimension: str, pattern: str, expected: set[str]
+) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=index, categories=[value], labels={"case": value}) for index, value in enumerate(TEXTS)
+        ],
+    )
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name=dimension, label_key="case" if dimension == "label" else None),
+        search_pattern=pattern,
+    )
+    facets = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {option.label for option in facets.items} == expected
+
+
+@pytest.mark.parametrize("dimension", ["label", "targeted_harm_category"])
+@pytest.mark.parametrize("value, expected", LITERAL_CASES)
+async def test_facet_literal_contract_async(
+    *, sqlite_instance: SQLiteMemory, dimension: str, value: str | None, expected: set[str]
+) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=index, categories=[text], labels={"case": text}) for index, text in enumerate(TEXTS)
+        ],
+    )
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name=dimension, label_key="case" if dimension == "label" else None),
+        search=value,
+    )
+    facets = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {option.label for option in facets.items} == expected
+
+
 @pytest.mark.parametrize("length", [4000, 4001, 4096])
 def test_mssql_json_scalars_extract_full_width_metadata(length: int) -> None:
     document = json.dumps({"a.b": "\u9577" * length}, ensure_ascii=False)
@@ -2172,12 +2234,12 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(
 ) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", _defer_initialization=True)
     try:
         engine = memory._get_async_engine()
         async with engine.connect() as connection:
             assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
-            await connection.run_sync(Base.metadata.create_all)
+        await memory.initialize_async()
         await add_legacy_attack_results_async(memory, attack_results=[make_result(), make_result(index=2)])
         inserted = False
 

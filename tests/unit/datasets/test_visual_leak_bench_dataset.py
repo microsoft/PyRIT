@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     VisualLeakBenchCategory,
     VisualLeakBenchPIIType,
     _VisualLeakBenchDataset,

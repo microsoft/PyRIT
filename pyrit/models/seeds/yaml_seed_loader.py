@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 
-from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_dataset import SeedDataset
@@ -136,7 +136,7 @@ def load_seed_from_yaml(file: str | Path, *, cls: type[T]) -> T:
     return seed
 
 
-def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
+def load_seed_dataset_from_yaml(file: str | Path, *, default_dataset_name: str | None = None) -> SeedDataset:
     """
     Load a ``SeedDataset`` from a YAML file.
 
@@ -146,6 +146,9 @@ def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
 
     Args:
         file: Path to the YAML file containing the dataset definition.
+        default_dataset_name: Dataset name used when the YAML declares neither
+            ``dataset_name`` nor ``name``. Like a declared name, it only fills seeds
+            that have no ``dataset_name`` of their own.
 
     Returns:
         A ``SeedDataset`` populated from the YAML file.
@@ -157,6 +160,8 @@ def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
     """
     data = _canonicalize_scalar_lists(_read_yaml(file))
     data["is_jinja_template"] = True
+    if default_dataset_name and not (data.get("dataset_name") or data.get("name")):
+        data["dataset_name"] = default_dataset_name
     dataset = SeedDataset.from_dict(data)
     for seed in dataset.seeds:
         _set_local_origin(seed=seed, file=file)

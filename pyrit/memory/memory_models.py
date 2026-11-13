@@ -57,6 +57,7 @@ from pyrit.models import (
     ConversationRetry,
     ConversationType,
     ConverterIdentifier,
+    DecompositionPath,
     EvaluationIdentifier,
     Finding,
     FindingEvidence,
@@ -92,6 +93,7 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
 def _load_identifier(
@@ -120,6 +122,8 @@ def _load_identifier(
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
     """
     if not stored:
+        return None
+    if set(stored) == {_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY}:
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
@@ -256,6 +260,40 @@ class Base(DeclarativeBase):
     """
 
 
+class DatasetLifecycleLock(Base):
+    """One transaction lock shared by dataset lifecycle and media-reference writers."""
+
+    __tablename__ = "DatasetLifecycleLock"
+    id: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+
+
+class DatasetLifecycleEntry(Base):
+    """Durable import staging or dataset deletion; no prompt content is stored here."""
+
+    __tablename__ = "DatasetLifecycleEntries"
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    dataset_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    deleted_seeds: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Unicode(256), nullable=True)
+
+
+class DatasetMediaEntry(Base):
+    """API-owned assets, including permanent tombstones preventing dangling new references."""
+
+    __tablename__ = "DatasetMediaEntries"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    path: Mapped[str] = mapped_column(Unicode, nullable=False)
+    upload_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=False, index=True
+    )
+    cleanup_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
 class OperationEntry(Base):
     """A saved operation that owns findings."""
 
@@ -374,6 +412,7 @@ class FindingEvidenceEntry(Base):
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        Index("ix_FindingEvidenceEntries_attack_result_id", "attack_result_id"),
         UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 
@@ -757,8 +796,9 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     ``MemoryInterface._persist_target_identifier``). ``ConversationEntry`` references a
     row here via ``target_identifier_hash``. The promoted scalar columns (``endpoint`` /
     ``model_name`` / ``underlying_model_name`` / ``temperature`` / ``top_p`` /
-    ``max_requests_per_minute`` / ``supported_auth_modes``) are surfaced for querying;
-    ``identifier_json`` remains the source of truth on reload. Inner targets of a
+    ``max_requests_per_minute`` / ``http_request_fingerprint`` / ``supported_auth_modes``)
+    are surfaced for querying; ``identifier_json`` remains the source of truth on reload.
+    Inner targets of a
     multi-target are linked via ``TargetIdentifierChildren`` (and also live inline in
     ``identifier_json``).
     """
@@ -781,6 +821,7 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_requests_per_minute: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    http_request_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
     supported_auth_modes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     #: Ordered child-edge rows (``parent_hash -> child_hash``) for this target.
@@ -1456,7 +1497,9 @@ class ScoreEntry(Base):
     scorer_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
     )
-    prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
+    prompt_request_response_id = mapped_column(
+        CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), index=True
+    )
     timestamp = mapped_column(UTCDateTime, nullable=False)
     # The full, versioned expectation this score was judged against (objective + conditions).
     # Supersedes the legacy ``objective`` column.
@@ -1674,6 +1717,8 @@ class SeedEntry(Base):
         role (str): The role of the prompt (e.g., user, system, assistant).
         seed_type (SeedType): The type of seed - "prompt", "objective", or "simulated_conversation".
         conditions (list[dict[str, Any]] | None): Serialized objective criteria, absent for other seeds.
+        parent_objective_id (uuid.UUID | None): The parent of a decomposed objective, absent for other seeds.
+        paths (list[dict[str, Any]] | None): Serialized decomposition paths of an objective's children.
 
     Methods:
         __str__(): Returns a string representation of the memory entry.
@@ -1686,7 +1731,7 @@ class SeedEntry(Base):
     value_sha256 = mapped_column(Unicode, nullable=True)
     data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     name = mapped_column(String, nullable=True)
-    dataset_name = mapped_column(String, nullable=True)
+    dataset_name = mapped_column(Unicode, nullable=True)
     harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     description = mapped_column(String, nullable=True)
     authors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -1704,6 +1749,11 @@ class SeedEntry(Base):
         String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
     )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    is_general_technique: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    # Decomposition members are deduplicated as whole trees, so the parent link has no foreign key:
+    # bulk inserts and dataset replacement validate complete trees in code instead.
+    parent_objective_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
+    paths: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: Seed[Any]) -> None:
         """
@@ -1737,11 +1787,18 @@ class SeedEntry(Base):
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
         self.origin = entry.origin.value
+        self.is_general_technique = bool(entry.is_general_technique)
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
             else None
         )
+        if isinstance(entry, SeedObjective):
+            self.parent_objective_id = entry.parent_objective_id
+            self.paths = [path.model_dump(mode="json") for path in entry.paths] or None
+        else:
+            self.parent_objective_id = None
+            self.paths = None
 
         # SeedPrompt-specific fields
         if isinstance(entry, SeedPrompt):
@@ -1863,7 +1920,19 @@ class SeedEntry(Base):
             parameters=self.parameters,
             conditions=self.conditions,
             response_json_schema=response_json_schema,
+            is_general_technique=self.is_general_technique,
+            parent_objective_id=self.parent_objective_id,
+            paths=self._decode_paths(),
         )
+
+    def _decode_paths(self) -> tuple[DecompositionPath, ...]:
+        """
+        Rebuild the stored decomposition paths.
+
+        Returns:
+            tuple[DecompositionPath, ...]: The paths, in stored order.
+        """
+        return tuple(DecompositionPath.model_validate(path) for path in self.paths or ())
 
     def get_seed(self) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
         """
@@ -1873,12 +1942,14 @@ class SeedEntry(Base):
             SeedPrompt | SeedObjective | SeedSimulatedConversation: The reconstructed seed object.
 
         Raises:
-            ValueError: If persisted conditions are invalid or attached to a non-objective seed,
-                or a simulated conversation record cannot be rebuilt, for example when it names
-                a prompt file that is not present on this machine.
+            ValueError: If persisted conditions or decomposition fields are invalid or attached to a
+                non-objective seed, or a simulated conversation record cannot be rebuilt, for example
+                when it names a prompt file that is not present on this machine.
         """
         if self.seed_type != "objective" and self.conditions not in (None, []):
             raise ValueError("Only objective seeds can have persisted conditions.")
+        if self.seed_type != "objective" and (self.parent_objective_id is not None or self.paths):
+            raise ValueError("Only objective seeds can have persisted decomposition fields.")
         cleaned_metadata, decoded_schema = self._unpack_seed_metadata(self.prompt_metadata)
         if self.seed_type == "objective":
             return SeedObjective(
@@ -1898,6 +1969,8 @@ class SeedEntry(Base):
                 metadata=cleaned_metadata,
                 prompt_group_id=self.prompt_group_id,
                 conditions=self.conditions if self.conditions is not None else (),
+                parent_objective_id=self.parent_objective_id,
+                paths=self._decode_paths(),
             )
         if self.seed_type == "simulated_conversation":
             # Reconstruct SeedSimulatedConversation from JSON value. Records written before the
@@ -1937,6 +2010,7 @@ class SeedEntry(Base):
                     num_turns=config.get("num_turns", 3),
                     sequence=config.get("sequence", 0),
                     pyrit_version=config.get("pyrit_version"),
+                    is_general_technique=self.is_general_technique,
                     **prompt_config,
                 )
             except (OSError, ValueError) as exc:
@@ -1968,6 +2042,7 @@ class SeedEntry(Base):
             prompt_group_id=self.prompt_group_id,
             sequence=self.sequence or 0,
             role=self.role,
+            is_general_technique=self.is_general_technique,
         )
 
 
@@ -2286,6 +2361,7 @@ class AttackResultEntry(Base):
                 return uuid.UUID(str(obj.id))
             except (ValueError, TypeError):
                 pass
+
         return None
 
     @staticmethod
@@ -2361,7 +2437,7 @@ class AttackResultEntry(Base):
         # Deserialize retry events from JSON
         retry_events = []
         if self.retry_events_json:
-            from pyrit.models.retry_event import RetryEvent
+            from pyrit.models import RetryEvent
 
             retry_events = [RetryEvent.model_validate(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
 

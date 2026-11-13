@@ -26,6 +26,12 @@ interface SavedTranscriptPage {
   consumedCursors: ReadonlySet<string>
 }
 
+interface LoadedFullTranscript {
+  readonly attackResultId: string | null
+  readonly conversationId: string
+  readonly response: ConversationMessagesResponse
+}
+
 function mergeTranscriptPage(
   previous: ConversationMessagesResponse | null, incoming: ConversationMessagesResponse, conversationId: string,
   cursor?: string, consumedCursors?: ReadonlySet<string>,
@@ -126,6 +132,7 @@ export function useConversationMessages({
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false)
   const [messageContinuationIssue, setMessageContinuationIssue] = useState<{ detail: string; restartRequired: boolean } | null>(null)
   const savedTranscriptPageRef = useRef<SavedTranscriptPage | null>(null)
+  const fullTranscriptRef = useRef<LoadedFullTranscript | null>(null)
   const loadedAttackResultIdRef = useRef<string | null>(null)
   const loadedConversationIdRef = useRef<string | null>(null)
   const viewedAttackRef = useRef(attackResultId)
@@ -201,6 +208,7 @@ export function useConversationMessages({
   }, [viewedConversationId, attackResultId, messagePageSize])
 
   const resetConversationMessages = useCallback((): void => {
+    fullTranscriptRef.current = null
     setMessages([])
     setLoadedConversationId(null)
     setLoadedAttackResultId(null)
@@ -235,10 +243,33 @@ export function useConversationMessages({
       }
       // Discard superseded loads and responses invalidated by a send.
       if (!isCurrentLoad()) { return }
-      const response = messagePageSize === undefined ? incoming : mergeTranscriptPage(null, incoming, convId)
+      let response = messagePageSize === undefined ? incoming : mergeTranscriptPage(null, incoming, convId)
+      const consumedCursors = new Set<string>()
+      const full = fullTranscriptRef.current
+      if (messagePageSize !== undefined && arId && full?.attackResultId === arId && full.conversationId === convId) {
+        const missing = new Set(full.response.messages.flatMap((message: BackendMessage) => message.message_pieces.map((piece: BackendMessagePiece) => piece.id)))
+        for (const message of response.messages) {
+          for (const piece of message.message_pieces) missing.delete(piece.id)
+        }
+        // Complete the already-visible live window before installing its saved paging state.
+        while (missing.size > 0 && response.pagination?.has_more) {
+          const cursor = response.pagination.next_cursor
+          if (!cursor) throw new Error('The saved transcript continuation is missing. Restart transcript loading.')
+          const next = await attacksApi.getMessages(arId, convId, { limit: messagePageSize, cursor })
+          if (!isCurrentLoad()) return
+          response = mergeTranscriptPage(response, next, convId, cursor, consumedCursors)
+          consumedCursors.add(cursor)
+          for (const message of next.messages) {
+            for (const piece of message.message_pieces) missing.delete(piece.id)
+          }
+        }
+      }
       setMessageContinuationIssue(null)
       if (messagePageSize !== undefined && arId) {
-        saveTranscriptPage({ attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response, consumedCursors: new Set() })
+        saveTranscriptPage({ attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response, consumedCursors })
+        fullTranscriptRef.current = null
+      } else {
+        fullTranscriptRef.current = { attackResultId: arId, conversationId: convId, response }
       }
       setConversationLoadIssue(
         findingEvidenceId && response.messages.length === 0 && !response.pagination?.has_more
@@ -414,7 +445,19 @@ export function useConversationMessages({
     // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
-    if (!force && (
+    // A send in flight owns this conversation's optimistic transcript, but only
+    // while the hook still holds it, and #3818 also defers a mount into a
+    // sending conversation until the send ends. Returning after the hook has
+    // loaded another conversation is the one case that must not skip: the
+    // optimistic copy is gone, and keeping the skip would render the held
+    // view under this URL with no loading state. The send pipeline layers its
+    // pending messages on the loaded transcript, so the view stays correct
+    // while the send runs.
+    const holdsAnotherConversation = (
+      loadedConversationIdRef.current !== null
+      && loadedConversationIdRef.current !== activeConversationId
+    )
+    if (!force && !holdsAnotherConversation && (
       isActiveConversationSending
       || sendCallbacksRef.current.isSendInFlight(activeConversationId)
       || (
@@ -450,11 +493,14 @@ export function useConversationMessages({
   // conversation whose messages we've loaded, we're in a transition gap.
   // This avoids the 1-frame flash between useEffect fire and render.
   // Reads `sendingConversations` (state) rather than a send ref so the
-  // computation stays render-safe.
+  // computation stays render-safe. A sending conversation is only exempt from
+  // the gap flag while the hook holds it: once another conversation is held,
+  // returning to the sending one re-fetches and must show the gap, not the
+  // held transcript unflagged.
   const awaitingConversationLoad = Boolean(
     activeConversationId && (activeConversationId !== loadedConversationId
       || (loadedAttackResultId !== null && loadedAttackResultId !== attackResultId))
-    && !sendingConversations.has(activeConversationId)
+    && (loadedConversationId !== null || !sendingConversations.has(activeConversationId))
   )
 
   const requestForcedLoad = useCallback((): void => { forceLoadRef.current = true }, [])

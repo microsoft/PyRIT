@@ -15,10 +15,10 @@ from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
     ScorerMetricsWithIdentity,
-)
-from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_harm_metrics,
     get_all_objective_metrics,
+)
+from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     replace_evaluation_results,
 )
 

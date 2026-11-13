@@ -62,7 +62,7 @@ function oneValue(params: URLSearchParams, key: string): { value: string | null;
   const values = params.getAll(key)
   if (values.length > 1) return { value: null, repeated: true }
   if (values.length === 0 || values[0] === '') return { value: null, repeated: false }
-  return { value: values[0], repeated: false }
+  return { value: values[0] ?? null, repeated: false }
 }
 
 function pageSize(params: URLSearchParams): number {
@@ -91,7 +91,7 @@ function seedTypesFrom(params: URLSearchParams): SeedType[] {
  */
 export function seedBrowserQueryFromSearchParams(params: URLSearchParams): SeedBrowserQuery {
   const searchValues = params.getAll(SEARCH_PARAM)
-  const search = searchValues.length === 1 ? searchValues[0].slice(0, MAX_SEED_SEARCH_LENGTH) : ''
+  const search = searchValues.length === 1 ? (searchValues[0]?.slice(0, MAX_SEED_SEARCH_LENGTH) ?? '') : ''
   const cursor = oneValue(params, CURSOR_PARAM)
   const example = oneValue(params, EXAMPLE_PARAM)
   return {
@@ -225,7 +225,7 @@ export function popSeedCursor(cursors: readonly (string | null)[]): {
 } | null {
   if (cursors.length === 0) return null
   return {
-    cursor: cursors[cursors.length - 1],
+    cursor: cursors[cursors.length - 1] ?? null,
     seedCursors: cursors.slice(0, -1),
   }
 }

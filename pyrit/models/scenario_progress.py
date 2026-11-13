@@ -78,6 +78,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
+    #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
+    is_compound: bool | None = None
 
 
 class ScenarioRunPlan(BaseModel):
@@ -156,6 +158,7 @@ class ScenarioProgressScore(BaseModel):
     status: ScoreStatus
     score_value: str | None = None
     score_rationale: str | None = None
+    score_category: list[str] = Field(default_factory=list)
 
 
 class ScenarioComponentIdentity(BaseModel):
@@ -365,7 +368,10 @@ class ScenarioActiveConversation(BaseModel):
     """A saved objective conversation and the scan execution that produced it."""
 
     attack_result_id: str
+    #: The conversation the attack is working on, or the recorded objective conversation.
     conversation_id: str
+    #: Every objective conversation the attack has started so far, in first-use order.
+    conversation_ids: list[str] = Field(default_factory=list)
     atomic_attack_name: str
     seed_group_id: str | None = None
     objective: str
