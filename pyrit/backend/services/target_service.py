@@ -33,12 +33,6 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
-from pyrit.backend.services.saved_entries import (
-    SavedEntryConflictError,
-    launch_script_class_reason,
-    prepare_saved_params_async,
-    save_then_register_async,
-)
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
 from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import (
@@ -60,7 +54,13 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
     CapabilityDiscoveryError,
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
-from pyrit.registry import TargetRegistry
+from pyrit.registry import (
+    SavedEntryConflictError,
+    TargetRegistry,
+    launch_script_class_reason,
+    prepare_saved_params_async,
+    save_then_register_async,
+)
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
@@ -629,8 +629,7 @@ class TargetService:
                 raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution, or
                 creates a target that would authenticate with this server's stored credentials.
-            NotSaveableError: If a target to save would hold or use a credential, or names a Temporary
-                target.
+            NotSaveableError: If a target to save would hold or use a credential, or uses a Temporary target.
             SavedEntryConflictError: If a target to save has the name of a registered or saved target.
             SavedEntryStorageError: If a target to save can't be written to storage.
         """
@@ -797,10 +796,10 @@ class TargetService:
         recipes_source: str | None,
     ) -> TargetInstance:
         """
-        Save the target's recipe, then register the target as a saved entry.
+        Save the target's recipe through the registry library, then return the saved target.
 
-        The recipe names the class by the registry name the request used, which restore looks up, and keeps
-        the auth mode apart from the parameters, as the create request does.
+        The recipe names the class by the registry name the request used, which restore looks up, and keeps the
+        auth mode apart from the parameters, as the create request does.
 
         Returns:
             TargetInstance: The saved target.
@@ -828,8 +827,8 @@ class TargetService:
                 params={key: value for key, value in params.items() if key not in auth_parameters},
                 owner=owner,
             ),
-            recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register(target_obj, name=name, metadata=metadata),
+            source=recipes_source,
         )
         return target
 

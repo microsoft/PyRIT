@@ -35,12 +35,7 @@ from pyrit.backend.services import (
     ConverterService,
     get_converter_service,
 )
-from pyrit.backend.services.saved_entries import (
-    NotSaveableError,
-    SavedEntryConflictError,
-    SavedEntryRemovalError,
-    SavedEntryStorageError,
-)
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.common import apply_defaults, reset_default_values, set_default_value
 from pyrit.converter import (
@@ -74,7 +69,13 @@ from pyrit.models.catalog import (
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import ConverterRegistry, TargetRegistry
+from pyrit.registry import (
+    ConverterRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryStorageError,
+    TargetRegistry,
+)
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SAVED_ENTRY_OWNER_METADATA_KEY,
@@ -2619,7 +2620,7 @@ class TestPersistConverter:
     ) -> None:
         with (
             patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=error),
-            patch("pyrit.backend.services.saved_entries.logger") as log,
+            patch("pyrit.registry.registry_recipe_save.logger") as log,
             pytest.raises(SavedEntryStorageError, match="Saved converters can't be written right now."),
         ):
             await upload_service.create_converter_async(
