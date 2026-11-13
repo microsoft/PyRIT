@@ -90,6 +90,14 @@ def test_converter_requires_both_modality_attributes() -> None:
                 return ConverterResult(output_text=prompt, output_type="text")
 
 
+@pytest.mark.parametrize(
+    ("instructions", "expected"),
+    [("Rewrite the text.", "Rewrite the text.\n\nhello"), (None, "hello"), ("", "hello")],
+)
+def test_prepend_instructions(instructions: str | None, expected: str) -> None:
+    assert Converter._prepend_instructions(instructions=instructions, prompt="hello") == expected
+
+
 async def test_convert_tokens_two_tokens_async() -> None:
     converter = Base64Converter()
     prompt = "Base 64 encode this piece ⟪test⟫ and this ⟪test2⟫"

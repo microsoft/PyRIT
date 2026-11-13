@@ -112,7 +112,8 @@ def mock_runtime_env():
             "OPENAI_CHAT_MODEL": "gpt-4",
         },
     ):
-        yield
+        with override_default_adversarial_target(MockPromptTarget()):
+            yield
 
 
 def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> AttackSeedGroup:
@@ -144,6 +145,8 @@ def _make_fake_factory(
     )
     fake_technique = AttackTechnique(attack=fake_attack, seed_technique=seed_technique, requirements=requirements)
     factory = MagicMock(spec=AttackTechniqueFactory)
+    factory.uses_default_adversarial_target = False
+    factory.get_identifier.return_value = _mock_id(f"FakeFactory{fake_id}")
     factory.attack_class = PromptSendingAttack
     factory.requirements = fake_technique.requirements
     factory.seed_technique = seed_technique
@@ -1146,7 +1149,7 @@ class TestTextAdaptiveResume:
         original = await initialize_async(factory=original_factory)
         unchanged = await initialize_async(factory=original_factory, scenario_result_id=original._scenario_result_id)
         assert unchanged._build_run_plan() == original._build_run_plan()
-        with pytest.raises(ValueError, match="unavailable|reconstructable"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await initialize_async(factory=changed_factory, scenario_result_id=original._scenario_result_id)
 
     async def _initialize_scenario_async(
@@ -1384,7 +1387,7 @@ class TestTextAdaptiveResume:
         selector.select_async.reset_mock()
         selector.select_async.side_effect = AssertionError("Resume selected techniques again")
 
-        with pytest.raises(ValueError, match="Selected adaptive techniques are unavailable or incompatible"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await self._initialize_scenario_async(
                 target=mock_objective_target,
                 scorer=mock_objective_scorer,

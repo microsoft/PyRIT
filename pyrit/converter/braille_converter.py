@@ -149,13 +149,21 @@ class BrailleConverter(Converter):
         # it ends numeric mode too.
         number_punctuations = [".", ","]
         digit_letters = "abcdefghij"
+        digits = set("0123456789")
 
         output = ""
 
         is_number = False
-        for char in text:
+        for i, char in enumerate(text):
             if char in character_unicodes:
-                if char.isdigit() and not is_number:
+                # A decimal point before an ASCII digit starts the number ("⠼⠲⠑" for ".5"),
+                # unless it follows a letter or another period, where it is a period
+                # ("No.16", "...5"; UEB rule 6.4.1).
+                previous = text[i - 1 : i]
+                starts_number = char.isdigit() or (
+                    char == "." and text[i + 1 : i + 2] in digits and not (previous.isalpha() or previous == ".")
+                )
+                if starts_number and not is_number:
                     is_number = True
                     output += character_unicodes["num"]
                 elif is_number and char in digit_letters:
