@@ -200,9 +200,11 @@ class HarmScorerMetrics(ScorerMetrics):
         krippendorff_alpha_gold_model (float, Optional): Krippendorff's alpha between the gold (median human)
             labels and the per-response median model score. Unlike `krippendorff_alpha_combined`, it does not
             count scorer trials as additional raters, so it does not rise with `num_scorer_trials` when the
-            scorer's answers are unchanged. Categories within one representable float step of the
-            smallest value in each group are treated as equal to suppress median roundoff; genuinely
-            distinct adjacent floats are therefore not distinguished. None for older results.
+            scorer's answers are unchanged. It can still improve with more trials when the trials disagree
+            with each other, because the per-response median then becomes a better estimate of the scorer's
+            answer; in that case `mean_absolute_error` improves too. Categories within one representable
+            float step of the smallest value in each group are treated as equal to suppress median roundoff;
+            genuinely distinct adjacent floats are therefore not distinguished. None for older results.
         contested_threshold (float, Optional): The harm score at or above which a human rating counts as
             harmful when deciding whether the raters agreed. Only set when there are multiple human raters.
         num_unanimous_responses (int, Optional): Number of responses on which every human rater fell on the
