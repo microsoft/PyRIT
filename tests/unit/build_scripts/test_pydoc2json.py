@@ -8,6 +8,7 @@ from pathlib import Path
 
 import griffe
 import pytest
+from markdown_it import MarkdownIt
 
 from build_scripts.gen_api_md import render_class
 from build_scripts.pydoc2json import class_to_dict, function_to_dict
@@ -73,6 +74,32 @@ class Result:
     assert "| `value` | `str` |" in markdown
     assert "**Type Parameters:**" in markdown
     assert "The result type." in markdown
+
+
+def test_video_remix_documentation_does_not_become_parameter_rows() -> None:
+    path = Path("pyrit") / "prompt_target" / "openai" / "openai_video_target.py"
+    module = griffe.visit("sample", filepath=path, code=path.read_text(encoding="utf-8"))
+    result = class_to_dict(module["OpenAIVideoTarget"])
+    names = {param["name"] for param in result["init"]["docstring"]["params"]}
+    assert "httpx_client_kwargs" in names
+    assert "Remix workflow" not in names
+    assert not any(name.startswith("To remix") for name in names)
+    markdown = render_class(result, module="sample")
+    assert '``prompt_metadata={"video_id": "<id>"}``' in markdown
+    assert '``response.message_pieces[0].prompt_metadata["video_id"]``' in markdown
+
+
+def test_prompt_shield_documentation_preserves_literal_prompt_tags() -> None:
+    path = Path("pyrit") / "prompt_target" / "prompt_shield_target.py"
+    module = griffe.visit("sample", filepath=path, code=path.read_text(encoding="utf-8"))
+    markdown = render_class(class_to_dict(module["PromptShieldTarget"]), module="sample")
+    tokens = MarkdownIt("commonmark").enable("table").parse(markdown)
+    examples = [token.content for token in tokens if token.type == "fence" and token.info == "text"]
+    assert any("<illicit substance>" in example for example in examples)
+    assert any("<document> document1 </document>" in example for example in examples)
+    assert not any(
+        child.type == "html_inline" for token in tokens if token.type == "inline" for child in token.children or []
+    )
 
 
 @pytest.mark.parametrize(

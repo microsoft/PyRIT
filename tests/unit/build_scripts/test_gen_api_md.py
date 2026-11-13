@@ -70,6 +70,14 @@ def test_docs_scripts_share_validate_docs_module() -> None:
     assert example_index_module.validate_docs is gen_api_md_module.validate_docs
 
 
+def test_parameter_table_missing_type_renders_empty_cell_not_backticks() -> None:
+    markdown = render_params([{"name": "T", "desc": "The stored type."}])
+    html = MarkdownIt("commonmark").enable("table").render(markdown)
+    assert "<td></td>" in html
+    assert "`" not in html
+    assert "<td>The stored type.</td>" in html
+
+
 def _fake_class(name: str, methods: list[str] | None = None) -> dict:
     return {
         "name": name,

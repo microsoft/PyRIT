@@ -102,12 +102,12 @@ def render_params(params: list[dict]) -> str:
     lines = ["| Parameter | Type | Description |", "|---|---|---|"]
     for p in params:
         name = f"`{p['name']}`"
-        ptype = p.get("type", "")
+        ptype = f"`{p['type']}`" if p.get("type") else ""
         desc = p.get("desc", "").replace("\n", " ")
         default = p.get("default", "")
         if default:
             desc += f" Defaults to `{default}`."
-        cells = [re.sub(r"(?<!\\)\|", r"\\|", cell) for cell in (name, f"`{ptype}`", desc)]
+        cells = [re.sub(r"(?<!\\)\|", r"\\|", cell) for cell in (name, ptype, desc)]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
