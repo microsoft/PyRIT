@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import json
 import logging
 import uuid
@@ -14,6 +15,7 @@ from pyrit.exceptions import (
     remove_markdown_json,
 )
 from pyrit.models import (
+    ComponentIdentifier,
     JsonResponseConfig,
     Message,
     MessagePiece,
@@ -56,9 +58,27 @@ class FuzzerConverter(Converter):
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
         """
+        super().__init__(converter_target=converter_target)
         self.converter_target = converter_target
         self.system_prompt = prompt_template.value
         self.template_label = "TEMPLATE"
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with prompt template and target parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        prompt_template_hash = (
+            hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:16] if self.system_prompt else None
+        )
+        return self._create_identifier(
+            params={
+                "prompt_template_hash": prompt_template_hash,
+            },
+            converter_target=self.converter_target.get_identifier() if self.converter_target else None,
+        )
 
     def update(self, **kwargs: Any) -> None:
         """Update the converter with new parameters."""

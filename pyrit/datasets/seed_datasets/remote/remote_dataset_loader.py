@@ -296,9 +296,11 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
                     return cast(
                         "list[dict[str, str]]", self.FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text))
                     )
+                # newline=None translates only "\r\n" and "\r", as reading a local file does. str.splitlines()
+                # would also break lines at characters such as U+2028, form feed and NEL inside the data.
                 return cast(
                     "list[dict[str, str]]",
-                    self.FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines()))),
+                    self.FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text, newline=None)),
                 )
             valid_types = ", ".join(self.FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")

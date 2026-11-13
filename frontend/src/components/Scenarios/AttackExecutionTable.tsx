@@ -18,8 +18,6 @@ import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import {
-  formatAttackOutcome,
-  formatAttackSuccess,
   formatDuration,
   formatTimestamp,
   objectivePreview,
@@ -221,7 +219,7 @@ function ResultRows({
           <OutcomeBadge
             appearance="tint"
             outcome={result.outcome}
-            label={booleanOutcome ? formatAttackSuccess(result.outcome) : formatAttackOutcome(result.outcome)}
+            labelStyle={booleanOutcome ? 'success' : 'outcome'}
           />
         </TableCell>
         <TableCell className={styles.nowrap}>{formatDuration(result.execution_time_ms)}</TableCell>

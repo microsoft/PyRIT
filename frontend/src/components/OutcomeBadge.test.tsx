@@ -36,6 +36,17 @@ describe('OutcomeBadge', () => {
     expect(screen.getByTestId('verdict')).toHaveTextContent('No')
     expect(screen.getByTestId('verdict')).toHaveClass('custom')
   })
+
+  it.each<[AttackOutcome, 'outcome' | 'success', string]>([
+    ['success', 'success', 'True'],
+    ['failure', 'success', 'False'],
+    ['error', 'success', 'Error'],
+    ['success', 'outcome', 'Success'],
+    ['undetermined', 'outcome', 'Undetermined'],
+  ])('labels %s in %s style as %s', (outcome: AttackOutcome, labelStyle: 'outcome' | 'success', label: string) => {
+    render(<TestWrapper><OutcomeBadge outcome={outcome} labelStyle={labelStyle} testId="verdict" /></TestWrapper>)
+    expect(screen.getByTestId('verdict')).toHaveTextContent(label)
+  })
 })
 
 describe('OutcomeIcon', () => {

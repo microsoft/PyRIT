@@ -93,6 +93,7 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
 def _load_identifier(
@@ -121,6 +122,8 @@ def _load_identifier(
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
     """
     if not stored:
+        return None
+    if set(stored) == {_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY}:
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
@@ -409,6 +412,7 @@ class FindingEvidenceEntry(Base):
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        Index("ix_FindingEvidenceEntries_attack_result_id", "attack_result_id"),
         UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 

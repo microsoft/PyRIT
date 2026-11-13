@@ -9,6 +9,7 @@ import {
   QuestionCircleRegular,
 } from '@fluentui/react-icons'
 
+import { formatAttackOutcome, formatAttackSuccess } from '@/components/AttackResults/attackAttemptFormatting'
 import type { AttackOutcome } from '@/types'
 
 import { useOutcomeBadgeStyles } from './OutcomeBadge.styles'
@@ -20,6 +21,18 @@ const OUTCOME_ICONS: Record<AttackOutcome, ReactElement> = {
   undetermined: <QuestionCircleRegular />,
 }
 
+/**
+ * How a saved outcome is worded: `outcome` capitalizes it ("Success"), `success`
+ * answers "Attack success?" ("True"/"False"). Omitted keeps the raw outcome word.
+ */
+type OutcomeLabelStyle = 'outcome' | 'success'
+
+function outcomeLabel(outcome: AttackOutcome, labelStyle: OutcomeLabelStyle | undefined): string {
+  if (labelStyle === 'success') return formatAttackSuccess(outcome)
+  if (labelStyle === 'outcome') return formatAttackOutcome(outcome)
+  return outcome
+}
+
 interface OutcomeBadgeProps {
   readonly outcome?: AttackOutcome | null
   readonly testId?: string
@@ -27,6 +40,7 @@ interface OutcomeBadgeProps {
   readonly appearance?: BadgeProps['appearance']
   readonly size?: BadgeProps['size']
   readonly label?: string
+  readonly labelStyle?: OutcomeLabelStyle
 }
 
 interface OutcomeIconProps {
@@ -50,6 +64,7 @@ export default function OutcomeBadge({
   appearance = 'filled',
   size,
   label,
+  labelStyle,
 }: OutcomeBadgeProps) {
   const styles = useOutcomeBadgeStyles()
   const normalizedOutcome = outcome ?? 'undetermined'
@@ -62,7 +77,7 @@ export default function OutcomeBadge({
       className={mergeClasses(styles[normalizedOutcome], styles[appearance], className)}
       data-testid={testId}
     >
-      {label ?? normalizedOutcome}
+      {label ?? outcomeLabel(normalizedOutcome, labelStyle)}
     </Badge>
   )
 }
