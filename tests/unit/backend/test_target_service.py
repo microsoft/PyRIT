@@ -595,7 +595,7 @@ async def test_create_github_copilot_target_requires_token_async(
 
     with (
         patch.dict(os.environ, environment, clear=True),
-        patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+        patch.object(service._registry, "create_instance_async") as create_instance,
         pytest.raises(
             ValueError,
             match=r"Enter GitHub Token or configure GITHUB_TOKEN for this CoPyRIT instance.*\.env/\.env\.local",
@@ -840,7 +840,7 @@ class TestCreateTargetCodeExecution:
         service = TargetService()
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
             await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=False)
@@ -852,7 +852,7 @@ class TestCreateTargetCodeExecution:
         service = TargetService()
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(ValueError, match="trust_remote_code"),
         ):
             await service.create_target_async(request=self._request({"trust_remote_code": 1}), is_admin=False)
@@ -874,7 +874,7 @@ class TestCreateTargetCodeExecution:
         stop = RuntimeError("stop after construction")
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            patch.object(service._registry, "create_instance_async", side_effect=stop) as create_instance,
             pytest.raises(RuntimeError, match="stop after construction"),
         ):
             await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=True)
@@ -887,7 +887,7 @@ class TestCreateTargetCodeExecution:
         stop = RuntimeError("stop after construction")
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            patch.object(service._registry, "create_instance_async", side_effect=stop) as create_instance,
             pytest.raises(RuntimeError, match="stop after construction"),
         ):
             await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=False)
@@ -956,7 +956,7 @@ class TestCreateTargetServerCredential:
         service = TargetService()
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
             await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=False)
@@ -969,7 +969,7 @@ class TestCreateTargetServerCredential:
         service = TargetService()
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
             await service.create_target_async(
@@ -982,7 +982,7 @@ class TestCreateTargetServerCredential:
         service = TargetService()
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
             await service.create_target_async(request=self._request(), is_admin=False)
@@ -995,7 +995,7 @@ class TestCreateTargetServerCredential:
         service = TargetService()
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
             await service.create_target_async(request=self._request(), is_admin=False)
@@ -1007,7 +1007,7 @@ class TestCreateTargetServerCredential:
         stop = RuntimeError("stop after construction")
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            patch.object(service._registry, "create_instance_async", side_effect=stop) as create_instance,
             pytest.raises(RuntimeError, match="stop after construction"),
         ):
             await service.create_target_async(request=self._request({"sas_token": "caller-sas"}), is_admin=False)
@@ -1019,7 +1019,7 @@ class TestCreateTargetServerCredential:
         stop = RuntimeError("stop after construction")
 
         with (
-            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            patch.object(service._registry, "create_instance_async", side_effect=stop) as create_instance,
             pytest.raises(RuntimeError, match="stop after construction"),
         ):
             await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=True)
@@ -1131,12 +1131,14 @@ class TestCreateTarget:
         service = TargetService()
         with patch.object(
             service._registry,
-            "create_instance_from_external_input",
-            wraps=service._registry.create_instance_from_external_input,
+            "create_instance_async",
+            wraps=service._registry.create_instance_async,
         ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once_with("TextTarget", params={}, allowed_path_params=frozenset())
+        create.assert_awaited_once_with(
+            name="TextTarget", params={}, external_input=True, allowed_path_params=frozenset()
+        )
 
     async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:
         """An invalid enum value from the JSON request raises a parameter error before target construction."""

@@ -80,6 +80,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
 
     attack = MagicMock(spec=AtomicAttack)
+    attack.attack_technique.attack.IS_COMPOUND = False
     attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
     attack.seed_group_adaptations = {}
     attack.atomic_attack_name = name
