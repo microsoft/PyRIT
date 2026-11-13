@@ -816,7 +816,7 @@ class TestXPIAManualProcessingWorkflow:
             closed_read = reader.read_line_async(prompt="Paste the output:")
             awaited = closed_read.send(None)
             while reader._unclaimed_line is None:
-                await awaited
+                await asyncio.wait([awaited])
                 awaited = closed_read.send(None)
             closed_read.close()
 
