@@ -18,19 +18,17 @@ from pyrit.models import (
     ScoringExpectation,
     UnvalidatedScore,
 )
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import (
     MessageScorable,
     NonReplayableObservationError,
     Scorer,
     ScorerPromptValidator,
+    SelfAskQuestionAnswerScorer,
     SelfAskTrueFalseScorer,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 

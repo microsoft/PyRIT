@@ -108,10 +108,6 @@ class AdaptiveScenario(Scenario):
                 with default settings.
             scenario_result_id (str | None): ID of an existing ``ScenarioResult`` to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._objective_scorer: TrueFalseScorer = objective_scorer
-
         self._selector: TechniqueSelector = selector if selector is not None else EpsilonGreedyTechniqueSelector()
         self._selected_seed_group_adaptations: list[dict[str, str]] = []
         self._selected_technique_hashes: dict[str, list[str]] = {}
@@ -160,7 +156,7 @@ class AdaptiveScenario(Scenario):
         # Local import: ``techniques`` imports ``pyrit.scenario.core``,
         # which transitively re-imports this module, so a top-level import
         # would form a cycle during ``pyrit.scenario`` package initialization.
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry import AttackTechniqueRegistry
         from pyrit.setup.initializers.techniques import build_technique_factories
 
         catalog = {factory.name: factory for factory in build_technique_factories()}
@@ -172,6 +168,9 @@ class AdaptiveScenario(Scenario):
             # safe fallback and matches the technique enum's value set.
             registry_overrides = {}
         return {**catalog, **registry_overrides}
+
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return self._get_attack_technique_factories()
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """

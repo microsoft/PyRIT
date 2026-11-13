@@ -3,7 +3,8 @@
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, assert_never
 
 from pyrit.auth import (
@@ -11,8 +12,7 @@ from pyrit.auth import (
     get_default_azure_scope,
     is_azure_openai_endpoint,
 )
-from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, net_utility, print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -58,6 +58,8 @@ class PromptShieldTarget(PromptTarget):
     # A subscription key is the "api_key"; auth_mode="identity" mints an Entra ID token
     # provider for a recognized Azure Content Safety endpoint instead.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
 
     _endpoint: str
     _api_key: str | Callable[[], str] | None
@@ -104,11 +106,13 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
 
         Raises:
-            ValueError: If the endpoint value is not provided, if identity auth is requested
+            ValueError: If ``auth_mode`` is not one of ``supported_auth_modes``, if the endpoint
+                value is not provided, if identity auth is requested
                 alongside an explicit ``api_key``, if identity auth is requested for an endpoint
                 that is not a recognized Azure Content Safety endpoint, or if no API key is
                 available for an endpoint that is not a recognized Azure Content Safety endpoint.
         """
+        self._validate_auth_mode(auth_mode)
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
         )

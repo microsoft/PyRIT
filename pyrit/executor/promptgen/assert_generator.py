@@ -48,8 +48,7 @@ from pyrit.models import (
     WebSearchMode,
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
-from pyrit.prompt_target import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -419,6 +418,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             group_id=group_id,
             behavior_category=assignment["behavior"],
             dimension_values={key: value for key, value in assignment.items() if key != "behavior"},
+            tester_instructions=content.adversarial_instructions,
             config=config,
             taxonomy=taxonomy,
             dimensions=dimensions,

@@ -15,7 +15,7 @@ from typing import Any, ClassVar
 
 from pydantic import PydanticUserError
 
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.services.manual_send_scheduler import complete_owned_write_async, get_manual_send_scheduler
 from pyrit.backend.services.scorer_service import get_scorer_service

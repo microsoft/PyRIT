@@ -11,6 +11,12 @@ export const useMessageListStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalL,
   },
+  savedEvidenceBody: {
+    [NARROW_VIEWPORT_QUERY]: {
+      flex: '0 0 auto',
+      overflowY: 'visible',
+    },
+  },
   message: {
     display: 'flex',
     gap: tokens.spacingHorizontalM,
@@ -56,6 +62,7 @@ export const useMessageListStyles = makeStyles({
   },
   messageFooter: {
     display: 'flex',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: tokens.spacingVerticalXS,
@@ -72,8 +79,14 @@ export const useMessageListStyles = makeStyles({
   },
   footerDetails: {
     display: 'flex',
+    flexWrap: 'wrap',
+    minWidth: 0,
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
+  },
+  generationDetails: {
+    maxWidth: 'min(32rem, calc(100vw - 2rem))',
+    overflowWrap: 'anywhere',
   },
   pieceRow: {
     display: 'flex',
@@ -227,50 +240,6 @@ export const useMessageListStyles = makeStyles({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-  },
-  scoreSurface: {
-    display: 'flex',
-    flexDirection: 'column',
-    rowGap: tokens.spacingVerticalXS,
-    width: 'min(360px, calc(100vw - 64px))',
-    minWidth: 0,
-    maxWidth: '100%',
-  },
-  scoreRow: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    columnGap: tokens.spacingHorizontalS,
-    width: '100%',
-    minWidth: 0,
-  },
-  scoreLabel: {
-    flex: '0 0 72px',
-    color: tokens.colorNeutralForeground2,
-  },
-  scoreValue: {
-    display: 'block',
-    flex: '0 1 auto',
-    minWidth: 0,
-    maxWidth: '100%',
-    height: 'auto',
-    whiteSpace: 'normal',
-    overflowWrap: 'anywhere',
-    wordBreak: 'break-word',
-  },
-  scoreRationale: {
-    display: 'flex',
-    flexDirection: 'column',
-    rowGap: tokens.spacingVerticalXXS,
-    marginTop: tokens.spacingVerticalXS,
-    paddingTop: tokens.spacingVerticalXS,
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  scoreRationaleText: {
-    color: tokens.colorNeutralForeground2,
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word',
-    maxHeight: '30vh',
-    overflowY: 'auto',
   },
   loadingEllipsis: {
     fontSize: tokens.fontSizeBase500,

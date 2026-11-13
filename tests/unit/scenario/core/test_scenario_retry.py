@@ -9,8 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from pyrit.executor.attack import AttackParameters, AttackStrategy, SingleTurnAttackContext
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutorResult, AttackParameters, AttackStrategy, SingleTurnAttackContext
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
@@ -152,6 +151,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
 
     attack = MagicMock(spec=AtomicAttack)
+    attack.attack_technique.attack.IS_COMPOUND = False
     attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
     attack.seed_group_adaptations = {}
     attack.atomic_attack_name = name
@@ -888,10 +888,10 @@ class TestScenarioForeignKeyResumeRegression:
         that contract in (the resume mocks bypass it intentionally)."""
         from pyrit.executor.attack import AttackStrategy
         from pyrit.models import AttackSeedGroup, SeedObjective
-        from pyrit.scenario import AtomicAttack
-        from pyrit.scenario.core.attack_technique import AttackTechnique
+        from pyrit.scenario import AtomicAttack, AttackTechnique
 
         mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.IS_COMPOUND = False
         duplicate_groups = [
             AttackSeedGroup(seeds=[SeedObjective(value="dup-obj")]),
             AttackSeedGroup(seeds=[SeedObjective(value="dup-obj")]),
@@ -1105,6 +1105,7 @@ class TestApplyPersistedObjectives:
 
     def test_noop_when_metadata_has_no_persisted_hashes(self):
         atomic = MagicMock(spec=AtomicAttack)
+        atomic.attack_technique.attack.IS_COMPOUND = False
         atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
         scenario = self._make_scenario_with_atomics([atomic])
         stored = MagicMock()
@@ -1114,9 +1115,11 @@ class TestApplyPersistedObjectives:
 
     def test_replays_persisted_subset_across_atomics(self):
         atomic_a = MagicMock(spec=AtomicAttack)
+        atomic_a.attack_technique.attack.IS_COMPOUND = False
         atomic_a.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_a.keep_seed_groups_with_hashes.return_value = {"h1", "h2"}
         atomic_b = MagicMock(spec=AtomicAttack)
+        atomic_b.attack_technique.attack.IS_COMPOUND = False
         atomic_b.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_b.keep_seed_groups_with_hashes.return_value = {"h3"}
         scenario = self._make_scenario_with_atomics([atomic_a, atomic_b])
@@ -1130,6 +1133,7 @@ class TestApplyPersistedObjectives:
 
     def test_raises_when_persisted_hash_is_missing(self):
         atomic = MagicMock(spec=AtomicAttack)
+        atomic.attack_technique.attack.IS_COMPOUND = False
         atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic.keep_seed_groups_with_hashes.return_value = {"h1"}  # h2 missing
         scenario = self._make_scenario_with_atomics([atomic])

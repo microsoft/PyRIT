@@ -2,8 +2,9 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { useTargetCapabilityDetection } from "@/hooks/useTargetCapabilityDetection";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import TargetConfig from "./TargetConfig";
+import TargetConfigView from "./TargetConfig";
 import { advanceAutoRefresh, installAutoRefreshTimers } from "@/test-utils/autoRefresh";
 import { targetsApi } from "../../services/api";
 import type { TargetInstance, TargetListResponse } from "../../types";
@@ -13,10 +14,16 @@ jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
+    detectCapabilities: jest.fn(),
   },
 }));
 
 let mockRuntimeGeneration = "generation-1";
+
+function TargetConfig(props: Omit<React.ComponentProps<typeof TargetConfigView>, "detection">) {
+  const detection = useTargetCapabilityDetection({ generation: mockRuntimeGeneration });
+  return <TargetConfigView {...props} detection={detection} />;
+}
 
 jest.mock("@/hooks/useRuntime", () => ({
   useRuntime: () => ({ generation: mockRuntimeGeneration, ready: true, state: "ready" }),
@@ -67,7 +74,14 @@ const sampleTargets: TargetInstance[] = [
     target_type: "OpenAIChatTarget",
     endpoint: "https://api.openai.com",
     model_name: "gpt-4",
-    capabilities: { supports_multi_turn: true },
+    capabilities: {
+      supports_multi_turn: true,
+      supports_system_prompt: true,
+      supports_json_output: false,
+      supports_json_schema: false,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["text"],
+    },
   }),
   makeTarget({
     target_registry_name: "openai_image_dalle",
@@ -87,6 +101,164 @@ describe("TargetConfig", () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     mockRuntimeGeneration = "generation-1";
+  });
+
+  it.each(["fails", "omits"] as const)("should retain saved capabilities when the next batch %s the target", async (outcome) => {
+    const user = userEvent.setup();
+    const updated: TargetInstance = {
+      ...sampleTargets[0],
+      capabilities: { ...sampleTargets[0].capabilities, supports_multi_turn: false },
+    };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+    mockedTargetsApi.detectCapabilities.mockReset();
+    mockedTargetsApi.detectCapabilities.mockResolvedValueOnce(updated);
+    if (outcome === "fails") {
+      mockedTargetsApi.detectCapabilities.mockRejectedValueOnce(new Error("Provider unavailable; unchanged"));
+    } else {
+      mockedTargetsApi.detectCapabilities.mockResolvedValueOnce(sampleTargets[1]);
+    }
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+    await user.click(await screen.findByRole("button", { name: "Auto-detect capabilities" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    const adversarialOptions = () => within(screen.getByRole("combobox", { name: "Default adversarial target" }));
+    expect(adversarialOptions().queryByRole("option", { name: "openai_chat_gpt4 (gpt-4)" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Auto-detect capabilities" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    const nextName = outcome === "fails" ? "openai_chat_gpt4" : "openai_image_dalle";
+    await user.click(screen.getByRole("checkbox", { name: `Select ${nextName}` }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText(outcome === "fails" ? "Failed" : "Saved")).toBeInTheDocument();
+    expect(adversarialOptions().queryByRole("option", { name: "openai_chat_gpt4 (gpt-4)" })).not.toBeInTheDocument();
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    expect(mockedTargetsApi.detectCapabilities).toHaveBeenCalledTimes(2);
+  });
+
+  it("should show saved capabilities immediately and use newer registry data on refresh", async () => {
+    const user = userEvent.setup();
+    const updated: TargetInstance = {
+      ...sampleTargets[0],
+      capabilities: { ...sampleTargets[0].capabilities, supports_multi_turn: false },
+    };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+
+    mockedTargetsApi.detectCapabilities.mockResolvedValue(updated);
+    const onTargetsLoaded = jest.fn();
+    render(
+      <TestWrapper>
+        <TargetConfig
+          {...defaultProps}
+          onTargetsLoaded={onTargetsLoaded}
+        />
+      </TestWrapper>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Auto-detect capabilities" }));
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(1);
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .queryByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).not.toBeInTheDocument();
+    expect(mockedTargetsApi.detectCapabilities).toHaveBeenCalledTimes(1);
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    await advanceAutoRefresh();
+    await waitFor(() => expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument());
+    mockedTargetsApi.detectCapabilities.mockRejectedValueOnce(new Error("Provider unavailable; unchanged"));
+    await user.click(screen.getByRole("button", { name: "Auto-detect capabilities" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Failed")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("should retain a detection completed during an older registry fetch", async () => {
+    const user = userEvent.setup();
+    const updated: TargetInstance = {
+      ...sampleTargets[0],
+      capabilities: { ...sampleTargets[0].capabilities, supports_multi_turn: false },
+    };
+    const registryResponse = { items: sampleTargets, pagination: { limit: 200, has_more: false } };
+    let finishRefresh: (response: TargetListResponse) => void = () => {
+      throw new Error("Refresh has not started");
+    };
+    mockedTargetsApi.listTargets.mockReset();
+    mockedTargetsApi.listTargets.mockResolvedValueOnce(registryResponse)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+    mockedTargetsApi.detectCapabilities.mockReset();
+    mockedTargetsApi.detectCapabilities.mockResolvedValueOnce(updated);
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    await screen.findByText("openai_chat_gpt4");
+    await advanceAutoRefresh();
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "Auto-detect capabilities" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    await act(async () => { finishRefresh(registryResponse); });
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .queryByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("should discard saved detection payloads after a runtime generation change", async () => {
+    const user = userEvent.setup();
+    const updated: TargetInstance = {
+      ...sampleTargets[0],
+      capabilities: { ...sampleTargets[0].capabilities, supports_multi_turn: false },
+    };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets, pagination: { limit: 200, has_more: false },
+    });
+    mockedTargetsApi.detectCapabilities.mockReset();
+    mockedTargetsApi.detectCapabilities.mockResolvedValueOnce(updated);
+    const { rerender } = render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    await user.click(await screen.findByRole("button", { name: "Auto-detect capabilities" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    mockRuntimeGeneration = "generation-2";
+    rerender(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    await waitFor(() => expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument());
+    mockedTargetsApi.detectCapabilities.mockRejectedValueOnce(new Error("Provider unavailable; unchanged"));
+    await user.click(screen.getByRole("button", { name: "Auto-detect capabilities" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all shown targets" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select openai_chat_gpt4" }));
+    await user.click(screen.getByRole("button", { name: "Begin capability detection" }));
+    expect(await screen.findByText("Failed")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("combobox", { name: "Default adversarial target" }))
+        .getByRole("option", { name: "openai_chat_gpt4 (gpt-4)" }),
+    ).toBeInTheDocument();
   });
 
   it("should show loading state initially", () => {
@@ -120,6 +292,22 @@ describe("TargetConfig", () => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("OpenAIImageTarget").length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it("should omit SDK-only targets from the registry and default selector", async () => {
+    const sdkTarget = makeTarget({
+      target_registry_name: "sdk_demo", target_type: "TextTarget",
+      capabilities: { supports_multi_turn: true },
+    });
+    const onTargetsLoaded = jest.fn();
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [sdkTarget, ...sampleTargets], pagination: { limit: 200, has_more: false },
+    });
+    render(<TestWrapper><TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} /></TestWrapper>);
+    expect(await screen.findByText("openai_chat_gpt4")).toBeInTheDocument();
+    expect(screen.queryByText("sdk_demo")).not.toBeInTheDocument();
+    expect(screen.queryByText("TextTarget")).not.toBeInTheDocument();
+    expect(onTargetsLoaded).toHaveBeenCalledWith(sampleTargets);
   });
 
   it("should load every registry page before offering defaults", async () => {
@@ -517,7 +705,7 @@ describe("TargetConfig", () => {
     const targetsNoParams: TargetInstance[] = [
       makeTarget({
         target_registry_name: "simple_target",
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         endpoint: "http://localhost",
         model_name: "text",
       }),
@@ -535,7 +723,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("TextTarget")).toBeInTheDocument();
+      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
     });
 
     // No reasoning or other special params should be displayed

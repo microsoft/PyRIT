@@ -6,12 +6,228 @@ import {
   backendMessageToFrontend,
   backendMessageToOriginalDraft,
   backendMessagesToFrontend,
+  mergeBackendMessages,
   attachmentToMessagePieceRequest,
   buildMessagePieces,
+  startAttachmentUpload,
 } from "./messageMapper";
-import type { BackendMessage, MessageAttachment } from "../types";
+import type { BackendMessage, BackendMessagePiece, BackendScore, MessageAttachment } from "../types";
+import { mediaApi } from "@/services/api";
+import { waitFor } from "@testing-library/react";
+import type { MediaUploadResponse } from "../types";
+
+jest.mock("@/services/api", () => ({
+  mediaApi: { upload: jest.fn() },
+}));
 
 describe("messageMapper", () => {
+  describe("staged attachment uploads", () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it("should refresh from the server expiry with a one-hour buffer rather than a fixed lease", async () => {
+      const file = new File(["image"], "server-expiry.png", { type: "image/png" });
+      const now = Date.now();
+      jest.mocked(mediaApi.upload)
+        .mockResolvedValueOnce({ value: "pyrit-upload:first", expires_at: (now + 2 * 60 * 60 * 1000) / 1000 })
+        .mockResolvedValueOnce({ value: "pyrit-upload:renewed", expires_at: (now + 4 * 60 * 60 * 1000) / 1000 });
+      const clock = jest.spyOn(Date, "now").mockReturnValue(now);
+      try {
+        const first = startAttachmentUpload(file);
+        await first;
+        clock.mockReturnValue(now + 60 * 60 * 1000 - 1);
+        expect(startAttachmentUpload(file)).toBe(first);
+        clock.mockReturnValue(now + 60 * 60 * 1000);
+        expect(await startAttachmentUpload(file)).toEqual({ status: "uploaded", value: "pyrit-upload:renewed" });
+        expect(mediaApi.upload).toHaveBeenCalledTimes(2);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("should bound file reads and uploads together and release capacity after a failure", async () => {
+      const completions: Array<{ resolve: (value: MediaUploadResponse) => void; reject: (error: Error) => void }> = [];
+      jest.mocked(mediaApi.upload).mockImplementation(() => new Promise((resolve, reject) => {
+        completions.push({ resolve, reject });
+      }));
+      const reads = jest.spyOn(FileReader.prototype, "readAsDataURL");
+      try {
+        const files = Array.from({ length: 5 }, (_, index) => new File([String(index)], `${index}.png`, { type: "image/png" }));
+        const uploads = files.map((file) => startAttachmentUpload(file));
+        expect(startAttachmentUpload(files[4])).toBe(uploads[4]);
+        await waitFor(() => expect(completions).toHaveLength(3));
+        expect(reads).toHaveBeenCalledTimes(3);
+        completions[0].reject(new Error("Upload unavailable"));
+        await waitFor(() => expect(completions).toHaveLength(4));
+        expect(reads).toHaveBeenCalledTimes(4);
+        completions[1].resolve({ value: "second" });
+        await waitFor(() => expect(completions).toHaveLength(5));
+        completions.slice(2).forEach(({ resolve }, index) => resolve({ value: `remaining-${index}` }));
+        const results = await Promise.all(uploads);
+        expect(results[0]).toEqual({ status: "failed", detail: "Upload unavailable" });
+        expect(results.slice(1).every((result) => result.status === "uploaded")).toBe(true);
+      } finally {
+        completions.forEach(({ resolve }) => resolve({ value: "cleanup" }));
+        reads.mockRestore();
+      }
+    });
+
+    it("should expose invalid server expiration as an upload failure", async () => {
+      jest.mocked(mediaApi.upload).mockResolvedValueOnce({ value: "invalid", expires_at: Number.NaN });
+      expect(await startAttachmentUpload(new File(["image"], "invalid.png"))).toEqual({
+        status: "failed", detail: "The upload returned an invalid staging expiration.",
+      });
+    });
+
+    it("should upload distinct File objects independently and reuse each stored value across draft copies", async () => {
+      const first = new File(["first"], "same.png", { type: "image/png" });
+      const second = new File(["second"], "same.png", { type: "image/png" });
+      jest.mocked(mediaApi.upload)
+        .mockResolvedValueOnce({ value: "/stored/first.png" })
+        .mockResolvedValueOnce({ value: "/stored/second.png" });
+      const pending = startAttachmentUpload(first);
+      expect(startAttachmentUpload(first)).toBe(pending);
+      await Promise.all([pending, startAttachmentUpload(second)]);
+      const attachment: MessageAttachment = {
+        type: "image", name: first.name, url: "blob:local", file: first, mimeType: first.type,
+        metadata: { retained: true }, pieceId: "original-piece",
+      };
+      expect(await attachmentToMessagePieceRequest({ ...attachment })).toMatchObject({
+        original_value: "/stored/first.png", original_prompt_id: "original-piece",
+        mime_type: first.type, prompt_metadata: { retained: true },
+      });
+      expect(await attachmentToMessagePieceRequest({ ...attachment, file: second })).toMatchObject({
+        original_value: "/stored/second.png",
+      });
+      expect(mediaApi.upload).toHaveBeenCalledTimes(2);
+    });
+
+    it("should not silently resend bytes after a background upload fails", async () => {
+      const file = new File(["image"], "failure.png", { type: "image/png" });
+      jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error("Storage unavailable"));
+      expect(await startAttachmentUpload(file)).toEqual({ status: "failed", detail: "Storage unavailable" });
+      await expect(attachmentToMessagePieceRequest({
+        type: "image", name: file.name, url: "blob:local", mimeType: file.type, file,
+      })).rejects.toThrow("Upload failed for failure.png: Storage unavailable");
+      expect(mediaApi.upload).toHaveBeenCalledTimes(1);
+    });
+
+    it("should refresh an expired staging lease from the retained draft File before sending", async () => {
+      const file = new File(["image"], "old.png", { type: "image/png" });
+      jest.mocked(mediaApi.upload)
+        .mockResolvedValueOnce({ value: "pyrit-upload:old" })
+        .mockResolvedValueOnce({ value: "pyrit-upload:fresh" });
+      await startAttachmentUpload(file);
+      const later = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 24 * 60 * 60 * 1000);
+      try {
+        expect(await attachmentToMessagePieceRequest({
+          type: "image", name: file.name, url: "blob:local", mimeType: file.type, file,
+        })).toMatchObject({ original_value: "pyrit-upload:fresh" });
+        expect(mediaApi.upload).toHaveBeenCalledTimes(2);
+      } finally {
+        later.mockRestore();
+      }
+    });
+  });
+
+  describe("mergeBackendMessages", () => {
+    const timestamp = "2026-01-01T00:00:00Z";
+    const piece = (id: string, overrides: Partial<BackendMessagePiece> = {}): BackendMessagePiece => ({
+      id, timestamp, original_value_data_type: "text", original_value: `original ${id}`,
+      converted_value_data_type: "text", converted_value: `converted ${id}`, scores: [], response_error: "none",
+      ...overrides,
+    });
+    const turn = (sequence: number, pieces: BackendMessagePiece[], role: string = "assistant"): BackendMessage => ({
+      turn_number: sequence, role, created_at: timestamp, message_pieces: pieces,
+    });
+    const score = (id: string, pieceId: string): BackendScore => ({
+      id, message_piece_id: pieceId, scorer_type: "StoredScorer", score_type: "true_false",
+      score_value: "true", timestamp,
+    });
+
+    it("should merge split multimodal pieces with their original values, scores and media provenance", () => {
+      const text = piece("a", { scores: [score("text-score", "a")] });
+      const image = piece("b", {
+        original_value_data_type: "image_path", original_value: "/original.png",
+        original_value_url: "/api/media?path=original.png", original_filename: "original.png",
+        converted_value_data_type: "image_path", converted_value: "/converted.png",
+        converted_value_url: "/api/media?path=converted.png", converted_filename: "converted.png",
+        prompt_metadata: { video_id: "stored-video" }, converter_identifiers: [{ hash: "converter" }],
+        scores: [score("image-score", "b")],
+      });
+      const audio = piece("c", {
+        converted_value_data_type: "audio_path", converted_value: "/recording.wav",
+        converted_value_url: "/api/media?path=recording.wav",
+      });
+      const first = [turn(-1, [piece("context")], "system"), turn(0, [text], "user")];
+      const merged = mergeBackendMessages(first, [turn(0, [image, audio], "user"), turn(1, [piece("reply")])]);
+
+      expect(merged.map((message) => [message.turn_number, message.role])).toEqual([[-1, "system"], [0, "user"], [1, "assistant"]]);
+      expect(merged[1].message_pieces).toEqual([text, image, audio]);
+      expect(first[1].message_pieces).toEqual([text]);
+      const displayed = backendMessagesToFrontend(merged, [0])[1];
+      expect(displayed).toMatchObject({ sequence: 0, isPartial: true, content: "converted a", originalContent: "original a\noriginal c" });
+      expect(displayed.displayPieces?.map((entry) => entry.pieceId)).toEqual(["a", "b", "c"]);
+      expect(displayed.displayPieces?.[1].scores?.[0]).toMatchObject({ id: "image-score", message_piece_id: "b", pieceIndex: 1 });
+      expect(displayed.attachments?.[0]).toMatchObject({
+        pieceId: "b", url: "/api/media?path=converted.png", sourceValue: "/converted.png", metadata: { video_id: "stored-video" },
+      });
+      expect(displayed.originalAttachments?.[0]).toMatchObject({ pieceId: "b", url: "/api/media?path=original.png" });
+    });
+
+    it("should deduplicate overlapping piece and score IDs through multiple boundaries", () => {
+      const original = piece("a", { scores: [score("one", "a")] });
+      const updated = { ...original, scores: [score("one", "a"), score("two", "a")] };
+      let merged = mergeBackendMessages([], [turn(-1, [original])]);
+      merged = mergeBackendMessages(merged, [turn(-1, [updated, piece("b")])]);
+      merged = mergeBackendMessages(merged, [turn(-1, [piece("b"), piece("c")]), turn(0, [piece("d")], "simulated_assistant")]);
+      expect(merged).toHaveLength(2);
+      expect(merged[0].message_pieces.map((entry) => entry.id)).toEqual(["a", "b", "c"]);
+      expect(merged[0].message_pieces[0].scores.map((entry) => entry.id)).toEqual(["one", "two"]);
+      expect(backendMessagesToFrontend(merged, []).every((message) => message.isPartial === false)).toBe(true);
+      expect(backendMessagesToFrontend(merged)[0]).not.toHaveProperty("isPartial");
+    });
+
+    it("should order saved turns and pieces by sequence, timestamp and ID", () => {
+      const earlier = piece("z", { timestamp: "2025-12-31T23:59:00Z" });
+      const merged = mergeBackendMessages([turn(9, [piece("b")])], [
+        turn(9, [piece("a"), earlier]), turn(-2, [piece("context")], "developer"),
+      ]);
+      expect(merged.map((message) => message.turn_number)).toEqual([-2, 9]);
+      expect(merged[1].message_pieces.map((entry) => entry.id)).toEqual(["z", "a", "b"]);
+      expect(merged[1].created_at).toBe(earlier.timestamp);
+    });
+
+    it("should retain supplied piece order for legacy payloads without timestamps", () => {
+      const merged = mergeBackendMessages([], [turn(0, [piece("z", { timestamp: undefined }), piece("a", { timestamp: undefined })])]);
+      expect(merged[0].message_pieces.map((entry) => entry.id)).toEqual(["z", "a"]);
+      expect(mergeBackendMessages([], [])).toEqual([]);
+    });
+
+    it.each(["", "Z", "+00:00"])("should preserve Python microsecond ordering across saved pages with timezone %s", (zone: string) => {
+      const earlier = piece("ffffffff-ffff-ffff-ffff-ffffffffffff", { timestamp: `2026-11-01T10:00:00.123100${zone}` });
+      const later = piece("00000000-0000-0000-0000-000000000000", { timestamp: `2026-11-01T10:00:00.123900${zone}` });
+      const merged = mergeBackendMessages([turn(0, [earlier])], [turn(0, [later, earlier])]);
+      expect(merged[0].message_pieces.map((entry) => entry.id)).toEqual([earlier.id, later.id]);
+      expect(merged[0].created_at).toBe(earlier.timestamp);
+      expect(backendMessagesToFrontend(merged, [])[0].displayPieces?.map((entry) => entry.pieceId)).toEqual([earlier.id, later.id]);
+    });
+
+    it("should use IDs only after timezone and fractional precision represent the same instant", () => {
+      const last = piece("ffffffff-ffff-ffff-ffff-ffffffffffff", { timestamp: "2026-11-01T11:00:00.123100+01:00" });
+      const first = piece("00000000-0000-0000-0000-000000000000", { timestamp: "2026-11-01T10:00:00.1231Z" });
+      const merged = mergeBackendMessages([], [turn(0, [last, first])]);
+      expect(merged[0].message_pieces.map((entry) => entry.id)).toEqual([first.id, last.id]);
+    });
+
+    it("should reject changed turn roles or piece ownership rather than combine inconsistent evidence", () => {
+      const saved = turn(0, [piece("a")], "user");
+      expect(() => mergeBackendMessages([saved], [turn(0, [piece("b")])])).toThrow(/changed role/);
+      expect(() => mergeBackendMessages([saved], [turn(1, [piece("a")], "user")])).toThrow(/changed turns/);
+    });
+  });
+
   describe("fileToBase64", () => {
     it("should convert a file to base64 string", async () => {
       const file = new File(["hello world"], "test.txt", {

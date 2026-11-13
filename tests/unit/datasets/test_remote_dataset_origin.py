@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
-from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
+from pyrit.datasets.seed_datasets.remote import _HarmBenchDataset, _RemoteDatasetLoader
 from pyrit.models import SeedDataset, SeedObjective, SeedOrigin, SeedPrompt, SeedSimulatedConversation
 
 

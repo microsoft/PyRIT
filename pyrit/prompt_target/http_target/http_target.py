@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 
+import functools
+import hashlib
 import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -28,11 +30,102 @@ logger = logging.getLogger(__name__)
 RequestBody = dict[str, Any] | str
 
 
+@functools.cache
+def _httpx_default_headers() -> dict[str, str]:
+    """
+    Get the headers httpx adds to every client, so identity can tell them apart from configured ones.
+
+    Returns:
+        dict[str, str]: The default client headers, keyed by lower-case name.
+    """
+    with httpx.Client(transport=httpx.BaseTransport(), trust_env=False) as client:
+        return dict(client.headers.items())
+
+
+def _url_as_sent(*, url: str, method: str, client_params: httpx.QueryParams) -> httpx.URL:
+    """
+    Resolve the URL a client with these query parameters sends for a request to ``url``.
+
+    httpx replaces the request's query with non-empty client parameters, so the parameters that reach
+    the endpoint depend on both.
+
+    Args:
+        url (str): The request URL from the template.
+        method (str): The request method.
+        client_params (httpx.QueryParams): The client's query parameters.
+
+    Returns:
+        httpx.URL: The URL the request is sent to.
+    """
+    with httpx.Client(params=client_params, transport=httpx.BaseTransport(), trust_env=False) as client:
+        return client.build_request(method, url).url
+
+
 class HTTPTarget(PromptTarget):
     """
     HTTP_Target is for endpoints that do not have an API and instead require HTTP request(s) to send a prompt.
 
     """
+
+    not_saveable_reason: ClassVar[str | None] = "Its raw HTTP request can carry credentials."
+
+    _CREDENTIAL_HEADERS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "ocp-apim-subscription-key",
+            "cookie",
+            "set-cookie",
+        }
+    )
+
+    _CREDENTIAL_QUERY_NAME_TOKENS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "key",
+            "keys",
+            "token",
+            "tokens",
+            "secret",
+            "secrets",
+            "password",
+            "passwords",
+            "passwd",
+            "pwd",
+            "auth",
+            "authorization",
+            "credential",
+            "credentials",
+            "sig",
+            "signature",
+            "signatures",
+            "jwt",
+            "assertion",
+            "assertions",
+            "bearer",
+            "apikey",
+            "oauth",
+        }
+    )
+
+    @classmethod
+    def _is_sensitive_query_param(cls, key: str) -> bool:
+        # Match credential parameter names by word, not by substring: `design`
+        # contains "sig" and `author` contains "auth", but neither is a
+        # credential, and stripping them collapses distinct URLs into one
+        # identifier. Splitting on non-alphanumeric separators and on camelCase
+        # word boundaries keeps compound credential names (`api_key`,
+        # `client_secret`, `access_token`, `accessToken`, `clientSecret`)
+        # sensitive while leaving unrelated names intact.
+        tokens = {
+            token.lower()
+            for token in re.split(r"[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", key)
+            if token
+        }
+        if tokens & cls._CREDENTIAL_QUERY_NAME_TOKENS:
+            return True
+        return key.lower() in {"code", "pass"}
 
     def __init__(
         self,
@@ -53,7 +146,9 @@ class HTTPTarget(PromptTarget):
         Initialize the HTTPTarget.
 
         Args:
-            http_request (str): the header parameters as a request (i.e., from Burp)
+            http_request (str): the header parameters as a request (i.e., from Burp).
+                Pasted Accept-Encoding is ignored so httpx advertises supported response codings.
+                Configure encoding preferences on the client or with the headers client kwarg.
             prompt_regex_string (str): the placeholder for the prompt
                 (default is {PROMPT}) which will be replaced by the actual prompt.
                 make sure to modify the http request to have this included, otherwise it will not be properly replaced!
@@ -112,8 +207,55 @@ class HTTPTarget(PromptTarget):
                 "prompt_regex_string": self.prompt_regex_string,
                 "callback_function": getattr(self.callback_function, "__name__", None),
                 "follow_redirects": self.follow_redirects,
+                "http_request_fingerprint": self._http_request_fingerprint(),
             },
         )
+
+    def _http_request_fingerprint(self) -> str:
+        """
+        Hash what every send asks the endpoint, without its deployment address or credentials.
+
+        The method, encoded path, query, body and effective headers change how the endpoint responds, so
+        they belong to the target's identity and to its evaluation identity. Query parameters and
+        headers set on an injected client or passed as ``params`` and ``headers`` in the client
+        kwargs are merged with the template the same way a send combines them. The scheme, host and
+        port are left out, so the same request on another deployment keeps its evaluation identity,
+        and so are unchanged httpx default headers. Credential headers and credential query
+        parameters are left out so a secret never reaches the identifier and rotating it does not
+        change the identity.
+
+        Returns:
+            str: The first 16 hex characters of the SHA-256 of the canonical request.
+        """
+        template_headers, body, url, method, _ = self.parse_raw_http_request(self.http_request)
+        if self._client:
+            headers: dict[str, str] = {}
+            client_params = self._client.params
+        else:
+            headers = dict(httpx.Headers(self.httpx_client_kwargs.get("headers")).items())
+            client_params = httpx.QueryParams(self.httpx_client_kwargs.get("params"))
+        headers.update(template_headers)
+        default_headers = _httpx_default_headers()
+        kept_headers = {
+            name: value
+            for name, value in headers.items()
+            if name != "host" and name not in self._CREDENTIAL_HEADERS and default_headers.get(name) != value
+        }
+        sent_url = _url_as_sent(url=url, method=method, client_params=client_params)
+        kept_query = [
+            [name, value] for name, value in sent_url.params.multi_items() if not self._is_sensitive_query_param(name)
+        ]
+        canonical = json.dumps(
+            {
+                "method": method,
+                "path": sent_url.raw_path.partition(b"?")[0].decode("ascii"),
+                "query": kept_query,
+                "headers": kept_headers,
+                "body": body if isinstance(body, str) else json.dumps(body, sort_keys=True),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @classmethod
     def with_client(
@@ -284,6 +426,8 @@ class HTTPTarget(PromptTarget):
             if key == "cookie" and key in request_headers:
                 value = "; ".join(part for part in (request_headers[key], value) if part)
             request_headers[key] = value
+        # Ignore browser compression offers, but retain deliberately configured client headers.
+        request_headers.pop("accept-encoding", None)
         headers_dict.update(request_headers)
 
         for framing_header in ("content-length", "transfer-encoding"):

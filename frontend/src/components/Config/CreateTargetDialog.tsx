@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -33,7 +33,9 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance, TargetTypeEntry } from '@/types'
+import { listRegisteredTargets } from '@/services/targetRegistry'
+import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
+import { isGuiTarget } from '@/utils/targetVisibility'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -68,6 +70,15 @@ const FALLBACK_IDENTITY_TARGET_TYPES = new Set([
   'OpenAITTSTarget',
   'OpenAIResponseTarget',
   'AzureMLChatTarget',
+])
+
+const FALLBACK_NO_KEY_TARGET_TYPES = new Set([
+  'OpenAIChatTarget',
+  'OpenAICompletionTarget',
+  'OpenAIImageTarget',
+  'OpenAIVideoTarget',
+  'OpenAITTSTarget',
+  'OpenAIResponseTarget',
 ])
 
 const TARGET_DISPLAY_NAMES: Record<string, string> = {
@@ -122,23 +133,29 @@ const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = FALLBACK_TARGET_TYPES.ma
   }
 ))
 
-type AuthMode = 'api_key' | 'identity'
 type TypeMetadataStatus = 'loading' | 'loaded' | 'error'
+
+const AUTH_MODE_LABELS: Record<TargetAuthMode, string> = {
+  api_key: 'API key',
+  identity: 'Microsoft Entra ID',
+  none: 'No key',
+}
 
 function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
 
-function getAuthDescription(entry: TargetTypeEntry): string | null {
+function getAuthDescription(entry: TargetTypeEntry, registryMetadataLoaded: boolean): string | null {
   if (entry.target_type === 'GitHubCopilotTarget') {
 return 'Supported authentication: GitHub token'
   }
   const authModes = entry.supported_auth_modes
-  if (authModes.length === 0) return null
+  if (authModes.length === 0) {
+    // The built-in fallback entries also carry an empty list, so only registry data can say "no credentials".
+    return registryMetadataLoaded ? 'No authentication required' : null
+  }
 
-  const labels = authModes.map((mode) => (
-    mode === 'identity' ? 'Microsoft Entra ID' : 'API key'
-  ))
+  const labels = authModes.map((mode) => AUTH_MODE_LABELS[mode])
   return `Supported authentication: ${labels.join(' or ')}`
 }
 
@@ -149,10 +166,14 @@ function defaultSupportsIdentity(targetType: string): boolean {
   return FALLBACK_IDENTITY_TARGET_TYPES.has(targetType)
 }
 
+function defaultSupportsNoKey(targetType: string): boolean {
+  return FALLBACK_NO_KEY_TARGET_TYPES.has(targetType)
+}
+
 function getParameterLabel(name: string): string {
   return name
     .split('_')
-    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
+    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`)
     .join(' ')
 }
 
@@ -264,11 +285,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [modelName, setModelName] = useState('')
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
-  const [authMode, setAuthMode] = useState<AuthMode>('api_key')
+  const [authMode, setAuthMode] = useState<TargetAuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [httpRequestError, setHttpRequestError] = useState<string | null>(null)
+  const errorMessageRef = useRef<HTMLDivElement>(null)
+  const httpRequestFieldRef = useRef<HTMLTextAreaElement>(null)
   const [fieldErrors, setFieldErrors] = useState<{
     targetType?: string
     endpoint?: string
@@ -276,6 +300,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     underlyingModel?: string
     apiKey?: string
   }>({})
+
+  useEffect(() => {
+    if (httpRequestError) {
+      httpRequestFieldRef.current?.focus()
+    } else if (error) {
+      errorMessageRef.current?.focus()
+    }
+  }, [error, httpRequestError])
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -379,17 +411,21 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const hasApiKeyField = hasField('api_key')
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
-    ? getAuthDescription(targetTypeEntry)
+    ? getAuthDescription(targetTypeEntry, typeMetadataAvailable)
     : null
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
     : defaultSupportsIdentity(targetType)
-  const showAuthField = targetType !== '' && supportsIdentity
+  const supportsNoKey = targetTypeEntry
+    ? targetTypeEntry.supported_auth_modes.includes('none')
+    : defaultSupportsNoKey(targetType)
+  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
   const isIdentity = showAuthField && authMode === 'identity'
-  const endpointRequired = hasEndpointField
+  const isNoKey = showAuthField && authMode === 'none'
+  const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
-  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -421,9 +457,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (!open || !isRoundRobin) return
     if (existingTargets && existingTargets.length > 0) return
     let cancelled = false
-    targetsApi.listTargets(200)
-      .then((res) => {
-        if (!cancelled) setAvailableTargets(res.items)
+    listRegisteredTargets()
+      .then((items) => {
+        if (!cancelled) setAvailableTargets(items)
       })
       .catch(() => {
         // Ignore fetch errors — the list will just be empty
@@ -449,6 +485,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
     const candidates = availableTargets.filter(
       (t) =>
+        isGuiTarget(t) &&
         getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
         !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
@@ -457,7 +494,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (selectedInnerTargets.length === 0) return candidates
     // Otherwise, filter to only targets compatible with the first one
     const firstSelected = availableTargets.find(
-      (t) => t.target_registry_name === selectedInnerTargets[0].registryName,
+      (t) => t.target_registry_name === selectedInnerTargets[0]?.registryName,
     )
     if (!firstSelected) return candidates
     return candidates.filter((t) => isCompatible(firstSelected, t))
@@ -477,6 +514,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
   }
 
+  const handleParameterChange = (name: string, value: ParameterFormValue) => {
+    setParameterValues((current) => ({ ...current, [name]: value }))
+    if (name === 'http_request' && httpRequestError !== null) {
+      setHttpRequestError(null)
+      setError(null)
+    }
+  }
+
   const resetForm = () => {
     setTargetType('')
     setEndpoint('')
@@ -487,11 +532,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setApiKey('')
     setParameterValues({})
     setError(null)
+    setHttpRequestError(null)
     setFieldErrors({})
     setSelectedInnerTargets([])
   }
 
   const handleClose = () => {
+    if (submitting) return
     resetForm()
     onClose()
   }
@@ -561,12 +608,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
     const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
     if (!metadataParams.ok) {
+      setHttpRequestError(null)
       setError(metadataParams.error)
       return
     }
 
     setSubmitting(true)
     setError(null)
+    setHttpRequestError(null)
 
     try {
       const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
@@ -580,7 +629,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
+      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
 
       if (
         (underlyingModelRequired || hasDifferentUnderlying)
@@ -594,6 +643,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         type: targetType,
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
+        ...(isNoKey ? { auth_mode: 'none' as const } : {}),
       })
 
       resetForm()
@@ -601,7 +651,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     } catch (err) {
       // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
       // messages) rather than the generic axios "Request failed with status code 400".
-      setError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      setError(apiError.detail)
+      setHttpRequestError(
+        targetType === 'HTTPTarget' && apiError.status === 400 ? apiError.detail : null,
+      )
     } finally {
       setSubmitting(false)
     }
@@ -618,10 +672,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               data-testid="create-target-form"
               onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
             >
-              {error && (
-                <MessageBar intent="error">
-                  <MessageBarBody>{error}</MessageBarBody>
-                </MessageBar>
+              {error && !httpRequestError && (
+                <div ref={errorMessageRef} role="alert" tabIndex={-1}>
+                  <MessageBar intent="error">
+                    <MessageBarBody>{error}</MessageBarBody>
+                  </MessageBar>
+                </div>
               )}
 
               {typeMetadataStatus === 'loading' && (
@@ -648,6 +704,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 <Dropdown
                   aria-label="Target Type"
                   className={styles.fullWidthSelect}
+                  disabled={submitting}
                   listbox={{ className: styles.targetTypeListbox }}
                   placeholder="Select a target type"
                   positioning={{ matchTargetSize: 'width' }}
@@ -658,18 +715,28 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     if (!next) return
                     setTargetType(next)
                     setParameterValues({})
+                    if (httpRequestError !== null) {
+                      setHttpRequestError(null)
+                      setError(null)
+                    }
                     const nextEntry = targetTypeByName.get(next)
                     const nextSupportsIdentity = nextEntry
                       ? nextEntry.supported_auth_modes.includes('identity')
                       : defaultSupportsIdentity(next)
-                    if (!nextSupportsIdentity) {
+                    const nextSupportsNoKey = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('none')
+                      : defaultSupportsNoKey(next)
+                    if (
+                      (authMode === 'identity' && !nextSupportsIdentity)
+                      || (authMode === 'none' && !nextSupportsNoKey)
+                    ) {
                       setAuthMode('api_key')
                     }
                   }}
                 >
                   {targetTypeOptions.map((entry) => {
                     const displayName = getTargetDisplayName(entry.target_type)
-                    const authDescription = getAuthDescription(entry)
+                    const authDescription = getAuthDescription(entry, typeMetadataAvailable)
                     const accessibleDescription = [
                       displayName,
                       entry.description,
@@ -951,10 +1018,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         extraHint={identityConflict
                           ? 'Ignored with Identity-based authentication.'
                           : undefined}
-                        onChange={(name, value) => setParameterValues((current) => ({
-                          ...current,
-                          [name]: value,
-                        }))}
+                        validationMessage={parameter.name === 'http_request' ? httpRequestError ?? undefined : undefined}
+                        controlRef={parameter.name === 'http_request' ? httpRequestFieldRef : undefined}
+                        onChange={handleParameterChange}
                       />
                     )
                   })}
@@ -966,10 +1032,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       disabled={submitting}
                       label="GitHub Token"
                       testIdPrefix="target-param"
-                      onChange={(name, value) => setParameterValues((current) => ({
-                        ...current,
-                        [name]: value,
-                      }))}
+                      onChange={handleParameterChange}
                     />
                   )}
 
@@ -978,8 +1041,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       <RadioGroup
                         value={authMode}
                         onChange={(_, data) => {
-                          const next = data.value as AuthMode
+                          const next = data.value as TargetAuthMode
                           setAuthMode(next)
+                          if (next === 'none') {
+                            setApiKey('')
+                          }
                           if (next === 'identity') {
                             setApiKey('')
                             setParameterValues((current) => {
@@ -993,7 +1059,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         }}
                       >
                         <Radio value="api_key" label="API Key" />
-                        <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
+                        {supportsIdentity && (
+                          <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
+                        )}
+                        {supportsNoKey && (
+                          <Radio value="none" label="No key (for servers that need none)" />
+                        )}
                       </RadioGroup>
                     </Field>
                   )}
@@ -1006,7 +1077,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     </MessageBar>
                   )}
 
-                  {hasApiKeyField && !isIdentity && (
+                  {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
                       label="API Key"
                       hint={apiKeyParameter?.description || undefined}
@@ -1044,6 +1115,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                               extraHint={identityConflict
                                 ? 'Ignored with Identity-based authentication.'
                                 : undefined}
+                              validationMessage={parameter.name === 'http_request' ? httpRequestError ?? undefined : undefined}
+                              controlRef={parameter.name === 'http_request' ? httpRequestFieldRef : undefined}
                               onChange={(name, value) => setParameterValues((current) => ({
                                 ...current,
                                 [name]: value,

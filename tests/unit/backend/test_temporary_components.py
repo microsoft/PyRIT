@@ -4,10 +4,14 @@
 """Private construction, reconstruction, lifetime, and provenance regressions."""
 
 import asyncio
+import importlib.abc
+import importlib.util
+import sys
 import threading
 import uuid
-from collections.abc import Iterator
-from types import ModuleType
+from collections.abc import Iterator, Sequence
+from importlib.machinery import ModuleSpec
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -15,30 +19,40 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from openai import BadRequestError
+from openai.resources.chat.completions import AsyncCompletions
+from openai.types.chat import ChatCompletion
+from pydantic import ValidationError
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.backend.models.attacks import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.models import (
+    ConverterPreviewRequest,
     CreateAttackRequest,
     CreateConversationRequest,
+    CreateConverterRequest,
+    CreateScorerRequest,
+    CreateTargetRequest,
     MessagePieceRequest,
     MessageRequest,
+)
+from pyrit.backend.models.attacks import (
     SaveConversationRequest,
 )
-from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
-from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
-from pyrit.backend.models.scorers import CreateScorerRequest
-from pyrit.backend.models.targets import CreateTargetRequest
+from pyrit.backend.models.message_sends import MessageSendFailureStage, MessageSendRequest, MessageSendState
 from pyrit.backend.routes import converters, scorers, targets
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import (
+    AttackService,
+    ConverterService,
+    TargetService,
+    get_converter_service,
+    get_target_service,
+)
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
-from pyrit.backend.services.converter_service import ConverterService, get_converter_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
-from pyrit.backend.services.target_service import TargetService, get_target_service
-from pyrit.common.apply_defaults import reset_default_values, set_default_value
-from pyrit.common.brick_contract import forward_init_parameters
+from pyrit.common import forward_init_parameters, reset_default_values, set_default_value
 from pyrit.converter import (
     CaesarConverter,
     Converter,
@@ -48,12 +62,28 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.memory import SQLiteMemory
-from pyrit.models import JSONValue, Operation, PromptDataType
+from pyrit.models import (
+    CapabilityName,
+    JSONValue,
+    Operation,
+    PromptDataType,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+)
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
+from pyrit.prompt_target import (
+    HuggingFaceChatTarget,
+    OpenAIChatTarget,
+    OpenAICompletionTarget,
+    OpenAIResponseTarget,
+    PromptTarget,
+    RoundRobinTarget,
+)
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
 from unit.backend.mocks import _settle_send_async
+from unit.mocks import openai_chat_response_json_dict
 
 
 @pytest.fixture(autouse=True)
@@ -99,6 +129,26 @@ class _ForwardedConverter(LLMGenericTextConverter):
         super().__init__(**kwargs)
 
 
+class _TorchStandIn(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Stand in for torch, noting the thread that first imports it and the one that first checks for CUDA."""
+
+    def __init__(self) -> None:
+        self.first_threads: dict[str, threading.Thread] = {}
+
+    def find_spec(
+        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> ModuleSpec | None:
+        return importlib.util.spec_from_loader(fullname, self) if fullname == "torch" else None
+
+    def exec_module(self, module: ModuleType) -> None:
+        self.first_threads.setdefault("import", threading.current_thread())
+        module.cuda = SimpleNamespace(is_available=self._is_available)  # type: ignore[attr-defined]
+
+    def _is_available(self) -> bool:
+        self.first_threads.setdefault("cuda", threading.current_thread())
+        return True
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestTemporaryComponents:
     @pytest.mark.parametrize("register", [True, False])
@@ -106,10 +156,10 @@ class TestTemporaryComponents:
         request_loop = asyncio.get_running_loop()
         constructed: list[HuggingFaceChatTarget] = []
         registry = TargetRegistry.get_registry_singleton()
-        factory = registry.create_instance_from_external_input
+        factory = registry.create_instance_async
 
-        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
-            target = factory(name, params=params, allowed_path_params=allowed_path_params)
+        async def create(**kwargs: Any) -> HuggingFaceChatTarget:
+            target = await factory(**kwargs)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
             return target
@@ -117,14 +167,14 @@ class TestTemporaryComponents:
         with (
             patch.dict("sys.modules", {"torch": ModuleType("torch")}),
             patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock) as load,
-            patch.object(registry, "create_instance_from_external_input", side_effect=create),
+            patch.object(registry, "create_instance_async", side_effect=create),
         ):
             response = await TargetService().create_target_async(
                 request=CreateTargetRequest(
                     name="local-model" if register else None,
                     type="HuggingFaceChatTarget",
                     register=register,
-                    params={"model_path": "test-model", "use_cuda": False},
+                    params={"model_path": "test-model", "use_cuda": False, "hf_access_token": "test-only-token"},
                 )
             )
             [target] = constructed
@@ -133,6 +183,64 @@ class TestTemporaryComponents:
             load.assert_awaited_once()
             assert response.identifier.class_name == "HuggingFaceChatTarget"
             assert registry.instances.get_names() == (["local-model"] if register else [])
+
+    @pytest.mark.parametrize(
+        ("use_cuda", "steps"), [(False, ["import"]), ("false", ["import"]), (True, ["cuda", "import"])]
+    )
+    async def test_hugging_face_imports_torch_off_the_request_loop_async(
+        self, use_cuda: bool | str, steps: list[str]
+    ) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": use_cuda, "hf_access_token": "test-only-token"},
+                )
+            )
+            target = TargetRegistry.get_registry_singleton().instances.get("local-model")
+            assert isinstance(target, HuggingFaceChatTarget)
+            await target.load_model_and_tokenizer_task
+
+        assert sorted(torch.first_threads) == steps
+        assert threading.current_thread() not in torch.first_threads.values()
+        assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
+
+    async def test_hugging_face_without_torch_reports_the_constructor_error_async(self) -> None:
+        with patch.dict("sys.modules", {"torch": None}), pytest.raises(RuntimeError, match="Could not import torch"):
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": True, "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert TargetRegistry.get_registry_singleton().instances.get_names() == []
+
+    async def test_hugging_face_use_cuda_that_is_not_a_boolean_is_refused_without_a_cuda_check_async(self) -> None:
+        torch = _TorchStandIn()
+        with (
+            patch.dict("sys.modules"),
+            patch.object(sys, "meta_path", [torch, *sys.meta_path]),
+            pytest.raises(ValueError, match="expects bool"),
+        ):
+            sys.modules.pop("torch", None)
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    name="local-model",
+                    type="HuggingFaceChatTarget",
+                    params={"model_path": "test-model", "use_cuda": "maybe", "hf_access_token": "test-only-token"},
+                )
+            )
+
+        assert "cuda" not in torch.first_threads
 
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
@@ -267,6 +375,43 @@ class TestTemporaryComponents:
         finally:
             await source.cleanup_target_async()
 
+    @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
+    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match="including auth_mode"):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"temperature": 0.8},
+            {"temperature": 0.8, "api_key": None},
+            {"temperature": 0.8, "headers": None},
+            {"temperature": 0.8, "headers": ""},
+        ],
+    )
+    async def test_no_key_source_stays_no_key_async(self, overrides: dict[str, Any]) -> None:
+        source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        try:
+            with patch.dict(
+                "os.environ",
+                {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+            ):
+                private = await TargetService().build_from_source_async(
+                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=overrides)
+                )
+            try:
+                assert private._api_key == "not-needed"
+                assert private._headers == {}
+                assert private.get_identifier().temperature == 0.8
+            finally:
+                await private.cleanup_target_async()
+        finally:
+            await source.cleanup_target_async()
+
     async def test_two_temperature_variants_are_isolated_async(self) -> None:
         source = source_target()
         TargetRegistry.get_registry_singleton().instances.register(source, name="source")
@@ -296,32 +441,151 @@ class TestTemporaryComponents:
             await second.cleanup_target_async()
             await source.cleanup_target_async()
 
+    @pytest.mark.parametrize("target_type", ["OpenAIChatTarget", "OpenAICompletionTarget", "OpenAIResponseTarget"])
+    async def test_generation_range_declarations_remain_python_only_async(self, target_type: str) -> None:
+        with pytest.raises(ValueError, match="generation_ranges.*cannot be set through the API"):
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    type=target_type,
+                    register=False,
+                    params={
+                        "model_name": "gpt-4o",
+                        "endpoint": "https://example.test/v1",
+                        "api_key": "test-only-key",
+                        "generation_ranges": {"temperature": [0.2, 0.8]},
+                    },
+                )
+            )
+        assert not TargetRegistry.get_registry_singleton().instances.get_names()
+
+    @pytest.mark.parametrize(
+        "model, supported, maximum", [("gpt-4o", True, 2), ("Mistral-Large-3", True, 1), ("o3", False, 2)]
+    )
+    @pytest.mark.parametrize("wrapped", [False, True])
+    async def test_gui_generation_capabilities_match_target_and_children_async(
+        self, *, model: str, supported: bool, maximum: float, wrapped: bool
+    ) -> None:
+        async with httpx.AsyncClient() as client:
+            children = [
+                OpenAIChatTarget(
+                    model_name=model,
+                    endpoint="https://example.test/v1",
+                    api_key="test-only-key",
+                    httpx_client_kwargs={"http_client": client},
+                )
+                for _ in range(2 if wrapped else 1)
+            ]
+            target = RoundRobinTarget(targets=children) if wrapped else children[0]
+            descriptor = target_object_to_instance("target", target)
+            assert descriptor.capabilities.supports_temperature is supported
+            assert descriptor.generation_ranges == {"temperature": (0, maximum)}
+            assert descriptor.model_dump(mode="json")["generation_ranges"] == {"temperature": [0, maximum]}
+            assert "generation_ranges" not in descriptor.model_dump(mode="json")["capabilities"]
+            if descriptor.inner_targets:
+                assert all(
+                    child.generation_ranges == {"temperature": (0, maximum)} for child in descriptor.inner_targets
+                )
+            if wrapped:
+                children[1].apply_capabilities(
+                    capabilities=children[1].capabilities.model_copy(update={"supports_temperature": False})
+                )
+                assert not target_object_to_instance("target", target).capabilities.supports_temperature
+
+    @pytest.mark.parametrize("register", [False, True])
+    @pytest.mark.parametrize("declaration", ["constructor", "inferred"])
+    @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+    async def test_source_bounds_survive_reconstruction_and_descriptor_serialization_async(
+        self,
+        *,
+        register: bool,
+        declaration: str,
+        target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    ) -> None:
+        source = target_type(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            generation_ranges={"temperature": (0.2, 0.8)} if declaration == "constructor" else None,
+        )
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        copied: PromptTarget | None = None
+        try:
+            explicit = None if declaration == "inferred" else (0.2, 0.8)
+            assert registry.get_reconstruction_parameters(source)["generation_ranges"] == (
+                {"temperature": explicit} if explicit is not None else {}
+            )
+            service = TargetService()
+            spec = SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params={})
+            if register:
+                copied = await service.build_from_source_async(spec)
+                registry.instances.register(copied, name="copy")
+                descriptor = await service.get_target_async(target_registry_name="copy")
+                assert descriptor is not None
+            else:
+                descriptor = await service.create_target_async(
+                    request=CreateTargetRequest(type=target_type.__name__, register=False, source=spec)
+                )
+            expected = explicit or (0, 2)
+            assert descriptor.generation_ranges == {"temperature": expected}
+            assert descriptor.model_dump(mode="json")["generation_ranges"] == {"temperature": list(expected)}
+            assert "generation_ranges" not in descriptor.model_dump(mode="json")["capabilities"]
+            assert type(descriptor).model_validate_json(descriptor.model_dump_json()) == descriptor
+            assert not source._client.is_closed()
+            if copied is not None:
+                assert isinstance(copied, target_type)
+                copied.set_model_name(model_name="Mistral-Large-3")
+                assert copied.generation_range(capability=CapabilityName.TEMPERATURE) == (explicit or (0, 1))
+        finally:
+            if copied is not None:
+                await copied.cleanup_target_async()
+            await source.cleanup_target_async()
+
     @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
-    async def test_temperature_support_with_http_client_async(self, client_setting: str) -> None:
+    @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+    async def test_runtime_temperature_is_independent_of_reconstruction_async(
+        self,
+        *,
+        client_setting: str,
+        target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    ) -> None:
         async with httpx.AsyncClient() as client:
             client_kwargs: dict[str, Any] = {}
             if client_setting != "default":
                 client_kwargs["http_client"] = client if client_setting == "custom" else None
-            source = OpenAIChatTarget(
+            source = target_type(
                 endpoint="https://example.test/v1",
-                model_name="test",
+                model_name="gpt-4o",
                 api_key="test-only-key",
                 httpx_client_kwargs=client_kwargs,
             )
             try:
                 descriptor = target_object_to_instance("source", source)
+                assert descriptor.capabilities.supports_temperature
+                schema = type(descriptor).model_json_schema()
+                assert (
+                    not {
+                        "reconstructable",
+                        "reconstruction_error",
+                        "supports_temperature_override",
+                    }
+                    & descriptor.model_dump().keys()
+                )
+                assert (
+                    not {
+                        "reconstructable",
+                        "reconstruction_error",
+                        "supports_temperature_override",
+                    }
+                    & schema["$defs"]["TargetInstance"]["properties"].keys()
+                )
+                registry = TargetRegistry.get_registry_singleton()
                 if client_setting == "custom":
-                    assert not descriptor.reconstructable
-                    assert not descriptor.supports_temperature_override
-                    assert descriptor.reconstruction_error == (
-                        "OpenAIChatTarget cannot be recreated with different settings because it uses a custom "
-                        "HTTP client supplied through httpx_client_kwargs['http_client']."
-                    )
+                    with pytest.raises(ValueError, match="custom HTTP client"):
+                        registry.get_reconstruction_parameters(source)
                     assert not client.is_closed
                 else:
-                    assert descriptor.reconstructable
-                    assert descriptor.supports_temperature_override
-                    assert descriptor.reconstruction_error is None
+                    assert registry.get_reconstruction_parameters(source)["model_name"] == "gpt-4o"
             finally:
                 await source.cleanup_target_async()
 
@@ -454,41 +718,116 @@ class TestTemporaryComponents:
         finally:
             await target.cleanup_target_async()
 
-    async def test_target_settings_capability_rejects_undeclared_inputs_async(self) -> None:
+    async def test_target_reconstruction_rejects_undeclared_inputs_async(self) -> None:
         target = source_target()
-        TargetRegistry.get_registry_singleton().instances.register(target, name="source")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(target, name="source")
         try:
             with patch.dict(target._reconstruction_parameters, {"opaque_setting": "preserve"}):
                 descriptor = await TargetService().get_target_async(target_registry_name="source")
                 assert descriptor is not None
-                assert not descriptor.reconstructable
-                assert not descriptor.supports_temperature_override
-                assert descriptor.reconstruction_error == (
-                    "The source uses undeclared constructor inputs: opaque_setting"
-                )
+                assert descriptor.identifier.hash == target.get_identifier().hash
+                with pytest.raises(ValueError, match="undeclared constructor inputs: opaque_setting"):
+                    registry.recreate_instance(source=target, params={})
         finally:
             await target.cleanup_target_async()
 
+    @pytest.mark.timeout(3 * TEST_WATCHDOG_SECONDS)
     async def test_cancelled_thread_build_releases_component_async(self) -> None:
-        started = threading.Event()
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
         finish = threading.Event()
         component = source_target()
         cleanup = AsyncMock()
 
         def build() -> OpenAIChatTarget:
-            started.set()
-            assert finish.wait(timeout=5)
+            loop.call_soon_threadsafe(started.set)
+            finish.wait()
             return component
 
-        with patch.object(component, "cleanup_target_async", cleanup):
-            task = asyncio.create_task(construct_component_async(build))
-            assert await asyncio.to_thread(started.wait, 5)
-            task.cancel()
-            finish.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            cleanup.assert_awaited_once()
-        await component.cleanup_target_async()
+        try:
+            with patch.object(component, "cleanup_target_async", cleanup):
+                task = asyncio.create_task(construct_component_async(build))
+                try:
+                    await wait_for_event_async(event=started, tasks=[task])
+                    if task.done():
+                        task.result()
+                        pytest.fail("Construction completed before the worker was released")
+                    task.cancel()
+                    finish.set()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                    cleanup.assert_awaited_once()
+                finally:
+                    finish.set()
+                    if not task.done():
+                        task.cancel()
+                    await drain_tasks_async(task)
+        finally:
+            await component.cleanup_target_async()
+
+    @pytest.mark.timeout(3 * TEST_WATCHDOG_SECONDS)
+    @pytest.mark.parametrize(
+        ("failure", "cancel_during_drain"),
+        [
+            (AssertionError, False),
+            (TimeoutError, False),
+            (asyncio.CancelledError, False),
+            (asyncio.CancelledError, True),
+        ],
+    )
+    async def test_thread_build_drains_worker_on_early_failure_async(
+        self, *, failure: type[BaseException], cancel_during_drain: bool
+    ) -> None:
+        observe = wait_for_event_async
+        drain = drain_tasks_async
+        component = source_target()
+        pending = asyncio.all_tasks()
+
+        async def fail_after_readiness_async(*, event: asyncio.Event, tasks: list[asyncio.Task[Any]]) -> None:
+            await observe(event=event, tasks=tasks)
+            raise failure("injected failure after worker readiness")
+
+        async def interrupt_drain_async(*tasks: asyncio.Task[OpenAIChatTarget]) -> None:
+            if cancel_during_drain:
+                task = asyncio.current_task()
+                assert task is not None
+                asyncio.get_running_loop().call_soon(task.cancel, "cleanup cancellation")
+            await drain(*tasks)
+
+        with (
+            patch(f"{__name__}.source_target", return_value=component),
+            patch(f"{__name__}.wait_for_event_async", side_effect=fail_after_readiness_async),
+            patch(f"{__name__}.drain_tasks_async", side_effect=interrupt_drain_async),
+        ):
+            with pytest.raises(failure, match="injected failure"):
+                await self.test_cancelled_thread_build_releases_component_async()
+
+        assert component._client.is_closed()
+        assert asyncio.all_tasks() == pending
+
+    @pytest.mark.timeout(3 * TEST_WATCHDOG_SECONDS)
+    async def test_thread_build_reports_failure_before_readiness_async(self) -> None:
+        component = source_target()
+        pending = asyncio.all_tasks()
+        failure = RuntimeError("construction failed before readiness")
+        to_thread = asyncio.to_thread
+
+        def fail_build() -> None:
+            raise failure
+
+        async def fail_to_thread_async(*_args: Any, **_kwargs: Any) -> None:
+            await to_thread(fail_build)
+
+        with (
+            patch(f"{__name__}.source_target", return_value=component),
+            patch.object(asyncio, "to_thread", side_effect=fail_to_thread_async),
+        ):
+            with pytest.raises(RuntimeError, match="construction failed before readiness") as error:
+                await self.test_cancelled_thread_build_releases_component_async()
+        assert error.value is failure
+        assert component._client.is_closed()
+        assert asyncio.all_tasks() == pending
 
     async def test_attack_binding_persists_and_same_attack_is_immutable_async(
         self, sqlite_instance: SQLiteMemory
@@ -641,6 +980,226 @@ class TestTemporaryComponents:
                     )
                 )
         finally:
+            await source.cleanup_target_async()
+
+    async def test_runtime_temperature_preserves_saved_variant_binding_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        source = OpenAIChatTarget(
+            model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key", temperature=0.2
+        )
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        built = await TargetService().build_from_source_async(
+            SourceInstanceSpec(
+                source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+            )
+        )
+        binding = TargetBinding(
+            source_name="source",
+            source_hash=source.get_identifier().hash,
+            temperature=0.8,
+            effective_hash=built.get_identifier().hash,
+        )
+        await built.cleanup_target_async()
+        sender = MessageSendService(scheduler=ManualSendScheduler())
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source", target_binding=binding)
+            )
+            response = ChatCompletion.model_validate({**openai_chat_response_json_dict(), "created": 0})
+            with patch.object(AsyncCompletions, "create", new_callable=AsyncMock, return_value=response) as send:
+                for index, temperature in enumerate((0, None)):
+                    status = await sender.submit_async(
+                        attack_result_id=created.attack_result_id,
+                        request=MessageSendRequest(
+                            target_registry_name="source",
+                            target_conversation_id=created.conversation_id,
+                            submission_id=f"runtime-{index}",
+                            role="user",
+                            pieces=[
+                                MessagePieceRequest(
+                                    original_value="hello",
+                                    prompt_metadata=RequestGenerationConfig(temperature=temperature).to_metadata(),
+                                )
+                            ],
+                        ),
+                    )
+                    status = await _settle_send_async(service=sender, status=status)
+                    assert status.state == MessageSendState.COMPLETED
+            assert [call.kwargs["temperature"] for call in send.call_args_list] == [0, 0.8]
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+            assert TargetBinding.from_metadata(saved.metadata) == binding
+            messages = await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id)
+            for message, expected in zip(messages, (0, 0, 0.8, 0.8), strict=True):
+                assert "_pyrit_temperature" not in message.get_piece().prompt_metadata
+                assert "request_temperature" not in message.get_piece().prompt_metadata
+                info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+                assert info is not None
+                assert info.temperature.resolved == expected
+            assert source.get_identifier().hash == binding.source_hash
+            assert source._temperature == 0.2
+        finally:
+            await sender.shutdown_async()
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("saved_binding", [False, True])
+    @pytest.mark.parametrize("count", [1, 3])
+    @pytest.mark.parametrize(
+        ("temperature", "model", "extras", "error"),
+        [
+            (True, "gpt-4o", {}, "valid number"),
+            ("0.3", "gpt-4o", {}, "valid number"),
+            (float("nan"), "gpt-4o", {}, "finite"),
+            (float("inf"), "gpt-4o", {}, "finite"),
+            (-0.1, "gpt-4o", {}, "between 0 and 2"),
+            (2.1, "gpt-4o", {}, "between 0 and 2"),
+            (0, "gpt-5", {}, "does not support runtime temperature"),
+            (0, "gpt-4o", {"reasoning_effort": "high"}, "does not support runtime temperature"),
+        ],
+    )
+    async def test_generation_rejected_before_send_admission_async(
+        self,
+        sqlite_instance: SQLiteMemory,
+        saved_binding: bool,
+        count: int,
+        temperature: Any,
+        model: str,
+        extras: dict[str, Any],
+        error: str,
+    ) -> None:
+        source = OpenAIChatTarget(
+            model_name=model,
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=0.2,
+            extra_body_parameters=extras,
+        )
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        target_service = get_target_service()
+        binding = None
+        if saved_binding:
+            built = await target_service.build_from_source_async(
+                SourceInstanceSpec(
+                    source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+                )
+            )
+            binding = TargetBinding(
+                source_name="source",
+                source_hash=source.get_identifier().hash,
+                temperature=0.8,
+                effective_hash=built.get_identifier().hash,
+            )
+            await built.cleanup_target_async()
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        resolved: list[PromptTarget] = []
+        resolve_binding_async = target_service.resolve_binding_async
+
+        async def track_binding_async(binding: TargetBinding) -> PromptTarget:
+            target = await resolve_binding_async(binding)
+            resolved.append(target)
+            return target
+
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source", target_binding=binding)
+            )
+            request = MessageSendRequest(
+                target_registry_name="source",
+                target_conversation_id=created.conversation_id,
+                submission_id="invalid-generation",
+                count=count,
+                role="user",
+                pieces=[
+                    MessagePieceRequest(
+                        original_value="hello",
+                        prompt_metadata={"request_generation_config": {"temperature": temperature}},
+                    )
+                ],
+            )
+            with (
+                patch.object(target_service, "resolve_binding_async", side_effect=track_binding_async),
+                patch.object(AsyncCompletions, "create", new_callable=AsyncMock) as provider,
+                patch.object(sender, "_run_send_async", new_callable=AsyncMock) as run_send,
+                patch.object(
+                    sqlite_instance, "add_message_to_memory_async", wraps=sqlite_instance.add_message_to_memory_async
+                ) as store,
+            ):
+                with pytest.raises(ValueError, match=error):
+                    await sender.submit_async(
+                        attack_result_id=created.attack_result_id,
+                        request=request,
+                    )
+                provider.assert_not_called()
+                run_send.assert_not_called()
+                store.assert_not_called()
+            assert not sender._sends
+            assert not sender._submissions
+            assert not scheduler.has_active_work()
+            with sender.reserve_conversation(created.conversation_id):
+                assert scheduler.has_active_work()
+            assert await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id) == []
+            assert len(resolved) == int(saved_binding)
+            for target in resolved:
+                assert isinstance(target, OpenAIChatTarget)
+                assert target is not source
+                assert target._client.is_closed()
+            assert not source._client.is_closed()
+            assert source._temperature == 0.2
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+            assert TargetBinding.from_metadata(saved.metadata) == binding
+        finally:
+            await sender.shutdown_async()
+            await source.cleanup_target_async()
+
+    async def test_unknown_model_provider_rejection_fails_accepted_send_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        source = source_target()
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source")
+            )
+            rejection = BadRequestError(
+                "Temperature is not supported with this model.",
+                response=httpx.Response(400, request=httpx.Request("POST", "https://example.test/v1/chat/completions")),
+                body={"code": "unsupported_parameter", "param": "temperature"},
+            )
+            with patch.object(AsyncCompletions, "create", new_callable=AsyncMock, side_effect=rejection) as provider:
+                status = await sender.submit_async(
+                    attack_result_id=created.attack_result_id,
+                    request=MessageSendRequest(
+                        target_registry_name="source",
+                        target_conversation_id=created.conversation_id,
+                        submission_id="provider-rejection",
+                        role="user",
+                        pieces=[
+                            MessagePieceRequest(
+                                original_value="hello",
+                                prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+                            )
+                        ],
+                    ),
+                )
+                status = await _settle_send_async(service=sender, status=status)
+            provider.assert_awaited_once()
+            assert provider.call_args.kwargs["temperature"] == 0
+            assert status.state == MessageSendState.FAILED
+            assert status.failure_stage == MessageSendFailureStage.SENDING
+            assert not scheduler.has_active_work()
+            messages = await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id)
+            assert len(messages) == 2
+            assert messages[1].get_piece().response_error == "processing"
+            assert "Temperature is not supported with this model." in messages[1].get_piece().original_value
+            for message in messages:
+                info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+                assert info is not None
+                assert info.temperature.requested == info.temperature.resolved == 0
+        finally:
+            await sender.shutdown_async()
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("operation_by_id", [False, True])
