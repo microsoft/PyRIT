@@ -2077,7 +2077,7 @@ describe('App draft handoff with the real chat and composer', () => {
         jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: 'new-runtime' })
         await act(async () => { jest.advanceTimersByTime(2000) })
       }
-      await returnToChat(user)
+      await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
       await user.click(within(await screen.findByRole('region', { name: 'Message 1' }))
         .getByRole('button', { name: 'Toggle converter panel' }))
       if (runtimeChanged) {

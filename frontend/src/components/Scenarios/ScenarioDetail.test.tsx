@@ -15,6 +15,7 @@ import {
   techniquesApi,
 } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import type {
   AddMessageResponse,
   RegisteredScenario,
@@ -804,31 +805,36 @@ describe('ScenarioDetail', () => {
     })
 
     it('protects Scanner conversation edits when browser Forward returns to Datasets', async () => {
-      const user = userEvent.setup()
-      const router = createMemoryRouter([
-        { path: '/scanner/launch/:scenarioName', element: <ScenarioDetail
-          targets={[makeTarget('target-a')]} defaultObjectiveTarget={makeTarget('target-a')}
-          defaultAdversarialTarget={null} labels={{ operator: 'roakey' }}
-          defaultsReady onNavigate={jest.fn()} /> },
-        { path: '/datasets', element: <h1>Datasets</h1> },
-      ], {
-        initialEntries: ['/scanner/launch/technique.execute?prepended_conversation_id=history-conversation', '/datasets'],
-        initialIndex: 0,
-      })
-      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
-        <RouterProvider router={router} />
-      </UserPreferencesProvider></FluentProvider>)
-      await user.click(await screen.findByRole('button', { name: 'Edit conversation' }))
-      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
-      await act(async () => { await router.navigate(1) })
-      expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeVisible()
-      await user.click(screen.getByRole('button', { name: 'Keep editing' }))
-      expect(screen.getByDisplayValue('Saved context changed')).toBeVisible()
-      expect(router.state.location.pathname).toBe('/scanner/launch/technique.execute')
-      await act(async () => { await router.navigate(1) })
-      await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
-      expect(await screen.findByRole('heading', { name: 'Datasets' })).toBeVisible()
-      expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      const restoreRequest = installRouterTestRequest()
+      try {
+        const user = userEvent.setup()
+        const router = createMemoryRouter([
+          { path: '/scanner/launch/:scenarioName', element: <ScenarioDetail
+            targets={[makeTarget('target-a')]} defaultObjectiveTarget={makeTarget('target-a')}
+            defaultAdversarialTarget={null} labels={{ operator: 'roakey' }}
+            defaultsReady onNavigate={jest.fn()} /> },
+          { path: '/datasets', element: <h1>Datasets</h1> },
+        ], {
+          initialEntries: ['/scanner/launch/technique.execute?prepended_conversation_id=history-conversation', '/datasets'],
+          initialIndex: 0,
+        })
+        render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+          <RouterProvider router={router} />
+        </UserPreferencesProvider></FluentProvider>)
+        await user.click(await screen.findByRole('button', { name: 'Edit conversation' }))
+        await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
+        await act(async () => { await router.navigate(1) })
+        expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeVisible()
+        await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+        expect(screen.getByDisplayValue('Saved context changed')).toBeVisible()
+        expect(router.state.location.pathname).toBe('/scanner/launch/technique.execute')
+        await act(async () => { await router.navigate(1) })
+        await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+        expect(await screen.findByRole('heading', { name: 'Datasets' })).toBeVisible()
+        expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      } finally {
+        restoreRequest()
+      }
     })
 
     it('should report a missing conversation without opening an empty editor or changing the field', async () => {
