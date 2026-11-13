@@ -805,9 +805,10 @@ describe('ScenarioDetail', () => {
     })
 
     it('protects Scanner conversation edits when browser Forward returns to Datasets', async () => {
+      jest.useFakeTimers()
       const restoreRequest = installRouterTestRequest()
       try {
-        const user = userEvent.setup()
+        const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
         const router = createMemoryRouter([
           { path: '/scanner/launch/:scenarioName', element: <ScenarioDetail
             targets={[makeTarget('target-a')]} defaultObjectiveTarget={makeTarget('target-a')}
@@ -830,6 +831,7 @@ describe('ScenarioDetail', () => {
         expect(router.state.location.pathname).toBe('/scanner/launch/technique.execute')
         await act(async () => { await router.navigate(1) })
         await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+        await advanceTimers(300)
         expect(await screen.findByRole('heading', { name: 'Datasets' })).toBeVisible()
         expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
       } finally {

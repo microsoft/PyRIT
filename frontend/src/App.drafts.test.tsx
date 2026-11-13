@@ -2080,10 +2080,11 @@ describe('App draft handoff with the real chat and composer', () => {
       await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
       await user.click(within(await screen.findByRole('region', { name: 'Message 1' }))
         .getByRole('button', { name: 'Toggle converter panel' }))
+      await screen.findByRole('combobox', { name: 'Add converter' })
       if (runtimeChanged) {
         expect(screen.queryByRole('textbox', { name: 'Stage 1 output - Message 1: text' })).not.toBeInTheDocument()
       } else {
-        expect(screen.getByRole('button', { name: 'Remove converter draft-converter' })).toBeVisible()
+        expect(await screen.findByRole('button', { name: 'Remove converter draft-converter' })).toBeVisible()
         expect(screen.getByRole('textbox', { name: 'Working input - Message 1: text' })).toHaveValue('Editor working input')
         expect(screen.getByRole('textbox', { name: 'Stage 1 output - Message 1: text' })).toHaveValue('Editor working output')
       }
