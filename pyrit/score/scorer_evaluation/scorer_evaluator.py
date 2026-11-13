@@ -779,6 +779,31 @@ class HarmScorerEvaluator(ScorerEvaluator):
                 reliability_data=all_model_scores, level_of_measurement="ordinal"
             )
 
+        # Human-vs-scorer agreement on the same pair that MAE compares: the gold
+        # label and the per-response median model score. Unlike the combined
+        # alpha, this has exactly two rows, so repeating the scorer trials does
+        # not turn agreement with itself into extra raters.
+        krippendorff_alpha_gold_model = None
+        if num_responses > 0:
+            # Ordinal categories are shared across items and both rows. Merge
+            # adjacent floating-point values (e.g. 0.3 and the median of 0.2 and
+            # 0.4), rather than reconstructing model scores from rounded diffs.
+            # Limit each group to one ULP from its first value: decimal rounding
+            # would discard fine score levels, and chaining could merge more.
+            gold_model_scores = np.vstack((gold_scores, median_model_scores))
+            categories, inverse = np.unique(gold_model_scores, return_inverse=True)
+            normalized_categories = categories.copy()
+            representative = categories[0]
+            for index, category in enumerate(categories[1:], start=1):
+                if category <= np.nextafter(representative, np.inf):
+                    normalized_categories[index] = representative
+                else:
+                    representative = category
+            krippendorff_alpha_gold_model = krippendorff_alpha(
+                reliability_data=normalized_categories[inverse].reshape(gold_model_scores.shape),
+                level_of_measurement="ordinal",
+            )
+
         # A scorer that ignored the response would do best by always returning the median gold score.
         baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
 
@@ -795,6 +820,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             ),
             krippendorff_alpha_humans=krippendorff_alpha_humans,
             krippendorff_alpha_model=krippendorff_alpha_model,
+            krippendorff_alpha_gold_model=krippendorff_alpha_gold_model,
             contested_threshold=contested_threshold,
             num_unanimous_responses=num_unanimous_responses,
             num_contested_responses=num_contested_responses,
