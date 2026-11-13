@@ -4,6 +4,7 @@
 """Tests for the SeedGroup and AttackSeedGroup classes."""
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -1022,3 +1023,42 @@ class TestAttackSeedGroupFilterCompatible:
 
         result = AttackSeedGroup.filter_compatible(seed_groups=groups, technique=technique)
         assert len(result) == 1
+
+
+class TestSeedGroupMetadataIsolation:
+    def test_derived_messages_do_not_share_nested_metadata_with_seeds(self) -> None:
+        seeds = [
+            SeedPrompt(value="u", role="user", sequence=0, metadata={"nested": {"labels": ["source"]}}),
+            SeedPrompt(value="a", role="assistant", sequence=1, metadata={"nested": {"labels": ["source"]}}),
+            SeedPrompt(value="u2", role="user", sequence=2, metadata={"nested": {"labels": ["source"]}}),
+        ]
+        group = SeedGroup(seeds=seeds)
+
+        first = group.next_message
+        second = group.next_message
+        history = group.prepended_conversation
+        second_history = group.prepended_conversation
+        assert first is not None and history is not None and second_history is not None
+
+        first.get_piece().prompt_metadata["nested"]["labels"].append("message-only")
+        history[1].get_piece().prompt_metadata["nested"]["labels"].append("history-only")
+
+        assert [seed.metadata["nested"]["labels"] for seed in seeds] == [["source"], ["source"], ["source"]]
+        assert second.get_piece().prompt_metadata["nested"]["labels"] == ["source"]
+        assert history[0].get_piece().prompt_metadata["nested"]["labels"] == ["source"]
+        assert second_history[1].get_piece().prompt_metadata["nested"]["labels"] == ["source"]
+
+    @pytest.mark.parametrize("metadata", [None, {}])
+    def test_derived_messages_with_empty_metadata_get_independent_dicts(self, metadata: dict[str, Any] | None) -> None:
+        seed = SeedPrompt(value="hello", role="user", metadata=metadata)
+        group = SeedGroup(seeds=[seed])
+
+        first = group.next_message
+        second = group.next_message
+        assert first is not None and second is not None
+
+        first.get_piece().prompt_metadata["added"] = True
+
+        assert first.get_piece().prompt_metadata is not second.get_piece().prompt_metadata
+        assert second.get_piece().prompt_metadata == {}
+        assert seed.metadata == metadata

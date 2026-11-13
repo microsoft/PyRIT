@@ -27,6 +27,7 @@ from pyrit.models.catalog import (
 )
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import RegistryNameTakenError, saved_entry_registration
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage, safe_failure_text
 
 if TYPE_CHECKING:
@@ -73,13 +74,13 @@ class RegistryRecipeRestorer:
     is built after the saved entries it names. The caller supplies the builder, so an entry is built the
     way the caller's create builds one; the backend's builder calls the API's create for each kind. A
     file never chooses what gets imported: classes and attack types are looked up among the ones already
-    registered. Server paths are refused as they are for API input, and a recipe never holds a value for
-    a parameter its class declares as a credential. Entries that can't come back are reported with the
-    reason instead of being skipped.
+    registered. Server paths are refused as they are for API input, and ``check_saved_entry_params``
+    refuses a recipe that stores a credential, or a target recipe that would let its target use one from
+    this server or send requests where this server's settings say. Entries that can't come back are
+    reported with the reason instead of being skipped.
 
-    Stored files are otherwise trusted the way configuration is. Rules for credentials a class
-    reads from server settings, and for fields that can carry a credential without being declared
-    one, need each class to declare them, so they arrive with saving and apply to restore too.
+    Stored files are otherwise trusted the way configuration is. Converters and scorers don't
+    declare the credentials they read from server settings yet, so those rules cover targets only.
     """
 
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
@@ -241,7 +242,7 @@ class RegistryRecipeRestorer:
                 if isinstance(recipe, TechniqueRecipe)
                 else self._component_references(ref=stored.ref, recipe=recipe)
             )
-        except RecipeRejectedError as rejection:
+        except (RecipeRejectedError, SavedEntryRefusedError) as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))
         except Exception as error:  # A bug here must not stop the others from being checked, or blame the file.
             causes[(stored.ref.kind, stored.ref.name)] = error
@@ -270,8 +271,9 @@ class RegistryRecipeRestorer:
             list[SavedEntryRef]: The referenced entries, in parameter order.
 
         Raises:
-            RecipeRejectedError: If the class is unknown or is now one from outside PyRIT, the recipe holds
-                a credential or sets a server file or folder, or the name is taken or can't be used.
+            RecipeRejectedError: If the class is unknown or is now one from outside PyRIT, the recipe sets a
+                server file or folder, or the name is taken or can't be used.
+            SavedEntryRefusedError: If the class can't be saved, or the recipe holds or would use a credential.
         """
         registry = self._get_registry(ref.kind)
         try:
@@ -288,7 +290,7 @@ class RegistryRecipeRestorer:
             )
             raise RecipeRejectedError(reason=RestoreFailureReason.MODULE_MISMATCH, message=message)
         parameters = self._class_parameters(registry=registry, name=recipe.class_name, cls=cls)
-        self._check_stored_credentials(parameters=parameters, params=recipe.params)
+        check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params, auth_mode=recipe.auth_mode)
         # As in the target API, a target may let callers set some path parameters, such as a working folder.
         allowed_paths = (
             getattr(cls, "caller_path_parameters", frozenset())
@@ -326,7 +328,8 @@ class RegistryRecipeRestorer:
             list[SavedEntryRef]: The adversarial target, converters, and attack parameter references.
 
         Raises:
-            RecipeRejectedError: If the attack type isn't registered, or the recipe holds a credential.
+            RecipeRejectedError: If the attack type isn't registered.
+            SavedEntryRefusedError: If the recipe holds a credential.
         """
         from pyrit.registry.components.attack_registry import AttackRegistry
 
@@ -341,7 +344,7 @@ class RegistryRecipeRestorer:
         if recipe.adversarial_chat is not None:
             references.append(SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name=recipe.adversarial_chat))
         parameters = self._class_parameters(registry=attack_registry, name=recipe.type, cls=attack_class)
-        self._check_stored_credentials(parameters=parameters, params=recipe.params)
+        check_saved_entry_params(cls=attack_class, parameters=parameters, params=recipe.params)
         return references + self._parameter_references(parameters=parameters, params=recipe.params)
 
     @staticmethod
@@ -354,25 +357,6 @@ class RegistryRecipeRestorer:
         """
         metadata: RegistryMetadata = registry.get_registered_class_metadata(name) or registry.get_class_metadata(cls)
         return metadata.parameters
-
-    @staticmethod
-    def _check_stored_credentials(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
-        """
-        Refuse a recipe that stores a value for a parameter its class declares as a credential.
-
-        Raises:
-            RecipeRejectedError: If a declared credential parameter has a value.
-        """
-        stored = sorted(
-            parameter.name
-            for parameter in parameters
-            if parameter.sensitive and params.get(parameter.name) not in (None, "")
-        )
-        if stored:
-            raise RecipeRejectedError(
-                reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
-                message=f"Saved entries can't hold credentials ('{stored[0]}').",
-            )
 
     def _parameter_references(
         self, *, parameters: Sequence[Parameter], params: Mapping[str, Any]
@@ -520,7 +504,7 @@ class RegistryRecipeRestorer:
         try:
             with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name):
                 await build_async(stored)
-        except RecipeRejectedError as rejection:
+        except (RecipeRejectedError, SavedEntryRefusedError) as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))
         except RegistryNameTakenError as error:
             return self._failure(stored=stored, reason=RestoreFailureReason.NAME_CLASH, message=str(error))
