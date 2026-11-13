@@ -7,6 +7,14 @@ authors = [
 ]
 readme = "README.md"
 license = "MIT"
+license-files = [
+    "LICENSE",
+    "LICENSES/Apache-2.0.txt",
+    "LICENSES/PromptInject-MIT.txt",
+    "THIRD_PARTY_NOTICES.txt",
+    "third_party/garak-provenance.json",
+    "third_party/promptinject-provenance.json",
+]
 keywords = [
     "llm",
     "ai-safety",
@@ -322,16 +330,6 @@ backend-path = ["."]
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
-
-[tool.setuptools]
-license-files = [
-    "LICENSE",
-    "LICENSES/Apache-2.0.txt",
-    "LICENSES/PromptInject-MIT.txt",
-    "THIRD_PARTY_NOTICES.txt",
-    "third_party/garak-provenance.json",
-    "third_party/promptinject-provenance.json",
-]
 
 [tool.setuptools.package-data]
 pyrit = [
