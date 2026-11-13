@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, Message, MessagePiece
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, ComponentIdentifier, Message, MessagePiece
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:
@@ -316,3 +316,31 @@ def test_history_squash_as_identifier_params_reflects_child_normalizer_configura
         "use_developer_role": False,
         "system_message_behavior": "ignore",
     }
+
+
+def test_history_squash_preserves_identified_formatter_parameters():
+    class ConfiguredFormatter(MessageStringNormalizer):
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"value": self.value})
+
+        async def normalize_string_async(self, messages: list[Message]) -> str:
+            return self.value
+
+    first = HistorySquashNormalizer(message_normalizer=ConfiguredFormatter("A"))
+    second = HistorySquashNormalizer(message_normalizer=ConfiguredFormatter("B"))
+    assert first.as_identifier_params()["message_normalizer"]["params"] == {"value": "A"}
+    assert second.as_identifier_params()["message_normalizer"]["params"] == {"value": "B"}
+    assert first.get_identifier().hash != second.get_identifier().hash
+    assert first.has_replay_identity()
+
+
+def test_history_squash_rejects_unidentified_custom_formatter_for_replay():
+    class UnidentifiedFormatter(MessageStringNormalizer):
+        async def normalize_string_async(self, messages: list[Message]) -> str:
+            return "custom"
+
+    normalizer = HistorySquashNormalizer(message_normalizer=UnidentifiedFormatter())
+    assert not normalizer.has_replay_identity()

@@ -69,16 +69,33 @@ class HistorySquashNormalizer(MessageListNormalizer[Message], Identifiable):
         params: dict[str, Any] = {}
         if self._message_normalizer is not None:
             params_fn = getattr(self._message_normalizer, "as_identifier_params", None)
-            child_params = params_fn() if callable(params_fn) else {}
+            child_identifier = self._message_normalizer.get_identifier()
+            identifier = child_identifier.model_dump(mode="json", exclude={"pyrit_version", "hash", "eval_hash"})
+            child_params = (
+                params_fn()
+                if "_build_identifier" not in type(self._message_normalizer).__dict__ and callable(params_fn)
+                else child_identifier.params
+            )
             params["message_normalizer"] = {
-                **self._message_normalizer.get_identifier().model_dump(
-                    mode="json", exclude={"pyrit_version", "hash", "eval_hash"}
-                ),
+                **identifier,
                 "params": child_params,
             }
         if self._expected_history_message_count is not None:
             params["expected_history_message_count"] = self._expected_history_message_count
         return params
+
+    def has_replay_identity(self) -> bool:
+        """
+        Check whether the child formatter explicitly identifies its behavior for replay.
+
+        Returns:
+            bool: Whether the child has a replay identity.
+        """
+        child = self._message_normalizer
+        if child is None or type(child) is ConversationContextNormalizer or "_build_identifier" in type(child).__dict__:
+            return True
+        params_fn = getattr(child, "as_identifier_params", None)
+        return "as_identifier_params" in type(child).__dict__ and callable(params_fn) and isinstance(params_fn(), dict)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

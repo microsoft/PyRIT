@@ -303,6 +303,31 @@ class TargetConfiguration:
         """
         return [self._serialize_normalizer(normalizer) for normalizer in self._pipeline.normalizers]
 
+    def project_replay_pipeline(self) -> list[dict[str, Any]] | None:
+        """
+        Project the pipeline only when each normalizer declares its behavioral identity.
+
+        Returns:
+            list[dict[str, Any]] | None: The projection, or None when identity is unavailable.
+        """
+        for normalizer in self._pipeline.normalizers:
+            normalizer_type = type(normalizer)
+            declared_identifier = (
+                isinstance(normalizer, Identifiable) and "_build_identifier" in normalizer_type.__dict__
+            )
+            params_fn = getattr(normalizer, "as_identifier_params", None)
+            declared_params = (
+                not isinstance(normalizer, Identifiable)
+                and "as_identifier_params" in normalizer_type.__dict__
+                and callable(params_fn)
+            )
+            if not declared_identifier and not (declared_params and isinstance(params_fn(), dict)):
+                return None
+            replay_check = getattr(normalizer, "has_replay_identity", None)
+            if replay_check is not None and (not callable(replay_check) or not replay_check()):
+                return None
+        return self.project_pipeline()
+
     @staticmethod
     def _capabilities_to_identifier_params(capabilities: TargetCapabilities) -> dict[str, Any]:
         """

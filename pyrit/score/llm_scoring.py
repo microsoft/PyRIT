@@ -53,6 +53,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _ValidatedAcquisitionError(Exception):
+    """Signal that an error observation has passed its replay contract check."""
+
+
 def _format_string_references_message_piece(template: str | None) -> bool:
     """
     Check whether a format string reads the complete message piece.
@@ -139,11 +143,15 @@ async def _run_llm_scoring_async(
     )
     expectation_fingerprint = scoring_expectation_fingerprint(expectation or ScoringExpectation())
     target_adaptation = _target_judgment_adaptation(chat_target)
-    replay_contract_fingerprint = _replay_contract_fingerprint(
-        response_handler=response_handler,
-        category=request.category,
-        judgment_replay_identifier=request.judgment_replay_identifier,
-        target_adaptation=target_adaptation,
+    replay_contract_fingerprint = (
+        _replay_contract_fingerprint(
+            response_handler=response_handler,
+            category=request.category,
+            judgment_replay_identifier=request.judgment_replay_identifier,
+            target_adaptation=target_adaptation,
+        )
+        if target_adaptation is not None
+        else None
     )
     active_scorable = request.scorable
     if active_scorable is not None and not isinstance(active_scorable, SCORABLE_TYPES):
@@ -426,18 +434,11 @@ def _target_judgment_adaptation(target: Any) -> list[dict[str, Any]] | None:
     Returns:
         list[dict[str, Any]] | None: The projected normalizer pipeline, or None.
     """
-    if target is None:
-        return None
     from pyrit.prompt_target import TargetConfiguration
 
     config = getattr(target, "configuration", None)
     if isinstance(config, TargetConfiguration):
-        return config.project_pipeline()
-    project_pipeline = getattr(config, "project_pipeline", None)
-    if callable(project_pipeline):
-        pipeline = project_pipeline()
-        if isinstance(pipeline, list):
-            return pipeline
+        return config.project_replay_pipeline()
     return None
 
 
@@ -461,22 +462,33 @@ def _parse_judgment_observation(
 
     Raises:
         NonReplayableObservationError: If the stored response has no text judgment.
+        _ValidatedAcquisitionError: If a retained error passes the replay contract check.
     """
     if not isinstance(observation.payload, ScorerTargetResponsePayload):
         raise NonReplayableObservationError("A judgment scorer requires a judgment observation.")
     effective_target_adaptation = (
         target_adaptation if target_adaptation is not None else _target_judgment_adaptation(target)
     )
-    replay_contract_fingerprint = _replay_contract_fingerprint(
-        response_handler=response_handler,
-        category=category,
-        judgment_replay_identifier=judgment_replay_identifier,
-        target_adaptation=effective_target_adaptation,
+    replay_contract_fingerprint = (
+        _replay_contract_fingerprint(
+            response_handler=response_handler,
+            category=category,
+            judgment_replay_identifier=judgment_replay_identifier,
+            target_adaptation=effective_target_adaptation,
+        )
+        if effective_target_adaptation is not None
+        else None
     )
     if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
         # A current handler that opts out of replay is never overridden by a legacy contract.
         raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
     contract_matches = replay_contract_fingerprint == observation.payload.replay_contract_fingerprint
+    if observation.acquisition is Acquisition.ERROR:
+        if not contract_matches:
+            raise NonReplayableObservationError(
+                "The judgment configuration, response handler or category differs from the acquisition contract."
+            )
+        raise _ValidatedAcquisitionError
     if not contract_matches and not isinstance(evidence, Message):
         raise NonReplayableObservationError(
             "The judgment configuration, response handler or category differs from the acquisition contract."
@@ -554,31 +566,7 @@ def _legacy_replay_contract_fingerprints(
         set[str]: The digests an observation acquired under an older contract may carry.
     """
     legacy_handlers = response_handler._legacy_replay_identifiers(response_text=response_text, category=category)
-    current_handler = response_handler._get_replay_identifier()
-
     fingerprints: set[str | None] = set()
-
-    # Legacy contract: acquired before target-side adaptation was fingerprinted.
-    if target_adaptation is not None:
-        fingerprints.add(
-            _contract_fingerprint(
-                handler_identifier=current_handler,
-                category=category,
-                judgment_replay_identifier=judgment_replay_identifier,
-                target_adaptation=None,
-            )
-        )
-        for legacy in legacy_handlers:
-            fingerprints.add(
-                _contract_fingerprint(
-                    handler_identifier=legacy,
-                    category=category,
-                    judgment_replay_identifier=judgment_replay_identifier,
-                    target_adaptation=None,
-                )
-            )
-
-    # Legacy contract: older handler identifiers with current target adaptation.
     for legacy in legacy_handlers:
         fingerprints.add(
             _contract_fingerprint(

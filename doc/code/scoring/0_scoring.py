@@ -169,8 +169,11 @@ print(df.to_string(index=False))
 # `Score.scored_expectation` records the complete expectation used for the verdict, while
 # `Score.objective` remains a read-only compatibility view. `score_observation_async()` can
 # parse that stored judgment again without calling the target. Replay requires unchanged scored
-# evidence and response content, plus the exact original expectation, scorer configuration, and
-# response-handler contract. `ScorerTargetResponsePayload` references the scorer's target response;
+# evidence and response content, plus the exact original expectation, scorer configuration, target
+# adaptation, and response-handler contract. Older observations without a recorded target adaptation
+# cannot be replayed; acquire a new judgment instead. A custom target normalizer must explicitly
+# identify its behavior for its judgments to be replayable.
+# `ScorerTargetResponsePayload` references the scorer's target response;
 # the target need not be a language model. Its kind is `scorer_target_response`.
 # Media observation capture remains deferred until its evidence can be snapshotted.
 # Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb), and file-system

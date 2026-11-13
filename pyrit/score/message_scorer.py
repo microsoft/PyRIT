@@ -40,7 +40,7 @@ from pyrit.models import (
 )
 from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
-from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
+from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility, _ValidatedAcquisitionError
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
@@ -1291,6 +1291,16 @@ class MessageScorer(Scorer):
                 "The scorer or response handler did not declare a stable replay contract at acquisition."
             )
         if observation.acquisition is Acquisition.ERROR:
+            try:
+                self._score_judgment_observation(
+                    observation=observation,
+                    evidence=evidence,
+                    expectation=expectation,
+                )
+            except _ValidatedAcquisitionError:
+                pass
+            else:
+                raise NonReplayableObservationError("The scorer did not validate the error observation contract.")
             if observation.metadata.get("reason") == "scorer_response_blocked" and self.raise_if_scorer_blocks:
                 raise NonReplayableObservationError(
                     "Blocked-response replay requires raise_if_scorer_blocks=False to match the acquisition policy."

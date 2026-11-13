@@ -622,6 +622,25 @@ def test_serialize_normalizer_defaults_to_empty_params():
     assert "PlainListNormalizer" in serialized["type"]
 
 
+def test_replay_pipeline_rejects_identifiable_normalizer_with_only_inherited_identity():
+    class UnidentifiedNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self)
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class ConfigurableNormalizer(UnidentifiedNormalizer):
+        def as_identifier_params(self) -> dict[str, str]:
+            return {"value": "not included in inherited identifier"}
+
+    config = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_json_schema=False),
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: ConfigurableNormalizer()},
+    )
+    assert config.project_replay_pipeline() is None
+
+
 def test_serialize_normalizer_retains_child_identifier_configuration():
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
