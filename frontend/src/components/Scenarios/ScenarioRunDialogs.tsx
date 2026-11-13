@@ -7,6 +7,8 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  MessageBar,
+  MessageBarBody,
   Text,
   mergeClasses,
 } from '@fluentui/react-components'
@@ -46,9 +48,14 @@ interface ObjectiveDetailsDialogProps {
   readonly attempts: ScenarioProgressResult[]
   readonly onOpenAttempt: (attempt: ScenarioProgressResult, trigger: HTMLElement) => void
   readonly scenarioResultId: string
+  /** Technique shorthand per atomic group, shown under each attack. */
+  readonly techniqueNames: ReadonlyMap<string, string>
 }
 
-export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAttempt, scenarioResultId }: ObjectiveDetailsDialogProps) {
+/** An objective's text, its seed prompts, and the attacks that pursued it. */
+export function ObjectiveDetailsDialog({
+  objective, onClose, attempts, onOpenAttempt, scenarioResultId, techniqueNames,
+}: ObjectiveDetailsDialogProps) {
   const styles = useScenarioRunPageStyles()
 
   return (
@@ -90,7 +97,7 @@ export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAtt
                 <AttackExecutionTable label="Atomic attacks" attempts={attempts} totalAttempts={attempts.length}
                   roots={[]} hierarchy={EMPTY_HIERARCHY}
                   scenarioResultId={scenarioResultId} seedObjectives={new Map([[objective.id, objective.objective]])}
-                  onOpenDetails={onOpenAttempt} showTimestamp={false} booleanOutcome />
+                  techniqueNames={techniqueNames} onOpenDetails={onOpenAttempt} showTimestamp={false} booleanOutcome />
               </section>
             </DialogContent>
           )}
@@ -99,6 +106,28 @@ export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAtt
           </DialogActions>
         </DialogBody>
       </DialogSurface>
+    </Dialog>
+  )
+}
+
+interface CancelScanDialogProps {
+  readonly open: boolean
+  readonly cancelling: boolean
+  readonly error: string | null
+  readonly onOpenChange: (open: boolean) => void
+  readonly onConfirm: () => void
+}
+
+export function CancelScanDialog({ open, cancelling, error, onOpenChange, onConfirm }: CancelScanDialogProps) {
+  const styles = useScenarioRunPageStyles()
+  return (
+    <Dialog open={open} onOpenChange={(_, data) => { onOpenChange(data.open) }}>
+      <DialogSurface><DialogBody><DialogTitle>Cancel scan?</DialogTitle><DialogContent className={styles.dialogContent}>
+        <Text>Stop remaining attacks. Saved conversations and results stay available.</Text>
+        {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+      </DialogContent><DialogActions><Button disabled={cancelling} onClick={() => { onOpenChange(false) }}>Keep running</Button>
+        <Button appearance="primary" disabled={cancelling} onClick={onConfirm}>{cancelling ? 'Cancelling...' : 'Cancel scan'}</Button>
+      </DialogActions></DialogBody></DialogSurface>
     </Dialog>
   )
 }

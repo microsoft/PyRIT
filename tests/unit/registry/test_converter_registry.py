@@ -36,6 +36,7 @@ from pyrit.registry import (
     ConverterRegistry,
     TargetRegistry,
 )
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, record_saved_entry_refusals
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -196,6 +197,17 @@ class TestConverterRegistryRegisterInstance:
 
         assert isinstance(converter, Base64Converter)
         assert registry.instances.get("base64") is converter
+
+    def test_create_named_instance_records_a_caught_clash_with_a_saved_entry(self, registry: ConverterRegistry):
+        saved = Base64Converter()
+        registry.instances.register(saved, name="base64", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match="already exists"):
+                registry.create_named_instance(name="base64", type_name="Base64Converter")
+
+        assert refusals == [("converters", "base64")]
+        assert registry.instances.get("base64") is saved
 
     def test_create_named_instance_stores_registry_metadata(self, registry: ConverterRegistry):
         converter = registry.create_named_instance(

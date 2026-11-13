@@ -6,7 +6,7 @@ import logging
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar, Self, final
 
 from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
@@ -158,6 +158,23 @@ class PromptTarget(Identifiable):
             dict[str, object]: Additional constructor parameters.
         """
         return {}
+
+    @classmethod
+    async def create_async(cls, **kwargs: Any) -> Self:
+        """
+        Build the target on the calling event loop.
+
+        Targets whose construction needs slow setup, such as a first import, override this to do that setup in a
+        worker thread first. The constructor itself still runs on the calling loop, so the tasks and locks it creates
+        belong to that loop.
+
+        Args:
+            **kwargs (Any): The constructor arguments.
+
+        Returns:
+            Self: The new target.
+        """
+        return cls(**kwargs)
 
     @classmethod
     def _validate_auth_mode(cls, auth_mode: AuthMode | None) -> None:

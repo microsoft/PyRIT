@@ -500,10 +500,10 @@ not additional results.
 Available flat execution rows remain usable while relationships load or if the
 hierarchy request fails, with an explicit loading/error notice.
 
-Clicking a result with a main conversation opens the existing chat view and
-preserves scenario-run provenance for its return breadcrumb. Conversationless
-compound results expand their children instead. A separate Details action reuses
-the existing metadata dialog. Hierarchy requests do not load transcript bodies;
+Clicking a result row or pressing Enter on it opens the attack details dialog.
+An explicit expansion button shows a compound result's saved children. The separate
+Conversation link opens Chat and preserves scenario-run provenance for its return
+breadcrumb. Hierarchy requests do not load transcript bodies;
 the Chat viewer loads saved evidence through the bounded conversation reads above.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
@@ -691,8 +691,9 @@ The chat preserves failed drafts across replacement, but requires converter choi
 to be reviewed again rather than restoring outputs tied to the previous registry.
 
 The offline browser fixture `frontend.e2e.fixtures.manual_send_backend:app` uses the real
-backend lifecycle with isolated in-memory SQLite, no environment files, and no default
-providers. The recovery tests register deterministic loopback targets. For example, start
+backend lifecycle with isolated in-memory SQLite, no environment files, no saved registry
+entries, and no default providers. The recovery tests register deterministic loopback
+targets. For example, start
 it with `uv run python -m uvicorn frontend.e2e.fixtures.manual_send_backend:app --host 127.0.0.1 --port 18213`
 (set `PYTHONUTF8=1` on Windows). In another shell, set `PYRIT_BACKEND_URL=http://127.0.0.1:18213`
 and `E2E_FRONTEND_PORT=31213`, then run `npx playwright test chat-recovery --project seeded --workers 1`
