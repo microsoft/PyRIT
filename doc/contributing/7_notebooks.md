@@ -26,6 +26,41 @@ providers. Notebook execution is a separate step that requires configured
 credentials. Keep the committed notebook outputs and JupyText metadata when
 editing documentation.
 
+Keep existing notebook cell IDs. Our `nbstripout` hook preserves them with
+`--keep-id`, rather than renumbering each notebook from zero. Use explicit,
+project-unique MyST labels for stable cross-document references. Legacy numeric
+IDs can cause duplicate-reference warnings in MyST's project-wide index; do not
+renumber notebooks or change their outputs just to silence these warnings.
+
+### Jupytext metadata warnings
+
+The locked Jupyter Book 2.1.7 reader can report `'jupytext' extra keys ignored:
+cell_metadata_filter, main_language`. These are valid Jupytext fields, not invalid
+notebook metadata. MyST's [Jupytext frontmatter validator](https://github.com/jupyter-book/mystmd/blob/main/packages/myst-frontmatter/src/jupytext/validators.ts)
+only accepts `formats` and `text_representation`; it ignores the other fields in
+its rendering model, without changing the source notebook.
+
+Keep the metadata used by the notebook tools:
+
+- `[tool.jupytext].formats = "ipynb,py:percent"` in `pyproject.toml` configures
+  repository-wide pairing. A notebook's `jupytext.formats`, when present, specifies
+  its own pairing; `text_representation` identifies the percent-file format.
+- `cell_metadata_filter` controls which cell metadata is written to the percent
+  file. For example, `-all` excludes cell metadata, while `class,-all` retains
+  `class`. Jupytext restores filtered metadata and saved outputs from the
+  `.ipynb` when synchronizing the pair.
+- `main_language` identifies the notebook's primary language, including how
+  non-primary language cells are interpreted. Jupytext generates it when reading
+  percent files without a stored kernel, so deleting it is not a lasting fix.
+
+These warnings describe an upstream reader limitation. Do not remove Jupytext
+sections, filters, pairing information, cell metadata, or outputs to silence
+them, and do not broadly suppress frontmatter validation. The focused Jupytext
+contract tests in `tests/unit/build_scripts/test_docs_build_contract.py` cover
+pair resolution, metadata filtering, language handling, and output restoration.
+
+### HTML build
+
 Use this checkout's uv environment and locked development dependencies:
 
 ```powershell

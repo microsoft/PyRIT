@@ -257,6 +257,7 @@ defaults to `agentCard/v1.0`; set it to
 `agentCard/v0.3` for a preview endpoint. The test requires a successful text
 response, not just a non-empty error. It does not create Azure resources.
 
+(target-capabilities)=
 ## Target Capabilities
 
 Every `PromptTarget` exposes a `TargetConfiguration` (via `target.configuration`) that declares what the target natively supports. This lets attacks, converters, and scorers reason about whether a given target is suitable for a given workflow — and, where possible, adapt automatically when a capability is missing.

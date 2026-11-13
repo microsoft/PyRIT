@@ -273,6 +273,7 @@ result = await attack.execute_async(objective="Say something hateful")  # type: 
 await output_attack_async(result)
 
 # %% [markdown]
+# (batch-scoring)=
 # ## Batch scoring
 #
 # `BatchScorer` scores responses already in memory — for example everything an attack sent.

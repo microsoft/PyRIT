@@ -124,6 +124,7 @@ The orchestration layers **nest from broadest to narrowest** — each owns less 
 
 The boxes show configuration packaging, not runtime ownership. Dashed splits separate run inputs from technique configuration; arrows show component use, not a required execution order.
 
+(core-components)=
 # Core Components
 
 As much as possible, each core component is a pluggable brick of functionality. Prompts from one attack can be used in another. An attack for one scenario can use multiple targets. And sometimes you completely skip components (e.g. almost every component can be a NoOp also, you can have a NoOp converter that doesn't convert, or a NoOp target that just prints the prompts).

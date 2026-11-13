@@ -25,9 +25,9 @@ class ScaleDescription(BaseModel):
     """
     A single scale description entry from a harm definition.
 
-    Args:
-        score_value: The score value (e.g., "1", "2", etc.)
-        description: The description for this score level.
+    Attributes:
+        score_value (str): The score value (e.g., "1", "2", etc.)
+        description (str): The description for this score level.
 
     """
 
@@ -43,11 +43,11 @@ class HarmDefinition(BaseModel):
     which includes the version, category name, and scale descriptions that define
     how to score content for this harm category.
 
-    Args:
-        version: The version of the harm definition (e.g., "1.0").
-        category: The harm category name (e.g., "violence", "hate_speech").
-        scale_descriptions: List of scale descriptions defining score levels.
-        source_path: The path to the YAML file this was loaded from.
+    Attributes:
+        version (str): The version of the harm definition (e.g., "1.0").
+        category (str): The harm category name (e.g., "violence", "hate_speech").
+        scale_descriptions (list[ScaleDescription]): List of scale descriptions defining score levels.
+        source_path (str | None): The path to the YAML file this was loaded from.
 
     """
 

@@ -214,6 +214,7 @@ custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
 
 # %% [markdown]
+# (reporting-every-conversation)=
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use

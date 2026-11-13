@@ -180,15 +180,39 @@ def test_only_main_push_or_dispatch_can_publish_with_write_permissions() -> None
         assert jobs[name].get("permissions", workflow["permissions"]) == {"contents": "read"}
         assert "environment" not in jobs[name]
     deploy = jobs["deploy"]
-    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert deploy["permissions"] == {"actions": "read", "contents": "read", "pages": "write", "id-token": "write"}
     assert deploy["needs"] == "compose"
     assert " ".join(deploy["if"].split()) == PUBLISH_IF
     upload = _step(job="compose", name="Upload Pages artifact")
     assert " ".join(upload["if"].split()) == PUBLISH_IF
     assert jobs["compose"]["needs"] == ["versions", "build"]
     assert jobs["compose"]["if"] == "needs.versions.outputs.compose == 'true'"
-    assert len(deploy["steps"]) == 1
-    assert deploy["steps"][0]["uses"].startswith("actions/deploy-pages@")
+    assert _step(job="deploy", name="Deploy to GitHub Pages")["uses"].startswith("actions/deploy-pages@")
+
+
+def test_pages_recovery_reuses_composed_artifact_and_fails_closed() -> None:
+    steps = _workflow()["jobs"]["deploy"]["steps"]
+    check = _step(job="deploy", name="Check deployment recovery safety")
+    deploy = _step(job="deploy", name="Deploy to GitHub Pages")
+    diagnose = _step(job="deploy", name="Diagnose failed Pages deployment")
+    assert _checkout("deploy")["with"] == {
+        "ref": "${{ github.sha }}",
+        "persist-credentials": "false",
+        "sparse-checkout": "build_scripts",
+    }
+    assert steps.index(check) < steps.index(deploy) < steps.index(diagnose)
+    assert "if" not in check
+    assert diagnose["if"] == "failure() && steps.deployment.outcome == 'failure'"
+    for step, mode in [(check, "preflight"), (diagnose, "diagnose")]:
+        assert step["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+        assert step["with"]["retries"] == "0"
+        assert f"mode: '{mode}'" in step["with"]["script"]
+        assert "docs_deployment.cjs" in step["with"]["script"]
+        assert "Number(process.env.GITHUB_RUN_ATTEMPT)" in step["with"]["script"]
+    assert "with" not in deploy
+    assert _step(job="compose", name="Upload Pages artifact")["with"] == {"path": "dist", "retention-days": "7"}
+    assert all("download-artifact" not in step.get("uses", "") for step in steps)
+    assert all("continue-on-error" not in step for step in steps)
 
 
 def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None:
