@@ -93,7 +93,9 @@ recorded as the one who saved it. A saved target can't hold a key: it signs in w
 (`"auth_mode": "identity"`, through this server's Azure identity), needs no key, or names a key an administrator listed
 in `server_credentials` (`"server_credential": "<name>"` with `"auth_mode": "api_key"`). That key is read from this
 server's environment, only sent to the credential's endpoint, and never saved. An OpenAI target's empty `headers` is
-set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`.
+set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save itself is
+the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a target the
+same way; the API adds the signed-in user, the configured source, and the responses below.
 
 | A request with `persist` that... | Gets |
 |---|---|

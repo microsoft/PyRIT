@@ -57,15 +57,11 @@ from pyrit.backend.services import AttackService
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
-from pyrit.backend.services.target_service import (
-    SavedTargetConflictError,
-    SavedTargetRefusedError,
-    SavedTargetStorageError,
-)
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import SavedEntryOwner, ServerCredential, TargetInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1403,8 +1399,8 @@ class TestTargetRoutes:
     @pytest.mark.parametrize(
         ("error", "status_code"),
         [
-            (SavedTargetConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
-            (SavedTargetStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
+            (SavedEntryConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
+            (SavedEntryStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
         ],
     )
     def test_create_target_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
@@ -1421,7 +1417,7 @@ class TestTargetRoutes:
     def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
         self, client: TestClient
     ) -> None:
-        refusal = SavedTargetRefusedError(
+        refusal = NotSaveableError(
             "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
         )
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
