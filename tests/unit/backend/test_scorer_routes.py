@@ -15,12 +15,11 @@ from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import PaginationInfo, ScorerListResponse
 from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_IDENTIFIER_LENGTH, MAX_ITEMS
-from pyrit.backend.services.saved_entries import SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation, TargetIdentifier
 from pyrit.models.catalog import SavedEntryOwner
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import ScorerRegistry, TargetRegistry
+from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError, ScorerRegistry, TargetRegistry
 from pyrit.score import Scorer
 
 

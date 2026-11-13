@@ -20,13 +20,7 @@ from pyrit.backend.services import ConverterService, get_converter_service, get_
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.saved_entries import (
-    NotSaveableError,
-    SavedEntryConflictError,
-    SavedEntryReplacement,
-    hold_saved_entry_lock_async,
-    save_then_register_async,
-)
+from pyrit.backend.services.saved_entries import hold_saved_entry_lock_async, save_then_register_locked_async
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
@@ -47,7 +41,15 @@ from pyrit.models.catalog import (
     SavedEntryOwner,
 )
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryReplacement,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_OWNER_METADATA_KEY,
     RegistryNameTakenError,
@@ -283,12 +285,12 @@ async def test_replacing_a_saved_entry_needs_the_lock_an_edit_holds(tmp_path: Pa
     register = AsyncMock()
 
     with pytest.raises(RuntimeError):
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=CONVERTERS,
             name="cat_replace",
             recipe=recipe,
-            recipes_source=str(tmp_path),
             register=register,
+            source=str(tmp_path),
             replacing=SavedEntryReplacement(version="v1", previous=recipe, running=True),
         )
 

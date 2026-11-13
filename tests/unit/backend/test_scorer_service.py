@@ -16,7 +16,6 @@ import pytest
 
 from pyrit.backend.models import CreateScorerRequest
 from pyrit.backend.services.chat_scoring_service import ChatScoringService
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
@@ -39,7 +38,14 @@ from pyrit.models.catalog import (
 )
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import TextTarget
-from pyrit.registry import DefaultInstanceRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    DefaultInstanceRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryStorageError,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SAVED_ENTRY_OWNER_METADATA_KEY,

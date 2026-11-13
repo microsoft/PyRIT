@@ -16,7 +16,6 @@ from pyrit.backend.models.saved_entries import SavedEntryResponse, SavedEntryUpd
 from pyrit.backend.routes import converters, saved_entries
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
     SavedEntryForbiddenError,
@@ -27,6 +26,7 @@ from pyrit.backend.services.saved_entry_service import (
     SavedEntryVersionRequiredError,
 )
 from pyrit.models.catalog import RegistryRecipeKind
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 _ENTRY = SavedEntryResponse(
     kind=RegistryRecipeKind.CONVERTERS,

@@ -16,7 +16,6 @@ from pyrit.backend.middleware.auth import current_user_oid, get_authentication_p
 from pyrit.backend.models import ProblemDetail
 from pyrit.backend.models.saved_entries import SavedEntryResponse, SavedEntryUpdateResponse, UpdateSavedEntryRequest
 from pyrit.backend.routes.common import NOT_SAVEABLE_PROBLEM_TYPE, not_saveable_response
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
     SavedEntryForbiddenError,
@@ -28,6 +27,7 @@ from pyrit.backend.services.saved_entry_service import (
 )
 from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog import RegistryRecipeKind
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/saved-entries", tags=["saved-entries"])
 

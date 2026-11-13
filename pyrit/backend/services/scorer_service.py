@@ -15,12 +15,7 @@ from pyrit.backend.models import (
     ScorerTypeResponse,
 )
 from pyrit.backend.models.scorers import UnregisteredScorer
-from pyrit.backend.services.saved_entries import (
-    SavedEntryConflictError,
-    SavedEntryReplacement,
-    prepare_saved_params_async,
-    save_then_register_async,
-)
+from pyrit.backend.services.saved_entries import save_then_register_locked_async
 from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
 from pyrit.models.catalog import (
     ComponentRecipe,
@@ -31,7 +26,7 @@ from pyrit.models.catalog import (
 )
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
-from pyrit.registry import ScorerRegistry
+from pyrit.registry import SavedEntryConflictError, SavedEntryReplacement, ScorerRegistry, prepare_saved_params_async
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -332,13 +327,13 @@ class ScorerService:
             )
 
         scorer, instance = await asyncio.to_thread(build)
-        await save_then_register_async(
+        await save_then_register_locked_async(
             kind=RegistryRecipeKind.SCORERS,
             name=name,
             recipe=ComponentRecipe(
                 class_module=scorer_cls.__module__, class_name=request.type, params=params, owner=owner
             ),
-            recipes_source=recipes_source,
+            source=recipes_source,
             register=lambda metadata: self._registry.instances.register(scorer, name=name, metadata=metadata),
             replacing=replacing,
         )

@@ -30,12 +30,7 @@ from pyrit.backend.models.saved_entries import (
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services import get_converter_service, get_target_service
 from pyrit.backend.services.component_lifecycle import release_component_async
-from pyrit.backend.services.saved_entries import (
-    REGISTRIES_BY_KIND,
-    SavedEntryReplacement,
-    SavedEntryStorageError,
-    hold_saved_entry_lock_async,
-)
+from pyrit.backend.services.saved_entries import REGISTRIES_BY_KIND, hold_saved_entry_lock_async
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.models import ComponentIdentifier, Identifiable
@@ -49,6 +44,7 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
+from pyrit.registry import SavedEntryReplacement, SavedEntryStorageError
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
