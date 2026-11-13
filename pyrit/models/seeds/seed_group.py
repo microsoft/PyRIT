@@ -10,6 +10,7 @@ configurations together with consistent group IDs and roles.
 
 from __future__ import annotations
 
+import copy
 import logging
 import uuid
 from collections import defaultdict
@@ -43,46 +44,6 @@ SeedUnion = Annotated[
 # dataset/group-level defaults (e.g. ``data_type: image_path``) don't bleed in and trip
 # ``extra="forbid"`` on the leaf class. Shared with SeedDataset, which imports it from here.
 PROMPT_ONLY_SEED_KEYS = ("data_type", "role", "sequence", "parameters")
-
-
-def _copy_containers(value: Any, *, memo: dict[int, Any] | None = None) -> Any:
-    """
-    Copy nested dicts, lists and tuples so derived messages do not share containers with seeds.
-
-    Tuples are rebuilt on every call and are not memoized: they are immutable, so
-    sharing is harmless on their own, and a tuple cannot be part of a cycle without a
-    list or dict in the loop, which is memoized before recursion and so terminates.
-
-    Any other value is returned as-is, so live objects (clients, locks, handles) are
-    neither duplicated nor required to be deep-copyable.
-
-    Args:
-        value: The metadata value to copy.
-        memo: Previously copied dicts and lists, keyed by their identity.
-
-    Returns:
-        A copy of ``value`` with every nested dict, list and tuple rebuilt.
-
-    """
-    if memo is None:
-        memo = {}
-    if isinstance(value, tuple):
-        return tuple(_copy_containers(item, memo=memo) for item in value)
-    if isinstance(value, (dict, list)):
-        identity = id(value)
-        if identity in memo:
-            return memo[identity]
-        copied: dict[Any, Any] | list[Any]
-        if isinstance(value, dict):
-            copied = {}
-            memo[identity] = copied
-            copied.update((key, _copy_containers(item, memo=memo)) for key, item in value.items())
-        else:
-            copied = []
-            memo[identity] = copied
-            copied.extend(_copy_containers(item, memo=memo) for item in value)
-        return copied
-    return value
 
 
 class SeedGroup(BaseModel):
@@ -500,7 +461,7 @@ class SeedGroup(BaseModel):
                     original_value_data_type=prompt.data_type or "text",
                     conversation_id=str(prompt.prompt_group_id),
                     sequence=sequence,
-                    prompt_metadata=_copy_containers(prompt.metadata or {}),
+                    prompt_metadata=copy.deepcopy(prompt.metadata or {}),
                 )
                 if is_history or piece.api_role in {"assistant", "tool"}:
                     piece.set_simulated_role()

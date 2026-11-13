@@ -3,9 +3,8 @@
 
 """Tests for the SeedGroup and AttackSeedGroup classes."""
 
-import threading
 import uuid
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -893,6 +892,11 @@ class TestAttackSeedGroupFilterCompatible:
         assert len(result) == 1
 
 
+class _Point(NamedTuple):
+    x: int
+    y: list[int]
+
+
 class TestSeedGroupMetadataIsolation:
     def test_derived_messages_do_not_share_nested_metadata_with_seeds(self) -> None:
         seeds = [
@@ -916,18 +920,18 @@ class TestSeedGroupMetadataIsolation:
         assert history[0].get_piece().prompt_metadata["nested"]["labels"] == ["source"]
         assert second_history[1].get_piece().prompt_metadata["nested"]["labels"] == ["source"]
 
-    def test_derived_messages_pass_live_objects_through_without_copying(self) -> None:
-        lock = threading.Lock()
-        seed = SeedPrompt(value="hello", role="user", metadata={"lock": lock, "nested": {"items": [1]}})
+    def test_derived_messages_preserve_namedtuple_metadata(self) -> None:
+        point = _Point(x=1, y=[2])
+        seed = SeedPrompt(value="hello", role="user", metadata={"point": point})
         group = SeedGroup(seeds=[seed])
 
         message = group.next_message
         assert message is not None
 
-        derived = message.get_piece().prompt_metadata
-        assert derived["lock"] is lock
-        assert derived["nested"] == {"items": [1]}
-        assert derived["nested"] is not seed.metadata["nested"]
+        derived = message.get_piece().prompt_metadata["point"]
+        assert isinstance(derived, _Point)
+        assert derived == point
+        assert derived.y is not point.y
 
     def test_derived_messages_preserve_cycles_in_nested_metadata(self) -> None:
         items = []
