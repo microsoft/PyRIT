@@ -23,6 +23,8 @@ from pyrit.scenario.core.scenario_target_defaults import validate_default_advers
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.converter import Converter
     from pyrit.memory import MemoryInterface
     from pyrit.models import DatasetExampleSelection, ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
@@ -30,7 +32,7 @@ if TYPE_CHECKING:
     from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, Scenario, ScenarioTechnique
+    from pyrit.scenario import DatasetAttackConfiguration, Scenario
 
 
 class ScenarioConfigurationResolver:
@@ -250,6 +252,7 @@ class ScenarioConfigurationResolver:
         max_concurrency: int | None = None,
         max_retries: int | None = None,
         memory_labels: dict[str, str] | None = None,
+        scenario_params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Resolve shared launch and estimate fields into scenario parameters.
@@ -258,7 +261,10 @@ class ScenarioConfigurationResolver:
         An exact selection is supplied as ``dataset_config`` by ``resolve_configuration_async``.
         Its examples must run unchanged under every selected technique that has a factory:
         the shared compatibility checks reject a technique that would skip an example or
-        run it only after objective-only adaptation.
+        run it only after objective-only adaptation. The factories checked are the ones
+        the scenario executes, resolved by the scenario itself with ``scenario_params``
+        and the resolved values, so a registered override or run-local edit is checked
+        rather than a catalog default it replaces.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -322,43 +328,11 @@ class ScenarioConfigurationResolver:
             resolved["local_technique_factory"] = TechniqueEditService.resolve(technique_override)
 
         if exact_selection is not None:
-            exact_selection.validate_technique_factories(
-                cls._selected_technique_factories(
-                    technique_class=introspection_instance._technique_class,
-                    scenario_techniques=resolved.get("scenario_techniques"),
-                    local_factory=resolved.get("local_technique_factory"),
-                )
-            )
+            # Configure the introspection instance with the parameters the run receives, then
+            # ask the scenario which factory it executes for each selected technique.
+            introspection_instance.set_params_from_args(args={**(scenario_params or {}), **resolved})
+            exact_selection.validate_technique_factories(introspection_instance._get_selected_technique_factories())
         return resolved
-
-    @staticmethod
-    def _selected_technique_factories(
-        *,
-        technique_class: type[ScenarioTechnique],
-        scenario_techniques: list[ScenarioTechnique] | None,
-        local_factory: AttackTechniqueFactory | None,
-    ) -> dict[str, AttackTechniqueFactory]:
-        """
-        Return the factories behind the run's concrete techniques.
-
-        The scenario's own catalog wins over the global registry, and a run-local edit
-        replaces its source technique. Techniques without a factory declare no shared
-        seed requirements and are left to the scenario.
-
-        Returns:
-            dict[str, AttackTechniqueFactory]: Factories keyed by concrete technique name.
-        """
-        from pyrit.registry import AttackTechniqueRegistry
-
-        selected = technique_class.resolve(scenario_techniques, default=technique_class.default())
-        catalog = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories())
-        catalog.update(getattr(technique_class, "_factory_sources", {}))
-        factories: dict[str, AttackTechniqueFactory] = {}
-        for technique in selected:
-            factory = local_factory if local_factory is not None else catalog.get(technique.value)
-            if factory is not None:
-                factories[technique.value] = factory
-        return factories
 
     @classmethod
     def resolve_techniques_and_converters(
@@ -410,6 +384,7 @@ class ScenarioConfigurationResolver:
         memory_labels: dict[str, str] | None = None,
         memory: MemoryInterface | None = None,
         reject_exact_selection: bool = False,
+        scenario_params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Resolve launch and estimate fields, including an exact example selection.
@@ -468,4 +443,5 @@ class ScenarioConfigurationResolver:
             max_concurrency=max_concurrency,
             max_retries=max_retries,
             memory_labels=memory_labels,
+            scenario_params=scenario_params,
         )

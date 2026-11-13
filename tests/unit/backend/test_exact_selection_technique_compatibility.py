@@ -18,14 +18,20 @@ from pyrit.models import (
     DatasetExampleSelection,
     DatasetExampleSelectionError,
     Seed,
+    SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
     TargetIdentifier,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
-from pyrit.scenario import IncompatibleTechniquePolicy
-from pyrit.scenario.core.technique_requirements import filter_seed_groups, prepare_seed_group
+from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy
+from pyrit.scenario.core.technique_requirements import (
+    TechniqueRequirements,
+    filter_seed_groups,
+    prepare_seed_group,
+)
+from pyrit.scenario.scenarios.adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt import RapidResponse
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 from pyrit.score import TrueFalseScorer
@@ -174,3 +180,64 @@ async def test_default_techniques_are_checked_when_none_are_selected(sqlite_inst
             memory=sqlite_instance,
         )
     assert caught.value.example_id == group
+
+
+def _objective_only_crescendo() -> AttackTechniqueFactory:
+    """A registered ``crescendo`` override that, unlike the catalog default, accepts only an objective."""
+    catalog = {factory.name: factory for factory in build_technique_factories()}["crescendo"]
+    return AttackTechniqueFactory(
+        name="crescendo",
+        attack_class=catalog.attack_class,
+        technique_tags=list(catalog.technique_tags),
+        requirements=TechniqueRequirements(
+            objective_target=catalog.requirements.objective_target,
+            seed_group=SeedGroupRequirements(objective_only=True),
+        ),
+    )
+
+
+@pytest.fixture
+def registered_crescendo_override() -> Iterator[AttackTechniqueFactory]:
+    """Register the catalog with ``crescendo`` replaced by an objective-only override."""
+    override = _objective_only_crescendo()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [override if factory.name == "crescendo" else factory for factory in build_technique_factories()]
+    )
+    TextAdaptive._cached_technique_class = None
+    with patch.object(TextAdaptive, "_get_default_objective_scorer", return_value=MagicMock(spec=TrueFalseScorer)):
+        yield override
+    TextAdaptive._cached_technique_class = None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_exact_selection_checks_the_registered_override_text_adaptive_runs(
+    sqlite_instance: MemoryInterface, registered_crescendo_override: AttackTechniqueFactory
+) -> None:
+    """TextAdaptive runs a registered factory over its catalog default, so the check must use it too."""
+    group, lone = await _conversation_and_objective(sqlite_instance)
+    assert TextAdaptive()._get_attack_technique_factories()["crescendo"] is registered_crescendo_override
+
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="adaptive.text",
+            scenario_class=TextAdaptive,
+            techniques=["crescendo"],
+            example_selection=await _selection(sqlite_instance, example_ids=[group, lone]),
+            include_baseline=False,
+            memory=sqlite_instance,
+        )
+    assert caught.value.code == "unsupported"
+    assert caught.value.example_id == group
+    assert "crescendo" in str(caught.value)
+
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="adaptive.text",
+        scenario_class=TextAdaptive,
+        techniques=["crescendo"],
+        example_selection=await _selection(sqlite_instance, example_ids=[lone]),
+        include_baseline=False,
+        memory=sqlite_instance,
+    )
+    groups = await resolved["dataset_config"].get_attack_seed_groups_async()
+    assert [seed_group.objective.value for seed_group in groups] == ["separate goal"]

@@ -1038,6 +1038,7 @@ class ScenarioRunService:
                 if "max_retries" in declared_names or "max_retries" in request.model_fields_set
                 else None,
                 memory_labels=request.labels,
+                scenario_params=request.scenario_params,
             )
             init_kwargs["operation_id"] = request.operation_id
             metadata = dict(

@@ -1213,6 +1213,27 @@ class Scenario(ABC):
             factories[local_factory.name] = local_factory
         return factories
 
+    def _get_selected_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+        """
+        Return the factory this scenario runs for each selected concrete technique.
+
+        Resolves the selection from ``params`` with ``_resolve_scenario_techniques`` and
+        looks each technique up in ``_get_readiness_factories``, the same view readiness
+        and execution use. A scenario's own precedence therefore applies, for example
+        registered factories over catalog defaults in ``AdaptiveScenario``, scenario-local
+        factories, and a run-local edit. Techniques without a factory are omitted.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Factories keyed by technique name, in selection order.
+        """
+        factories = self._get_readiness_factories()
+        selected = self._resolve_scenario_techniques(scenario_techniques=self.params.get("scenario_techniques"))
+        return {
+            technique.value: factory
+            for technique in selected
+            if (factory := factories.get(technique.value)) is not None
+        }
+
     @staticmethod
     def _get_target_requirements(factory: "AttackTechniqueFactory") -> "TechniqueRequirements":
         """
