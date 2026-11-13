@@ -171,6 +171,16 @@ async def test_known_document_layouts_and_base64_identities_parse_the_same_async
     assert actual.spans[0].status is TraceSpanStatus.OK
 
 
+@pytest.mark.parametrize("parent", ["0" * 16, base64.b64encode(bytes(8)).decode()])
+async def test_an_all_zero_parent_is_a_root_span_not_an_unreadable_trace_async(parent: str) -> None:
+    client, _ = _client(_serve({_TRACE: _document(_otlp_span(parentSpanId=parent))}))
+
+    result = await client.get_spans_async(query=_query())
+
+    assert len(result.spans) == 1
+    assert result.spans[0].parent_span_id is None
+
+
 async def test_unset_end_time_is_an_unfinished_span_async() -> None:
     client, _ = _client(_serve({_TRACE: _document(_otlp_span(end="0"))}))
 

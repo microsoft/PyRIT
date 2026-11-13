@@ -227,6 +227,11 @@ def _parse_span(raw: Any) -> TraceSpan:
     if not isinstance(raw, dict):
         raise TypeError("A span must be a JSON object.")
     parent = raw.get("parentSpanId") or None
+    if parent is not None:
+        parent = _hex_id(parent, size=8)
+        # W3C and OTel treat an all-zero identity as absent; some converters emit it for root spans.
+        if int(parent, 16) == 0:
+            parent = None
     start_nanos = _nanos(raw.get("startTimeUnixNano"))
     end_nanos = _nanos(raw.get("endTimeUnixNano", 0))
     # Compare in nanoseconds: truncating both to microseconds can hide an end just before the start.
@@ -244,7 +249,7 @@ def _parse_span(raw: Any) -> TraceSpan:
     return TraceSpan(
         trace_id=_hex_id(raw.get("traceId"), size=16),
         span_id=_hex_id(raw.get("spanId"), size=8),
-        parent_span_id=None if parent is None else _hex_id(parent, size=8),
+        parent_span_id=parent,
         start_time=_timestamp(start_nanos),
         end_time=_timestamp(end_nanos) if end_nanos else None,
         attributes=_key_values(attributes),
