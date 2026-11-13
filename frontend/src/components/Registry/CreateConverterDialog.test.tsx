@@ -166,6 +166,7 @@ describe('CreateConverterDialog', () => {
     renderDialog({ editing: { converter }, onTemporary })
     const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
     expect(offset).toHaveValue('1')
+    expect(screen.getByText('Only changed fields apply to this stage, not the registered converter.')).toBeInTheDocument()
     expect(screen.queryByLabelText(/registry name/i)).not.toBeInTheDocument()
     await user.clear(offset)
     await user.type(offset, '3')
@@ -198,7 +199,10 @@ describe('CreateConverterDialog', () => {
 
     const voice = await screen.findByRole('textbox', { name: /synthesis_voice_name/i })
     expect(screen.queryByRole('textbox', { name: /azure_speech_region/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/connection settings come from the source converter/i)).toBeInTheDocument()
+    expect(screen.getByText(
+      'Only changed fields apply to this stage, not the registered converter. '
+      + 'Connection settings stay with the source converter.',
+    )).toBeInTheDocument()
     await user.clear(voice)
     await user.type(voice, 'en-US-JennyNeural')
     await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
@@ -252,7 +256,7 @@ describe('CreateConverterDialog', () => {
     await selectConverterType('AzureSpeechTextToAudioConverter')
 
     expect(await screen.findByRole('textbox', { name: /azure_speech_region/i })).toBeInTheDocument()
-    expect(screen.queryByText(/connection settings come from the source converter/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/connection settings stay with the source converter/i)).not.toBeInTheDocument()
   })
 
   it('locks scalar inputs while Apply Settings is building so a newer edit cannot be lost', async () => {
