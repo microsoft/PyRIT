@@ -32,6 +32,10 @@ if TYPE_CHECKING:
         ToolsCalledInOrder,
         ViolatesAssertPolicy,
     )
+    from pyrit.models.score.cyberseceval_mitre_verdict import (
+        CyberSecEvalMitreVerdict,
+        InvalidCyberSecEvalMitreVerdictError,
+    )
     from pyrit.models.score.expectation import (
         ScoringExpectation,
         scoring_expectation_fingerprint,
@@ -115,6 +119,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "InvalidFloatFeedbackError": "pyrit.models.score.float_feedback",
     "InvalidStrongRejectAnswersError": "pyrit.models.score.strongreject_answers",
     "StrongRejectAnswers": "pyrit.models.score.strongreject_answers",
+    "CyberSecEvalMitreVerdict": "pyrit.models.score.cyberseceval_mitre_verdict",
+    "InvalidCyberSecEvalMitreVerdictError": "pyrit.models.score.cyberseceval_mitre_verdict",
     "ExecutionStepKind": "pyrit.models.score.trace",
     "ExecutionTraceObservationPayload": "pyrit.models.score.observation",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",

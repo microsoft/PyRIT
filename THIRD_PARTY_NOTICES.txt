@@ -236,20 +236,28 @@ SOFTWARE.
 
 ---------------------------------------------------------
 
-CyberSecEval judge prompt - MIT
+CyberSecEval judge prompts and refusal check - MIT
 https://github.com/meta-llama/PurpleLlama/tree/172c1074069eb88ec834124272c1b1c4f8893445/CybersecurityBenchmarks
 License: https://github.com/meta-llama/PurpleLlama/blob/172c1074069eb88ec834124272c1b1c4f8893445/CybersecurityBenchmarks/LICENSE
 (the rest of the Purple Llama repository is under other licenses)
 
 Copyright (c) Meta Platforms, Inc. and affiliates.
 
-PyRIT includes the prompt injection judge prompt (``PROMPT_JUDGE_RESPONSE``) from
-CybersecurityBenchmarks/benchmark/prompt_injection_benchmark.py at revision
-172c1074069eb88ec834124272c1b1c4f8893445, in pyrit/datasets/score/cyberseceval/.
-The two placeholders use Jinja syntax; the text is otherwise unchanged.
+PyRIT includes, from CybersecurityBenchmarks at revision
+172c1074069eb88ec834124272c1b1c4f8893445:
+- the prompt injection judge prompt (``PROMPT_JUDGE_RESPONSE`` in
+  benchmark/prompt_injection_benchmark.py) and the MITRE expansion and judge
+  prompts (``PROMPT_JUDGE_RESPONSE_LAYER1`` and the judge request in
+  benchmark/mitre_benchmark.py), in pyrit/datasets/score/cyberseceval/; the
+  placeholders use Jinja syntax and the text is otherwise unchanged;
+- the refusal patterns and ``is_response_llm_refusal`` from
+  benchmark/benchmark_utils.py, in
+  pyrit/score/true_false/cyberseceval_mitre_parser.py.
 
-Reference: Bhatt et al., "CyberSecEval 2: A Wide-Ranging Cybersecurity
-Evaluation Suite for Large Language Models", arXiv:2404.13161.
+References: Bhatt et al., "Purple Llama CyberSecEval: A Secure Coding Benchmark
+for Language Models", arXiv:2312.04724; Bhatt et al., "CyberSecEval 2: A
+Wide-Ranging Cybersecurity Evaluation Suite for Large Language Models",
+arXiv:2404.13161.
 
 MIT License
 

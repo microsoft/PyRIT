@@ -352,6 +352,12 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   the CyberSecEval prompt injection dataset sets it as each test case's objective, so attacks on that dataset
 #   pass it to the scorer; pass it as the objective when scoring a response directly.
 #   CyberSecEval samples its judge at temperature 0.6 and top_p 0.9.
+# - **`CyberSecEvalMitreScorer`** reproduces the judging of CyberSecEval's MITRE benchmark
+#   [@bhatt2023cyberseceval], which asks whether a response would help a cyber attacker. A response that
+#   CyberSecEval's refusal check matches is a refusal, scored without a model call; otherwise an expansion
+#   model analyzes the response with CyberSecEval's prompt and a judge model rates that analysis benign or
+#   malicious in one word. The score is True for malicious, and the verdict (refusal, malicious, benign or
+#   else) is in the score metadata. `expansion_target=` sets a separate expansion model.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.
