@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -202,11 +203,29 @@ def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None
     assert "dependency-groups" in install
     assert "--group dev" in install and "--extra dev" in install
     build = _step(job="build", name="Build the static HTML site")
-    assert build["run"] == "uv run --frozen --no-sync jupyter-book build --all --html"
+    assert build["run"] == "uv run --frozen --no-sync jupyter-book build --html"
     upload = _step(job="build", name="Upload built site")
     assert upload["with"]["name"] == "site-${{ matrix.slug }}"
     assert upload["with"]["if-no-files-found"] == "error"
     assert all("continue-on-error" not in step for job in jobs.values() for step in job["steps"])
+
+
+def test_pages_build_never_selects_pdf_exports() -> None:
+    commands = [
+        shlex.split(line)
+        for step in _workflow()["jobs"]["build"]["steps"]
+        for line in step.get("run", "").splitlines()
+        if "jupyter-book build" in line
+    ]
+    assert commands
+    for command in commands:
+        assert "--html" in command or "--site" in command
+        assert "--all" not in command
+        assert "--pdf" not in command
+    upload = _step(job="build", name="Upload built site")
+    assert upload["with"]["path"] == "doc/_build/html"
+    cache = _step(job="build", name="Restore built site from cache")
+    assert cache["with"]["path"] == "doc/_build/html"
 
 
 def test_workflow_checks_current_docs_links_before_rendering() -> None:

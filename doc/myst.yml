@@ -7,10 +7,6 @@ project:
   github: microsoft/PyRIT
   bibliography:
     - references.bib
-  exports:
-    - format: pdf
-      template: plain_latex_book
-      output: exports/book.pdf
   # MyST copies these to the site root, preserving the videos directory.
   static_files:
     - assets/videos
@@ -20,14 +16,6 @@ project:
   # Rule IDs come from https://github.com/jupyter-book/mystmd
   # (packages/myst-common/src/ruleids.ts).
   error_rules:
-    # mystmd v2.x has no LaTeX renderer for the MyST layout directives we use
-    # extensively in the HTML site (grid, tabSet, details, mermaid). They
-    # render fine in HTML; PDF export emits "Unhandled LaTeX conversion for
-    # node of X" errors per node. Track upstream support and remove this
-    # suppression when those renderers land.
-    - rule: tex-renders
-      severity: ignore
-
     # External APIs that require auth — always return 401/403 from CI workers
     # and public link checkers. The URLs themselves are correct; they just
     # can't be verified without credentials. Every other broken URL in the

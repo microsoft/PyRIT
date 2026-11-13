@@ -35,12 +35,10 @@ def test_html_build_prepares_api_without_selecting_pdf() -> None:
     assert "build_scripts.gen_api_md" in api_commands[1]
 
 
-def test_pdf_targets_share_checked_export_and_all_builds_html_first() -> None:
-    pdf_dependencies, pdf_commands = _target("docs-build-pdf")
-    all_dependencies, all_commands = _target("docs-build-all")
-    assert pdf_dependencies == ["docs-api"]
-    assert all_dependencies == ["docs-build"]
-    assert pdf_commands == all_commands == ["uv run python -m build_scripts.build_docs_pdf"]
+def test_documentation_config_does_not_select_or_suppress_pdf_exports() -> None:
+    config = yaml.safe_load((REPO_ROOT / "doc" / "myst.yml").read_text(encoding="utf-8"))
+    assert all(export["format"] != "pdf" for export in config["project"].get("exports", []))
+    assert all(rule["rule"] != "tex-renders" for rule in config["project"]["error_rules"])
 
 
 @pytest.mark.parametrize(

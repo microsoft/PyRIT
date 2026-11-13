@@ -199,13 +199,13 @@ jobs:
 
       - name: Build the static HTML site
         if: steps.cache.outputs.cache-hit != 'true'
-        # --all builds frontmatter exports (PDF, per doc/myst.yml).
-        # --html is required to produce the static HTML site we deploy.
+        # Pages publishes HTML only. Avoid --all so historical release
+        # configurations cannot select PDF exports or require LaTeX.
         # NOT using --strict because older release branches have known
         # warnings (e.g. unresolved cross-refs) that aren't worth fixing
         # retroactively just to satisfy strict mode.
         working-directory: doc
-        run: uv run --frozen --no-sync jupyter-book build --all --html
+        run: uv run --frozen --no-sync jupyter-book build --html
 
       - name: Upload built site
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

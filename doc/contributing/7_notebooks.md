@@ -42,18 +42,19 @@ uv run --frozen --no-sync python -m build_scripts.gen_api_md
 uv run --frozen --no-sync python -m build_scripts.validate_docs
 ```
 
-For HTML only, run from `doc`:
+The documentation is built and published as HTML only. No PDF export or LaTeX
+toolchain is required. Run from `doc`:
 
 ```powershell
 Set-Location doc
 uv run --frozen --no-sync jupyter-book build --html --strict --check-links
 ```
 
-Do not add `--all` to an HTML-only build. It selects the PDF export declared in
-`myst.yml` too, even when `--html` is present. With the locked Jupyter Book 2
-version, `--strict` fails on errors and reports warnings separately; a successful
-strict build is not necessarily warning-free. Do not suppress errors to make a
-build pass.
+Use explicit `--html` rather than `--all`, which can also select exports declared
+in historical release configurations. With the locked Jupyter Book 2 version,
+`--strict` fails on errors and reports warnings separately; a successful strict
+build is not necessarily warning-free. Do not suppress errors to make a build
+pass.
 
 `--check-links` checks link destinations, including missing Python source files
 that otherwise remain ordinary hyperlinks. External URL checks require network
@@ -62,35 +63,6 @@ The docs workflow runs strict link checking for the `latest` slot, including PR
 validation, before rendering. Frozen release versions retain their existing build
 behavior.
 
-### PDF prerequisites and validation
-
-The `plain_latex_book` export requires `latexmk`, `xelatex`, and the template's
-LaTeX packages. Provision those tools separately before requesting a PDF build.
-For example, Ubuntu needs `latexmk`, `texlive-xetex`,
-`texlive-fonts-recommended`, and `texlive-plain-generic`. PDF image conversion can
-also require ImageMagick. HTML builds do not need this toolchain.
-
-After generating the API reference, run the checked PDF export from the
-repository root:
-
-```powershell
-uv run --frozen --no-sync python -m build_scripts.build_docs_pdf
-```
-
-The helper checks prerequisites before building, runs
-`jupyter-book build --site --pdf --strict --logs`, and requires a fresh, readable
-`doc\exports\book.pdf` with fresh native logs free of fatal LaTeX diagnostics.
-`--site` validates the book content in strict mode without building static HTML;
-the locked Jupyter Book version only applies strict error checking to site
-content, not to standalone exports.
-Jupyter Book can log an export failure without returning a nonzero exit, so its
-exit code alone is not sufficient PDF evidence. A stale PDF does not count as a
-successful new export. Inspect the PDF's chapters, images, citations, and layout
-as well; compilation does not prove that every interactive HTML element has a
-correct print representation.
-
 Where GNU Make is available, `make docs-build` prepares the API reference, builds
-strict HTML with link checking, and generates RSS. `make docs-build-pdf` prepares
-the API reference and runs the checked PDF export. `make docs-build-all` builds
-HTML first and then checks the PDF export. These local targets do not change the
-hosted multiversion publication workflow.
+strict HTML with link checking, and generates RSS. The hosted multiversion
+publication workflow builds, caches, and uploads only HTML for GitHub Pages.
