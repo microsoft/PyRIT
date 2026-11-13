@@ -256,6 +256,24 @@ def test_seed_prompt_keeps_template_whose_missing_parameter_decides_a_branch(tem
 
 
 @pytest.mark.parametrize(
+    ("template_value", "expected"),
+    [
+        ("Say {{ prompt | upper }}", "Say HELLO"),
+        ("{{ prompt | length }} characters", "5 characters"),
+        ("{{ prompt | replace('l', 'L') }}", "heLLo"),
+    ],
+)
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_trusted_template_keeps_filters_on_missing_parameters(
+    *, seed_class: type[SeedPrompt | SeedObjective], template_value: str, expected: str
+) -> None:
+    template = seed_class(value=template_value, data_type="text", is_jinja_template=True)
+
+    assert template.value == template_value
+    assert template.render_template_value(prompt="hello") == expected
+
+
+@pytest.mark.parametrize(
     ("conversation_context", "expected_tail"),
     [(None, ""), ("two turns", "Context: two turns")],
 )
