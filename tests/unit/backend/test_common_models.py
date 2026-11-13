@@ -462,13 +462,11 @@ def test_finding_requests_reject_values_over_limits(model: type[BaseModel], over
         model.model_validate({"title": "Finding", "severity": "moderate", **overrides})
 
 
-@pytest.mark.parametrize(
-    "remove_retired_keys",
-    [["k" * (MAX_IDENTIFIER_LENGTH + 1)], [f"key{i}" for i in range(MAX_ITEMS + 1)]],
-)
-def test_finding_update_request_rejects_retired_keys_over_limits(remove_retired_keys: list[str]) -> None:
+@pytest.mark.parametrize("field", ["keep_retired_keys", "remove_retired_keys"])
+@pytest.mark.parametrize("keys", [["k" * (MAX_IDENTIFIER_LENGTH + 1)], [f"key{i}" for i in range(MAX_ITEMS + 1)]])
+def test_finding_update_request_rejects_retired_keys_over_limits(field: str, keys: list[str]) -> None:
     with pytest.raises(ValidationError):
-        FindingUpdateRequest(title="Finding", severity="moderate", remove_retired_keys=remove_retired_keys)
+        FindingUpdateRequest.model_validate({"title": "Finding", "severity": "moderate", field: keys})
 
 
 def test_finding_update_request_accepts_values_at_limits() -> None:

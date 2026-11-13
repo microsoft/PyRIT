@@ -368,7 +368,8 @@ it('prefills edit fields and saves only editable values', async () => {
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
   await waitFor(() => { expect(screen.getByRole('heading', { name: edited.title })).toBeInTheDocument() })
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
-    title: edited.title, severity: 'critical', field_values: { description: 'Notes' }, remove_retired_keys: [],
+    title: edited.title, severity: 'critical', field_values: { description: 'Notes' },
+    keep_retired_keys: [], remove_retired_keys: [],
   })
 
   expect(operationsApi.createFinding).not.toHaveBeenCalled()
@@ -392,7 +393,8 @@ it('displays and preserves both custom classifications when editing a finding', 
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
-    title: FINDING.title, severity: 'Team severity', field_values: { harm_type: 'Team harm' }, remove_retired_keys: [],
+    title: FINDING.title, severity: 'Team severity', field_values: { harm_type: 'Team harm' },
+    keep_retired_keys: [], remove_retired_keys: [],
   })
 })
 
@@ -430,7 +432,7 @@ it('retains an edited draft on update failure and shows why the backend rejected
   expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue(`${FINDING.title} changed`)
   expect(within(dialog).getByRole('textbox', { name: 'Other Severity' })).toHaveValue('Critical')
   expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
-    title: `${FINDING.title} changed`, severity: 'Critical', field_values: {}, remove_retired_keys: [],
+    title: `${FINDING.title} changed`, severity: 'Critical', field_values: {}, keep_retired_keys: [], remove_retired_keys: [],
   })
 })
 
@@ -483,7 +485,7 @@ it('shows configured rows and retired values on a finding card', async () => {
   expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: 'Technique' })).toHaveValue('Other')
 })
 
-it('resends the kept retired values and lists the removed ones, and sends none for a new finding', async () => {
+it('lists the kept and removed retired values by key, and sends none for a new finding', async () => {
   const user = userEvent.setup()
   const legacy: FindingListItem = {
     ...FINDING, field_values: { harm_type: 'Malware', contoso_ticket: 'CONTOSO-42', retired_owner: 'Contoso' },
@@ -497,8 +499,8 @@ it('resends the kept retired values and lists the removed ones, and sends none f
   await user.click(within(await findRemovalConfirmation()).getByRole('button', { name: 'Remove' }))
   await user.click(await screen.findByRole('button', { name: 'Save finding' }))
   await waitFor(() => expect(operationsApi.updateFinding).toHaveBeenCalledWith('op-1', FINDING.id, {
-    title: FINDING.title, severity: 'informational', field_values: { harm_type: 'Malware', retired_owner: 'Contoso' },
-    remove_retired_keys: ['contoso_ticket'],
+    title: FINDING.title, severity: 'informational', field_values: { harm_type: 'Malware' },
+    keep_retired_keys: ['retired_owner'], remove_retired_keys: ['contoso_ticket'],
   }))
 
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

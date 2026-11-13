@@ -265,7 +265,7 @@ describe('FindingDialog', () => {
     }, ATTEMPT))
   })
 
-  it('edits resend kept retired values unchanged', async () => {
+  it('edits list kept retired values by key instead of resending them', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn().mockResolvedValue(undefined)
     renderDialog({ fields: CONTOSO_FINDING_FIELDS, editing: true, initialValues: CONTOSO_EDIT, onSave })
@@ -279,11 +279,12 @@ describe('FindingDialog', () => {
 
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_EDIT.field_values, remove_retired_keys: [],
+      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
+      keep_retired_keys: ['description'], remove_retired_keys: [],
     }, ATTEMPT))
   })
 
-  it('keeps the fields it opened with when the page reloads them, and resends a returned value unchanged', async () => {
+  it('keeps the fields it opened with when the page reloads them, and keeps a returned value by key', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn().mockResolvedValue(undefined)
     const props = { editing: true, initialValues: CONTOSO_EDIT, onSave, onClose: jest.fn() }
@@ -301,7 +302,8 @@ describe('FindingDialog', () => {
 
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_EDIT.field_values, remove_retired_keys: [],
+      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
+      keep_retired_keys: ['description'], remove_retired_keys: [],
     }, ATTEMPT))
   })
 
@@ -327,7 +329,7 @@ describe('FindingDialog', () => {
     await user.click(await screen.findByRole('button', { name: 'Save finding' }))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
       title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
-      remove_retired_keys: ['description'],
+      keep_retired_keys: [], remove_retired_keys: ['description'],
     }, ATTEMPT))
     // The backend rejects a key that is both sent and listed for removal.
     expect((onSave.mock.calls[0] as [FindingDraft])[0].field_values).not.toHaveProperty('description')
@@ -388,7 +390,12 @@ describe('FindingDialog', () => {
     await user.type(screen.getByRole('textbox', { name: 'Other Severity' }), 'Critical')
     await user.click(saveButton())
 
-    expect(await screen.findByText(detail)).toBeInTheDocument()
+    const banner = await screen.findByText(detail)
+    // A long field list can push Save below the fold, so the error sits after every input, by Save.
+    for (const input of [...screen.getAllByRole('textbox'), ...screen.getAllByRole('combobox')]) {
+      expect(input.compareDocumentPosition(banner)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    }
+    expect(banner.compareDocumentPosition(saveButton())).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(screen.getByRole('textbox', { name: 'Other Severity' })).toHaveValue('Critical')
     expect(saveButton()).toBeEnabled()
   })

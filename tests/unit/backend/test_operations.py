@@ -13,6 +13,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from pyrit.backend.main import app
+from pyrit.backend.models.common import MAX_ITEMS
 from pyrit.backend.models.operations import EvidenceAvailability, FindingEvidenceCreateRequest
 from pyrit.backend.services.operation_service import FindingNotFoundError, OperationNotFoundError, OperationService
 from pyrit.memory import AttackResultEntry, CentralMemory, PromptMemoryEntry, SQLiteMemory
@@ -496,11 +497,19 @@ async def test_update_removes_a_listed_retired_value_async(
     assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == {"steps": "1. Open"}
 
 
-async def test_update_keeps_a_current_value_that_a_stale_client_resends_async(
+@pytest.mark.parametrize(
+    "kept",
+    [
+        pytest.param({"field_values": {"steps": "1. Open", "description": "Old text"}}, id="resent value"),
+        pytest.param({"field_values": {"steps": "1. Open"}, "keep_retired_keys": ["description"]}, id="kept key"),
+    ],
+)
+async def test_update_keeps_a_value_that_a_stale_client_shows_as_retired_async(
     sqlite_instance: SQLiteMemory,
     retired_value_finding_async: Finding,
     contoso_finding_fields: FindingFields,
     compatibility_headers: dict[str, str],
+    kept: dict[str, object],
 ) -> None:
     finding = retired_value_finding_async
     # A live apply makes ``description`` current again, while the client still shows it as retired.
@@ -514,11 +523,33 @@ async def test_update_keeps_a_current_value_that_a_stale_client_resends_async(
     )
     response = TestClient(app, headers=compatibility_headers).put(
         f"/api/operations/{finding.operation_id}/findings/{finding.id}",
-        json={"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open", "description": "Old text"}},
+        json={"title": "Leak", "severity": "sev1", **kept},
     )
     assert response.status_code == 200
     stored = await read_finding_async(memory=sqlite_instance, finding=finding)
     assert stored.field_values == {"steps": "1. Open", "description": "Old text"}
+
+
+async def test_update_keeps_retired_values_by_key_beyond_the_value_limit_async(
+    sqlite_instance: SQLiteMemory, contoso_finding_fields: FindingFields, compatibility_headers: dict[str, str]
+) -> None:
+    retired = {f"retired_{index}": "Old text" for index in range(MAX_ITEMS)}
+    operation = await sqlite_instance.add_operation_async(Operation(name="Contoso"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="Leak", severity="sev1", field_values=retired)
+    )
+    response = TestClient(app, headers=compatibility_headers).put(
+        f"/api/operations/{operation.id}/findings/{finding.id}",
+        json={
+            "title": "Leak",
+            "severity": "sev1",
+            "field_values": {"steps": "1. Open"},
+            "keep_retired_keys": [*retired],
+        },
+    )
+    assert response.status_code == 200
+    stored = await read_finding_async(memory=sqlite_instance, finding=finding)
+    assert stored.field_values == {**retired, "steps": "1. Open"}
 
 
 async def test_update_keeps_an_unchanged_severity_that_is_no_longer_an_option_async(

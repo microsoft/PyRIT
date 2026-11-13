@@ -370,17 +370,25 @@ class FindingFields(BaseModel):
         )
 
     def apply_edit(
-        self, *, stored: FindingCreate, edit: FindingCreate, remove_retired_keys: Collection[str] = ()
+        self,
+        *,
+        stored: FindingCreate,
+        edit: FindingCreate,
+        keep_retired_keys: Collection[str] = (),
+        remove_retired_keys: Collection[str] = (),
     ) -> FindingCreate:
         """
         Build the finding that an edit saves, checked against these fields.
 
         A current field left out of the edit is cleared. Stored values of fields that are no longer configured
-        are kept unchanged, unless their keys are listed in ``remove_retired_keys``.
+        are kept unchanged, unless their keys are listed in ``remove_retired_keys``. A stored value whose key is
+        listed in ``keep_retired_keys`` is kept too, even if these fields use the key again.
 
         Args:
             stored (FindingCreate): The finding as saved.
             edit (FindingCreate): The edited title, severity and current field values.
+            keep_retired_keys (Collection[str]): Keys of the stored values the editor showed as retired.
+                Defaults to none.
             remove_retired_keys (Collection[str]): Keys of the stored retired values to delete. Defaults to none.
 
         Returns:
@@ -396,7 +404,11 @@ class FindingFields(BaseModel):
                 raise FindingValuesError(f"{key!r} is not a retired value of this finding.")
             if key in edit.field_values:
                 raise FindingValuesError(f"{key!r} can't be both sent and removed.")
-        kept = {key: value for key, value in retired.items() if key not in remove_retired_keys}
+        kept = {
+            key: value
+            for key, value in stored.field_values.items()
+            if (key in retired or key in keep_retired_keys) and key not in remove_retired_keys
+        }
         values = {**kept, **edit.field_values}
         self.check_values(
             severity=edit.severity,

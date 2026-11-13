@@ -22,8 +22,9 @@ export interface FindingSaveAttempt {
   attackResultId: string
 }
 
-/** The finding Save sends. An edit also resends its kept retired values unchanged, and lists the keys to delete. */
+/** The finding Save sends. An edit lists its retired values by key: those it keeps and those to delete. */
 export interface FindingDraft extends FindingCreate {
+  keep_retired_keys?: string[]
   remove_retired_keys?: string[]
 }
 
@@ -69,12 +70,6 @@ function openingState(
 function filledFinding(draft: FindingCreate): FindingCreate {
   const filled = Object.entries(draft.field_values).filter(([, value]: [string, string]) => value.trim() !== '')
   return { title: draft.title, severity: draft.severity, field_values: Object.fromEntries(filled) }
-}
-
-/** The retired values an edit keeps and resends unchanged: all but the removed ones, whose keys it never sends. */
-function keptValues(retired: RetiredValue[], removed: ReadonlySet<string>): Record<string, string> {
-  const kept = retired.filter(({ key }: RetiredValue) => !removed.has(key))
-  return Object.fromEntries(kept.map(({ key, value }: RetiredValue) => [key, value]))
 }
 
 function sameFinding(left: FindingCreate, right: FindingCreate): boolean {
@@ -136,12 +131,12 @@ export default function FindingDialog({
     setError('')
     setAttackResultIdError('')
     const trimmedAttackResultId = attackResultId.trim()
-    // The server clears a current field left out, and its fields may differ from those this dialog opened with.
+    // The server keeps a listed retired value even if a live apply has configured its field again.
     const filled = filledFinding(draft)
     const finding: FindingDraft = editing
       ? {
         ...filled,
-        field_values: { ...keptValues(opening.retired, removed), ...filled.field_values },
+        keep_retired_keys: opening.retired.map(({ key }: RetiredValue) => key).filter((key: string) => !removed.has(key)),
         remove_retired_keys: [...removed],
       }
       : filled
@@ -174,7 +169,6 @@ export default function FindingDialog({
         <DialogContent>
           <form className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
             {context ?? <Text>Record a human assessment. No attack is required.</Text>}
-            {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <Field label="Title" required>
               <Input className={styles.input} value={draft.title} disabled={saving} name="title" autoComplete="off"
                 onChange={(_, data) => { setDraft(value => ({ ...value, title: data.value })) }} />
@@ -203,6 +197,7 @@ export default function FindingDialog({
                 autoComplete="off"
                 onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />
             </Field>}
+            {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>
               <Button type="submit" appearance="primary" className={styles.button} disabledFocusable={saving}

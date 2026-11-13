@@ -201,8 +201,8 @@ async def update_operation_finding_async(
     Replace a finding's current field values in its operation.
 
     A current field left out is cleared. Values of fields that are no longer configured are kept and can't
-    change; list them in ``remove_retired_keys`` to delete them. Values that haven't changed may use options
-    that no longer exist.
+    change; list them in ``remove_retired_keys`` to delete them. A value listed in ``keep_retired_keys`` is kept
+    even if its field is configured again. Values that haven't changed may use options that no longer exist.
 
     Returns:
         Finding: The updated finding.

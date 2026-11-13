@@ -2559,8 +2559,12 @@ export interface FindingCreateRequest extends FindingCreate {
   attack_result_id?: string
 }
 
-/** A finding edit. Each key in `remove_retired_keys` drops that retired value from the stored finding. */
+/**
+ * A finding edit. A key in `keep_retired_keys` keeps that stored value, even if a live apply configured its field
+ * again, and a key in `remove_retired_keys` drops that retired value.
+ */
 export interface FindingUpdateRequest extends FindingCreate {
+  keep_retired_keys: string[]
   remove_retired_keys: string[]
 }
 

@@ -118,8 +118,13 @@ class FindingCreateRequest(_FindingRequestFields):
 
 
 class FindingUpdateRequest(_FindingRequestFields):
-    """A finding's new editable values, and any retired values to remove."""
+    """A finding's new editable values, and the retired values to keep or remove."""
 
+    keep_retired_keys: list[IdentifierStr] = Field(
+        default_factory=list,
+        max_length=MAX_ITEMS,
+        description="Keys of stored values to keep unchanged, even if the active fields use them again",
+    )
     remove_retired_keys: list[IdentifierStr] = Field(
         default_factory=list, max_length=MAX_ITEMS, description="Keys of the retired values to delete from the finding"
     )
