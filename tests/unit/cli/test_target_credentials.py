@@ -425,6 +425,82 @@ async def test_keep_fresh_resends_until_stopped_and_survives_failures(capsys: py
     assert "Stopped refreshing" in captured.out
 
 
+def _status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("PUT", "http://localhost:8000/api/targets/mine/credentials")
+    response = httpx.Response(status_code, request=request, json={"detail": "server detail"})
+    return httpx.HTTPStatusError(f"{status_code}: server detail", request=request, response=response)
+
+
+async def _keep_fresh_async(client: MagicMock, *, sleeps: AsyncMock) -> int:
+    with (
+        patch("pyrit.cli.pyrit_scan.asyncio.sleep", sleeps),
+        patch("pyrit.cli._target_credentials.read_target_credential_async", AsyncMock(return_value=_SECRET)),
+    ):
+        return await pyrit_scan._dispatch_with_client_async(
+            client=client, parsed_args=_parse("set-target-credential", "mine", "--from-ant", "--keep-fresh")
+        )
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404, 422])
+async def test_keep_fresh_stops_on_a_permanent_error(capsys: pytest.CaptureFixture[str], status_code: int) -> None:
+    client = _cli_client(target=_target(name="mine", personal=True))
+    client.set_target_credential_async = AsyncMock(side_effect=[None, _status_error(status_code)])
+    sleeps = AsyncMock(side_effect=[None, None, asyncio.CancelledError])
+
+    exit_code = await _keep_fresh_async(client, sleeps=sleeps)
+
+    assert exit_code == 1
+    assert client.set_target_credential_async.await_count == 2
+    assert sleeps.await_count == 1
+    captured = capsys.readouterr()
+    assert "server detail" in captured.err
+    assert ("add-personal-target mine" in captured.err) is (status_code == 404)
+    assert _SECRET not in captured.out + captured.err
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+async def test_keep_fresh_retries_a_temporary_error(capsys: pytest.CaptureFixture[str], status_code: int) -> None:
+    client = _cli_client(target=_target(name="mine", personal=True))
+    client.set_target_credential_async = AsyncMock(side_effect=[None, _status_error(status_code), None])
+    sleeps = AsyncMock(side_effect=[None, None, asyncio.CancelledError])
+
+    exit_code = await _keep_fresh_async(client, sleeps=sleeps)
+
+    assert exit_code == 0
+    assert client.set_target_credential_async.await_count == 3
+    captured = capsys.readouterr()
+    assert "Warning: could not refresh" in captured.err
+    assert "Refreshed your credential" in captured.out
+
+
+@pytest.mark.parametrize(
+    "current",
+    [
+        None,
+        TargetInstance(
+            target_registry_name="mine",
+            identifier=TargetIdentifier(
+                class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", endpoint="https://other.test/v1"
+            ),
+            capabilities=TargetCapabilities(),
+            requires_caller_credential=True,
+        ),
+    ],
+)
+async def test_keep_fresh_stops_when_the_target_is_gone_or_replaced(
+    capsys: pytest.CaptureFixture[str], current: TargetInstance | None
+) -> None:
+    client = _cli_client(target=_target(name="mine", personal=True))
+    client.get_target_async = AsyncMock(side_effect=[_target(name="mine", personal=True), current])
+    sleeps = AsyncMock(side_effect=[None, asyncio.CancelledError])
+
+    exit_code = await _keep_fresh_async(client, sleeps=sleeps)
+
+    assert exit_code == 1
+    assert client.set_target_credential_async.await_count == 1
+    assert "no longer the target you set your credential for" in capsys.readouterr().err
+
+
 async def test_add_personal_target_copies_the_source_with_overrides_and_credential(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Seque
 from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
-from pyrit.auth import ensure_async_token_provider, validate_token_provider_headers
+from pyrit.auth import ensure_async_token_provider, is_caller_credential_provider, validate_token_provider_headers
 from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -205,14 +205,21 @@ class LiteLLMChatTarget(PromptTarget):
     """
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    # An empty endpoint takes ``LITELLM_ENDPOINT``.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    # LiteLLM's OpenAI-compatible routes build OpenAI SDK clients, which add these headers.
+    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
     _SUPPORTS_TOOL_CALL_HISTORY = True
 
     # A callable ``api_key`` is resolved before every send and passed to LiteLLM as a string key.
+    # A caller-credential provider (see ``pyrit.auth.caller_credential``) is also limited to the
+    # ``openai/`` route and to options that can't change how the caller authenticates; a token
+    # provider passed directly keeps LiteLLM's usual routing.
     caller_credential_parameter: ClassVar[str | None] = "api_key"
-    _TOKEN_PROVIDER_PASSTHROUGH = frozenset(
+    _CALLER_CREDENTIAL_PASSTHROUGH = frozenset(
         {
             "api_key",
             "headers",
@@ -288,7 +295,9 @@ class LiteLLMChatTarget(PromptTarget):
         Initialize a LiteLLMChatTarget.
 
         Raises:
-            ValueError: If model_name is not provided and LITELLM_MODEL env var is not set.
+            ValueError: If model_name is not provided and LITELLM_MODEL env var is not set, or a
+                caller-credential provider is combined with options that could change how the caller
+                authenticates.
             PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
         """
         resolved_model = model_name or os.environ.get("LITELLM_MODEL", "")
@@ -335,7 +344,8 @@ class LiteLLMChatTarget(PromptTarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
-        self._validate_token_provider_options()
+        self._validate_caller_credential_options()
+        self._validate_caller_credential_environment()
 
         # Delegate transient/rate-limit retry to LiteLLM (provider-aware: honors ``Retry-After``
         # and per-provider rate-limit semantics), rather than stacking PyRIT's
@@ -364,28 +374,38 @@ class LiteLLMChatTarget(PromptTarget):
                 so a copy never reads the environment again.
 
         Raises:
-            ValueError: If the target's constructor did not retain its inputs.
+            ValueError: If the target's constructor did not retain its inputs, or ``extra_body_parameters``
+                sets a temperature that would replace a copy's own.
         """
         parameters = cast("dict[str, object] | None", vars(self).get("_reconstruction_parameters"))
         if parameters is None:
             raise ValueError(f"{type(self).__name__} cannot be reconstructed")
+        if "temperature" in (self._extra_body_parameters or {}):
+            raise ValueError(
+                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
+            )
         return {**parameters, "model_name": self._model_name, "endpoint": self._endpoint, "api_key": self._api_key}
 
     def attach_reconstruction_source(self, source: object) -> None:
         """Share request pacing, not clients or behavioral configuration."""
         self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
-    def _validate_token_provider_options(self) -> None:
-        if not callable(self._api_key):
+    def _holds_caller_credential_provider(self) -> bool:
+        return is_caller_credential_provider(self._api_key)
+
+    def _validate_caller_credential_options(self) -> None:
+        if not self._holds_caller_credential_provider():
             return
         if not self._model_name.startswith("openai/"):
             raise ValueError(
-                "A token provider requires an explicit openai/ model; other provider routes are unsupported."
+                "A caller-credential token provider requires an explicit openai/ model; other provider routes are "
+                "unsupported."
             )
         options = self._extra_body_parameters or {}
-        if options.keys() - self._TOKEN_PROVIDER_PASSTHROUGH:
+        if options.keys() - self._CALLER_CREDENTIAL_PASSTHROUGH:
             raise ValueError(
-                "Only generation parameters and non-authentication headers may accompany a token provider."
+                "Only generation parameters and non-authentication headers may accompany a caller-credential "
+                "token provider."
             )
         for headers in (self._headers, options.get("headers"), options.get("extra_headers")):
             validate_token_provider_headers(headers)
@@ -497,14 +517,17 @@ class LiteLLMChatTarget(PromptTarget):
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         litellm = self._import_litellm()
-        if callable(self._api_key):
+        if self._holds_caller_credential_provider():
             aliases = getattr(litellm, "model_alias_map", {}) or {}
             if (
                 getattr(litellm, "model_fallbacks", None) is not None
                 or self._model_name in aliases
                 or self._model_name.removeprefix("openai/") in aliases
             ):
-                raise ValueError("Global LiteLLM fallback or alias routing cannot be combined with a token provider.")
+                raise ValueError(
+                    "Global LiteLLM fallback or alias routing cannot be combined with a caller-credential token "
+                    "provider."
+                )
             validate_token_provider_headers(getattr(litellm, "headers", None))
 
         message = normalized_conversation[-1]
@@ -623,10 +646,12 @@ class LiteLLMChatTarget(PromptTarget):
         if self._extra_body_parameters:
             body.update(self._extra_body_parameters)
         if callable(self._api_key):
-            self._validate_token_provider_options()
+            # The resolved key wins over a passthrough ``api_key``, so LiteLLM never falls back to another key.
             if not isinstance(api_key, str) or not api_key.strip():
                 raise ValueError("A token provider must return a nonempty API key.")
             body["api_key"] = api_key
+        if self._holds_caller_credential_provider():
+            self._validate_caller_credential_options()
             body["model"] = self._model_name.removeprefix("openai/")
             body["custom_llm_provider"] = "openai"
 

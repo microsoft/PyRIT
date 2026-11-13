@@ -16,6 +16,7 @@ from pyrit.auth import (
     create_caller_credential_provider,
     ensure_async_token_provider,
     get_caller_principal,
+    is_caller_credential_provider,
 )
 
 _SECRET = "fake-secret-marker"
@@ -170,3 +171,19 @@ def test_provider_is_an_async_token_provider(store: CallerCredentialStore) -> No
     assert inspect.iscoroutinefunction(provider)
     assert ensure_async_token_provider(provider) is provider
     assert copy.deepcopy(provider) is provider
+
+
+def test_only_caller_credential_providers_are_recognized(store: CallerCredentialStore) -> None:
+    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
+
+    async def own_provider() -> str:
+        return "own-key"
+
+    assert is_caller_credential_provider(provider)
+    assert is_caller_credential_provider(ensure_async_token_provider(provider))
+    assert is_caller_credential_provider(copy.deepcopy(provider))
+    assert not is_caller_credential_provider(own_provider)
+    assert not is_caller_credential_provider(ensure_async_token_provider(lambda: "own-key"))
+    assert not is_caller_credential_provider("own-key")
+    assert not is_caller_credential_provider(None)
+    assert not is_caller_credential_provider({"api_key": "own-key"})

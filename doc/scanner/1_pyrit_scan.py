@@ -329,7 +329,7 @@ MyCustomScenario()
 # pyrit_scan remove-target-credential my-claude
 # ```
 #
-# `--set KEY=VALUE` overrides constructor settings on the copy, such as `--set temperature=0.3`. `list-targets` shows which targets are personal and whether you have set your credential. Credentials live only in the backend's memory, so set them again after the backend restarts (`--keep-fresh` does this automatically).
+# `--set KEY=VALUE` overrides constructor settings on the copy, such as `--set temperature=0.3`; only an administrator can change where the copy sends requests, such as its `endpoint`. `list-targets` shows which targets are personal and whether you have set your credential. A personal target and its credentials live only in the backend's memory, so a backend restart or reinitialization removes them: run `add-personal-target` again afterward. `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone.
 
 # %% [markdown]
 # ## Stopping the Backend Server

@@ -1323,16 +1323,25 @@ async def _send_target_credential_async(*, client: Any, target_name: str, source
 
 
 async def _keep_target_credential_fresh_async(
-    *, client: Any, target_name: str, source: CredentialSource, refresh_minutes: int
+    *, client: Any, target_name: str, target_hash: str, source: CredentialSource, refresh_minutes: int
 ) -> int:
     """
     Re-send a fresh credential on an interval until the user stops the command.
 
-    Failures are reported and retried at the next interval, so a temporarily unavailable source or
-    backend does not end the session.
+    Temporary failures (an unavailable credential source, sign-in, or backend, a timeout, a 429 or a 5xx
+    response) are reported and retried at the next interval. The command stops when the target is gone
+    or is no longer the one the credential was set for, such as after the backend restarts, which removes
+    personal targets, or when the backend rejects the credential.
+
+    Args:
+        client: The open API client.
+        target_name: The personal target's registry name.
+        target_hash: The identifier hash of the target the credential was first set for.
+        source: Where to re-read the credential.
+        refresh_minutes: Minutes between refreshes.
 
     Returns:
-        int: Exit code ``0`` after the user stops the command.
+        int: Exit code ``0`` after the user stops the command, or ``1`` when refreshing can't continue.
     """
     import httpx
 
@@ -1340,12 +1349,33 @@ async def _keep_target_credential_fresh_async(
     from pyrit.cli._target_credentials import TargetCredentialError
     from pyrit.cli.api_client import ServerNotAvailableError
 
+    recreate_hint = (
+        f"Personal targets are removed when the backend restarts or reinitializes. Run 'pyrit_scan "
+        f"add-personal-target {target_name} ...' again, then set your credential."
+    )
     print(f"Keeping your credential for '{target_name}' fresh every {refresh_minutes} minute(s). Press Ctrl+C to stop.")
     try:
         while True:
             await asyncio.sleep(refresh_minutes * 60)
             try:
+                target = await client.get_target_async(target_registry_name=target_name)
+                if target is None or target.identifier.hash != target_hash:
+                    print(
+                        f"Error: '{target_name}' is no longer the target you set your credential for, so refreshing "
+                        f"stopped. {recreate_hint}",
+                        file=sys.stderr,
+                    )
+                    return 1
                 await _send_target_credential_async(client=client, target_name=target_name, source=source)
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code != 429 and status_code < 500:
+                    print(f"Error: could not refresh your credential for '{target_name}': {exc}", file=sys.stderr)
+                    if status_code == 404:
+                        print(recreate_hint, file=sys.stderr)
+                    return 1
+                print(f"Warning: could not refresh your credential for '{target_name}': {exc}", file=sys.stderr)
+                continue
             except (TargetCredentialError, CliAuthenticationError, ServerNotAvailableError, httpx.HTTPError) as exc:
                 print(f"Warning: could not refresh your credential for '{target_name}': {exc}", file=sys.stderr)
                 continue
@@ -1392,7 +1422,11 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
     if not parsed_args.keep_fresh:
         return 0
     return await _keep_target_credential_fresh_async(
-        client=client, target_name=target_name, source=source, refresh_minutes=parsed_args.refresh_minutes
+        client=client,
+        target_name=target_name,
+        target_hash=target.identifier.hash,
+        source=source,
+        refresh_minutes=parsed_args.refresh_minutes,
     )
 
 
@@ -1438,7 +1472,9 @@ async def _handle_add_personal_target_async(*, client: Any, parsed_args: Namespa
     except TargetCredentialError as exc:
         print(f"Error: {exc}")
         return 1
-    await client.create_personal_target_async(name=name, source=source_target, params=overrides, credential=credential)
+    created = await client.create_personal_target_async(
+        name=name, source=source_target, params=overrides, credential=credential
+    )
     print(f"Registered personal target '{name}' from '{parsed_args.source_target}'.")
     if source is None:
         print(f"Set your credential with 'pyrit_scan set-target-credential {name} --prompt' before using it.")
@@ -1447,7 +1483,11 @@ async def _handle_add_personal_target_async(*, client: Any, parsed_args: Namespa
     if not parsed_args.keep_fresh:
         return 0
     return await _keep_target_credential_fresh_async(
-        client=client, target_name=name, source=source, refresh_minutes=parsed_args.refresh_minutes
+        client=client,
+        target_name=name,
+        target_hash=created.identifier.hash,
+        source=source,
+        refresh_minutes=parsed_args.refresh_minutes,
     )
 
 

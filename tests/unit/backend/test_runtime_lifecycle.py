@@ -144,6 +144,25 @@ async def test_target_deletion_rejects_active_work_async(
     cleanup.assert_not_awaited()
 
 
+async def test_credential_removal_does_not_take_the_target_deletion_barrier_async(
+    runtime: RuntimeLifecycle, runtime_deletion_route: tuple[FastAPI, str]
+) -> None:
+    cleanup_active_during_removal: list[bool] = []
+
+    @runtime.app.delete("/api/targets/shared/credentials")
+    async def remove_credential_async() -> dict[str, bool]:
+        cleanup_active_during_removal.append(runtime.target_cleanup_active)
+        return {"removed": True}
+
+    app, prefix = runtime_deletion_route
+    with patch.object(runtime, "_has_active_work", return_value=True):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(prefix + "/api/targets/shared/credentials")
+    assert response.status_code == 200
+    assert cleanup_active_during_removal == [False]
+    assert runtime.target_cleanup_active is False
+
+
 async def test_target_deletion_blocks_new_admission_until_cleanup_finishes_async(
     runtime: RuntimeLifecycle, runtime_deletion_route: tuple[FastAPI, str]
 ) -> None:
@@ -164,7 +183,11 @@ async def test_target_deletion_blocks_new_admission_until_cleanup_finishes_async
         deletion = asyncio.create_task(client.delete(prefix + "/api/targets/shared"))
         try:
             await wait_for_event_async(event=entered, tasks=[deletion])
-            assert (await client.post(prefix + "/api/sends")).status_code == 503
+            blocked = await client.post(prefix + "/api/sends")
+            assert blocked.status_code == 503
+            assert blocked.json() == {"detail": "A target deletion is in progress; retry shortly."}
+            assert blocked.headers["retry-after"] == "1"
+            assert runtime.status()["state"] == "ready"
             deletion.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await deletion

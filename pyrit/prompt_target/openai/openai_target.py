@@ -25,7 +25,7 @@ from openai._exceptions import (
 )
 from pydantic import TypeAdapter
 
-from pyrit.auth import resolve_openai_auth, validate_token_provider_headers
+from pyrit.auth import is_caller_credential_provider, resolve_openai_auth, validate_token_provider_headers
 from pyrit.common import default_values
 from pyrit.exceptions import (
     RateLimitException,
@@ -255,8 +255,9 @@ class OpenAITarget(PromptTarget):
         Raises:
             ValueError: If identity auth is requested for an endpoint that is not a recognized
                 Azure OpenAI / AI Foundry endpoint, if identity or no-key auth is requested with an
-                explicit ``api_key``, or if ``"api_key"`` auth is requested and no key is available
-                via parameter or environment variable.
+                explicit ``api_key``, if ``"api_key"`` auth is requested and no key is available
+                via parameter or environment variable, or if ``api_key`` is a caller-credential
+                provider while ``OPENAI_CUSTOM_HEADERS`` is set.
         """
         self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
@@ -311,6 +312,7 @@ class OpenAITarget(PromptTarget):
             api_key_environment_variable=self.api_key_environment_variable,
             auth_mode=auth_mode,
         )
+        self._validate_caller_credential_environment()
 
         self._initialize_openai_client()
         if self._SUPPORTED_GENERATION_CAPABILITIES:
@@ -764,6 +766,9 @@ class OpenAITarget(PromptTarget):
             api_key=self._api_key,
             **httpx_kwargs,
         )
+
+    def _holds_caller_credential_provider(self) -> bool:
+        return is_caller_credential_provider(self._api_key)
 
     def _validate_request_headers(self, *, body: Mapping[str, Any]) -> None:
         """

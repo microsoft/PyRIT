@@ -24,6 +24,7 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
+from pyrit.backend.services.target_service import TargetInUseError
 from pyrit.models.catalog import TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 
@@ -158,8 +159,12 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         },
         403: {
             "model": ProblemDetail,
-            "description": "Administrator access is required to run model repository code or to use the "
-            "server's stored credentials",
+            "description": "Administrator access is required to run model repository code, to use the "
+            "server's stored credentials, or to change a personal copy's destination",
+        },
+        409: {
+            "model": ProblemDetail,
+            "description": "Caller credentials require one backend worker and one replica",
         },
     },
 )
@@ -181,6 +186,8 @@ async def create_target(
     Returns:
         TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
     """
+    if body.requires_caller_credential:
+        _require_single_process(request)
     service = get_target_service()
 
     try:
@@ -215,6 +222,7 @@ async def create_target(
     },
 )
 async def get_target(
+    *,
     target_registry_name: IdentifierStr,
     request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
@@ -239,25 +247,36 @@ async def get_target(
     responses={
         403: {"model": ProblemDetail, "description": "Only the caller who created the target can delete it"},
         404: {"model": ProblemDetail, "description": "Target not found"},
-        409: {"model": ProblemDetail, "description": "Runtime work is active"},
+        409: {
+            "model": ProblemDetail,
+            "description": "Runtime work is active, or a registered component uses the target",
+        },
     },
 )
 async def delete_target(
+    *,
     target_registry_name: IdentifierStr,
     request: Request,
 ) -> Response:  # pyrit-async-suffix-exempt
     """
     Delete a target the caller created through the API.
 
-    Deletion requires an idle runtime. Target resources are closed before every caller's
-    credential is forgotten. Upstream credentials are not revoked.
+    Deletion requires an idle runtime and no registered target, scorer, converter, or technique
+    that uses the target. Target resources are closed before every caller's credential is
+    forgotten. Upstream credentials are not revoked.
 
     Returns:
         Response: An empty 204 response.
+
+    Raises:
+        HTTPException: 404 if the target is not registered, or 409 if a registered component uses it.
     """
-    deleted = await get_target_service().delete_target_async(
-        target_registry_name=target_registry_name, caller=caller_principal(request)
-    )
+    try:
+        deleted = await get_target_service().delete_target_async(
+            target_registry_name=target_registry_name, caller=caller_principal(request)
+        )
+    except TargetInUseError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not deleted:
         raise _target_not_found(target_registry_name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -274,6 +293,7 @@ async def delete_target(
     },
 )
 async def set_target_credential(
+    *,
     target_registry_name: IdentifierStr,
     body: SetTargetCredentialRequest,
     request: Request,
@@ -308,6 +328,7 @@ async def set_target_credential(
     },
 )
 async def delete_target_credential(
+    *,
     target_registry_name: IdentifierStr,
     request: Request,
 ) -> Response:  # pyrit-async-suffix-exempt

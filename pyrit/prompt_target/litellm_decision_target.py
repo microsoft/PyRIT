@@ -6,7 +6,6 @@ import math
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
-from pyrit.auth import validate_token_provider_headers
 from pyrit.exceptions import pyrit_target_retry
 from pyrit.models import (
     ComponentIdentifier,
@@ -41,8 +40,8 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
     Responses use the SDK's JSON types. LiteLLM converts Boolean answers and
     numeric strings to numbers before returning them.
 
-    The separate decision API retains its existing callable-key behavior, but
-    does not opt into the backend's personal Chat Completions credential contract.
+    The decision API keeps LiteLLM's usual callable-key behavior and does not opt
+    into the backend's personal Chat Completions credential contract.
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = False
@@ -86,7 +85,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
             trace_config (TargetTraceConfig | None): Optional per-request tracing.
 
         Raises:
-            ValueError: If the model name is empty or static authentication headers conflict with a token provider.
+            ValueError: If the model name is empty.
         """
         if not model_name.strip():
             raise ValueError("A LiteLLM decision model name is required.")
@@ -99,10 +98,6 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
             custom_configuration=custom_configuration or self._DEFAULT_CONFIGURATION,
             trace_config=trace_config,
         )
-
-    def _validate_token_provider_options(self) -> None:
-        if callable(self._api_key):
-            validate_token_provider_headers(self._headers)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

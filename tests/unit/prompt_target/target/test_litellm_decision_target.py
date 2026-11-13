@@ -207,14 +207,18 @@ class TestLiteLLMDecisionTarget:
         assert decision_sdk.adecisions.call_args.kwargs["api_key"] == "current-test-key"
 
     @pytest.mark.parametrize("header", ["Authorization", "aPi-KeY", "X-API-Key"])
-    def test_token_provider_rejects_static_authentication_headers(self, decision_sdk: MagicMock, header: str) -> None:
-        with pytest.raises(ValueError, match="authentication headers"):
-            LiteLLMDecisionTarget(
-                model_name=MODEL,
-                api_key=AsyncMock(return_value="current-test-key"),
-                headers={header: "static-key"},
-            )
-        decision_sdk.adecisions.assert_not_awaited()
+    async def test_direct_token_provider_keeps_static_headers_async(self, decision_sdk: MagicMock, header: str) -> None:
+        # The caller-credential rules belong to personal chat targets; a direct token provider is unchanged.
+        target = LiteLLMDecisionTarget(
+            model_name=MODEL,
+            api_key=AsyncMock(return_value="current-test-key"),
+            headers={header: "static-key"},
+        )
+        await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
+
+        kwargs = decision_sdk.adecisions.call_args.kwargs
+        assert kwargs["api_key"] == "current-test-key"
+        assert kwargs["extra_headers"] == {header: "static-key"}
 
     def test_decision_api_does_not_inherit_chat_personal_credentials(self) -> None:
         assert LiteLLMDecisionTarget.caller_credential_parameter is None

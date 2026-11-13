@@ -78,7 +78,7 @@ from pyrit.scenario.core import (
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
 from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import (
     MockPromptTarget,
     get_mock_target_identifier,
@@ -1462,6 +1462,7 @@ class TestScenarioRunServiceStartRun:
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         finished = asyncio.Event()
+        release_second = asyncio.Event()
         started: list[tuple[str, str | None]] = []
 
         async def _create_scenario(*args: object, **kwargs: object) -> MagicMock:
@@ -1479,6 +1480,7 @@ class TestScenarioRunServiceStartRun:
                     await release_first.wait()
                 else:
                     finished.set()
+                    await release_second.wait()
                 record.scenario_run_state = ScenarioRunState.COMPLETED
 
             scenario.run_async = AsyncMock(side_effect=_run)
@@ -1501,11 +1503,26 @@ class TestScenarioRunServiceStartRun:
 
         with caller_principal_scope("alice"):
             await service.start_run_async(request=_make_request())
-        await asyncio.wait_for(first_started.wait(), timeout=1)
-        with caller_principal_scope("bob"):
-            queued = await service.start_run_async(request=_make_request())
-        release_first.set()
-        await asyncio.wait_for(finished.wait(), timeout=1)
+        first_task = service._active_tasks["run-1"].task
+        assert first_task is not None
+        owned: list[asyncio.Task[None]] = [first_task]
+        try:
+            await wait_for_event_async(event=first_started, tasks=[first_task])
+            with caller_principal_scope("bob"):
+                queued = await service.start_run_async(request=_make_request())
+            release_first.set()
+            await wait_for_completion_async(future=first_task)
+            # The scheduler hands off to run-2 in its own task, so observe run-2's start by its event.
+            await wait_for_event_async(event=finished, tasks=[])
+            second_task = service._active_tasks["run-2"].task
+            assert second_task is not None
+            owned.append(second_task)
+            release_second.set()
+            await wait_for_completion_async(future=second_task)
+        finally:
+            release_first.set()
+            release_second.set()
+            await settle_tasks_async(*owned)
 
         assert queued.status == ScenarioRunState.QUEUED
         assert started == [("run-1", "alice"), ("run-2", "bob")]

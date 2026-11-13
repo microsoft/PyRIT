@@ -21,7 +21,7 @@ from pyrit.backend.services.target_service import (
     get_caller_credential_store,
 )
 from pyrit.models.catalog import TargetInstance
-from pyrit.models.component_spec import SourceInstanceSpec
+from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 
@@ -66,6 +66,7 @@ async def _copy_async(
     target_type: str = "OpenAIChatTarget",
     source_name: str = "configured",
     params: dict[str, object] | None = None,
+    is_admin: bool = False,
 ) -> TargetInstance:
     created = await service.create_target_async(
         request=CreateTargetRequest(
@@ -75,6 +76,7 @@ async def _copy_async(
             source=SourceInstanceSpec(source_name=source_name, source_hash=source_hash, params=params or {}),
         ),
         caller=caller,
+        is_admin=is_admin,
     )
     assert isinstance(created, TargetInstance)
     return created
@@ -97,7 +99,10 @@ async def test_personal_copy_keeps_source_settings_but_not_its_credential_async(
     assert copy._headers == {"x-team": "red"}
     assert copy._underlying_model == "gpt-4o"
     assert copy._max_requests_per_minute == 7
-    assert created.identifier.hash == source_hash
+    # Same settings, but the identity records caller credentials, so the copy never matches its source.
+    assert created.identifier.params == source.get_identifier().params
+    assert created.identifier.attributes == {"caller_credential": True}
+    assert created.identifier.hash != source_hash
     assert created.requires_caller_credential
     assert created.caller_credential_configured
     assert _ALICE_KEY not in created.model_dump_json()
@@ -134,7 +139,10 @@ async def test_personal_copy_allows_routing_and_generation_overrides_async(servi
     source_hash = _register_source(service, _openai_source())
 
     created = await _copy_async(
-        service, source_hash=source_hash, params={"endpoint": "https://other.test/v1", "temperature": 0.3}
+        service,
+        source_hash=source_hash,
+        params={"endpoint": "https://other.test/v1", "temperature": 0.3},
+        is_admin=True,
     )
 
     copy = service.get_target_object(target_registry_name="mine")
@@ -142,6 +150,72 @@ async def test_personal_copy_allows_routing_and_generation_overrides_async(servi
     assert created.identifier.params["temperature"] == 0.3
     with pytest.raises(CallerCredentialRequiredError):
         await _openai_key_as_async(copy, caller=_ALICE)
+
+
+@pytest.mark.parametrize(
+    ("source_factory", "target_type"),
+    [
+        (
+            lambda: _openai_source(headers='{"Ocp-Apim-Subscription-Key": "fake-gateway-secret-marker"}'),
+            "OpenAIChatTarget",
+        ),
+        (
+            lambda: LiteLLMChatTarget(
+                model_name="openai/test-model",
+                endpoint=_ENDPOINT,
+                api_key=_SERVER_KEY,
+                headers={"Ocp-Apim-Subscription-Key": "fake-gateway-secret-marker"},
+            ),
+            "LiteLLMChatTarget",
+        ),
+    ],
+)
+async def test_personal_copy_keeps_source_destination_for_non_admins_async(
+    service: TargetService, source_factory: object, target_type: str
+) -> None:
+    source_hash = _register_source(service, source_factory())  # type: ignore[operator]
+
+    with pytest.raises(PermissionError, match="'endpoint' requires administrator access"):
+        await _copy_async(
+            service,
+            source_hash=source_hash,
+            target_type=target_type,
+            params={"endpoint": "https://attacker.test/v1", "api_key": _ALICE_KEY},
+        )
+
+    assert service.get_target_object(target_registry_name="mine") is None
+    assert len(get_caller_credential_store()) == 0
+
+
+async def test_personal_copy_allows_non_admin_overrides_that_keep_the_destination_async(
+    service: TargetService,
+) -> None:
+    source_hash = _register_source(service, _openai_source())
+
+    created = await _copy_async(service, source_hash=source_hash, params={"endpoint": _ENDPOINT, "temperature": 0.3})
+
+    assert service.get_target_object(target_registry_name="mine")._endpoint == _ENDPOINT
+    assert created.identifier.params["temperature"] == 0.3
+
+
+async def test_binding_to_deleted_personal_copy_does_not_fall_back_to_its_source_async(
+    service: TargetService,
+) -> None:
+    source_hash = _register_source(service, _openai_source())
+    created = await _copy_async(service, source_hash=source_hash, params={"api_key": _ALICE_KEY})
+    bound = await service.build_from_source_async(
+        SourceInstanceSpec(source_name="mine", source_hash=created.identifier.hash, params={"temperature": 0.5})
+    )
+    binding = TargetBinding(
+        source_name="mine",
+        source_hash=created.identifier.hash,
+        temperature=0.5,
+        effective_hash=bound.get_identifier().hash,
+    )
+
+    assert await service.delete_target_async(target_registry_name="mine", caller=_ALICE)
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        await service.resolve_binding_async(binding)
 
 
 async def test_personal_copy_of_a_personal_target_keeps_credentials_separate_async(service: TargetService) -> None:

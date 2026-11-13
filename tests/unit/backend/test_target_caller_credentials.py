@@ -6,7 +6,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import Request, status
@@ -14,17 +14,21 @@ from fastapi.testclient import TestClient
 
 from pyrit.auth import CallerCredentialRequiredError, caller_principal_scope
 from pyrit.backend.main import app
-from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.models import CreateScorerRequest, CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
+from pyrit.backend.services.scorer_service import ScorerService
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.target_service import (
+    TargetInUseError,
     clear_caller_credentials,
     get_caller_credential_store,
 )
+from pyrit.converter import Converter
+from pyrit.models import ComponentIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.registry import TargetRegistry
+from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 
 _ALICE = "entra:tenant:alice"
 _BOB = "entra:tenant:bob"
@@ -35,11 +39,13 @@ _TARGET_PARAMS = {"model_name": "test-model", "endpoint": "https://example.test/
 
 @pytest.fixture(autouse=True)
 def isolated_targets() -> Iterator[None]:
-    TargetRegistry.reset_registry_singleton()
+    for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry):
+        registry.reset_registry_singleton()
     get_target_service.cache_clear()
     clear_caller_credentials()
     yield
-    TargetRegistry.reset_registry_singleton()
+    for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry):
+        registry.reset_registry_singleton()
     get_target_service.cache_clear()
     clear_caller_credentials()
 
@@ -292,6 +298,46 @@ async def test_recreated_name_never_inherits_old_credentials_async(service: Targ
         await _resolve_as_async(old_target, caller=_BOB)
 
 
+async def _register_refusal_scorer_async(*, chat_target: str) -> None:
+    await ScorerService().create_scorer_async(
+        request=CreateScorerRequest(
+            name="refusal", type="SelfAskRefusalScorer", params={"chat_target": chat_target}, register=True
+        )
+    )
+
+
+@pytest.mark.parametrize("requires_caller_credential", [True, False])
+async def test_delete_target_rejects_registered_dependents_async(
+    service: TargetService, requires_caller_credential: bool
+) -> None:
+    await _create_async(service, caller=_ALICE, requires_caller_credential=requires_caller_credential)
+    target = service.get_target_object(target_registry_name="personal")
+    await _register_refusal_scorer_async(chat_target="personal")
+
+    with pytest.raises(TargetInUseError, match="scorer 'refusal'"):
+        await service.delete_target_async(target_registry_name="personal", caller=_ALICE)
+
+    assert service.get_target_object(target_registry_name="personal") is target
+    assert not target._async_client.is_closed()
+    assert ScorerRegistry.get_registry_singleton().instances.get("refusal") is not None
+    if requires_caller_credential:
+        assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
+
+
+async def test_delete_target_rejects_components_that_record_its_hash_async(service: TargetService) -> None:
+    created = await _create_async(service, caller=_ALICE)
+    holder = MagicMock(spec=Converter)
+    holder.get_identifier.return_value = ComponentIdentifier(
+        class_name="TechniqueLike",
+        class_module="tests",
+        params={"kwargs": {"adversarial_chat": created.identifier.hash}},
+    )
+    ConverterRegistry.get_registry_singleton().instances.register(holder, name="holder")
+
+    with pytest.raises(TargetInUseError, match="converter 'holder'"):
+        await service.delete_target_async(target_registry_name="personal", caller=_ALICE)
+
+
 async def test_delete_target_releases_owned_resources_async(service: TargetService) -> None:
     await _create_async(service, caller=_ALICE, name="shared")
     target = service.get_target_object(target_registry_name="shared")
@@ -508,6 +554,59 @@ def test_rest_set_credential_requires_one_backend_process(client: TestClient, ca
         response = client.put("/api/targets/personal/credentials", json={"credential": _BOB_KEY})
 
     assert response.status_code == status.HTTP_409_CONFLICT
+
+
+def test_rest_create_personal_target_requires_one_backend_process(client: TestClient, caller: _Caller) -> None:
+    runtime = SimpleNamespace(
+        is_stopping=False,
+        state="ready",
+        topology_supported=False,
+        target_cleanup_active=False,
+        operations=set(),
+        management_operations=set(),
+        apply_task=None,
+    )
+
+    with patch.object(app.state, "runtime_lifecycle", runtime, create=True):
+        personal = client.post(
+            "/api/targets",
+            json={
+                "name": "personal",
+                "type": "OpenAIChatTarget",
+                "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY},
+                "requires_caller_credential": True,
+            },
+        )
+        shared = client.post(
+            "/api/targets",
+            json={"name": "shared", "type": "OpenAIChatTarget", "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY}},
+        )
+
+    assert personal.status_code == status.HTTP_409_CONFLICT
+    assert _ALICE_KEY not in personal.text
+    assert shared.status_code == status.HTTP_201_CREATED
+    assert get_target_service().get_target_object(target_registry_name="personal") is None
+    assert len(get_caller_credential_store()) == 0
+
+
+def test_rest_delete_target_in_use_returns_conflict(client: TestClient, caller: _Caller) -> None:
+    _create_through_api(client)
+    scorer = client.post(
+        "/api/scorers",
+        json={
+            "name": "refusal",
+            "type": "SelfAskRefusalScorer",
+            "params": {"chat_target": "personal"},
+            "register": True,
+        },
+    )
+    assert scorer.status_code == status.HTTP_201_CREATED
+
+    response = client.delete("/api/targets/personal")
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert "scorer 'refusal'" in response.json()["detail"]
+    assert client.get("/api/targets/personal").status_code == status.HTTP_200_OK
 
 
 def test_rest_delete_target_is_limited_to_its_creator(client: TestClient, caller: _Caller) -> None:

@@ -94,7 +94,8 @@ for a diagram of target creation, per-caller credential storage, and request-tim
 Targets are shared by default: a key submitted when creating a target is used for every caller's
 requests. To use a personal token or account instead, create the target with
 `"requires_caller_credential": true`. Supported for OpenAI-family targets (except
-`RealtimeTarget`) and `LiteLLMChatTarget`, with `auth_mode` `api_key`.
+`RealtimeTarget`) and `LiteLLMChatTarget` with an explicit `openai/` model, with `auth_mode`
+`api_key`.
 
 Such a target keeps no key. The backend stores the creator's `api_key` in process memory for that
 caller only, and the target asks for the current caller's own credential before every request.
@@ -103,16 +104,12 @@ caller sets their own credential, their requests through the target fail with
 `CallerCredentialRequiredError`, and nothing falls back to the server's environment keys, managed
 identity, or SDK login.
 
-Dynamic-key LiteLLM targets require an explicit `openai/` model name. Other provider routes,
-including Vertex, are rejected because a generic API key does not establish their authentication
-contract. Configure those shared targets through an initializer instead. Dynamic token providers
-cannot be combined with static authentication headers or provider-routing overrides; the resolved
-key remains authoritative after request-body passthrough merging.
-Passthrough options in this mode are restricted to generation parameters and non-authentication
-headers. Global LiteLLM fallbacks, aliases for the selected model, and static authentication
-headers are rejected rather than allowed to change how the caller authenticates.
-`LiteLLMDecisionTarget` uses a separate decision API and does not support personal-target opt-in;
-its existing shared-target and direct Python callable-key behavior is unchanged.
+Nothing may replace the caller's credential. A personal target rejects static authentication
+headers, and is not built while the server sets `OPENAI_CUSTOM_HEADERS`. A personal
+`LiteLLMChatTarget` also accepts only generation parameters and other headers as passthrough
+options, and rejects provider-routing overrides and global LiteLLM fallbacks or model aliases.
+These LiteLLM rules apply only to personal targets: a token provider passed directly in Python to
+`LiteLLMChatTarget` or `LiteLLMDecisionTarget` keeps LiteLLM's usual routing and options.
 
 ```http
 POST /api/targets
@@ -138,16 +135,17 @@ DELETE /api/targets/my-gpt
 - Replacing a credential applies to the caller's next request through the target, including in
   work that is already running. A request that was already sent finishes with the old value.
 - Only the caller who created a target through the API can delete it. Deletion returns **409**
-  while runtime work is active. Once idle, new runtime requests are blocked until the target's
-  clients and connections have been closed; successful deletion then forgets every caller's
-  credential for it. Cleanup failure keeps the registered target and credentials available for
-  retry. Neither deletion nor credential removal revokes the credential at the provider.
-- Credentials are lost when the backend restarts or reinitializes, and are kept in one process:
-  `PUT /api/targets/{id}/credentials` returns **409** when the deployment runs more than one
-  backend worker or replica.
-- A replacement credential is a value the caller obtains and submits again; the backend does not
-  acquire OAuth tokens or refresh them. The `pyrit_scan` client can re-read and re-send one
-  (`set-target-credential --from-ant --keep-fresh`).
+  while runtime work is active or while a registered target, scorer, converter, or technique uses
+  the target. Once idle, other requests get **503** with `Retry-After` until the target's clients
+  and connections have been closed; successful deletion then forgets every caller's credential for
+  it. Cleanup failure keeps the registered target and credentials available for retry. Neither
+  deletion nor credential removal revokes the credential at the provider.
+- A personal target and its credentials live only in one backend process. A restart or
+  reinitialization removes both, so create the target again. Creating a personal target and
+  `PUT /api/targets/{id}/credentials` return **409** when the deployment runs more than one backend
+  worker or replica.
+- The backend does not acquire or refresh tokens. `pyrit_scan ... --from-ant --keep-fresh`
+  re-sends expiring `ant` tokens, and stops when the target is gone.
 
 ##### Personal copies of existing targets
 
@@ -164,14 +162,14 @@ POST /api/targets
 - The copy keeps the source's configuration but never its credential: the source's key, token
   provider, or managed identity is replaced by your own credential, even when the source used
   `auth_mode` `none`. The source target is unchanged.
-- `source.params` accepts the same overrides as other source clones, including `endpoint` and
-  `headers`. Headers copied from the source go wherever the copy sends requests. `auth_mode`
-  cannot be overridden. An `api_key` override becomes the creator's stored credential, never a
-  static key on the copy.
-- The source must support reconstruction: OpenAI-family targets (except `RealtimeTarget`) and
-  `LiteLLMChatTarget`. Sources that cannot be rebuilt (for example an OpenAI target with a custom
-  `http_client`) or whose configuration cannot use a token provider (for example a LiteLLM route
-  other than `openai/`, or a static authentication header) are rejected.
+- `source.params` accepts the same overrides as other source clones, such as `headers` or
+  `temperature`. The copy keeps the source's headers and client settings, so only an administrator
+  can change where it sends requests (for example `endpoint`). `auth_mode` cannot be overridden. An
+  `api_key` override becomes the creator's stored credential, never a static key on the copy.
+- The copy's identity records that it uses caller credentials, so it never matches its source.
+- The source must be a supported target that can be rebuilt with a caller credential. For example,
+  an OpenAI target with a custom `http_client`, a LiteLLM route other than `openai/`, or a static
+  authentication header is rejected.
 - `source` with `register: true` is accepted only for personal copies; other source clones still
   require `register: false`.
 

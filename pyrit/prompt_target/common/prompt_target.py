@@ -3,6 +3,7 @@
 
 import abc
 import logging
+import os
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -874,12 +875,46 @@ class PromptTarget(Identifiable):
         return TargetIdentifier.of(
             self,
             params=params,
+            # Not a credential: it records that each caller's own credential is used, so a personal
+            # target never shares an identity with a target that authenticates as the server.
+            attributes={"caller_credential": True} if self._holds_caller_credential_provider() else None,
             endpoint=self._endpoint,
             model_name=self._model_name or "",
             underlying_model_name=self._underlying_model or "",
             max_requests_per_minute=self._max_requests_per_minute,
             targets=targets,
         )
+
+    def _holds_caller_credential_provider(self) -> bool:
+        """
+        Return whether this target's ``caller_credential_parameter`` holds a caller-credential provider.
+
+        Targets that name a ``caller_credential_parameter`` override this to check the value they hold.
+
+        Returns:
+            bool: True if the target resolves each caller's own credential per request.
+        """
+        return False
+
+    def _validate_caller_credential_environment(self) -> None:
+        """
+        Refuse a caller-credential provider while this server sets headers the target's client adds itself.
+
+        Those headers are sent with every request, so one could replace each caller's own credential.
+
+        Raises:
+            ValueError: If the target holds a caller-credential provider and one of its
+                ``server_header_variables`` is set.
+        """
+        if not self._holds_caller_credential_provider():
+            return
+        for variable in type(self).server_header_variables:
+            if os.environ.get(variable):
+                raise ValueError(
+                    f"This server sets {variable}, whose headers {type(self).__name__} would send with every "
+                    "request and which could replace each caller's own credential. A target that uses caller "
+                    "credentials isn't built while it is set."
+                )
 
     @property
     def configuration(self) -> TargetConfiguration:

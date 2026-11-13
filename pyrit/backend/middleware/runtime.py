@@ -46,9 +46,16 @@ class RuntimeAdmissionMiddleware:
         management = path == "/api/config" or path.startswith(("/api/config/", "/api/initializers"))
         apply_route = path.startswith("/api/config/runtime")
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route
+        if runtime.target_cleanup_active and not runtime.is_stopping:
+            # A deletion closes one target's clients; the runtime itself stays ready.
+            await JSONResponse(
+                {"detail": "A target deletion is in progress; retry shortly."},
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )(scope, receive, send)
+            return
         if (
             runtime.is_stopping
-            or runtime.target_cleanup_active
             or (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
             or (path.startswith("/api/initializers") and runtime.edit_lock.locked())
             or (path.startswith("/api/initializers") and runtime.state == "initializing")

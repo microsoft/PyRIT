@@ -121,14 +121,8 @@ Each caller sets their provider token with `pyrit_scan set-target-credential` or
 who started them; the target resolves that caller's current token before every provider request.
 Other callers can see the target but must set their own token before using it.
 
-Caller credentials require one backend worker and one replica. They live only in process
-memory and are lost on restart or reinitialization. The backend does not refresh tokens;
-the CLI's `--from-ant --keep-fresh` option can obtain and re-submit them.
-
-Personal-target creation supports OpenAI-family targets except `RealtimeTarget`, and
-`LiteLLMChatTarget` with an explicit `openai/` model route, using `auth_mode="api_key"`.
 See [personal targets with caller credentials](../../../pyrit/backend/README.md#personal-targets-with-caller-credentials)
-for API examples, supported settings, and credential lifecycle details, and
+for the supported targets, API examples, and limits, such as what a backend restart removes, and
 [the scanner guide](../../scanner/1_pyrit_scan.ipynb) for CLI usage.
 
 ## OpenAI SDK compatibility

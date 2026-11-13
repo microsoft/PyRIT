@@ -211,3 +211,31 @@ async def test_concurrency_check_reports_early_send_failure_async(store: CallerC
     with patch(__name__ + "._send_as_async", side_effect=CallerCredentialRequiredError("early send failure")):
         with pytest.raises(CallerCredentialRequiredError, match="early send failure"):
             await test_openai_target_sends_each_callers_own_key_concurrently_async(store)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_class", [OpenAIChatTarget, OpenAIResponseTarget])
+def test_caller_credential_provider_refuses_server_header_variables(
+    store: CallerCredentialStore, target_class: type[OpenAIChatTarget] | type[OpenAIResponseTarget]
+) -> None:
+    provider = create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
+    with patch.dict("os.environ", {"OPENAI_CUSTOM_HEADERS": "Authorization: Bearer server-key"}):
+        with pytest.raises(ValueError, match="OPENAI_CUSTOM_HEADERS"):
+            target_class(model_name="test-model", endpoint="https://example.test/v1", api_key=provider)
+        direct = target_class(model_name="test-model", endpoint="https://example.test/v1", api_key=lambda: "own-key")
+
+    assert callable(direct._api_key)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_caller_credential_provider_is_part_of_the_identity(store: CallerCredentialStore) -> None:
+    provider = create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
+    settings = {"model_name": "test-model", "endpoint": "https://example.test/v1"}
+    personal = OpenAIChatTarget(**settings, api_key=provider)
+    direct = OpenAIChatTarget(**settings, api_key=lambda: "own-key")
+    shared = OpenAIChatTarget(**settings, api_key="server-key")
+
+    assert personal.get_identifier().attributes == {"caller_credential": True}
+    assert personal.get_identifier().params == shared.get_identifier().params
+    assert personal.get_identifier().hash != shared.get_identifier().hash
+    assert direct.get_identifier().hash == shared.get_identifier().hash

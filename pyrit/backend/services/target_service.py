@@ -35,7 +35,7 @@ from pyrit.backend.models.targets import (
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
-from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
+from pyrit.models import ComponentIdentifier, Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
@@ -49,7 +49,13 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
     CapabilityDiscoveryError,
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
-from pyrit.registry import RegistryEntry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    RegistryEntry,
+    ScorerRegistry,
+    TargetRegistry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +70,10 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
+
+
+class TargetInUseError(RuntimeError):
+    """A registered component still uses the target, so it can't be deleted."""
 
 
 class TargetService:
@@ -623,7 +633,8 @@ class TargetService:
                 endpoints) are raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution,
                 creates a target that would authenticate with this server's stored credentials,
-                or requests caller credentials without a verified caller identity.
+                or changes where a personal copy sends requests, or if caller credentials are
+                requested without a verified caller identity.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -680,14 +691,13 @@ class TargetService:
                 )
 
         permission_params = params
+        source_inputs: dict[str, object] = {}
         if request.source is not None:
             source = self._registry.resolve_source(
                 name=request.source.source_name, identifier_hash=request.source.source_hash
             )
-            permission_params = {
-                **self._registry.get_reconstruction_parameters(source),
-                **request.source.params,
-            }
+            source_inputs = self._registry.get_reconstruction_parameters(source)
+            permission_params = {**source_inputs, **request.source.params}
         metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
         if metadata is not None:
             missing: list[str] = []
@@ -710,6 +720,10 @@ class TargetService:
         if source_spec is not None and request.requires_caller_credential:
             if _AUTH_MODE_PARAM in source_spec.params:
                 raise ValueError("A personal copy always uses caller credentials; omit auth_mode from source.params.")
+            if not is_admin:
+                self._enforce_personal_copy_destination(
+                    target_cls=target_cls, overrides=source_spec.params, source_inputs=source_inputs
+                )
             source_spec = source_spec.model_copy(update={"params": dict(source_spec.params)})
         caller_credential = self._take_caller_credential(
             target_cls=target_cls,
@@ -844,12 +858,19 @@ class TargetService:
 
         Raises:
             PermissionError: If the caller did not create the target through the API.
+            TargetInUseError: If another registered target, scorer, converter, or technique uses it.
         """
         entry = self._registry.instances.get_entry(target_registry_name)
         if entry is None:
             return False
         if caller is None or entry.metadata.get(self.CREATED_BY_METADATA_KEY) != caller:
             raise PermissionError("Only the caller who created this target through the API can delete it.")
+        dependents = self._registered_dependents(entry=entry)
+        if dependents:
+            raise TargetInUseError(
+                f"Target '{target_registry_name}' is used by {', '.join(dependents)}. Deleting it would close the "
+                "client those components use, so remove them first."
+            )
         await release_component_async(entry.instance)
         if self._registry.instances.unregister(target_registry_name, expected_entry=entry) is None:
             return False
@@ -857,6 +878,32 @@ class TargetService:
         if credential_id is not None:
             self._credentials.remove_credential_id(credential_id)
         return True
+
+    def _registered_dependents(self, *, entry: RegistryEntry[PromptTarget]) -> list[str]:
+        """
+        Name the other registered components whose identity records this target.
+
+        A component that holds a target records the target's identifier, as a child or by its hash, in its
+        own identifier. An identical target registered under another name has the same hash, so it is
+        reported too.
+
+        Returns:
+            list[str]: Descriptions such as ``scorer 'refusal'``, grouped by registry and sorted by name.
+        """
+        target_hash = entry.instance.get_identifier().hash
+        registries: tuple[tuple[str, Any], ...] = (
+            ("target", self._registry),
+            ("scorer", ScorerRegistry.get_registry_singleton()),
+            ("converter", ConverterRegistry.get_registry_singleton()),
+            ("technique", AttackTechniqueRegistry.get_registry_singleton()),
+        )
+        return [
+            f"{kind} '{other.name}'"
+            for kind, registry in registries
+            for other in registry.instances.get_all_instances()
+            if other.instance is not entry.instance
+            and _identifier_references(identifier=other.instance.get_identifier(), target_hash=target_hash)
+        ]
 
     @staticmethod
     def _require_caller(caller: str | None) -> str:
@@ -950,6 +997,38 @@ class TargetService:
         )
         return {**target_cls.get_auth_mode_parameters(auth_mode="api_key"), parameter_name: provider}
 
+    @staticmethod
+    def _enforce_personal_copy_destination(
+        *, target_cls: type[PromptTarget], overrides: dict[str, Any], source_inputs: dict[str, object]
+    ) -> None:
+        """
+        Keep a non-administrator's personal copy sending where its source sends.
+
+        A copy keeps the source's headers and client settings, which an operator may use for a gateway
+        secret, so only an administrator may point it at another destination (see the target's
+        ``destination_parameters``).
+
+        Args:
+            target_cls (type[PromptTarget]): The copied target's class.
+            overrides (dict[str, Any]): The copy's ``source.params``.
+            source_inputs (dict[str, object]): The source's reconstruction inputs.
+
+        Raises:
+            PermissionError: If an override changes one of the source's destination parameters.
+        """
+        changed = sorted(
+            name
+            for name in target_cls.destination_parameters
+            if name in overrides and overrides[name] != source_inputs.get(name)
+        )
+        if changed:
+            names = ", ".join(f"'{name}'" for name in changed)
+            raise PermissionError(
+                f"A personal copy sends requests where its source does, with the source's headers and client "
+                f"settings, so changing {names} requires administrator access. Create a personal target with your "
+                "own settings to use another address."
+            )
+
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool
     ) -> None:
@@ -1024,6 +1103,36 @@ class TargetService:
                 f"credentials and requires administrator access. Create it with 'api_key' authentication and your "
                 f"own '{parameter_name}', or ask an administrator."
             )
+
+
+def _identifier_references(*, identifier: ComponentIdentifier, target_hash: str) -> bool:
+    """
+    Return whether an identifier records another component's hash, as a child or in a parameter.
+
+    Returns:
+        bool: True if ``target_hash`` appears among the identifier's children or parameter values.
+    """
+    return _value_references(value=list(identifier.children.values()), target_hash=target_hash) or _value_references(
+        value=identifier.params, target_hash=target_hash
+    )
+
+
+def _value_references(*, value: object, target_hash: str) -> bool:
+    """
+    Return whether an identifier value is, or contains, ``target_hash``.
+
+    Returns:
+        bool: True if the value is the hash, a component identifier that records it, or a container holding one.
+    """
+    if isinstance(value, ComponentIdentifier):
+        return value.hash == target_hash or _identifier_references(identifier=value, target_hash=target_hash)
+    if isinstance(value, str):
+        return value == target_hash
+    if isinstance(value, dict):
+        return any(_value_references(value=item, target_hash=target_hash) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_value_references(value=item, target_hash=target_hash) for item in value)
+    return False
 
 
 @lru_cache(maxsize=1)

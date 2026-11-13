@@ -17,11 +17,16 @@ context must be given its own principal with ``caller_principal_context``.
 
 import contextvars
 import threading
+import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from typing import NoReturn
 
 _caller_principal: contextvars.ContextVar[str | None] = contextvars.ContextVar("pyrit_caller_principal", default=None)
+
+# Providers made by ``create_caller_credential_provider``. They stay plain coroutine functions, so
+# ``ensure_async_token_provider`` returns them unchanged and this membership survives.
+_caller_credential_providers: "weakref.WeakSet[Callable[[], Awaitable[str]]]" = weakref.WeakSet()
 
 
 def validate_token_provider_headers(headers: Mapping[str, object] | None) -> None:
@@ -258,4 +263,22 @@ def create_caller_credential_provider(
             )
         return credential
 
+    _caller_credential_providers.add(resolve_caller_credential_async)
     return resolve_caller_credential_async
+
+
+def is_caller_credential_provider(value: object) -> bool:
+    """
+    Check whether a value is a provider made by ``create_caller_credential_provider``.
+
+    Components apply the caller-credential contract, such as refusing settings that could replace
+    the caller's credential, only to these providers. A token provider a user passes directly keeps
+    the component's ordinary token-provider behavior.
+
+    Args:
+        value (object): A credential parameter value, such as a target's ``api_key``.
+
+    Returns:
+        bool: True if the value resolves each caller's own credential.
+    """
+    return value in _caller_credential_providers
