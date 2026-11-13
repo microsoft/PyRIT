@@ -80,6 +80,7 @@ export interface UseChatSendStateOptions {
 
 export interface ChatSendTracking {
   readonly state: ChatSendState
+  /** The seam `useChatSend` drives. Other consumers read through the helpers below, never these two. */
   readonly dispatch: Dispatch<ChatSendAction>
   readonly locksRef: RefObject<ChatSendLocks>
   /** True while the active conversation (or, before one exists, any conversation) is sending. */

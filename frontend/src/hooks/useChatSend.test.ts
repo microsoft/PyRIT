@@ -5,8 +5,8 @@ import { attacksApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type {
-  AttackSummary, ChatConverterController, ConversationMessagesResponse, Message, MessageSendStatus, PieceConversion,
-  RequestGenerationDraft, TargetCapabilities, TargetInstance,
+  AttackSummary, ChatConverterController, ConversationMessagesResponse, Message, MessageSendConversation,
+  MessageSendStatus, PieceConversion, RequestGenerationDraft, TargetCapabilities, TargetInstance,
 } from '@/types'
 import { PENDING_SEND_CONVERSATION_ID } from '@/utils/chatSendState'
 
@@ -235,6 +235,41 @@ describe('useChatSend', () => {
 
     expect([...result.current.tracking.state.sending]).toEqual(['b'])
     expect(result.current.tracking.isSending).toBe(true)
+  })
+
+  it('adopts repeated-send sibling conversations with their own locks and settles each', async () => {
+    const conversation = (conversationId: string): MessageSendConversation => ({
+      conversation_id: conversationId, request_turn_number: 1, state: 'completed', error: null, failure_stage: null,
+    })
+    api.submitMessageSend.mockResolvedValue({
+      ...accepted('a'), count: 2, conversations: [conversation('a'), conversation('b')],
+    })
+    const { result, callbacks } = renderSend()
+
+    let outcome: unknown
+    await act(async () => {
+      outcome = await result.current.send.send('repeat me', undefined, [], { count: 2, requestConverterMode: 'shared' })
+    })
+
+    expect(api.submitMessageSend).toHaveBeenCalledTimes(1)
+    expect(api.submitMessageSend).toHaveBeenCalledWith('attack', expect.objectContaining({
+      count: 2, request_converter_mode: 'shared',
+    }))
+    // The source conversation settles its own outcome and may clear the draft.
+    expect(outcome).toEqual({ status: 'sent', clearDraft: true })
+    // The sibling was adopted with its own lock and settled through its own evidence read.
+    expect(api.getMessages).toHaveBeenCalledWith('attack', 'a')
+    expect(api.getMessages).toHaveBeenCalledWith('attack', 'b')
+    expect(result.current.tracking.isSendInFlight('a')).toBe(false)
+    expect(result.current.tracking.isSendInFlight('b')).toBe(false)
+    expect(result.current.tracking.state.sending.size).toBe(0)
+    expect(callbacks.revealRepeatConversations).toHaveBeenCalled()
+    // The repeat view survives completion until dismissed.
+    expect(result.current.send.repeatSends).toEqual([
+      expect.objectContaining({ needsRefresh: false, progress: expect.objectContaining({ send_id: 'send-a' }) }),
+    ])
+    act(() => { result.current.send.dismissRepeatSend('send-a') })
+    expect(result.current.send.repeatSends).toEqual([])
   })
 
   it('restores the optimistic prompt when the user returns to a conversation that is still sending', async () => {
