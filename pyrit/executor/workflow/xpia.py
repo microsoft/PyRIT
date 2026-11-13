@@ -706,40 +706,35 @@ class _ConsoleLineReader:
         Raises:
             asyncio.CancelledError: If the caller is cancelled before the line arrives. The read
                 keeps running; its line goes to a later caller only if one is waiting when it arrives.
+            EOFError: If the console input is closed before a line is entered.
         """
         with self._lock:
             previous_turn = self._turn
             self._turn = turn = concurrent.futures.Future()
         try:
             await asyncio.shield(asyncio.wrap_future(previous_turn))
-        except BaseException:
-            # A caller cancelled while queued never held the turn, so it passes the turn on only once
-            # the caller ahead of it is done. Releasing it now would let a later caller share the pending line.
-            previous_turn.add_done_callback(lambda _: turn.set_result(None))
-            raise
-        try:
-            with self._lock:
-                if self._unclaimed_line is not None and self._unclaimed_line.done():
-                    # Nobody was waiting when this line arrived, so it answers a cancelled caller's prompt.
-                    logger.warning("Discarding console input entered after its manual XPIA read was cancelled.")
-                    self._unclaimed_line = None
-                if self._unclaimed_line is None:
-                    self._unclaimed_line = self._start_read(prompt=prompt)
-                else:
-                    print(prompt, flush=True)
-                line = self._unclaimed_line
+            line = self._claim_line(prompt=prompt)
             try:
-                result = await asyncio.shield(asyncio.wrap_future(line))
-            except asyncio.CancelledError:
-                # Leave the read in place so the line the operator types reaches the next caller.
-                raise
-            except BaseException:
-                self._release_line(line=line)
-                raise
-            self._release_line(line=line)
-            return result
+                return await asyncio.shield(asyncio.wrap_future(line))
+            finally:
+                # A read still pending when its caller leaves stays for the next caller.
+                if line.done():
+                    self._release_line(line=line)
         finally:
-            turn.set_result(None)
+            # Pass the turn on once the caller ahead finishes, even if this caller left early.
+            previous_turn.add_done_callback(lambda _: turn.set_result(None))
+
+    def _claim_line(self, *, prompt: str) -> concurrent.futures.Future[str]:
+        with self._lock:
+            if self._unclaimed_line is not None and self._unclaimed_line.done():
+                # Nobody was waiting when this line arrived, so it answers a cancelled caller's prompt.
+                logger.warning("Discarding console input entered after its manual XPIA read was cancelled.")
+                self._unclaimed_line = None
+            if self._unclaimed_line is None:
+                self._unclaimed_line = self._start_read(prompt=prompt)
+            else:
+                print(prompt, flush=True)
+            return self._unclaimed_line
 
     def _release_line(self, *, line: concurrent.futures.Future[str]) -> None:
         with self._lock:

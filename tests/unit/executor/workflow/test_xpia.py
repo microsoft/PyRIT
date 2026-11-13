@@ -793,6 +793,41 @@ class TestXPIAManualProcessingWorkflow:
         assert response == "processed output"
         mock_input.assert_called_once()
 
+    async def test_closed_read_hands_its_line_to_the_next_read(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        release_input = threading.Event()
+
+        def operator_input(prompt: str) -> str:
+            assert release_input.wait(timeout=TEST_WATCHDOG_SECONDS)
+            return "processed output"
+
+        prompt_shown_again = asyncio.Event()
+
+        with (
+            patch("builtins.input", side_effect=operator_input) as mock_input,
+            patch("builtins.print", side_effect=lambda *args, **kwargs: prompt_shown_again.set()),
+        ):
+            # Drive the read by hand so it can be closed mid-read, as when a pending task is garbage collected.
+            reader = xpia_module._CONSOLE_READER
+            closed_read = reader.read_line_async(prompt="Paste the output:")
+            awaited = closed_read.send(None)
+            while reader._unclaimed_line is None:
+                await awaited
+                awaited = closed_read.send(None)
+            closed_read.close()
+
+            second_read = asyncio.create_task(context.processing_callback())
+            await asyncio.wait_for(prompt_shown_again.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            release_input.set()
+            response = await asyncio.wait_for(second_read, timeout=TEST_WATCHDOG_SECONDS)
+
+        assert response == "processed output"
+        mock_input.assert_called_once()
+
     async def test_line_entered_after_its_read_was_cancelled_is_not_given_to_a_later_read(
         self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
     ) -> None:
