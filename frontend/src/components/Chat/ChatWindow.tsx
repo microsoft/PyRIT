@@ -2946,7 +2946,7 @@ export default function ChatWindow({
           </MessageBar>
         )}
         {inProgress ? <AttackInProgressBar scanPath={!scenarioResultId && liveScanId ? scenarioRunRoutePath(liveScanId) : null}
-          scanState={location.state} onReturnToScan={onReturnToScan} />
+          scanState={location.state} />
           : <div hidden={editDraft !== null}>
         <ChatInputArea
           fileDropEnabled={false}

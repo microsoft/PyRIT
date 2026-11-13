@@ -3956,6 +3956,40 @@ describe("ChatWindow Integration", () => {
       .not.toBeInTheDocument();
   });
 
+  it.each(["click", "Enter"])("returns to the metadata-only scan with %s", async (activation: string) => {
+    const user = userEvent.setup();
+    const onReturnToScan = jest.fn();
+    function OriginatingScenario() {
+      const location = useLocation();
+      return <h1 data-navigation-state={JSON.stringify(location.state)}>Originating scenario run</h1>;
+    }
+    render(
+      <UserPreferencesProvider accountKey="local">
+        <FluentProvider theme={webLightTheme}>
+          <MemoryRouter initialEntries={["/attack/chat/attack-1"]}>
+            <Routes>
+              <Route path="/attack/chat/:attackResultId" element={
+                <ChatWindow {...defaultProps} inProgress attackScenarioResultId="scan"
+                  onReturnToScan={onReturnToScan} />
+              } />
+              <Route path="/scanner/history/scan" element={<OriginatingScenario />} />
+            </Routes>
+          </MemoryRouter>
+        </FluentProvider>
+      </UserPreferencesProvider>
+    );
+    const link = screen.getByRole("link", { name: "Back to scan" });
+    if (activation === "click") {
+      await user.click(link);
+    } else {
+      link.focus();
+      await user.keyboard("{Enter}");
+    }
+    expect(await screen.findByRole("heading", { name: "Originating scenario run" }))
+      .toHaveAttribute("data-navigation-state", JSON.stringify({ fromScenarioHistory: true }));
+    expect(onReturnToScan).not.toHaveBeenCalled();
+  });
+
   it("should apply and persist the Markdown choice across remounts", async () => {
     const user = userEvent.setup();
     mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("**Hello**").messages);

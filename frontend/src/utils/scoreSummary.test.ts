@@ -21,7 +21,7 @@ describe('scoreSummary', () => {
       score_rationale: 'Met.', score_category: ['jailbreak'],
     }
     expect(scoreSummaryFromProgressScore(score)).toEqual({
-      scorer: 'objective', scoreType: 'true_false', value: 'true', status: 'complete',
+      scorer: 'objective', value: 'true', status: 'complete',
       rationale: 'Met.', categories: ['jailbreak'], isObjective: true,
     })
   })

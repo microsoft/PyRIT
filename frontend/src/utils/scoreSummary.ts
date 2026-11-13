@@ -15,7 +15,6 @@ export function scoreSummaryFromBackendScore(score: BackendScore): ScoreSummary 
 export function scoreSummaryFromProgressScore(score: ScenarioProgressScore): ScoreSummary {
   return {
     scorer: score.scorer_name,
-    scoreType: score.score_type,
     value: score.score_value,
     status: score.status,
     rationale: score.score_rationale,
