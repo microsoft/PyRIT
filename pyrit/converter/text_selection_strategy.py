@@ -4,6 +4,7 @@
 import abc
 import re
 import string
+import unicodedata
 from collections.abc import Collection
 from re import Pattern
 from typing import Any
@@ -983,13 +984,36 @@ class ContentWordSelectionStrategy(WordSelectionStrategy):
         """
         Strip punctuation and lowercase a token for classification.
 
+        Leading and trailing ASCII punctuation and Unicode punctuation (such as
+        curly quotes, guillemets, inverted question marks and ellipses) are
+        stripped.
+
         Args:
             word (str): The raw token.
 
         Returns:
             str: The normalized token.
         """
-        return word.strip(string.punctuation).lower()
+        start, end = 0, len(word)
+        while start < end and ContentWordSelectionStrategy._is_punctuation(word[start]):
+            start += 1
+        while end > start and ContentWordSelectionStrategy._is_punctuation(word[end - 1]):
+            end -= 1
+        return word[start:end].lower()
+
+    @staticmethod
+    def _is_punctuation(char: str) -> bool:
+        """
+        Return whether a character is ASCII or Unicode punctuation.
+
+        Args:
+            char (str): A single character.
+
+        Returns:
+            bool: True if the character is in ``string.punctuation`` or in a
+                Unicode punctuation category.
+        """
+        return char in string.punctuation or unicodedata.category(char).startswith("P")
 
     def _is_content_word(self, word: str) -> bool:
         """
