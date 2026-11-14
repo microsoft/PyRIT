@@ -93,6 +93,7 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
 def _load_identifier(
@@ -121,6 +122,8 @@ def _load_identifier(
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
     """
     if not stored:
+        return None
+    if set(stored) == {_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY}:
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
@@ -2634,9 +2637,15 @@ class ScenarioResultEntry(Base):
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        base_identifier = ComponentIdentifier.model_validate(
-            {**self.scenario_identifier, "pyrit_version": stored_version}
-        )
+        # Rows from v0.13 and v0.14 kept scenario_init_data, which was always null for built-in
+        # scenarios, and the v1.0 rename carried that null over into scenario_identifier. The
+        # denormalized scenario_version column survives the upgrade, so carry it into the
+        # reconstructed identifier rather than letting the version default to 1.
+        stored_identifier = self.scenario_identifier or {
+            "class_name": self.scenario_name,
+            "version": self.scenario_version,
+        }
+        base_identifier = ComponentIdentifier.model_validate({**stored_identifier, "pyrit_version": stored_version})
         scenario_identifier = ScenarioIdentifier.from_component_identifier(
             base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)
         )

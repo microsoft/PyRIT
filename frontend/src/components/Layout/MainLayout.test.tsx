@@ -77,6 +77,23 @@ describe("MainLayout", () => {
     expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("shows a banner between the skip link and the top bar, in the layout column", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+
+    renderWithProvider(
+      <MainLayout {...defaultProps} banner={<div role="status">Saved entries need attention</div>}>
+        <div>Child Content</div>
+      </MainLayout>
+    );
+
+    const skipLink = screen.getByRole("link", { name: "Skip to main content" });
+    const banner = screen.getByRole("status");
+    const subtitle = screen.getByText("Python Risk Identification Tool");
+    expect(skipLink.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(banner.compareDocumentPosition(subtitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("main")).not.toContainElement(banner);
+  });
+
   it("renders the header with title and subtitle", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
 

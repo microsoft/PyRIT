@@ -8,10 +8,11 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable  # registry annotation resolution
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping  # registry annotation resolution
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from weakref import WeakValueDictionary
 
 import httpx
@@ -79,6 +80,10 @@ class A2ATarget(PromptTarget):
     `input-required` tasks are extracted from the task status message.
     """
 
+    # The endpoint has no server setting to fall back to, and the card path has a fixed default.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType(
+        {"endpoint": False, "agent_card_path": False}
+    )
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,

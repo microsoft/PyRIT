@@ -746,6 +746,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
 
+    #: Whether this strategy executes child attacks, independent of result attribution.
+    IS_COMPOUND: ClassVar[bool] = False
+
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING

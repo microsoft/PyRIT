@@ -500,10 +500,10 @@ not additional results.
 Available flat execution rows remain usable while relationships load or if the
 hierarchy request fails, with an explicit loading/error notice.
 
-Clicking a result with a main conversation opens the existing chat view and
-preserves scenario-run provenance for its return breadcrumb. Conversationless
-compound results expand their children instead. A separate Details action reuses
-the existing metadata dialog. Hierarchy requests do not load transcript bodies;
+Clicking a result row or pressing Enter on it opens the attack details dialog.
+An explicit expansion button shows a compound result's saved children. The separate
+Conversation link opens Chat and preserves scenario-run provenance for its return
+breadcrumb. Hierarchy requests do not load transcript bodies;
 the Chat viewer loads saved evidence through the bounded conversation reads above.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
@@ -691,8 +691,9 @@ The chat preserves failed drafts across replacement, but requires converter choi
 to be reviewed again rather than restoring outputs tied to the previous registry.
 
 The offline browser fixture `frontend.e2e.fixtures.manual_send_backend:app` uses the real
-backend lifecycle with isolated in-memory SQLite, no environment files, and no default
-providers. The recovery tests register deterministic loopback targets. For example, start
+backend lifecycle with isolated in-memory SQLite, no environment files, no saved registry
+entries, and no default providers. The recovery tests register deterministic loopback
+targets. For example, start
 it with `uv run python -m uvicorn frontend.e2e.fixtures.manual_send_backend:app --host 127.0.0.1 --port 18213`
 (set `PYTHONUTF8=1` on Windows). In another shell, set `PYRIT_BACKEND_URL=http://127.0.0.1:18213`
 and `E2E_FRONTEND_PORT=31213`, then run `npx playwright test chat-recovery --project seeded --workers 1`
@@ -751,6 +752,13 @@ uses them:
 - `HTTPXAPITarget`, which uploads local files, can be created through the API only when
   `target_upload_directory` is set in `.pyrit_conf`; it then uploads files only from that
   folder, and callers cannot supply their own.
+- A copy of a registered target or converter, made from its `source`, keeps the source's
+  connection: it can't change the parameters its type reports as `copy_locked` (for OpenAI
+  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for the Azure
+  Speech converters the region, key, and resource ID), and trying returns **400**. So a copy
+  can't take its source's credentials, or a token for an identity its source was set up with,
+  to another endpoint or resource. This rule covers copies only: creating a new target can
+  still send this server's key to an endpoint the caller chooses, as described below.
 
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.
