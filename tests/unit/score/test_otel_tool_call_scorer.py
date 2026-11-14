@@ -611,6 +611,13 @@ def test_exhaustive_match_is_undetermined_without_evidence(acquisition: Acquisit
     assert match_tools_called(condition=condition, payload=payload, acquisition=acquisition) is None
 
 
+def test_exhaustive_match_refutes_error_acquisition_with_an_observed_extra_tool() -> None:
+    condition = _exhaustive("lookup").conditions[0]
+    payload = _tool_payload("delete", complete=False)
+
+    assert match_tools_called(condition=condition, payload=payload, acquisition=Acquisition.ERROR) is False
+
+
 def test_subset_match_still_ignores_other_tools() -> None:
     condition = _expectation("lookup").conditions[0]
     payload = _tool_payload("lookup", "delete", complete=True)

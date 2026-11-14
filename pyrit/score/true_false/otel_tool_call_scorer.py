@@ -58,12 +58,12 @@ def _match_tools_called(
     Returns:
         tuple[bool | None, bool]: The verdict, and whether it depends on complete evidence.
     """
-    if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
-        return None, False
     observed = {event.name for event in payload.events}
     required = {tool.name for tool in condition.tools}
     if condition.exhaustive and not observed <= required:
         return False, False
+    if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
+        return None, False
     complete = acquisition is Acquisition.COMPLETE and payload.coverage.complete
     if required <= observed:
         if not condition.exhaustive:
