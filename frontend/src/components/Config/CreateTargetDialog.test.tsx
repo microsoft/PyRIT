@@ -9,6 +9,7 @@ import { targetsApi } from "@/services/api";
 
 jest.mock("@/services/api", () => ({
   targetsApi: {
+    checkSaveability: jest.fn(),
     createTarget: jest.fn(),
     listTargetTypes: jest.fn(),
     listTargets: jest.fn(),
@@ -367,6 +368,15 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
 // The primary action reads Save Target, or Create as Temporary when the target can't be saved.
 const SUBMIT_BUTTON_NAME = /^(Save Target|Create as Temporary|Creating\.\.\.)$/;
 
+// The backend refuses to save a typed credential, so the dialog offers a Temporary target once it answers.
+function refuseSavingTypedCredential(name: string): void {
+  mockedTargetsApi.checkSaveability.mockImplementation(async (request) => ({
+    not_saveable_reason: request.params[name]
+      ? `Saved entries can't hold credentials ('${name}'). It can still be created without saving it.`
+      : null,
+  }));
+}
+
 function getSubmitButton(): HTMLElement {
   return screen.getByRole("button", { name: SUBMIT_BUTTON_NAME });
 }
@@ -531,6 +541,7 @@ describe("CreateTargetDialog", () => {
     dialogAccessibilityObserver = watchDialogAccessibility();
     jest.clearAllMocks();
     mockedTargetsApi.listTargetTypes.mockResolvedValue(TARGET_TYPES);
+    mockedTargetsApi.checkSaveability.mockResolvedValue({ not_saveable_reason: null });
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
@@ -1862,6 +1873,7 @@ describe("CreateTargetDialog", () => {
 
   it("should show missing instance token guidance and allow retrying with an entered token", async () => {
     const user = userEvent.setup();
+    refuseSavingTypedCredential("github_token");
     const detail = "GitHub Copilot requires a GitHub token in CoPyRIT. Enter GitHub Token or configure "
       + "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files.";
     mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(new Error("Bad Request"), {
@@ -1888,7 +1900,7 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ })).toHaveValue("gpt-4.1");
 
     await user.type(screen.getByLabelText("GitHub Token", { selector: "input" }), "test-github-token");
-    await user.click(getSubmitButton());
+    await user.click(await screen.findByRole("button", { name: "Create as Temporary" }));
 
     await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
     expect(mockedTargetsApi.createTarget).toHaveBeenLastCalledWith({
@@ -1901,6 +1913,7 @@ describe("CreateTargetDialog", () => {
 
   it("should submit the GitHub token and typed Copilot advanced settings", async () => {
     const user = userEvent.setup();
+    refuseSavingTypedCredential("github_token");
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "copilot",
       target_type: "GitHubCopilotTarget",
@@ -1920,7 +1933,7 @@ describe("CreateTargetDialog", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Retain Session" }), "false");
     await user.type(screen.getByRole("spinbutton", { name: "Response Timeout Seconds" }), "120");
     await user.type(screen.getByRole("spinbutton", { name: "Max Requests Per Minute" }), "10");
-    await user.click(getSubmitButton());
+    await user.click(await screen.findByRole("button", { name: "Create as Temporary" }));
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
@@ -1946,6 +1959,7 @@ describe("CreateTargetDialog", () => {
     "should create GitHub Copilot without an endpoint when metadata is %s",
     async (metadataStatus) => {
       const user = userEvent.setup();
+      refuseSavingTypedCredential("github_token");
       if (metadataStatus === "loading") {
         mockedTargetsApi.listTargetTypes.mockReturnValue(new Promise<TargetTypeListResponse>(() => {}));
       } else if (metadataStatus === "failed") {
@@ -1976,7 +1990,7 @@ describe("CreateTargetDialog", () => {
 
       await user.type(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4.1");
       await user.type(screen.getByLabelText("GitHub Token", { selector: "input" }), "test-github-token");
-      await user.click(getSubmitButton());
+      await user.click(await screen.findByRole("button", { name: "Create as Temporary" }));
 
       await waitFor(() => {
         expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
@@ -2978,6 +2992,7 @@ describe("CreateTargetDialog saving", () => {
     dialogAccessibilityObserver = watchDialogAccessibility();
     jest.clearAllMocks();
     mockedTargetsApi.listTargetTypes.mockResolvedValue(SAVEABLE_TARGET_TYPES);
+    mockedTargetsApi.checkSaveability.mockResolvedValue({ not_saveable_reason: null });
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
@@ -3203,12 +3218,15 @@ describe("CreateTargetDialog saving", () => {
     await pasteInto(user, screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), "http://localhost:11434/v1");
 
     // No error while the address is still being typed, but saving already waits for one that works.
+    const endpointInput = screen.getByRole("textbox", { name: /Endpoint URL/ });
     expect(screen.queryByText(/Identity-based auth only works/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Target" })).toBeDisabled();
     await user.tab();
-    expect(screen.getAllByRole("status").some((region) => (
-      region.textContent?.includes("For a server that needs no key, such as a local one, choose No key.")
-    ))).toBe(true);
+    // The field's own message, so it shows next to the address even when the auth choices are off screen.
+    expect(endpointInput).toHaveAttribute("aria-invalid", "true");
+    expect(endpointInput).toHaveAccessibleDescription(
+      expect.stringContaining("For a server that needs no key, such as a local one, choose No key."),
+    );
     await user.click(screen.getByRole("radio", { name: /^No key/ }));
     expect(screen.queryByText(/Identity-based auth only works/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Target" })).toBeEnabled();
@@ -3305,8 +3323,12 @@ describe("CreateTargetDialog saving", () => {
     expect(screen.getByRole("button", { name: "Create as Temporary" })).toBeInTheDocument();
   });
 
-  it("should offer Temporary only while a credential is typed for a target that saves without one", async () => {
+  it("should offer Temporary only while the backend says a typed credential can't be saved", async () => {
     const user = userEvent.setup();
+    const refusal = "Saved entries can't hold credentials ('auth_token'). It can still be created without saving it.";
+    mockedTargetsApi.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: request.params.auth_token ? refusal : null,
+    }));
     mockedTargetsApi.listTargetTypes.mockResolvedValue({ items: [...SAVEABLE_TARGET_TYPES.items, A2A_TARGET_TYPE] });
     render(
       <TestWrapper>
@@ -3322,8 +3344,12 @@ describe("CreateTargetDialog saving", () => {
     const tokenField = screen.getByLabelText(/Auth Token/, { selector: "input" });
     await pasteInto(user, tokenField, "secret-token");
 
-    expect(screen.getByText(/Saved targets can't hold credentials \('auth_token'\) yet\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved entries can't hold credentials \('auth_token'\)\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create as Temporary" })).toBeInTheDocument();
+    expect(mockedTargetsApi.checkSaveability).toHaveBeenLastCalledWith(
+      { type: "A2ATarget", params: { endpoint: "https://agent.example.com", auth_token: "secret-token" } },
+      expect.any(AbortSignal),
+    );
 
     await user.clear(tokenField);
 
@@ -3716,8 +3742,13 @@ describe("CreateTargetDialog saving", () => {
     });
   });
 
-  it("should mark Temporary round-robin members and offer Temporary for the round robin", async () => {
+  it("should mark Temporary round-robin members and offer Temporary when the backend refuses to save them", async () => {
     const user = userEvent.setup();
+    mockedTargetsApi.checkSaveability.mockImplementation(async (request) => ({
+      not_saveable_reason: (request.params.targets as string[]).includes("temp_chat")
+        ? "Uses temporary target 'temp_chat', which won't exist after a restart. It can still be created without saving it."
+        : null,
+    }));
     render(
       <TestWrapper>
         <CreateTargetDialog
@@ -3753,6 +3784,10 @@ describe("CreateTargetDialog saving", () => {
     expect(
       await screen.findByText(/Uses temporary target 'temp_chat', which won't exist after a restart\./),
     ).toBeInTheDocument();
+    expect(mockedTargetsApi.checkSaveability).toHaveBeenLastCalledWith(
+      { type: "RoundRobinTarget", params: { targets: ["saved_chat", "temp_chat"] } },
+      expect.any(AbortSignal),
+    );
     await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
 
     await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
@@ -3762,5 +3797,62 @@ describe("CreateTargetDialog saving", () => {
       params: { targets: ["saved_chat", "temp_chat"], weights: [1, 1] },
       persist: false,
     });
+  });
+
+  it("should keep saving when the backend accepts a member the list showed as Temporary", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            makeTarget({ target_registry_name: "saved_chat", target_type: "OpenAIChatTarget", identifier_hash: "a" }),
+            makeTarget({
+              target_registry_name: "temp_chat",
+              target_type: "OpenAIChatTarget",
+              identifier_hash: "b",
+              origin: "temporary",
+            }),
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType("RoundRobinTarget");
+    const select = screen.getByText("Select a target to add...").closest("select")!;
+    await user.selectOptions(select, "saved_chat");
+    await user.selectOptions(select, "temp_chat");
+    await waitFor(() => expect(mockedTargetsApi.checkSaveability).toHaveBeenLastCalledWith(
+      { type: "RoundRobinTarget", params: { targets: ["saved_chat", "temp_chat"] } },
+      expect.any(AbortSignal),
+    ));
+    await act(async () => {});
+
+    expect(screen.getByRole("button", { name: "Save Target" })).toBeInTheDocument();
+    expect(screen.queryByText("This target can't be saved")).not.toBeInTheDocument();
+  });
+
+  it("should ignore the backend's answer for values that have since changed", async () => {
+    const user = userEvent.setup();
+    const answers: Array<(response: { not_saveable_reason: string | null }) => void> = [];
+    mockedTargetsApi.checkSaveability.mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }));
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await fillAzureOpenAiChat(user);
+    await waitFor(() => expect(answers.length).toBeGreaterThan(0));
+    const stale = answers.length - 1;
+    await user.type(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "-mini");
+    await waitFor(() => expect(answers.length).toBeGreaterThan(stale + 1));
+    await act(async () => {
+      answers[answers.length - 1]({ not_saveable_reason: null });
+      answers[stale]({ not_saveable_reason: "Refused. It can still be created without saving it." });
+    });
+
+    expect(screen.getByRole("button", { name: "Save Target" })).toBeInTheDocument();
+    expect(screen.queryByText(/Refused\./)).not.toBeInTheDocument();
   });
 });

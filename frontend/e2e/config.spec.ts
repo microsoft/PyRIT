@@ -452,6 +452,14 @@ test.describe("Create Target Dialog", () => {
         }),
       });
     });
+    // Also registered after the broad route, so the dialog's save check isn't taken for a create.
+    await page.route(/\/api\/targets\/saveability$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ not_saveable_reason: null }),
+      });
+    });
 
     await goToTargets(page);
 
