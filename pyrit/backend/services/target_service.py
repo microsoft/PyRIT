@@ -708,7 +708,9 @@ class TargetService:
             ValueError: If creating the target would be refused as invalid.
             PermissionError: If creating the target needs administrator access the caller doesn't have.
         """
-        create_request = CreateTargetRequest(type=request.type, params=request.params, auth_mode=request.auth_mode)
+        create_request = CreateTargetRequest(
+            type=request.type, params=request.params, auth_mode=request.auth_mode, register=False
+        )
         target_cls, params = await self._requested_params_async(
             request=create_request, upload_directory=upload_directory, is_admin=is_admin
         )
