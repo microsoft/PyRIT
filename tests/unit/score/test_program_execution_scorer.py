@@ -167,6 +167,112 @@ def test_evaluate_program_needs_every_case() -> None:
         assert _evaluate_program(condition=condition, payload=empty, acquisition=acquisition).value is None
 
 
+@pytest.mark.parametrize(
+    ("outcomes", "result", "rationale"),
+    [
+        (("9", "9", "9"), True, "in each of 3 runs"),
+        (("8", "8", "8"), False, "case 0 output did not match"),
+        (("9", "8", "9"), None, "case 0 gave different results across runs (1 of 3 failed)"),
+        (("8", "9", "8"), None, "case 0 gave different results across runs (2 of 3 failed)"),
+        (("9", "9", None), None, "case 0 did not run"),
+        (("8", None, "8"), None, "case 0 did not run"),
+    ],
+)
+def test_evaluate_program_settles_a_repeated_case_only_when_every_run_agrees(
+    outcomes: tuple[str | None, ...], result: bool | None, rationale: str
+) -> None:
+    condition = ProgramBehaves(
+        runtime_profile_name=_PROFILE, cases=(_case("3", stdout=Equals(value="9")),), repetitions=3
+    )
+    events = tuple(
+        _event(invocation_index=index, stdout=stdout) for index, stdout in enumerate(outcomes) if stdout is not None
+    )
+    payload = ProgramExecutionObservationPayload(program_sha256="a" * 64, events=events)
+    acquisition = Acquisition.COMPLETE if len(events) == 3 else Acquisition.PARTIAL
+
+    evaluation = _evaluate_program(condition=condition, payload=payload, acquisition=acquisition)
+
+    assert evaluation.value is result
+    assert rationale in evaluation.rationale
+
+
+@pytest.mark.parametrize(
+    ("outputs", "result", "rationale"),
+    [
+        (("9", "9", "16", "16"), True, "All 2 case(s) produced the expected result in each of 2 runs"),
+        (("9", "9", "16", "15"), None, "case 1 gave different results across runs (1 of 2 failed)"),
+    ],
+)
+def test_evaluate_program_reads_each_case_from_its_own_runs(
+    outputs: tuple[str, ...], result: bool | None, rationale: str
+) -> None:
+    condition = ProgramBehaves(runtime_profile_name=_PROFILE, cases=_SQUARES, repetitions=2)
+    payload = ProgramExecutionObservationPayload(
+        program_sha256="a" * 64,
+        events=tuple(_event(invocation_index=index, stdout=stdout) for index, stdout in enumerate(outputs)),
+    )
+
+    evaluation = _evaluate_program(condition=condition, payload=payload, acquisition=Acquisition.COMPLETE)
+
+    assert evaluation.value is result
+    assert rationale in evaluation.rationale
+    assert "case 0" not in evaluation.rationale
+
+
+class _DriftingSandbox(_FakeSandbox):
+    """Prints a different value on every run, as a program reading the clock or a random source would."""
+
+    async def execute_async(
+        self, *, program: str, runtime_profile_name: str, invocations: tuple[_ProgramInvocation, ...]
+    ) -> _SandboxRun:
+        self.calls.append((program, runtime_profile_name, invocations))
+        return _SandboxRun(
+            events=tuple(
+                _event(invocation_index=index, stdout=f"seed {index}", duration_ms=index + 1)
+                for index in range(len(invocations))
+            )
+        )
+
+
+async def test_runs_that_disagree_leave_the_verdict_undetermined_async(sqlite_instance: SQLiteMemory) -> None:
+    sandbox = _DriftingSandbox()
+    scorer = _scorer(sandbox)
+    case = _case("1", stdout=Equals(value="seed 0"))
+    repeated = ScoringExpectation(
+        conditions=(ProgramBehaves(runtime_profile_name=_PROFILE, cases=(case,), repetitions=3),)
+    )
+
+    score = (await scorer.score_async(scorable=ContentScorable(value="x"), expectation=repeated))[0]
+
+    assert (score.status, score.score_value) == (ScoreStatus.UNDETERMINED, None)
+    assert "case 0 gave different results across runs (2 of 3 failed)" in score.score_rationale
+    assert sandbox.calls[0][2] == (case.invocation,) * 3
+    single = (await scorer.score_async(scorable=ContentScorable(value="x"), expectation=_expectation(case)))[0]
+    assert single.get_value() is True
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    replayed = (await scorer.score_observation_async(observation=observation, expectation=repeated))[0]
+    assert replayed.status is ScoreStatus.UNDETERMINED
+    assert len(sandbox.calls) == 2
+    with pytest.raises(NonReplayableObservationError, match="different invocations"):
+        await scorer.score_observation_async(observation=observation, expectation=_expectation(case))
+
+
+async def test_differences_a_case_does_not_check_are_not_nondeterminism_async() -> None:
+    sandbox = _DriftingSandbox()
+    expectation = ScoringExpectation(
+        conditions=(
+            ProgramBehaves(
+                runtime_profile_name=_PROFILE, cases=(_case("1", stdout=Contains(value="seed")),), repetitions=3
+            ),
+        )
+    )
+
+    score = (await _scorer(sandbox).score_async(scorable=ContentScorable(value="x"), expectation=expectation))[0]
+
+    assert score.get_value() is True
+    assert "in each of 3 runs" in score.score_rationale
+
+
 async def test_scores_true_when_every_case_passes_async(sqlite_instance: SQLiteMemory) -> None:
     sandbox = _FakeSandbox(outputs={"3": {"stdout": "9"}, "4": {"stdout": "16"}})
     program = ContentScorable(value="import sys\nprint(int(sys.argv[1]) ** 2)\n")

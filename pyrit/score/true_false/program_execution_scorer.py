@@ -87,6 +87,25 @@ def _evaluate_case(*, expected: ProgramResult, event: _ProgramExecutionEvent | N
     return _Evaluation(value=True, rationale="")
 
 
+def _evaluate_runs(*, expected: ProgramResult, events: list[_ProgramExecutionEvent | None]) -> _Evaluation:
+    """
+    Settle a repeated case only when every run reaches the same verdict.
+
+    Returns:
+        _Evaluation: The shared verdict, or an undetermined one when runs are missing or disagree.
+    """
+    evaluations = [_evaluate_case(expected=expected, event=event) for event in events]
+    values = {evaluation.value for evaluation in evaluations}
+    if len(values) == 1:
+        return evaluations[0]
+    if {True, False} <= values:
+        failed = sum(evaluation.value is False for evaluation in evaluations)
+        return _Evaluation(
+            value=None, rationale=f"gave different results across runs ({failed} of {len(events)} failed)"
+        )
+    return next(evaluation for evaluation in evaluations if evaluation.value is None)
+
+
 def _evaluate_program(
     *, condition: ProgramBehaves, payload: ProgramExecutionObservationPayload, acquisition: Acquisition
 ) -> _Evaluation:
@@ -103,12 +122,16 @@ def _evaluate_program(
             value=None, rationale=f"The program's behavior under {profile_name} could not be observed ({gaps})."
         )
     events = {event.invocation_index: event for event in payload.events}
+    runs = condition.repetitions
     evaluations = [
-        _evaluate_case(expected=case.expected, event=events.get(index)) for index, case in enumerate(condition.cases)
+        _evaluate_runs(expected=case.expected, events=[events.get(index * runs + run) for run in range(runs)])
+        for index, case in enumerate(condition.cases)
     ]
     if all(evaluation.value is True for evaluation in evaluations):
+        each = f" in each of {runs} runs" if runs > 1 else ""
         return _Evaluation(
-            value=True, rationale=f"All {len(evaluations)} case(s) produced the expected result under {profile_name}."
+            value=True,
+            rationale=f"All {len(evaluations)} case(s) produced the expected result{each} under {profile_name}.",
         )
     summary = "; ".join(
         f"case {index} {evaluation.rationale}"
@@ -134,7 +157,8 @@ class ProgramExecutionScorer(TrueFalseScorer):
     The source receives verbatim program text, a runtime profile name, and invocation inputs,
     but never expected results. Each case checks its expected exit and output; a timeout or
     resource limit fails the case. All cases passing yields true, any proven failure yields
-    false, and insufficient evidence leaves the verdict undetermined.
+    false, and insufficient evidence leaves the verdict undetermined. A repeated case whose runs
+    disagree is insufficient evidence.
 
     Every scoring call runs afresh. ``score_observation_async`` replays saved evidence without
     executing the program.

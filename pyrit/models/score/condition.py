@@ -276,11 +276,20 @@ class ProgramBehaves(Condition):
     row. A scorer splits them before acquisition: the runtime profile and each invocation go to
     the source, and each expected result stays with the scorer's matcher. A run that times out
     or exceeds a resource limit fails its case.
+
+    ``repetitions`` runs each case that many times in one acquisition. A case is settled only when
+    every run reaches the same verdict; runs that disagree leave it undetermined. Only a difference
+    that changes a case's verdict counts as nondeterminism, such as output that depends on the
+    clock, randomness, or scheduling. Output the case does not check, and duration, never count.
+    Repetitions share one runtime profile, so they do not sample other platforms or architectures;
+    compare those under separate runtime profiles. Replay judges the stored runs again and never
+    repeats execution.
     """
 
     condition_type: Literal["program_behaves"] = "program_behaves"
     runtime_profile_name: _RuntimeProfileName
     cases: tuple[ProgramCase, ...]
+    repetitions: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def _validate_cases(self) -> ProgramBehaves:
@@ -299,8 +308,8 @@ class ProgramBehaves(Condition):
 
     @property
     def invocations(self) -> tuple[_ProgramInvocation, ...]:
-        """The stimuli of every case, in case order, without their expected results."""
-        return tuple(case.invocation for case in self.cases)
+        """The stimuli of every case, in case order and repeated per case, without their expected results."""
+        return tuple(case.invocation for case in self.cases for _ in range(self.repetitions))
 
 
 def _parse_conditions(value: Any) -> Any:
