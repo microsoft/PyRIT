@@ -2296,6 +2296,40 @@ describe("MessageList", () => {
   });
 
   describe("download handler", () => {
+    it("prevents overlapping downloads and enables retry after completion", async () => {
+      const user = userEvent.setup();
+      let failDownload: (reason: Error) => void = () => { throw new Error("Download was not started"); };
+      const pendingResponse = new Promise<Response>((_resolve, reject) => {
+        failDownload = reject;
+      });
+      global.fetch = jest.fn().mockReturnValue(pendingResponse);
+      const messages: Message[] = [{
+        role: "assistant",
+        content: "Here is the image",
+        timestamp: "2026-11-04T10:00:00.000Z",
+        attachments: [{
+          type: "image",
+          name: "result.png",
+          url: "http://localhost/media/result.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+
+      render(<TestWrapper><MessageList messages={messages} /></TestWrapper>);
+      const downloadButton = screen.getByTestId("download-btn-0-0");
+      await user.click(downloadButton);
+      expect(downloadButton).toBeDisabled();
+      expect(downloadButton).toHaveAttribute("aria-busy", "true");
+      await user.click(downloadButton);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      failDownload(new Error("Network unavailable"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(downloadButton).toBeEnabled();
+      expect(downloadButton).toHaveAttribute("aria-busy", "false");
+    });
+
     it("does not download HTTP error bodies and lets the user retry", async () => {
       const user = userEvent.setup();
       const mockBlob = new Blob(["image"], { type: "image/png" });

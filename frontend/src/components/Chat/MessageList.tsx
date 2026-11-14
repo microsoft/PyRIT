@@ -424,8 +424,13 @@ export default function MessageList({
   const copyMenuId = useId()
   const isCopyConversationDisabled = copyConversationDisabled || Boolean(copyConversationDisabledReason)
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
+  const activeDownloads = useRef(new Set<string>())
+  const [pendingDownloads, setPendingDownloads] = useState<Set<string>>(new Set())
 
   const handleDownload = async (att: MessageAttachment, downloadKey: string) => {
+    if (activeDownloads.current.has(downloadKey)) return
+    activeDownloads.current.add(downloadKey)
+    setPendingDownloads(new Set(activeDownloads.current))
     setDownloadErrors((current) => {
       const next = { ...current }
       delete next[downloadKey]
@@ -451,6 +456,9 @@ export default function MessageList({
     } catch {
       // Keep the download action available so the user can retry.
       setDownloadErrors((current) => ({ ...current, [downloadKey]: 'Download failed. Please try again.' }))
+    } finally {
+      activeDownloads.current.delete(downloadKey)
+      setPendingDownloads(new Set(activeDownloads.current))
     }
   }
 
@@ -729,6 +737,8 @@ export default function MessageList({
                             appearance="subtle"
                             size="small"
                             icon={<ArrowDownloadRegular />}
+                            disabled={pendingDownloads.has(downloadKey)}
+                            aria-busy={pendingDownloads.has(downloadKey)}
                             onClick={() => handleDownload(att, downloadKey)}
                             data-testid={`download-btn-${index}-${ai}`}
                             className={styles.messageActionButton}
