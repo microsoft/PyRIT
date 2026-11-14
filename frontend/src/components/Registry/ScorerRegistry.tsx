@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 
 import { Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
+import { Link } from 'react-router'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
@@ -187,7 +188,22 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
         return items.length > 0
           ? <ScorerTable key={family} family={family} title={title} metrics={metrics} scorers={items} /> : null
       })}
-      {!loading && !error && scorers.length === 0 && <Text>No scorers are registered. Configure scorers through an initializer.</Text>}
+      {!loading && !error && scorers.length === 0 && (
+        <section aria-label="Register your first scorer">
+          <Text as="p">No scorers are registered.</Text>
+          <Text as="p">
+            Use the <a href="https://microsoft.github.io/PyRIT/latest/getting-started/pyrit-conf/#initialization-scripts"
+              target="_blank" rel="noopener noreferrer">
+              local scorer initializer recipe
+            </a> to register a substring scorer without API credentials.
+          </Text>
+          <Text as="p">
+            Add the initializer script to <code>initialization_scripts</code> in <Link to="/config">Configuration</Link>.
+            Save your changes. Select <strong>Reinitialize PyRIT</strong> if available, or restart the backend
+            with the saved configuration. Then return here to select your scorer.
+          </Text>
+        </section>
+      )}
     </div>
   )
 }

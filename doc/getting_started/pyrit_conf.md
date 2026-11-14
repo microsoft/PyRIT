@@ -235,6 +235,39 @@ initialization_scripts:
   - ./local_initializer.py
 ```
 
+#### Register your first local scorer
+
+Save this example as `local_scorer.py` on the machine running the PyRIT backend.
+It checks whether a text response contains `example` and needs no model or API credentials.
+
+```python
+from pyrit.registry import ScorerRegistry
+from pyrit.score import SubStringScorer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+
+class LocalScorerInitializer(PyRITInitializer):
+    async def initialize_async(self) -> None:
+        ScorerRegistry.get_registry_singleton().instances.register(
+            SubStringScorer(substring="example"),
+            name="contains-example",
+        )
+```
+
+In the GUI, open **Configuration** and add the script's absolute path to the existing
+`initialization_scripts` list. For example:
+
+```yaml
+initialization_scripts:
+  - /absolute/path/to/local_scorer.py
+```
+
+Choose **Save**. If **Reinitialize PyRIT** is enabled, select it to apply the change.
+Live reinitialization is disabled by default. If the button is unavailable, restart
+the PyRIT backend using the saved configuration. Return to
+**Registry → Scorers** and select `contains-example` as the default objective scorer for chats.
+Use only initializer scripts you trust, since they run as Python code on the backend.
+
 ### `env_files`
 
 Optional local dotenv paths. Key Vault remains the canonical shared source; explicit files support local and non-Azure workflows.
