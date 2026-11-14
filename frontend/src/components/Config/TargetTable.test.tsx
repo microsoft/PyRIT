@@ -500,6 +500,165 @@ describe('TargetTable', () => {
     expect(defaults.getByRole('option', { name: 'Use server default' })).toHaveValue('')
   })
 
+  it('should say whether each target comes back after a restart, and nothing for inner targets', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      makeTarget({ target_registry_name: 'saved_chat', origin: 'saved' }),
+      makeTarget({ target_registry_name: 'startup_chat', origin: 'configuration' }),
+      makeTarget({
+        target_registry_name: 'temp_pool',
+        target_type: 'RoundRobinTarget',
+        origin: 'temporary',
+        inner_targets: [{ target_registry_name: 'inner_chat', origin: null }],
+      }),
+      makeTarget({ target_registry_name: 'unknown_chat' }),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} onTargetDeleted={jest.fn()} />
+      </TestWrapper>
+    )
+
+    // Only a saved target has a file to delete.
+    expect(screen.getAllByRole('button', { name: /^Delete saved target/ }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Delete saved target saved_chat'])
+    const labelIn = (name: string): string | null => {
+      const row = screen.getByRole('row', { name: new RegExp(`(^|\\s)${name}(\\s|$)`) })
+      const label = ['Saved', 'From configuration', 'Temporary'].find((text) => within(row).queryByText(text))
+      return label ?? null
+    }
+    expect(['saved_chat', 'startup_chat', 'temp_pool', 'unknown_chat'].map(labelIn)).toEqual([
+      'Saved',
+      'From configuration',
+      'Temporary',
+      null,
+    ])
+    await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+    expect(labelIn('inner_chat')).toBeNull()
+  })
+
+  describe('who saved each target', () => {
+    const mine = makeTarget({ target_registry_name: 'mine_chat', origin: 'saved', saved_by: 'Ada', saved_by_me: true })
+    const alsoMine = makeTarget({
+      target_registry_name: 'mine_second', origin: 'saved', saved_by: 'Ada', saved_by_me: true,
+    })
+    const bobs = makeTarget({ target_registry_name: 'bobs_chat', origin: 'saved', saved_by: 'Bob' })
+    const local = makeTarget({ target_registry_name: 'local_chat', origin: 'saved', saved_by: null })
+    const startup = makeTarget({ target_registry_name: 'startup_chat', origin: 'configuration' })
+
+    const listedNames = (): string[] => screen.getAllByTestId(/^target-row-/)
+      .map((row) => row.getAttribute('data-testid')?.replace('target-row-', '') ?? '')
+      .sort()
+
+    it('should say who saved each saved target, and you for your own', () => {
+      render(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[mine, bobs, local, startup]} />
+        </TestWrapper>
+      )
+
+      const captionIn = (name: string): string | null => (
+        within(screen.getByTestId(`target-row-${name}`)).queryByText(/^Saved by /)?.textContent ?? null
+      )
+      expect(['mine_chat', 'bobs_chat', 'local_chat', 'startup_chat'].map(captionIn)).toEqual([
+        'Saved by you',
+        'Saved by Bob',
+        null,
+        null,
+      ])
+    })
+
+    it('should list only the targets you saved while the checkbox is on', async () => {
+      const user = userEvent.setup()
+      render(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[mine, alsoMine, bobs, startup]} />
+        </TestWrapper>
+      )
+
+      const onlyMine = screen.getByRole('checkbox', { name: 'Only targets I saved (2)' })
+      expect(onlyMine).not.toBeChecked()
+      await user.click(onlyMine)
+      expect(listedNames()).toEqual(['mine_chat', 'mine_second'])
+      await user.click(onlyMine)
+      expect(listedNames()).toEqual(['bobs_chat', 'mine_chat', 'mine_second', 'startup_chat'])
+    })
+
+    it('should not offer the checkbox when no target is yours, such as with sign-in off', () => {
+      render(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[bobs, local, startup]} />
+        </TestWrapper>
+      )
+
+      expect(screen.queryByRole('checkbox', { name: /Only targets I saved/ })).not.toBeInTheDocument()
+    })
+
+    it('should turn the checkbox off when the last target you saved is gone', async () => {
+      const user = userEvent.setup()
+      const { rerender } = render(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[mine, bobs]} />
+        </TestWrapper>
+      )
+
+      await user.click(screen.getByRole('checkbox', { name: 'Only targets I saved (1)' }))
+      rerender(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[bobs]} />
+        </TestWrapper>
+      )
+      expect(screen.queryByRole('checkbox', { name: /Only targets I saved/ })).not.toBeInTheDocument()
+      expect(listedNames()).toEqual(['bobs_chat'])
+      rerender(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[alsoMine, bobs]} />
+        </TestWrapper>
+      )
+
+      expect(screen.getByRole('checkbox', { name: 'Only targets I saved (1)' })).not.toBeChecked()
+      expect(listedNames()).toEqual(['bobs_chat', 'mine_second'])
+    })
+
+    it('should apply the checkbox together with the column filters', async () => {
+      const user = userEvent.setup()
+      const myImage = makeTarget({
+        target_registry_name: 'mine_image',
+        target_type: 'OpenAIImageTarget',
+        origin: 'saved',
+        saved_by: 'Ada',
+        saved_by_me: true,
+      })
+      render(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[mine, myImage, bobs, startup]} />
+        </TestWrapper>
+      )
+
+      await user.click(screen.getByRole('checkbox', { name: 'Only targets I saved (2)' }))
+      await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
+
+      expect(listedNames()).toEqual(['mine_chat'])
+    })
+
+    it('should leave a target you saved but hid out of the list', async () => {
+      const user = userEvent.setup()
+      render(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={[mine, bobs]} />
+        </TestWrapper>
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Hide mine_chat' }))
+      await user.click(screen.getByRole('checkbox', { name: 'Only targets I saved (1)' }))
+
+      expect(screen.queryAllByTestId(/^target-row-/)).toHaveLength(0)
+      expect(screen.getByText('No targets match the selected filters.')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Show hidden targets (1)' }))
+      expect(listedNames()).toEqual(['mine_chat'])
+    })
+  })
+
   it('should set the supported adversarial role', async () => {
     const user = userEvent.setup()
 

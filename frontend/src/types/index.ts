@@ -451,6 +451,12 @@ export interface ScorerInstance {
   evaluation_identifier?: ComponentIdentifier | null
   metrics?: ScorerEvaluationMetrics | null
   chat_scoring_disabled_reason?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
+  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
+  saved_by?: string | null
+  /** Whether the signed-in user is the one who saved it. */
+  saved_by_me?: boolean
 }
 
 export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
@@ -500,8 +506,17 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
+/** Where a registered target, converter, or scorer comes from, and so whether it is still there after a restart. */
+export type RegistryEntryOrigin = 'saved' | 'configuration' | 'temporary'
+
 export interface TargetInstance {
   target_registry_name: string
+  /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
+  origin?: RegistryEntryOrigin | null
+  /** Name of the user who saved the target; null when it isn't saved or was saved with sign-in off. */
+  saved_by?: string | null
+  /** Whether the signed-in user is the one who saved the target. */
+  saved_by_me?: boolean
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -522,9 +537,13 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
+  /** Registry name; required with `persist`. */
+  name?: string
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
+  /** Save the target so it comes back after a restart. */
+  persist?: boolean
 }
 
 // --- Initializers ---
@@ -591,6 +610,12 @@ export interface ConverterInstance {
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
+  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
+  saved_by?: string | null
+  /** Whether the signed-in user is the one who saved it. */
+  saved_by_me?: boolean
 }
 
 export interface ConverterListResponse {
@@ -603,9 +628,12 @@ export type CreateConverterRequest = {
 } & ({
   params?: Record<string, unknown>
   source?: never
+  /** Save the converter so it comes back after a restart; a copy made with `source` can't be saved yet. */
+  persist?: boolean
 } | {
   source: SourceInstanceSpec
   params?: never
+  persist?: never
 })
 
 export interface SourceInstanceSpec {
@@ -646,6 +674,12 @@ export interface TechniqueInstance {
   identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
+  /** Whether the technique comes back after a restart. */
+  origin?: RegistryEntryOrigin | null
+  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
+  saved_by?: string | null
+  /** Whether the signed-in user is the one who saved it. */
+  saved_by_me?: boolean
 }
 
 export interface TechniqueTypeEntry {
@@ -667,6 +701,8 @@ export interface TechniqueTypeResponse {
 
 export interface CreateTechniqueRequest {
   name: string
+  /** Save the technique so it comes back after the backend restarts or is reinitialized. */
+  persist?: boolean
   description?: string
   tags: string[]
   type: string
@@ -769,6 +805,8 @@ export interface ConverterTypeEntry {
   parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
+  /** Why a converter of this type can't be saved, or null when it can be. */
+  not_saveable_reason?: string | null
 }
 
 export interface ConverterTypeListResponse {
@@ -810,6 +848,10 @@ export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: TargetAuthMode[]
+  /** Auth modes a saved target of this type can use; empty when it can't be saved. */
+  saveable_auth_modes?: TargetAuthMode[]
+  /** Why a target of this type can't be saved. */
+  not_saveable_reason?: string | null
   description?: string | null
 }
 
@@ -2536,6 +2578,20 @@ export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniq
 export interface SavedEntryRef {
   kind: RegistryRecipeKind
   name: string
+}
+
+/** A saved entry's file, as GET /api/saved-entries/{kind}/{name} describes it. */
+export interface SavedEntry {
+  kind: RegistryRecipeKind
+  name: string
+  /** The file's version, sent back when deleting it; null when the file can't be read. */
+  version: string | null
+  /** Why the file can't be used, when it can't be read or isn't a valid entry. */
+  problem: string | null
+  saved_by: string | null
+  saved_by_me: boolean
+  /** Whether the person asking may change or delete it. */
+  can_change: boolean
 }
 
 /** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */

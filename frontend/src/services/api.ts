@@ -383,6 +383,16 @@ export const runtimeApi = {
   },
 }
 
+export const savedEntriesApi = {
+  get: async (kind: RegistryRecipeKind, name: string): Promise<SavedEntry> => {
+    return (await apiClient.get(`/saved-entries/${kind}/${encodeURIComponent(name)}`)).data
+  },
+  delete: async (kind: RegistryRecipeKind, name: string, expectedVersion: string | null): Promise<void> => {
+    const params = expectedVersion === null ? {} : { expected_version: expectedVersion }
+    await apiClient.delete(`/saved-entries/${kind}/${encodeURIComponent(name)}`, { params })
+  },
+}
+
 export const targetsApi = {
   detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
     const response = await apiClient.post<TargetInstance>(
@@ -1054,4 +1064,9 @@ export const datasetsApi = {
   },
 }
 
-import type { RuntimeReadiness, RuntimeStatus } from '@/types'
+import type {
+  RegistryRecipeKind,
+  RuntimeReadiness,
+  RuntimeStatus,
+  SavedEntry,
+} from '@/types'

@@ -1,6 +1,8 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 
-import { Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
+import {
+  Checkbox, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip,
+} from '@fluentui/react-components'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
@@ -11,6 +13,9 @@ import {
   formatScorerComparisonMetric, scorerComparisonValue, scorerEvidenceLabel, scorerMetricDescription, scorerMetricLabel,
 } from '@/utils/scorerPresentation'
 
+import OriginBadge from './OriginBadge'
+import DeleteSavedEntryButton from './DeleteSavedEntryButton'
+import SavedBy from './SavedBy'
 import { useConverterRegistryStyles } from './Registry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useScorerRegistryStyles } from './ScorerRegistry.styles'
@@ -32,6 +37,7 @@ interface ScorerTableSection {
 
 interface ScorerTableProps extends ScorerTableSection {
   scorers: ScorerInstance[]
+  onDeleted: () => void
 }
 
 interface ScorerTableSort {
@@ -68,7 +74,7 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
   )
 }
 
-function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
+function ScorerTable({ title, family, metrics, scorers, onDeleted }: ScorerTableProps) {
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -136,7 +142,14 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
             <RegistryIdentityRow key={scorer.scorer_registry_name}
               name={scorer.scorer_registry_name} identity={scorer.identifier} columns={metrics.length + 4}
               expanded={expanded.has(scorer.scorer_registry_name)}
-              onToggle={() => toggleDetails(scorer.scorer_registry_name)}>
+              onToggle={() => toggleDetails(scorer.scorer_registry_name)}
+              nameContent={<>
+                {scorer.origin && <OriginBadge origin={scorer.origin} />}
+                <SavedBy entry={scorer} />
+                {scorer.origin === 'saved' && (
+                  <DeleteSavedEntryButton kind="scorers" name={scorer.scorer_registry_name} onDeleted={onDeleted} />
+                )}
+              </>}>
               <TableCell>
                 <Text className={scorerStyles.type}>
                   {(scorer.display_type ?? scorer.identifier.class_name).split('(').map((part: string, index: number) => (
@@ -163,11 +176,26 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
   const scorerStyles = useScorerRegistryStyles()
   const { preferences, updatePreferences } = useUserPreferences()
   useAutoRefresh(onRefresh, !loading)
+  const [onlySavedByMe, setOnlySavedByMe] = useState(false)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const [focusRestore, setFocusRestore] = useState(0)
+  useEffect(() => {
+    if (focusRestore) heading.current?.focus()
+  }, [focusRestore])
+  const handleDeleted = () => {
+    // The deleted scorer's row, or its whole table, is about to unmount, so focus goes to the page heading.
+    setFocusRestore((current) => current + 1)
+    onRefresh()
+  }
+  const savedByMeCount = scorers.filter((scorer) => scorer.saved_by_me === true).length
+  // The checkbox only shows while the user has a saved scorer, so it turns off when the last one goes.
+  if (onlySavedByMe && savedByMeCount === 0) setOnlySavedByMe(false)
+  const shown = onlySavedByMe ? scorers.filter((scorer: ScorerInstance) => scorer.saved_by_me === true) : scorers
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" aria-label="Scorer Registry" size={600} weight="semibold">
+          <Text as="h1" ref={heading} tabIndex={-1} aria-label="Scorer Registry" size={600} weight="semibold">
             <ContextualHelpLabel term="Scorer Registry" labelProps={{ weight: 'semibold' }}>
               Components that evaluate evidence and return a score or verdict. The attack decides what to do with that result.
             </ContextualHelpLabel>
@@ -182,10 +210,15 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
           onChange={(chatScorer: RegisteredComponentReference | null) => updatePreferences((current) => ({ ...current, chatScorer }))} />
       </div>
       <Divider className={scorerStyles.separator} aria-label="Scorer registry" />
+      {savedByMeCount > 0 && (
+        <Checkbox checked={onlySavedByMe} label={`Only scorers I saved (${savedByMeCount})`}
+          onChange={(_, data) => setOnlySavedByMe(data.checked === true)} />
+      )}
       {TABLE_SECTIONS.map(({ family, title, metrics }: ScorerTableSection) => {
-        const items = scorers.filter((scorer: ScorerInstance) => scorerFamily(scorer) === family)
+        const items = shown.filter((scorer: ScorerInstance) => scorerFamily(scorer) === family)
         return items.length > 0
-          ? <ScorerTable key={family} family={family} title={title} metrics={metrics} scorers={items} /> : null
+          ? <ScorerTable key={family} family={family} title={title} metrics={metrics} scorers={items}
+            onDeleted={handleDeleted} /> : null
       })}
       {!loading && !error && scorers.length === 0 && <Text>No scorers are registered. Configure scorers through an initializer.</Text>}
     </div>

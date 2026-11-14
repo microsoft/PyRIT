@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import base64
 import logging
-from collections.abc import Awaitable, Callable  # noqa: TC003 - registry annotation resolution
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable, Mapping  # noqa: TC003 - registry annotation resolution
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -56,6 +57,9 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
 
     API_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_KEY"
     ENDPOINT_URI_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_ENDPOINT"
+
+    # An empty key reads AZURE_CONTENT_SAFETY_API_KEY, or else signs in with this server's Azure identity.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
 
     # Mapping from Azure TextCategory to evaluation file configurations
     _CATEGORY_EVAL_FILES: dict[TextCategory, tuple[list[str], str, str]] = {

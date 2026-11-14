@@ -8,14 +8,18 @@ Tests for backend converter service.
 import asyncio
 import base64
 import codecs
-from collections.abc import AsyncGenerator
+import json
+from collections.abc import AsyncGenerator, Iterator
+from functools import partial
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from urllib.parse import quote, urlencode
 
 import pytest
-from fastapi import HTTPException
+from azure.core.exceptions import AzureError
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import ValidationError
@@ -31,6 +35,9 @@ from pyrit.backend.services import (
     ConverterService,
     get_converter_service,
 )
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
+from pyrit.common import apply_defaults, reset_default_values, set_default_value
 from pyrit.converter import (
     AzureSpeechTextToAudioConverter,
     Base64Converter,
@@ -50,9 +57,31 @@ from pyrit.converter import (
 )
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RegistryRestoreReport,
+    SavedEntryOwner,
+)
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.registry import ConverterRegistry, TargetRegistry
+from pyrit.prompt_target import PromptTarget
+from pyrit.registry import (
+    ConverterRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryStorageError,
+    TargetRegistry,
+)
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    RegistryNameTakenError,
+    registration_origin,
+)
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -95,6 +124,10 @@ class _MockTokenizerWithVocab:
 def _make_data_uri(*, mime_type: str, content: bytes) -> str:
     """Build a base64 data URI for constructor-upload tests."""
     return f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+
+
+def _route_request() -> Request:
+    return Request({"type": "http", "app": FastAPI(), "method": "POST", "path": "/api/converters", "headers": []})
 
 
 @pytest.fixture(autouse=True)
@@ -234,8 +267,10 @@ class TestSaveSourceConverter:
             await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
             await remove(paths=paths)
 
-        def signal_build(*, converter_id: str, converter_obj: object) -> object:
-            result = build(converter_id=converter_id, converter_obj=converter_obj)
+        def signal_build(
+            *, converter_id: str, converter_obj: object, origin: RegistryEntryOrigin | None = None
+        ) -> object:
+            result = build(converter_id=converter_id, converter_obj=converter_obj, origin=origin)
             built.set()
             return result
 
@@ -275,7 +310,8 @@ async def test_converter_input_errors_return_400_async(
     with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
         with pytest.raises(HTTPException) as exc:
             await converter_routes.create_converter(
-                CreateConverterRequest(name="invalid_binary", type="BinaryConverter", params=params)
+                body=CreateConverterRequest(name="invalid_binary", type="BinaryConverter", params=params),
+                request=_route_request(),
             )
     assert exc.value.status_code == 400
     assert next(iter(params)) in exc.value.detail
@@ -288,9 +324,10 @@ async def test_speech_converter_region_must_be_a_region_name_async(
     with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
         with pytest.raises(HTTPException) as exc:
             await converter_routes.create_converter(
-                CreateConverterRequest(
+                body=CreateConverterRequest(
                     name="speech", type=converter_type, params={"azure_speech_region": "example.com#"}
-                )
+                ),
+                request=_route_request(),
             )
     assert exc.value.status_code == 400
     assert "azure_speech_region must be an Azure region name" in exc.value.detail
@@ -302,14 +339,15 @@ async def test_binary_creation_from_metadata_and_selection_async(upload_service:
     bits = next(param for param in binary.parameters if param.name == "bits_per_char").model_dump(mode="json")
     with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
         result = await converter_routes.create_converter(
-            CreateConverterRequest(
+            request=_route_request(),
+            body=CreateConverterRequest(
                 type="BinaryConverter",
                 name="selected_binary",
                 params={
                     "bits_per_char": bits["default"],
                     "word_selection_strategy": {"type": "indices", "parameters": {"indices": [1]}},
                 },
-            )
+            ),
         )
     instance = upload_service.get_converter_object(converter_id=result.converter_id)
     converted = await instance.convert_async(prompt="a b")
@@ -324,7 +362,9 @@ async def test_unexpected_constructor_type_error_returns_500_async(upload_servic
     upload_service._registry.register_class(BrokenBinary)
     with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
         with pytest.raises(HTTPException) as exc:
-            await converter_routes.create_converter(CreateConverterRequest(name="broken_binary", type="BrokenBinary"))
+            await converter_routes.create_converter(
+                body=CreateConverterRequest(name="broken_binary", type="BrokenBinary"), request=_route_request()
+            )
     assert exc.value.status_code == 500
     assert "constructor bug" in exc.value.detail
 
@@ -711,6 +751,33 @@ class TestGetConverter:
         assert result is not None
         assert result.converter_id == "conv-1"
         assert result.identifier.class_name == "MockConverter"
+
+
+@pytest.mark.parametrize(
+    ("owner", "current_user_oid", "saved_by"),
+    [
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
+        (None, "ada-oid", (None, False)),
+    ],
+)
+async def test_list_and_get_say_who_saved_each_converter(
+    owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
+) -> None:
+    service = ConverterService()
+    service._registry.instances.register(
+        Base64Converter(),
+        name="saved_base64",
+        metadata={SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner},
+    )
+
+    listed = (await service.list_converters_async(current_user_oid=current_user_oid)).items
+    fetched = await service.get_converter_async(converter_id="saved_base64", current_user_oid=current_user_oid)
+
+    assert [(item.saved_by, item.saved_by_me) for item in listed] == [saved_by]
+    assert fetched is not None and (fetched.saved_by, fetched.saved_by_me) == saved_by
+    assert "ada-oid" not in fetched.model_dump_json()
 
 
 class TestGetConverterObject:
@@ -2340,3 +2407,538 @@ class TestConverterParamsExtraction:
         # Verify type info is populated from identifier
         assert isinstance(result.identifier.supported_input_types, list)
         assert isinstance(result.identifier.supported_output_types, list)
+
+
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved converters through the API's create, as startup does."""
+    get_converter_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
+def _persist(name: str, converter_type: str, params: dict[str, Any] | None = None) -> CreateConverterRequest:
+    return CreateConverterRequest(name=name, type=converter_type, params=params or {}, persist=True)
+
+
+def _saved_converter(source: Path, name: str) -> dict[str, Any]:
+    return json.loads((source / "converters" / f"{name}.json").read_text())
+
+
+@pytest.fixture
+def startup_and_launch_targets(patch_central_database: MagicMock) -> Iterator[None]:
+    TargetRegistry.reset_registry_singleton()
+    targets = TargetRegistry.get_registry_singleton().instances
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        targets.register(MockPromptTarget(), name="startup_chat")
+    targets.register(MockPromptTarget(), name="launch_chat")
+    yield
+    TargetRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPersistConverter:
+    async def test_saves_a_converter_that_restore_rebuilds(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        owner = SavedEntryOwner(oid="00000000-0000-0000-0000-000000000001", name="Ada")
+
+        converter = await upload_service.create_converter_async(
+            request=_persist("caesar_converter", "CaesarConverter", {"caesar_offset": 5}),
+            owner=owner,
+            recipes_source=str(tmp_path),
+        )
+
+        assert converter.origin is RegistryEntryOrigin.SAVED
+        assert (converter.saved_by, converter.saved_by_me) == ("Ada", True)
+        assert _saved_converter(tmp_path, "caesar_converter") == {
+            "schema_version": 1,
+            "class_module": "pyrit.converter.caesar_converter",
+            "class_name": "CaesarConverter",
+            "params": {"caesar_offset": 5},
+            "owner": {"oid": owner.oid, "name": "Ada"},
+        }
+        entry = upload_service._registry.instances.get_entry("caesar_converter")
+        assert entry is not None
+        assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+        saved_hash = entry.instance.get_identifier().hash
+        ConverterRegistry.reset_registry_singleton()
+        assert (await _restore(tmp_path)).failures == []
+        restored = ConverterRegistry.get_registry_singleton().instances.get("caesar_converter")
+        assert restored is not None
+        assert restored.get_identifier().hash == saved_hash
+
+    async def test_saves_without_an_owner_when_sign_in_is_off(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        await upload_service.create_converter_async(
+            request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
+        )
+
+        assert "owner" not in _saved_converter(tmp_path, "base64_converter")
+
+    @pytest.mark.usefixtures("startup_and_launch_targets")
+    async def test_saves_a_converter_only_over_a_target_that_comes_back_after_a_restart(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        with pytest.raises(NotSaveableError) as refusal:
+            await upload_service.create_converter_async(
+                request=_persist(
+                    "launch_french", "TranslationConverter", {"converter_target": "launch_chat", "language": "French"}
+                ),
+                recipes_source=str(tmp_path),
+            )
+        startup_french = await upload_service.create_converter_async(
+            request=_persist(
+                "startup_french", "TranslationConverter", {"converter_target": "startup_chat", "language": "French"}
+            ),
+            recipes_source=str(tmp_path),
+        )
+
+        assert str(refusal.value) == (
+            "Uses temporary target 'launch_chat', which won't exist after a restart. "
+            "It can still be created without saving it."
+        )
+        assert upload_service._registry.instances.get("launch_french") is None
+        assert not (tmp_path / "converters" / "launch_french.json").exists()
+        assert startup_french.origin is RegistryEntryOrigin.SAVED
+        assert _saved_converter(tmp_path, "startup_french")["params"] == {
+            "converter_target": "startup_chat",
+            "language": "French",
+        }
+
+    @pytest.mark.parametrize("converter_type", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
+    async def test_refuses_a_converter_that_would_use_this_servers_key(
+        self, upload_service: ConverterService, tmp_path: Path, converter_type: str
+    ) -> None:
+        with (
+            patch.dict("os.environ", {"AZURE_SPEECH_KEY": "server-speech-key"}),
+            pytest.raises(NotSaveableError) as refusal,
+        ):
+            await upload_service.create_converter_async(
+                request=_persist("speech", converter_type, {"azure_speech_region": "eastus"}),
+                recipes_source=str(tmp_path),
+            )
+
+        assert str(refusal.value) == (
+            f"'azure_speech_key' is empty, so '{converter_type}' can use this server's credential instead. "
+            "It can still be created without saving it."
+        )
+        assert upload_service._registry.instances.get("speech") is None
+        assert not (tmp_path / "converters").exists()
+
+    @pytest.mark.parametrize(
+        "font_name",
+        [
+            _make_data_uri(mime_type="font/ttf", content=b"font"),
+            "https://contoso.blob.core.windows.net/results/fonts/font.ttf",
+            None,
+        ],
+    )
+    async def test_refuses_an_uploaded_file_before_storing_it(
+        self, upload_service: ConverterService, tmp_path: Path, font_name: str | None
+    ) -> None:
+        request = _persist("banner", "AddTextImageConverter", {"text_to_add": "hello", "font_name": font_name})
+
+        with pytest.raises(NotSaveableError) as refusal:
+            await upload_service.create_converter_async(request=request, recipes_source=str(tmp_path))
+
+        assert str(refusal.value) == (
+            "Saved converters can't keep uploaded files yet, so leave out 'font_name'. "
+            "It can still be created without saving it."
+        )
+        assert list(upload_service._upload_path.iterdir()) == []
+        assert upload_service._registry.instances.get("banner") is None
+        assert not (tmp_path / "converters").exists()
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter"),
+        [
+            ("AddImageTextConverter", "img_to_add"),
+            ("AddImageVideoConverter", "video_path"),
+            ("ImageOverlayConverter", "base_image"),
+            ("TransparencyAttackConverter", "benign_image_path"),
+        ],
+    )
+    @pytest.mark.parametrize("with_file", [True, False])
+    async def test_refuses_a_converter_type_that_needs_an_uploaded_file(
+        self, upload_service: ConverterService, tmp_path: Path, converter_type: str, parameter: str, with_file: bool
+    ) -> None:
+        params = {parameter: _make_data_uri(mime_type="image/png", content=b"image")} if with_file else {}
+
+        with pytest.raises(NotSaveableError) as refusal:
+            await upload_service.create_converter_async(
+                request=_persist("uploads", converter_type, params), recipes_source=str(tmp_path)
+            )
+
+        assert str(refusal.value) == (
+            f"'{converter_type}' can't be saved. It needs an uploaded file, which saved converters can't keep yet. "
+            "It can still be created without saving it."
+        )
+        assert list(upload_service._upload_path.iterdir()) == []
+        assert not (tmp_path / "converters").exists()
+
+    async def test_saves_a_converter_whose_optional_file_is_left_out(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        await upload_service.create_converter_async(
+            request=_persist("banner", "AddTextImageConverter", {"text_to_add": "hello"}), recipes_source=str(tmp_path)
+        )
+
+        assert _saved_converter(tmp_path, "banner")["params"] == {"text_to_add": "hello"}
+        ConverterRegistry.reset_registry_singleton()
+        assert (await _restore(tmp_path)).failures == []
+
+    async def test_a_taken_name_is_a_conflict_only_when_saving(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="base64_converter", type="Base64Converter")
+        )
+
+        with pytest.raises(SavedEntryConflictError, match="already"):
+            await upload_service.create_converter_async(
+                request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
+            )
+        with pytest.raises(ValueError, match="already") as temporary_clash:
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(name="base64_converter", type="Base64Converter")
+            )
+
+        assert not isinstance(temporary_clash.value, SavedEntryConflictError)
+        assert not (tmp_path / "converters").exists()
+
+    async def test_a_reserved_name_is_refused_as_invalid_not_as_taken(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="reserved") as refusal:
+            await upload_service.create_converter_async(
+                request=_persist("preview", "Base64Converter"), recipes_source=str(tmp_path)
+            )
+
+        assert not isinstance(refusal.value, (SavedEntryConflictError, NotSaveableError))
+        assert not (tmp_path / "converters").exists()
+
+    async def test_a_saved_file_with_the_name_is_a_conflict_that_leaves_the_file(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.CONVERTERS, source=str(tmp_path))
+        storage.create_recipe(name="base64_converter", recipe=ComponentRecipe(class_module="m", class_name="X"))
+        before = (tmp_path / "converters" / "base64_converter.json").read_bytes()
+
+        with pytest.raises(SavedEntryConflictError, match="A saved converter named 'base64_converter' already exists."):
+            await upload_service.create_converter_async(
+                request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
+            )
+
+        assert upload_service._registry.instances.get("base64_converter") is None
+        assert (tmp_path / "converters" / "base64_converter.json").read_bytes() == before
+
+    @pytest.mark.parametrize(
+        ("error", "reason"),
+        [
+            (PermissionError(13, "Permission denied", "/srv/recipes/converters/x.json"), "Permission denied"),
+            (OSError("disk full"), "OSError"),
+            (AzureError("unreachable"), "AzureError"),
+        ],
+    )
+    async def test_reports_storage_failures_as_unavailable(
+        self, upload_service: ConverterService, tmp_path: Path, error: Exception, reason: str
+    ) -> None:
+        with (
+            patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=error),
+            patch("pyrit.registry.registry_recipe_save.logger") as log,
+            pytest.raises(SavedEntryStorageError, match="Saved converters can't be written right now."),
+        ):
+            await upload_service.create_converter_async(
+                request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
+            )
+
+        assert upload_service._registry.instances.get("base64_converter") is None
+        message = log.error.call_args.args[0] % log.error.call_args.args[1:]
+        assert message == (
+            f"Saved converter 'base64_converter' couldn't be written to {tmp_path / 'converters'} "
+            f"({reason}). If the write reached storage anyway, the converter is restored at the next start."
+        )
+
+    @pytest.mark.parametrize(
+        ("error", "raised"),
+        [
+            (RegistryNameTakenError("Instance 'base64_converter' already exists"), SavedEntryConflictError),
+            (ValueError("Instance name 'base64_converter' is reserved"), ValueError),
+            (RuntimeError("x"), RuntimeError),
+        ],
+    )
+    async def test_deletes_the_saved_file_when_the_converter_cant_be_registered(
+        self, upload_service: ConverterService, tmp_path: Path, error: Exception, raised: type[Exception]
+    ) -> None:
+        with (
+            patch.object(upload_service._registry.instances, "register", side_effect=error),
+            pytest.raises(raised) as refusal,
+        ):
+            await upload_service.create_converter_async(
+                request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
+            )
+
+        assert type(refusal.value) is raised
+        assert not (tmp_path / "converters" / "base64_converter.json").exists()
+
+    async def test_two_saves_of_one_name_save_one_converter(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        results = await asyncio.gather(
+            upload_service.create_converter_async(
+                request=_persist("shift", "CaesarConverter", {"caesar_offset": 1}), recipes_source=str(tmp_path)
+            ),
+            upload_service.create_converter_async(
+                request=_persist("shift", "CaesarConverter", {"caesar_offset": 2}), recipes_source=str(tmp_path)
+            ),
+            return_exceptions=True,
+        )
+
+        assert sorted(type(result).__name__ for result in results) == ["ConverterInstance", "SavedEntryConflictError"]
+        registered = upload_service._registry.instances.get("shift")
+        assert registered is not None
+        assert (
+            _saved_converter(tmp_path, "shift")["params"]["caesar_offset"]
+            == registered.get_identifier().params["caesar_offset"]
+        )
+
+    async def test_refuses_to_remove_a_saved_converter(self, upload_service: ConverterService, tmp_path: Path) -> None:
+        await upload_service.create_converter_async(
+            request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
+        )
+
+        with pytest.raises(SavedEntryRemovalError) as refusal:
+            await upload_service.delete_converter_async(converter_id="base64_converter")
+
+        assert str(refusal.value) == (
+            "Saved converter 'base64_converter' comes back from its saved file at every start, so delete it with "
+            "DELETE /api/saved-entries/converters/base64_converter instead."
+        )
+        assert upload_service._registry.instances.get("base64_converter") is not None
+        assert (tmp_path / "converters" / "base64_converter.json").exists()
+
+    async def test_still_removes_converters_from_configuration_and_temporary_ones(
+        self, upload_service: ConverterService
+    ) -> None:
+        instances = upload_service._registry.instances
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            instances.register(Base64Converter(), name="startup_base64")
+        await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="launch_base64", type="Base64Converter")
+        )
+
+        assert await upload_service.delete_converter_async(converter_id="startup_base64")
+        assert await upload_service.delete_converter_async(converter_id="launch_base64")
+        assert instances.get_names() == []
+
+    async def test_list_get_and_create_tell_where_each_converter_comes_from(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        instances = upload_service._registry.instances
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            instances.register(Base64Converter(), name="startup_base64")
+        saved = await upload_service.create_converter_async(
+            request=_persist("saved_base64", "Base64Converter"), recipes_source=str(tmp_path)
+        )
+        temporary = await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="launch_base64", type="Base64Converter")
+        )
+
+        listed = await upload_service.list_converters_async()
+        fetched = [
+            await upload_service.get_converter_async(converter_id=name)
+            for name in ("startup_base64", "saved_base64", "launch_base64")
+        ]
+
+        expected = {
+            "startup_base64": RegistryEntryOrigin.CONFIGURATION,
+            "saved_base64": RegistryEntryOrigin.SAVED,
+            "launch_base64": RegistryEntryOrigin.TEMPORARY,
+        }
+        assert {item.converter_id: item.origin for item in listed.items} == expected
+        assert {item.converter_id: item.origin for item in fetched if item is not None} == expected
+        assert (saved.origin, temporary.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.TEMPORARY)
+
+
+@pytest.fixture
+def default_converter_target(startup_and_launch_targets: None) -> Iterator[None]:
+    yield
+    reset_default_values()
+
+
+@pytest.mark.usefixtures("patch_central_database", "default_converter_target")
+class TestPersistConverterWithADefaultTarget:
+    async def test_names_a_default_target_from_configuration_in_the_saved_file(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        startup_chat = TargetRegistry.get_registry_singleton().instances.get("startup_chat")
+        set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=startup_chat)
+
+        await upload_service.create_converter_async(
+            request=_persist("french", "TranslationConverter", {"language": "French"}), recipes_source=str(tmp_path)
+        )
+
+        assert _saved_converter(tmp_path, "french")["params"] == {
+            "language": "French",
+            "converter_target": "startup_chat",
+        }
+        reset_default_values()
+        ConverterRegistry.reset_registry_singleton()
+        assert (await _restore(tmp_path)).failures == []
+
+    async def test_names_a_default_target_by_a_name_that_lasts(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        targets = TargetRegistry.get_registry_singleton().instances
+        startup_chat = targets.get("startup_chat")
+        targets.register(startup_chat, name="a_launch_alias")
+        set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=startup_chat)
+
+        await upload_service.create_converter_async(
+            request=_persist("french", "TranslationConverter", {"language": "French"}), recipes_source=str(tmp_path)
+        )
+
+        assert _saved_converter(tmp_path, "french")["params"]["converter_target"] == "startup_chat"
+
+    @pytest.mark.parametrize("left_unset", [{}, {"converter_target": ""}, {"converter_target": None}])
+    async def test_saves_an_optional_target_left_unset_as_sent(
+        self, upload_service: ConverterService, tmp_path: Path, left_unset: dict[str, Any]
+    ) -> None:
+        await upload_service.create_converter_async(
+            request=_persist("puzzled", "PuzzledConverter", left_unset), recipes_source=str(tmp_path)
+        )
+
+        assert _saved_converter(tmp_path, "puzzled")["params"] == left_unset
+        ConverterRegistry.reset_registry_singleton()
+        assert (await _restore(tmp_path)).failures == []
+
+    @pytest.mark.parametrize("left_unset", [{}, {"converter_target": None}, {"converter_target": ""}])
+    async def test_refuses_a_default_target_that_is_gone_after_a_restart(
+        self, upload_service: ConverterService, tmp_path: Path, left_unset: dict[str, Any]
+    ) -> None:
+        launch_chat = TargetRegistry.get_registry_singleton().instances.get("launch_chat")
+        set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=launch_chat)
+
+        with pytest.raises(NotSaveableError) as refusal:
+            await upload_service.create_converter_async(
+                request=_persist("french", "TranslationConverter", {"language": "French", **left_unset}),
+                recipes_source=str(tmp_path),
+            )
+
+        assert str(refusal.value) == (
+            "Uses temporary target 'launch_chat', which won't exist after a restart. "
+            "It can still be created without saving it."
+        )
+        assert not (tmp_path / "converters").exists()
+
+    async def test_refuses_a_default_target_that_isnt_registered(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=MockPromptTarget())
+
+        with pytest.raises(NotSaveableError) as refusal:
+            await upload_service.create_converter_async(
+                request=_persist("french", "TranslationConverter", {"language": "French"}), recipes_source=str(tmp_path)
+            )
+
+        assert str(refusal.value) == (
+            "'converter_target' is left to a default target that isn't registered, so it won't exist after a "
+            "restart. Name a target to save it, or create it without saving it."
+        )
+        assert not (tmp_path / "converters").exists()
+
+    async def test_keeps_a_target_the_converter_class_names_itself(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        own_target = _register_own_target_converter(upload_service)
+
+        try:
+            await upload_service.create_converter_async(
+                request=_persist("own_target", "OwnTargetTranslationConverter"), recipes_source=str(tmp_path)
+            )
+
+            assert _saved_converter(tmp_path, "own_target")["params"] == {}
+            saved = upload_service.get_converter_object(converter_id="own_target")
+            assert saved.converter_target is own_target
+        finally:
+            ConverterRegistry.reset_registry_singleton()
+
+    async def test_a_target_sent_as_null_still_takes_the_configured_default(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        _register_own_target_converter(upload_service)
+
+        try:
+            with pytest.raises(NotSaveableError) as refusal:
+                await upload_service.create_converter_async(
+                    request=_persist("own_target", "OwnTargetTranslationConverter", {"converter_target": None}),
+                    recipes_source=str(tmp_path),
+                )
+        finally:
+            ConverterRegistry.reset_registry_singleton()
+
+        assert str(refusal.value) == (
+            "Uses temporary target 'launch_chat', which won't exist after a restart. "
+            "It can still be created without saving it."
+        )
+
+
+def _register_own_target_converter(service: ConverterService) -> PromptTarget:
+    """Register a converter class whose constructor names its own target, with a Temporary target as the default."""
+    targets = TargetRegistry.get_registry_singleton().instances
+    own_target = targets.get("startup_chat")
+    assert own_target is not None
+
+    class OwnTargetTranslationConverter(TranslationConverter):
+        @apply_defaults
+        def __init__(self, *, converter_target: PromptTarget = own_target) -> None:
+            super().__init__(converter_target=converter_target, language="French")
+
+    service._registry.register_class(OwnTargetTranslationConverter)
+    set_default_value(
+        class_type=OwnTargetTranslationConverter, parameter_name="converter_target", value=targets.get("launch_chat")
+    )
+    return own_target
+
+
+async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
+    types = await ConverterService().list_converter_types_async()
+    reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
+
+    assert reasons["AzureSpeechTextToAudioConverter"] == (
+        "'AzureSpeechTextToAudioConverter' needs a credential in 'azure_speech_key', which saved entries can't hold "
+        "or take from this server yet."
+    )
+    assert reasons["ImageOverlayConverter"] == (
+        "'ImageOverlayConverter' can't be saved. It needs an uploaded file, which saved converters can't keep yet."
+    )
+    assert reasons["AddTextImageConverter"] is None
+    assert reasons["CaesarConverter"] is None
+    assert {name for name, reason in reasons.items() if reason is not None} == {
+        "AddImageTextConverter",
+        "AddImageVideoConverter",
+        "AzureSpeechAudioToTextConverter",
+        "AzureSpeechTextToAudioConverter",
+        "ImageOverlayConverter",
+        "TransparencyAttackConverter",
+    }
+
+
+class _LaunchScriptCaesarConverter(CaesarConverter):
+    """A converter class that only a scan's launch script registers."""
+
+
+async def test_types_say_a_converter_type_a_launch_script_added_cant_be_saved() -> None:
+    service = ConverterService()
+    with registration_origin(RegistryEntryOrigin.TEMPORARY):
+        service._registry.register_class(_LaunchScriptCaesarConverter)
+
+    types = await service.list_converter_types_async()
+
+    reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
+    assert reasons["_LaunchScriptCaesarConverter"] == (
+        "'_LaunchScriptCaesarConverter' was added by a scan's launch script, so a saved entry of it couldn't be "
+        "restored after a restart."
+    )
+    assert reasons["CaesarConverter"] is None

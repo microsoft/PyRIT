@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import uuid
+from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -27,16 +28,21 @@ from pyrit.backend.services.service_lifecycle import (
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry.instance_registry import registration_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
 
 if TYPE_CHECKING:
-    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure
+    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure, SavedEntryRef
 
 logger = logging.getLogger(__name__)
+
+# The admitted request that the running code belongs to, so a request doesn't count itself as work in progress.
+current_operation: ContextVar[asyncio.Task[None] | None] = ContextVar("pyrit_runtime_operation", default=None)
 
 
 class RuntimeLifecycle:
@@ -106,6 +112,7 @@ class RuntimeLifecycle:
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         self.app.state.target_upload_directory = config.target_upload_directory
+        self.app.state.registry_recipes_source = config.registry_recipes_source
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
         preset_registry = ScenarioPresetRegistry.get_registry_singleton()
@@ -179,6 +186,7 @@ class RuntimeLifecycle:
         """Keep management alive even when parsing or initialization fails."""
         self.app.state.allow_custom_initializers = False
         self.app.state.target_upload_directory = None
+        self.app.state.registry_recipes_source = None
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}
@@ -190,7 +198,10 @@ class RuntimeLifecycle:
             if config.allow_custom_initializers:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
                 await asyncio.to_thread(registry.register_stored_initializers, strict=True)
-            await config.initialize_pyrit_async(raise_on_initializer_error=True)
+            # Entries the startup scripts register are marked as configuration, so they can be told apart
+            # from entries that are gone after a restart, such as ones a scan's launch scripts register.
+            with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+                await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             if await self._restore_saved_entries_async(config):
@@ -277,7 +288,8 @@ class RuntimeLifecycle:
                 # The restore report describes the runtime being replaced.
                 self.restore_failures, self.restore_ignored = [], []
                 await close_services_async()
-                await config.apply_prepared_reinitialization_async(prepared=prepared)
+                with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+                    await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
                 self.version = current_version
                 if await self._restore_saved_entries_async(config):
@@ -304,14 +316,34 @@ class RuntimeLifecycle:
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
 
-    def _has_active_work(self) -> bool:
-        """Return whether any admitted or background runtime operation remains."""
+    def has_active_work(self) -> bool:
+        """
+        Return whether a run, send, estimate, or another request could still be using a registered entry.
+
+        Returns:
+            bool: Whether any admitted or background runtime operation remains, apart from the caller's request.
+        """
+        return self._has_active_work(excluding=current_operation.get())
+
+    def forget_restore_failure(self, ref: "SavedEntryRef") -> None:
+        """
+        Stop listing a saved entry whose file was deleted among the ones that couldn't be restored.
+
+        Args:
+            ref (SavedEntryRef): The deleted entry.
+        """
+        self.restore_failures = [
+            failure for failure in self.restore_failures if (failure.kind, failure.name) != (ref.kind, ref.name)
+        ]
+
+    def _has_active_work(self, *, excluding: asyncio.Task[None] | None = None) -> bool:
+        """Return whether any admitted or background runtime operation remains, other than ``excluding``."""
         service = peek_scenario_run_service()
         suite_execution_service = peek_scenario_suite_execution_service()
         return bool(
             (service and service.has_active_work())
             or (suite_execution_service and suite_execution_service.has_active_work())
-            or self.operations
+            or any(operation is not excluding for operation in self.operations)
             or outstanding_estimates()
             or has_active_manual_sends()
             or has_active_analytics_work()

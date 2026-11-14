@@ -75,12 +75,11 @@ class RegistryRecipeRestorer:
     way the caller's create builds one; the backend's builder calls the API's create for each kind. A
     file never chooses what gets imported: classes and attack types are looked up among the ones already
     registered. Server paths are refused as they are for API input, and ``check_saved_entry_params``
-    refuses a recipe that stores a credential, or a target recipe that would let its target use one from
-    this server or send requests where this server's settings say. Entries that can't come back are
+    refuses a recipe that stores a credential, that would let its entry use one from this server, or, for
+    a target, that would send requests where this server's settings say. Entries that can't come back are
     reported with the reason instead of being skipped.
 
-    Stored files are otherwise trusted the way configuration is. Converters and scorers don't
-    declare the credentials they read from server settings yet, so those rules cover targets only.
+    Stored files are otherwise trusted the way configuration is.
     """
 
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
@@ -316,7 +315,7 @@ class RegistryRecipeRestorer:
             raise RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
         except ValueError as error:  # A reserved name, which no entry of this kind can have.
             raise RecipeRejectedError(reason=RestoreFailureReason.INVALID_RECIPE, message=str(error)) from error
-        return self._parameter_references(parameters=parameters, params=recipe.params)
+        return self.recipe_references(kind=ref.kind, recipe=recipe)
 
     def _technique_references(self, *, ref: SavedEntryRef, recipe: TechniqueRecipe) -> list[SavedEntryRef]:
         """
@@ -339,13 +338,46 @@ class RegistryRecipeRestorer:
         except KeyError as error:
             message = f"'{recipe.type}' is not a registered attack type."
             raise RecipeRejectedError(reason=RestoreFailureReason.UNKNOWN_CLASS, message=message) from error
-        converters = [*(recipe.request_converters or []), *(recipe.response_converters or [])]
-        references = [SavedEntryRef(kind=RegistryRecipeKind.CONVERTERS, name=name) for name in converters]
-        if recipe.adversarial_chat is not None:
-            references.append(SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name=recipe.adversarial_chat))
         parameters = self._class_parameters(registry=attack_registry, name=recipe.type, cls=attack_class)
         check_saved_entry_params(cls=attack_class, parameters=parameters, params=recipe.params)
-        return references + self._parameter_references(parameters=parameters, params=recipe.params)
+        return self.recipe_references(kind=RegistryRecipeKind.TECHNIQUES, recipe=recipe)
+
+    def recipe_references(
+        self, *, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe
+    ) -> list[SavedEntryRef]:
+        """
+        List the entries a saved recipe names, as restoring it reads them.
+
+        A recipe whose class or attack type isn't registered names nothing, since it can't be restored.
+
+        Args:
+            kind (RegistryRecipeKind): The kind of entry the recipe saves.
+            recipe (ComponentRecipe | TechniqueRecipe): The recipe.
+
+        Returns:
+            list[SavedEntryRef]: The named entries, in the order the recipe names them.
+        """
+        if isinstance(recipe, TechniqueRecipe):
+            from pyrit.registry.components.attack_registry import AttackRegistry
+
+            converters = [*(recipe.request_converters or []), *(recipe.response_converters or [])]
+            references = [SavedEntryRef(kind=RegistryRecipeKind.CONVERTERS, name=name) for name in converters]
+            if recipe.adversarial_chat is not None:
+                references.append(SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name=recipe.adversarial_chat))
+            attack_registry = AttackRegistry.get_registry_singleton()
+            try:
+                attack_class = attack_registry.get_class(recipe.type)
+            except KeyError:
+                return references
+            parameters = self._class_parameters(registry=attack_registry, name=recipe.type, cls=attack_class)
+            return references + self._parameter_references(parameters=parameters, params=recipe.params)
+        registry = self._get_registry(kind)
+        try:
+            cls = registry.get_class(recipe.class_name)
+        except KeyError:
+            return []
+        parameters = self._class_parameters(registry=registry, name=recipe.class_name, cls=cls)
+        return self._parameter_references(parameters=parameters, params=recipe.params)
 
     @staticmethod
     def _class_parameters(*, registry: Registry[Any, Any], name: str, cls: type) -> tuple[Parameter, ...]:
@@ -502,7 +534,7 @@ class RegistryRecipeRestorer:
         from pyrit.registry.components.attack_technique_registry import TechniqueAdmissionError
 
         try:
-            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name):
+            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name, owner=stored.recipe.owner):
                 await build_async(stored)
         except (RecipeRejectedError, SavedEntryRefusedError) as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))

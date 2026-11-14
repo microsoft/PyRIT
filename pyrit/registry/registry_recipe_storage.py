@@ -26,7 +26,7 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.models.catalog.registry_recipe import RECIPE_SCHEMA_VERSION
-from pyrit.registry.file_document_storage import FileDocumentStorage
+from pyrit.registry.file_document_storage import FileDocumentStorage, describe_storage_error
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -187,6 +187,106 @@ class RegistryRecipeStorage(FileDocumentStorage):
             ignored=ignored,
             causes=MappingProxyType(causes),
         )
+
+    def create_recipe(self, *, name: str, recipe: ComponentRecipe | TechniqueRecipe) -> str:
+        """
+        Save a new recipe under a name that no saved recipe of this kind has.
+
+        Args:
+            name (str): The entry's name, which is also its document name.
+            recipe (ComponentRecipe | TechniqueRecipe): The recipe to save.
+
+        Returns:
+            str: The version of the saved document.
+
+        Raises:
+            DocumentConflictError: If a recipe with this name is already saved.
+            ValueError: If the name isn't a legal registry name.
+            DocumentStorageUnavailableError: If the folder or container can't be written, or a local write
+                could not acquire the document lock.
+        """
+        return self._save_document_conditional(name=name, content=self._serialize(recipe), expected_version=None)
+
+    def replace_recipe(self, *, name: str, recipe: ComponentRecipe | TechniqueRecipe, expected_version: str) -> str:
+        """
+        Overwrite a saved recipe, but only if it is still the version the caller read.
+
+        Args:
+            name (str): The entry's name.
+            recipe (ComponentRecipe | TechniqueRecipe): The new recipe.
+            expected_version (str): The version the caller read.
+
+        Returns:
+            str: The version of the saved document.
+
+        Raises:
+            DocumentConflictError: If the stored recipe is gone or isn't ``expected_version``.
+            ValueError: If the name isn't a legal registry name.
+            TimeoutError: If a local write could not acquire the document lock.
+            OSError: If the local folder can't be written.
+            AzureError: If the Blob container can't be written.
+        """
+        content = recipe.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
+        return self._save_document_conditional(name=name, content=content, expected_version=expected_version)
+
+    def read_recipe(self, name: str) -> StoredRecipe | RestoreFailure | None:
+        """
+        Read one saved recipe.
+
+        Args:
+            name (str): The entry's name.
+
+        Returns:
+            StoredRecipe | RestoreFailure | None: The recipe, why its file can't be used, or None if no
+                recipe of this kind has the name.
+
+        Raises:
+            ValueError: If the name isn't a legal registry name.
+            AzureError: If the Blob container can't be read.
+        """
+        try:
+            content = self._read_document_bytes(name)
+        except OSError as error:
+            return self._failure(
+                name=name, reason=RestoreFailureReason.UNREADABLE_RECIPE, message=describe_storage_error(error)
+            )
+        if content is None:
+            return None
+        return self._parse_recipe(name=name, content=content)
+
+    def delete_recipe(self, name: str, *, expected_version: str | None = None) -> bool:
+        """
+        Delete a saved recipe.
+
+        Args:
+            name (str): The entry's name.
+            expected_version (str | None): The version the caller read, so a recipe that changed since then
+                isn't deleted, or None to delete whatever is stored. Defaults to None.
+
+        Returns:
+            bool: True if the recipe existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the stored version isn't ``expected_version``.
+            ValueError: If the name isn't a legal registry name.
+            DocumentStorageUnavailableError: If the folder or container can't be written, or a local delete
+                could not acquire the document lock.
+        """
+        return self._delete_document(name, expected_version=expected_version)
+
+    @staticmethod
+    def _serialize(recipe: ComponentRecipe | TechniqueRecipe) -> bytes:
+        """
+        Write a recipe as JSON, labeled with the format version this PyRIT writes.
+
+        A recipe built in memory reads as version 1 unless it says otherwise, so the label is set here;
+        otherwise, once the version moves past 1, new files would be labeled with the old version.
+
+        Returns:
+            bytes: The document.
+        """
+        current = recipe.model_copy(update={"schema_version": RECIPE_SCHEMA_VERSION})
+        return current.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
 
     def _parse_recipe(
         self, *, name: str, content: bytes, causes: dict[str, BaseException] | None = None
