@@ -616,7 +616,7 @@ class TestScorerInitializerCategoryTags:
         expected_count = sum(1 for s in LikertScalePaths if s.evaluation_files is not None)
         assert len(likert_entries) == expected_count
 
-    async def test_task_achieved_category_uses_refined_scorer(self) -> None:
+    async def test_task_achieved_category_uses_refined_scorer_async(self) -> None:
         """Test that retirement preserves the refined category and preferred selection."""
         self._register_mock_target(name=GPT4O_TARGET)
         self._register_mock_target(name=GPT4O_TEMP9_TARGET)
