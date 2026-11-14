@@ -207,22 +207,25 @@ class RegistryRecipeStorage(FileDocumentStorage):
         """
         return self._save_document_conditional(name=name, content=self._serialize(recipe), expected_version=None)
 
-    def delete_recipe(self, name: str) -> bool:
+    def delete_recipe(self, name: str, *, expected_version: str | None = None) -> bool:
         """
         Delete a saved recipe, such as one whose entry couldn't be registered after it was saved.
 
         Args:
             name (str): The entry's name.
+            expected_version (str | None): The version the caller saved or read, so a recipe that changed since
+                then isn't deleted, or None to delete whatever is stored. Defaults to None.
 
         Returns:
             bool: True if the recipe existed and was deleted, False if it was already gone.
 
         Raises:
+            DocumentConflictError: If the stored version isn't ``expected_version``.
             ValueError: If the name isn't a legal registry name.
             DocumentStorageUnavailableError: If the folder or container can't be written, or a local delete
                 could not acquire the document lock.
         """
-        return self._delete_document(name)
+        return self._delete_document(name, expected_version=expected_version)
 
     @staticmethod
     def _serialize(recipe: ComponentRecipe | TechniqueRecipe) -> bytes:
