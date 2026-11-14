@@ -589,6 +589,10 @@ class ScenarioService:
                 if item.scenario_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming no registered scenario must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scenario catalog")
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more

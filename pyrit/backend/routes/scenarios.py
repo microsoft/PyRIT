@@ -135,11 +135,14 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         ScenarioListResponse: Paginated list of scenario summaries.
     """
     service = get_scenario_service()
-    return await service.list_scenarios_async(
-        limit=limit,
-        cursor=cursor,
-        include_estimates=include_estimates,
-    )
+    try:
+        return await service.list_scenarios_async(
+            limit=limit,
+            cursor=cursor,
+            include_estimates=include_estimates,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get(
