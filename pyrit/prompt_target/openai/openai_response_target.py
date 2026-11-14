@@ -6,11 +6,13 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from contextlib import AsyncExitStack
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Literal,
     cast,
 )
@@ -42,7 +44,7 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.models.messages.chat_message import FunctionCall
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
 from pyrit.prompt_target.common.tool_provider import (
@@ -126,6 +128,7 @@ class OpenAIResponseTarget(OpenAITarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
     _MAX_ERROR_MESSAGE_CHARS = 2_000
     _WEB_SEARCH_TOOL_TYPES = frozenset({"web_search", "web_search_preview"})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
@@ -230,8 +233,6 @@ class OpenAIResponseTarget(OpenAITarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, **kwargs)
-
         # Validate temperature and top_p
         validate_temperature(temperature)
         validate_top_p(top_p)
@@ -247,6 +248,7 @@ class OpenAIResponseTarget(OpenAITarget):
         self._reasoning_summary = reasoning_summary
 
         self._extra_body_parameters = extra_body_parameters
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
         if (
             custom_configuration is None
             and (extra_body_parameters or {}).get("tool_choice") != "none"
@@ -256,6 +258,7 @@ class OpenAIResponseTarget(OpenAITarget):
             )
         ):
             self.apply_capabilities(capabilities=self.capabilities.model_copy(update={"supports_web_search": True}))
+            self._refresh_generation_capabilities()
 
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._direct_tools = tuple(tools or ())
@@ -280,6 +283,12 @@ class OpenAIResponseTarget(OpenAITarget):
                     tool_name = tool.get("name")
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
+
+    def _effective_generation_parameters(self) -> dict[str, Any]:
+        parameters = super()._effective_generation_parameters()
+        reasoning = parameters.get("reasoning", self._build_reasoning_config())
+        parameters["reasoning_effort"] = reasoning.get("effort") if isinstance(reasoning, dict) else reasoning
+        return parameters
 
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """Check stored tool history through the pure serializers used for sending."""
@@ -549,7 +558,7 @@ class OpenAIResponseTarget(OpenAITarget):
         }
 
         if self._extra_body_parameters:
-            body_parameters.update(self._extra_body_parameters)
+            body_parameters.update(deepcopy(self._extra_body_parameters))
 
         if self._tools and not self._suppress_tools:
             advertised_tools = [self._to_openai_function_tool(tool=tool) for tool in self._tools]
@@ -938,6 +947,7 @@ class OpenAIResponseTarget(OpenAITarget):
     @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_model_request_async(self, *, body: dict[str, Any], request: Message) -> Message:
+        self._prepare_request_generation(body=body, request=request)
         return await self._handle_openai_request_async(
             api_call=lambda: self._client.responses.create(**body),
             request=request,

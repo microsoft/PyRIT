@@ -147,7 +147,7 @@ async def test_identifier_distinguishes_variation_order_async(
         configure_random_seed(seed=42)
         for converter in converters:
             await converter.convert_async(prompt="person in a park")
-            system_prompts.append(mock_target.set_system_prompt_async.call_args.kwargs["system_prompt"])
+            system_prompts.append(mock_target.send_prompt_async.call_args.kwargs["message"].get_value())
     finally:
         configure_random_seed(seed=None)
 
@@ -263,8 +263,8 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
     )
     result = await converter.convert_async(prompt="person walking through a dark alley")
 
-    mock_target.set_system_prompt_async.assert_called_once()
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_not_called()
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert "bodycam_footage" in system_arg
     assert "style_instructions" not in system_arg or "CRITICAL INSTRUCTION" in system_arg
 
@@ -280,8 +280,8 @@ async def test_convert_async_with_random_variation(mock_target) -> None:
     )
     result = await converter.convert_async(prompt="person in a park")
 
-    mock_target.set_system_prompt_async.assert_called_once()
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_not_called()
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     # Should contain one of the variation names
     assert any(name in system_arg for name in converter._variations)
 
