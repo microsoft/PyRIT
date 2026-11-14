@@ -197,6 +197,14 @@ class HarmScorerMetrics(ScorerMetrics):
             multiple human raters. This measures the agreement between human raters.
         krippendorff_alpha_model (float, Optional): Krippendorff's alpha for model scores, if there are
             multiple model scoring trials. This measures the agreement between model scoring trials.
+        krippendorff_alpha_gold_model (float, Optional): Krippendorff's alpha between the gold (median human)
+            labels and the per-response median model score. Unlike `krippendorff_alpha_combined`, it does not
+            count scorer trials as additional raters, so it does not rise with `num_scorer_trials` when the
+            scorer's answers are unchanged. It can still improve with more trials when the trials disagree
+            with each other, because the per-response median then becomes a better estimate of the scorer's
+            answer; in that case `mean_absolute_error` improves too. Categories within one representable
+            float step of the smallest value in each group are treated as equal to suppress median roundoff;
+            genuinely distinct adjacent floats are therefore not distinguished. None for older results.
         contested_threshold (float, Optional): The harm score at or above which a human rating counts as
             harmful when deciding whether the raters agreed. Only set when there are multiple human raters.
         num_unanimous_responses (int, Optional): Number of responses on which every human rater fell on the
@@ -228,6 +236,7 @@ class HarmScorerMetrics(ScorerMetrics):
     harm_definition_version: str | None = field(default=None, kw_only=True)
     krippendorff_alpha_humans: float | None = None
     krippendorff_alpha_model: float | None = None
+    krippendorff_alpha_gold_model: float | None = None
     contested_threshold: float | None = field(default=None, kw_only=True)
     num_unanimous_responses: int | None = field(default=None, kw_only=True)
     num_contested_responses: int | None = field(default=None, kw_only=True)
@@ -271,12 +280,29 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     Args:
         accuracy (float): The accuracy of the model scores when using the majority vote of
             human scores as the gold label.
+        accuracy_standard_error (float): The standard error of the accuracy estimate.
         f1_score (float): The F1 score of the model scores, an indicator of performance of the
             LLM scorer in its alignment with human scores.
         precision (float): The precision of the model scores, an indicator of the model's accuracy
             in its positive predictions.
         recall (float): The recall of the model scores, an indicator of the model's ability to correctly
             identify positive labels.
+        specificity (float | None, optional): The true negative rate ``TN / (TN + FP)`` over
+            evaluated responses that reached a verdict. ``None`` when there are no gold-negative
+            responses (whereas ``precision`` and ``recall`` retain their existing ``0.0``
+            convention when undefined) or for metrics recorded before this field existed.
+        true_positive (int | None, optional): Number of gold-positive responses scored positive
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        false_positive (int | None, optional): Number of gold-negative responses scored positive
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        true_negative (int | None, optional): Number of gold-negative responses scored negative
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        false_negative (int | None, optional): Number of gold-positive responses scored negative
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
         trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
         baseline_accuracy (float, Optional): The accuracy of a scorer that ignores the response and always
@@ -296,6 +322,11 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     f1_score: float
     precision: float
     recall: float
+    specificity: float | None = field(default=None, kw_only=True)
+    true_positive: int | None = field(default=None, kw_only=True)
+    false_positive: int | None = field(default=None, kw_only=True)
+    true_negative: int | None = field(default=None, kw_only=True)
+    false_negative: int | None = field(default=None, kw_only=True)
     baseline_accuracy: float | None = field(default=None, kw_only=True)
     baseline_f1_score: float | None = field(default=None, kw_only=True)
 

@@ -124,6 +124,86 @@ describe('Reinitialize', () => {
     expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeDisabled()
   })
 
+  it('should let a failed restore be retried by reinitializing', async () => {
+    const user = userEvent.setup()
+    api.getRuntimeStatus.mockResolvedValue({
+      ...ready,
+      state: 'failed',
+      outcome: 'restore-failed',
+      message: "1 saved registry entry couldn't be restored.",
+    })
+    render(
+      <TestWrapper>
+        <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+      </TestWrapper>,
+    )
+    expect(await screen.findByText(/Runtime: failed\. 1 saved registry entry/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+    await waitFor(() => expect(api.reinitialize).toHaveBeenCalledWith('saved-v1'))
+  })
+
+  it('should list the saved entries that could not be restored', async () => {
+    api.getRuntimeStatus.mockResolvedValue({
+      ...ready,
+      state: 'failed',
+      outcome: 'restore-failed',
+      message: "3 saved registry entries couldn't be restored.",
+      restore_failures: [
+        {
+          kind: 'targets',
+          name: 'pool',
+          reason: 'missing_dependency',
+          message: "Uses target 'gone', which doesn't exist.",
+          version: 'v1',
+          dependency: { kind: 'targets', name: 'gone' },
+        },
+        {
+          kind: 'scorers',
+          name: 'refusal',
+          reason: 'failed_dependency',
+          message: "It uses an entry that couldn't be restored.",
+          version: 'v2',
+          dependency: { kind: 'targets', name: 'pool' },
+        },
+        {
+          kind: 'converters',
+          name: null,
+          reason: 'unreadable_storage',
+          message: "The saved converters couldn't be listed: permission denied",
+          version: null,
+          dependency: null,
+        },
+      ],
+    })
+    render(
+      <TestWrapper>
+        <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+      </TestWrapper>,
+    )
+
+    const region = await screen.findByRole('region', { name: "Saved entries that couldn't be restored" })
+    expect(within(region).getByText("Target pool: Uses target 'gone', which doesn't exist.")).toBeInTheDocument()
+    expect(within(region).getByText("Scorer refusal: It uses an entry that couldn't be restored. (target pool)"))
+      .toBeInTheDocument()
+    expect(within(region).getByText("Saved converters: The saved converters couldn't be listed: permission denied"))
+      .toBeInTheDocument()
+    expect(region).toHaveAttribute('tabindex', '0')
+  })
+
+  it('should show no list when every saved entry was restored', async () => {
+    api.getRuntimeStatus.mockResolvedValue({ ...ready, restore_failures: [] })
+    render(
+      <TestWrapper>
+        <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+      </TestWrapper>,
+    )
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+    expect(screen.queryByRole('region', { name: "Saved entries that couldn't be restored" })).not.toBeInTheDocument()
+  })
+
   describe('runtime status polling', () => {
     beforeEach(() => {
       jest.useFakeTimers()
