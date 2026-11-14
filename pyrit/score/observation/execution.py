@@ -116,6 +116,8 @@ class _ScoringCollector:
         shared = self._acquisitions.get(key)
         if shared is None:
             shared = asyncio.ensure_future(acquire())
+            # Retrieve a failure no waiter is left to observe; awaiters still see the exception.
+            shared.add_done_callback(lambda task: task.cancelled() or task.exception())
             self._acquisitions[key] = shared
         try:
             # Shield, so cancelling this scorer does not cancel the acquisition other scorers await.

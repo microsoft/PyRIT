@@ -240,6 +240,19 @@ async def test_long_content_is_saved_complete_with_length_and_digest_async(clien
     assert content.sha256 == hashlib.sha256(value.encode()).hexdigest()
 
 
+async def test_a_lone_surrogate_in_content_is_replaced_so_the_snapshot_serializes_async(
+    client: InMemoryTraceClient,
+) -> None:
+    payload = await _acquire_async(
+        client, _span(1, {"openinference.span.kind": "TOOL", "tool.name": "t", "output.value": "ok \ud800 done"})
+    )
+
+    content = payload.steps[0].output_content
+    assert content.text == "ok \ufffd done"
+    assert content.sha256 == hashlib.sha256(content.text.encode()).hexdigest()
+    assert ExecutionTraceObservationPayload.model_validate_json(payload.model_dump_json()) == payload
+
+
 async def test_redactor_runs_before_measuring_and_hashing_async(client: InMemoryTraceClient) -> None:
     payload = await _acquire_async(
         client,

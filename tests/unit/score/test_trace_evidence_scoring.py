@@ -4,6 +4,7 @@
 """Judging conversations with the execution traces their target recorded."""
 
 import asyncio
+import gc
 import json
 import uuid
 from collections.abc import Iterator
@@ -272,6 +273,23 @@ async def test_unknown_citations_are_flagged_async(
     assert score.score_metadata["trace_citation_warnings"] == '["unknown_step:T42"]'
 
 
+async def test_zero_padded_citations_are_read_by_value_async(
+    sqlite_instance: MemoryInterface, capture: LocalTraceCapture
+) -> None:
+    judge = MockPromptTarget()
+    conversation_id = await _converse_async(_AgentTarget(capture=capture), "Book Seattle")
+
+    score, _ = await _score_async(
+        _judge(judge=judge, capture=capture),
+        judge=judge,
+        conversation_id=conversation_id,
+        response=_verdict(rationale="See [T0000000001]."),
+    )
+
+    assert score.score_metadata["trace_cited_steps"] == "[1]"
+    assert "trace_citation_warnings" not in score.score_metadata
+
+
 async def test_trace_content_cannot_forge_fences_async(
     sqlite_instance: MemoryInterface, capture: LocalTraceCapture
 ) -> None:
@@ -429,6 +447,28 @@ async def test_cancelling_one_scorer_does_not_cancel_the_shared_acquisition_asyn
     assert first.cancelled()
     assert await collector.acquire_once_async(key="k", acquire=acquire) == "observation"
     assert calls == 1
+
+
+async def test_an_orphaned_failed_acquisition_has_its_exception_retrieved_async() -> None:
+    collector = _ScoringCollector()
+    release = asyncio.Event()
+    unretrieved: list[dict[str, Any]] = []
+    asyncio.get_running_loop().set_exception_handler(lambda _loop, context: unretrieved.append(context))
+
+    async def acquire() -> Any:
+        await release.wait()
+        raise RuntimeError("capture closed")
+
+    waiter = asyncio.ensure_future(collector.acquire_once_async(key="k", acquire=acquire))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.sleep(0.01)
+    del collector, waiter
+    gc.collect()
+
+    assert not unretrieved
 
 
 async def test_a_cancelled_acquisition_is_not_cached_async() -> None:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from enum import Enum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -16,6 +17,8 @@ from pyrit.models.score._trace_validation import (  # noqa: TC001 (runtime-requi
     TraceId,
 )
 from pyrit.models.score.scorable import TraceScorable  # noqa: TC001 (runtime-required by Pydantic)
+
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 class TraceSpanStatus(str, Enum):
@@ -184,9 +187,13 @@ class TraceContent(BaseModel):
         """
         Describe a complete value, keeping its text only when ``retain`` is true.
 
+        A lone surrogate cannot be encoded as UTF-8, serialized, or persisted, so each is replaced
+        with U+FFFD first; the text, length, and digest then describe the same valid string.
+
         Returns:
             TraceContent: The content.
         """
+        value = _LONE_SURROGATE.sub("\N{REPLACEMENT CHARACTER}", value)
         return cls(
             text=value if retain else None,
             length=len(value),
@@ -197,12 +204,12 @@ class TraceContent(BaseModel):
     @staticmethod
     def _digest(value: str) -> str:
         """
-        Hash a value's UTF-8 bytes, encoding a lone surrogate as is so it cannot fail acquisition.
+        Hash a value's UTF-8 bytes.
 
         Returns:
             str: The hex SHA-256 digest.
         """
-        return hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     @model_validator(mode="after")
     def _validate_complete_value(self) -> TraceContent:

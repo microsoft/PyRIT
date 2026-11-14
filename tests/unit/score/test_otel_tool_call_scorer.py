@@ -476,6 +476,20 @@ async def test_completing_an_unknown_trace_does_not_break_eviction_async() -> No
     client.close()
 
 
+async def test_eviction_skips_complete_traces_that_hold_no_spans_async() -> None:
+    client = InMemoryTraceClient(max_spans=2)
+    client.mark_complete(trace_ids=("a" * 32, "b" * 32))
+    client.add_span(_span(trace_id="c" * 32, span_id="1" * 16))
+    client.add_span(_span(trace_id="d" * 32, span_id="2" * 16))
+    client.add_span(_span(trace_id="e" * 32, span_id="3" * 16))
+
+    for trace_id in ("a" * 32, "b" * 32):
+        result = await client.get_spans_async(query=TraceQuery(scope=TraceScorable(trace_ids=(trace_id,))))
+        assert result.available
+        assert "trace_evicted" not in result.coverage.reasons
+    client.close()
+
+
 async def test_sdk_dropped_execution_marker_prevents_false_negative_async(sqlite_instance: SQLiteMemory) -> None:
     client = InMemoryTraceClient()
     provider = TracerProvider(

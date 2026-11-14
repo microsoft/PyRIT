@@ -588,7 +588,7 @@ class ConversationScorer(MessageScorer, ABC):
         limit = self._MAX_CITED_INDEX
         cited = sorted(
             {
-                int(digits) if len(digits) < len(str(limit)) else limit
+                int(stripped or "0") if len(stripped := digits.lstrip("0")) < len(str(limit)) else limit
                 for digits in self._TRACE_CITATION.findall(score.score_rationale or "")
             }
         )
