@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
@@ -49,26 +49,68 @@ describe("MessageList", () => {
 
   it("should label a split turn and preserve its bubble when ordered evidence is extended", () => {
     const first = { ...mockMessages[0], sequence: 0, isPartial: true };
-    const rendered = render(<TestWrapper><MessageList messages={[first]} autoScroll={false} /></TestWrapper>);
+    const rendered = render(<TestWrapper><MessageList messages={[first]} /></TestWrapper>);
     const bubble = screen.getByTestId("message-bubble-0");
     expect(screen.getByText("Incomplete turn")).toBeVisible();
-    rendered.rerender(<TestWrapper><MessageList autoScroll={false} messages={[
+    rendered.rerender(<TestWrapper><MessageList messages={[
       { ...mockMessages[1], role: "system", sequence: -1 }, { ...first, isPartial: false },
     ]} /></TestWrapper>);
     expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
     expect(screen.queryByText("Incomplete turn")).not.toBeInTheDocument();
   });
 
-  it("should keep saved evidence in place while retaining live Chat auto-scroll", () => {
-    const scroll = jest.mocked(Element.prototype.scrollIntoView);
-    scroll.mockClear();
-    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} autoScroll={false} /></TestWrapper>);
-    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} autoScroll={false} /></TestWrapper>);
-    expect(scroll).not.toHaveBeenCalled();
+  it("should open at the latest message and follow new ones only while the reader stays near the end", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} /></TestWrapper>);
+    const list = screen.getByTestId("message-list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, writable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages.slice(0, 2)} /></TestWrapper>);
+    expect(list.scrollTop).toBe(1000);
+    list.scrollTop = 770;
+    fireEvent.scroll(list);
+    Object.defineProperty(list, "scrollHeight", { value: 1200 });
     rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
-    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(list.scrollTop).toBe(1200);
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    Object.defineProperty(list, "scrollHeight", { value: 1400 });
+    rendered.rerender(<TestWrapper><MessageList messages={[...mockMessages, mockMessages[1]]} /></TestWrapper>);
+    expect(list.scrollTop).toBe(100);
+    expect(screen.getByTestId("message-list")).toBe(list);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("should preserve historical saved evidence position instead of following its inner non-scrolling body", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} savedEvidence /></TestWrapper>);
+    const list = screen.getByTestId("message-list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, writable: true, value: 900 },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages.slice(0, 2)} savedEvidence announceUpdates={false} /></TestWrapper>);
+    expect(list.scrollTop).toBe(0);
+    expect(screen.queryByRole("log")).not.toBeInTheDocument();
+    list.scrollTop = 200;
+    fireEvent.scroll(list);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} savedEvidence /></TestWrapper>);
+    expect(list.scrollTop).toBe(200);
+  });
+
+  it("should announce appended live messages politely without replacing existing keyed bubbles", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} /></TestWrapper>);
+    const log = screen.getByRole("log");
+    const bubble = screen.getByTestId("message-bubble-0");
+    expect(log).toHaveAttribute("aria-live", "polite");
+    expect(log).toHaveAttribute("aria-relevant", "additions text");
+    expect(log).toHaveAttribute("aria-atomic", "false");
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(screen.getByRole("log")).toBe(log);
+    expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
+  });
   it.each([2, 3])("should retain gapped sequence %s beside optimistic user and loading rows without duplicate keys", (sequence: number) => {
     const errors = jest.spyOn(console, "error").mockImplementation(() => {});
     const stored: Message[] = [
@@ -2254,13 +2296,144 @@ describe("MessageList", () => {
   });
 
   describe("download handler", () => {
+    it("prevents overlapping downloads and enables retry after completion", async () => {
+      const user = userEvent.setup();
+      let failDownload: (reason: Error) => void = () => { throw new Error("Download was not started"); };
+      const pendingResponse = new Promise<Response>((_resolve, reject) => {
+        failDownload = reject;
+      });
+      global.fetch = jest.fn().mockReturnValue(pendingResponse);
+      const messages: Message[] = [{
+        role: "assistant",
+        content: "Here is the image",
+        timestamp: "2026-11-04T10:00:00.000Z",
+        attachments: [{
+          type: "image",
+          name: "result.png",
+          url: "http://localhost/media/result.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+
+      render(<TestWrapper><MessageList messages={messages} /></TestWrapper>);
+      const downloadButton = screen.getByTestId("download-btn-0-0");
+      await user.click(downloadButton);
+      expect(downloadButton).toBeDisabled();
+      expect(downloadButton).toHaveAttribute("aria-busy", "true");
+      await user.click(downloadButton);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      failDownload(new Error("Network unavailable"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(downloadButton).toBeEnabled();
+      expect(downloadButton).toHaveAttribute("aria-busy", "false");
+    });
+
+    it("does not download HTTP error bodies and lets the user retry", async () => {
+      const user = userEvent.setup();
+      const mockBlob = new Blob(["image"], { type: "image/png" });
+      const mockObjectUrl = "blob:http://localhost/retry";
+      const failedResponseBlob = new Blob([JSON.stringify({ detail: "Not found" })], { type: "application/json" });
+      const failedBlob = jest.fn().mockResolvedValue(failedResponseBlob);
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: false, status: 404, blob: failedBlob })
+        .mockResolvedValueOnce({ ok: true, status: 200, blob: () => Promise.resolve(mockBlob) });
+      global.URL.createObjectURL = jest.fn().mockReturnValue(mockObjectUrl);
+      global.URL.revokeObjectURL = jest.fn();
+      const clickSpy = jest.fn();
+      const origCreateElement = document.createElement.bind(document);
+      jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
+        const element = origCreateElement(tag);
+        if (tag === "a") jest.spyOn(element, "click").mockImplementation(clickSpy);
+        return element;
+      });
+
+      const messages: Message[] = [{
+        role: "assistant",
+        content: "Here is the image",
+        timestamp: new Date().toISOString(),
+        attachments: [{
+          type: "image",
+          name: "result.png",
+          url: "http://localhost/media/result.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+
+      render(<TestWrapper><MessageList messages={messages} /></TestWrapper>);
+      const downloadButton = screen.getByTestId("download-btn-0-0");
+
+      await user.click(downloadButton);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(downloadButton).toHaveTextContent("Retry download");
+      expect(failedBlob).not.toHaveBeenCalled();
+      expect(global.URL.createObjectURL).not.toHaveBeenCalled();
+      expect(clickSpy).not.toHaveBeenCalled();
+
+      await user.click(downloadButton);
+      await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+      expect(downloadButton).not.toHaveTextContent("Retry download");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(global.URL.revokeObjectURL).toHaveBeenCalledWith(mockObjectUrl);
+
+      jest.restoreAllMocks();
+    });
+
+    it("does not carry a failed download error into a different conversation", async () => {
+      const user = userEvent.setup();
+      const failedBlob = jest.fn().mockResolvedValue(
+        new Blob([JSON.stringify({ detail: "Not found" })], { type: "application/json" }),
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        blob: failedBlob,
+      });
+      const firstMessages: Message[] = [{
+        role: "assistant",
+        content: "First conversation",
+        timestamp: "2026-11-04T10:00:00.000Z",
+        attachments: [{
+          type: "image",
+          name: "same.png",
+          url: "http://localhost/media/same.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+      const secondMessages: Message[] = [{
+        role: "assistant",
+        content: "Second conversation",
+        timestamp: "2026-11-04T10:00:00.000Z",
+        attachments: [{
+          type: "image",
+          name: "same.png",
+          url: "http://localhost/media/same.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+
+      const { rerender } = render(<TestWrapper><MessageList conversationId="conversation-a" messages={firstMessages} /></TestWrapper>);
+      await user.click(screen.getByTestId("download-btn-0-0"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(failedBlob).not.toHaveBeenCalled();
+
+      rerender(<TestWrapper><MessageList conversationId="conversation-b" messages={secondMessages} /></TestWrapper>);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      jest.restoreAllMocks();
+    });
+
     it("should trigger download on click", async () => {
       const user = userEvent.setup();
 
       // Mock fetch + blob
       const mockBlob = new Blob(["test"], { type: "image/png" });
       const mockObjectUrl = "blob:http://localhost/mock-uuid";
-      global.fetch = jest.fn().mockResolvedValue({ blob: () => Promise.resolve(mockBlob) });
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, blob: () => Promise.resolve(mockBlob) });
       global.URL.createObjectURL = jest.fn().mockReturnValue(mockObjectUrl);
       global.URL.revokeObjectURL = jest.fn();
 
