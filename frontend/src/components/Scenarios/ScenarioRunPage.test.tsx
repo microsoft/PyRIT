@@ -7,7 +7,8 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { attacksApi, scenariosApi } from '@/services/api'
+import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
 import type {
   AttackFindingItem, ScenarioActiveConversation, ScenarioHierarchyNode, ScenarioHierarchyProjection,
   ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary,
@@ -19,7 +20,10 @@ import ScenarioRunPage from './ScenarioRunPage'
 
 jest.mock('@/hooks/useScenarioRunProgress', () => ({ useScenarioRunProgress: jest.fn() }))
 jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
-jest.mock('@/services/api', () => ({ attacksApi: { getAttackFindings: jest.fn() }, scenariosApi: {
+jest.mock('@/services/api', () => ({
+  attacksApi: { getAttackFindings: jest.fn() },
+  operationsApi: { getFindingFields: jest.fn() },
+  scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
   getPairedOutcomes: jest.fn(), getPairedOutcomeDetails: jest.fn(),
@@ -132,6 +136,7 @@ beforeEach(() => {
     retry: queueRetry,
   })
   jest.mocked(attacksApi.getAttackFindings).mockImplementation(async (id: string) => ({ attack_result_id: id, items: [] }))
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue(DEFAULT_FINDING_FIELDS_FIXTURE)
   state = makeState()
   jest.mocked(useScenarioRunProgress).mockImplementation(() => ({ state, retry, applyRunSummary }))
 })
@@ -345,8 +350,8 @@ describe('ScenarioRunPage', () => {
   it('shows findings linked to the attack only when there are some', async () => {
     const finding: AttackFindingItem = {
       id: 'finding-1', operation_id: RUN.operation_id, operation_name: 'Review operation', evidence_id: 'evidence-1',
-      title: 'Protected instructions disclosed', description: 'Review the saved response.', severity: 'important',
-      created_at: RUN.created_at,
+      title: 'Protected instructions disclosed', severity: 'important',
+      field_values: { description: 'Review the saved response.' }, created_at: RUN.created_at,
     }
     jest.mocked(attacksApi.getAttackFindings).mockResolvedValue({ attack_result_id: ATTEMPT.attack_result_id, items: [finding] })
     render(<Wrapper path={scenarioRunAttackRoutePath(RUN_ID, ATTEMPT.attack_result_id)} />)

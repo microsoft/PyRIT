@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
@@ -107,6 +107,10 @@ from pyrit.registry.instance_registry import SavedEntryReplacementError, record_
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
+from pyrit.setup.initializers import FindingsInitializer
+
+if TYPE_CHECKING:
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -1657,17 +1661,22 @@ class ScenarioRunService:
         """
         Validate and execute initializers specified in the request.
 
+        Every initializer is built before any runs, so a request naming an unknown or finding-fields
+        initializer is rejected before anything changes.
+
         Args:
             request: The run request containing initializer names and args.
 
         Raises:
-            ValueError: If an initializer name is not found in the registry.
+            ValueError: If an initializer name is not found in the registry, or an initializer sets the
+                deployment's finding fields, which only setup from ``.pyrit_conf`` may do.
             SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
         """
         if not request.initializers:
             return
 
         initializer_registry = await run_legacy_sync_async(InitializerRegistry.get_registry_singleton)
+        instances: list[tuple[str, PyRITInitializer]] = []
         for initializer_name in request.initializers:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
@@ -1676,6 +1685,13 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
+            if isinstance(instance, FindingsInitializer):
+                raise ValueError(
+                    f"Initializer '{initializer_name}' sets the deployment's finding fields, so it can run only "
+                    "from .pyrit_conf, not for one scenario run."
+                )
+            instances.append((initializer_name, instance))
+        for initializer_name, instance in instances:
             # The registries refuse to replace a saved entry; the record also catches a refusal
             # that the script itself caught, which would leave the saved entry in its place.
             with record_saved_entry_refusals() as refusals:

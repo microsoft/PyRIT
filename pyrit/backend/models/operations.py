@@ -7,34 +7,27 @@ from uuid import UUID
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
-from pyrit.backend.models.common import TextStr
+from pyrit.backend.models.common import MAX_ITEMS, IdentifierStr, TextStr
 from pyrit.models import (
     AttackOutcome,
     Finding,
     FindingCreate,
     FindingEvidence,
-    FindingSeverity,
     Operation,
     OperationCreate,
     OperationUsage,
 )
-from pyrit.models.harm_category import HarmCategory
+from pyrit.models.finding_fields import FindingValueRow
 from pyrit.models.operation import OperationName
 
 # Ten pages of the export dialog; the dashboard keeps its selection within this.
 MAX_EXPORT_FINDINGS = 1_000
 
 
-class FindingOptionsResponse(BaseModel):
-    """Harm categories a finding can use."""
-
-    harm_types: list[HarmCategory]
-
-
 class OperationListItem(Operation):
-    """An operation with its finding counts by severity. Severities with no findings are omitted."""
+    """An operation with its finding counts by stored severity value. Severities with no findings are omitted."""
 
-    finding_counts: dict[FindingSeverity, int]
+    finding_counts: dict[str, int]
 
 
 class OperationListResponse(BaseModel):
@@ -65,9 +58,13 @@ class OperationUpdateRequest(BaseModel):
 
 
 class FindingListItem(Finding):
-    """A finding with its evidence count."""
+    """A finding with its evidence count, and its values as the active finding fields label them."""
 
     evidence_count: int = Field(ge=0)
+    rows: list[FindingValueRow] = Field(description="The filled values in configured order, labelled for display")
+    retired: list[tuple[str, str]] = Field(
+        description="The (key, value) of each stored value that no active field or level uses, in stored order"
+    )
 
 
 class AttackFindingItem(Finding):
@@ -94,24 +91,43 @@ class FindingListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingUpdateRequest(FindingCreate):
-    """A finding's editable fields."""
+class _FindingRequestFields(FindingCreate):
+    """A finding's values as a request carries them, within the request limits."""
 
     title: TextStr
-    description: TextStr = ""
-    severity_other: TextStr | None = None
-    harm_type_other: TextStr | None = None
+    severity: TextStr = Field(
+        description="The key of a severity option, or Other text; surrounding whitespace is removed"
+    )
+    field_values: dict[IdentifierStr, TextStr] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description="Values by field or level key, each an option's key or text; blank values are dropped",
+    )
 
 
-class FindingCreateRequest(FindingUpdateRequest):
+class FindingCreateRequest(_FindingRequestFields):
     """
     A finding to record, optionally with one saved attack result as evidence.
 
-    Sending the same ``id`` and content again returns the saved finding, so a client can retry safely.
+    Sending the same ``id`` and content again returns the saved finding, as long as it still fits the active finding
+    fields, so a client can retry safely.
     """
 
     id: UUID | None = None
     attack_result_id: UUID | None = Field(None, description="A saved attack result to link as evidence")
+
+
+class FindingUpdateRequest(_FindingRequestFields):
+    """A finding's new editable values, and the retired values to keep or remove."""
+
+    keep_retired_keys: list[IdentifierStr] = Field(
+        default_factory=list,
+        max_length=MAX_ITEMS,
+        description="Keys of stored values to keep unchanged, even if the active fields use them again",
+    )
+    remove_retired_keys: list[IdentifierStr] = Field(
+        default_factory=list, max_length=MAX_ITEMS, description="Keys of the retired values to delete from the finding"
+    )
 
 
 class FindingEvidenceCreateRequest(BaseModel):

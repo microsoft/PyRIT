@@ -7,7 +7,7 @@ import sys
 import tempfile
 import time
 import weakref
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Iterator
 from contextlib import closing, contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -22,6 +22,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
 from pyrit.models import SeedDataset
+from pyrit.setup.finding_fields import reset_active_finding_fields
 from test_support.fixtures import use_sqlite_memory
 
 # This limits retries and speeds up execution
@@ -171,3 +172,10 @@ def patch_central_database(sqlite_instance):
     """Fixture to mock CentralMemory.get_memory_instance"""
     with patch.object(CentralMemory, "get_memory_instance", return_value=sqlite_instance) as sqlite_memory:
         yield sqlite_memory
+
+
+@pytest.fixture
+def reset_finding_fields() -> Iterator[None]:
+    """Restore the default finding fields after the test."""
+    yield
+    reset_active_finding_fields()

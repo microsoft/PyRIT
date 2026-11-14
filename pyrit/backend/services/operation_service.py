@@ -16,6 +16,7 @@ from pyrit.backend.models.operations import (
     FindingEvidenceListResponse,
     FindingListItem,
     FindingListResponse,
+    FindingUpdateRequest,
     OperationDetail,
     OperationListItem,
     OperationUpdateRequest,
@@ -30,6 +31,7 @@ from pyrit.models import (
     Operation,
     OperationCreate,
 )
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 # Keeps every ID list a batch reads within SQL Server's 2100-parameter limit.
 _EVIDENCE_BATCH_SIZE = 500
@@ -164,8 +166,10 @@ class OperationService:
 
         Raises:
             FindingConflictError: If the ID already belongs to a different finding.
+            FindingValuesError: If the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
+        get_active_finding_fields().check_values(severity=request.severity, field_values=request.field_values)
         finding = Finding(
             operation_id=operation_id,
             id=request.id or uuid4(),
@@ -203,11 +207,13 @@ class OperationService:
             FindingListResponse: The page and the offset of the next one, if any.
         """
         await self.get_async(operation_id)
+        fields = get_active_finding_fields()
         findings = await CentralMemory.get_memory_instance().get_findings_async(
             operation_id=operation_id,
             limit=limit + 1,
             offset=offset,
             title_query=title_query,
+            severity_order=fields.severity_order,
             title_pattern=title_pattern,
         )
         has_more = len(findings) > limit
@@ -215,8 +221,19 @@ class OperationService:
         counts = await CentralMemory.get_memory_instance().get_finding_evidence_counts_async(
             finding_ids=[finding.id for finding in page]
         )
+        items = []
+        for finding in page:
+            described = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
+            items.append(
+                FindingListItem(
+                    **finding.model_dump(),
+                    evidence_count=counts.get(finding.id, 0),
+                    rows=described.rows,
+                    retired=described.retired,
+                )
+            )
         return FindingListResponse(
-            items=[FindingListItem(**f.model_dump(), evidence_count=counts.get(f.id, 0)) for f in page],
+            items=items,
             has_more=has_more,
             next_offset=offset + limit if has_more else None,
         )
@@ -281,7 +298,11 @@ class OperationService:
         """
         await self.get_async(operation_id)
         memory = CentralMemory.get_memory_instance()
-        findings = await memory.get_findings_by_ids_async(operation_id=operation_id, finding_ids=finding_ids)
+        findings = await memory.get_findings_by_ids_async(
+            operation_id=operation_id,
+            finding_ids=finding_ids,
+            severity_order=get_active_finding_fields().severity_order,
+        )
         found = {finding.id for finding in findings}
         missing = next((finding_id for finding_id in finding_ids if finding_id not in found), None)
         if missing is not None:
@@ -404,7 +425,9 @@ class OperationService:
             AttackFindingListResponse: The linked findings with their Operation names and evidence links.
         """
         memory = CentralMemory.get_memory_instance()
-        linked = await memory.get_findings_for_attack_result_async(attack_result_id=attack_result_id)
+        linked = await memory.get_findings_for_attack_result_async(
+            attack_result_id=attack_result_id, severity_order=get_active_finding_fields().severity_order
+        )
         operation_ids = list({finding.operation_id for finding, _ in linked})
         operations = await memory.get_operations_async(operation_ids=operation_ids) if operation_ids else []
         names = {operation.id: operation.name for operation in operations}
@@ -458,20 +481,36 @@ class OperationService:
         if not any(stat.message_count > 0 for stat in stats.values()):
             raise FindingEvidenceNotFoundError("The attack result has no saved messages.")
 
-    async def update_finding_async(self, *, operation_id: UUID, finding_id: UUID, request: FindingCreate) -> Finding:
+    async def update_finding_async(
+        self, *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
+    ) -> Finding:
         """
-        Replace a finding's editable fields within an existing operation.
+        Replace a finding's current field values within an existing operation.
+
+        A current field left out is cleared. Values of fields that are no longer configured are kept and can't
+        change; list them in ``remove_retired_keys`` to delete them. A value listed in ``keep_retired_keys`` is
+        kept even if its field is configured again. Values that haven't changed may use options that no longer
+        exist.
 
         Returns:
             Finding: The updated finding.
 
         Raises:
             FindingNotFoundError: If the finding is missing or belongs to another operation.
+            FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the finding
+                or that is also sent, or the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
+        stored = await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
+        replacement = get_active_finding_fields().apply_edit(
+            stored=stored,
+            edit=request,
+            keep_retired_keys=request.keep_retired_keys,
+            remove_retired_keys=request.remove_retired_keys,
+        )
         try:
             return await CentralMemory.get_memory_instance().update_finding_async(
-                operation_id=operation_id, finding_id=finding_id, request=request
+                operation_id=operation_id, finding_id=finding_id, request=replacement
             )
         except LookupError as exc:
             raise FindingNotFoundError(str(exc)) from exc

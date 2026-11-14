@@ -8,6 +8,7 @@ import OutcomeBadge from '@/components/OutcomeBadge'
 import IdentityDisclosure from '@/components/Registry/IdentityDisclosure'
 import ScorerEvaluationDetails from '@/components/Scorers/ScorerEvaluationDetails'
 import { useAttackFindings } from '@/hooks/useAttackFindings'
+import { useFindingFields } from '@/hooks/useFindingFields'
 import type {
   AttackDisplayOutcome,
   ScenarioActiveConversation,
@@ -56,6 +57,7 @@ export default function AttackAttemptDetails({
   const styles = useAttackAttemptDetailsStyles()
   const completed = attempt && 'outcome' in attempt ? attempt : null
   const { findings, loading: findingsLoading, error: findingsError, refresh: refreshFindings } = useAttackFindings(completed?.attack_result_id)
+  const { fields: findingFields } = useFindingFields(findings.length > 0)
   const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt?.atomic_attack_name ?? 'Not recorded'
   const seeds = attempt && 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
   const datasetNames = [...new Set(seeds.flatMap((seed) =>
@@ -109,7 +111,7 @@ export default function AttackAttemptDetails({
           </MessageBar>}
           {findings.length > 0 && <ul className={styles.findings} aria-label="Attached findings">
             {findings.map((finding) => <li key={finding.evidence_id} className={styles.finding}>
-              <FindingSeverityBadge finding={finding} />
+              {findingFields !== null && <FindingSeverityBadge fields={findingFields} severity={finding.severity} />}
               <Text>{finding.title}</Text>
             </li>)}
           </ul>}

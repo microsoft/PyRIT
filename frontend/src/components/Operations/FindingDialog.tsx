@@ -1,21 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 
 import {
-  Button, Combobox, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Field, Input, MessageBar, MessageBarBody, Option, Select, Text, Textarea,
+  Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  Field, Input, MessageBar, MessageBarBody, Text,
 } from '@fluentui/react-components'
 
-import { operationsApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
-import type { FindingCreate, FindingSeverity } from '@/types'
+import { type FieldError, toApiError } from '@/services/errors'
+import type { FindingCreate, FindingField, FindingFields, FindingListItem } from '@/types'
 import { generateClientId } from '@/utils/clientId'
-import { FINDING_SEVERITY_LABELS } from '@/utils/findingSeverity'
+import { SEVERITY_KEY } from '@/utils/findingFields'
 
 import { useFindingDialogStyles } from './FindingDialog.styles'
+import FindingFieldInput from './FindingFieldInput'
+import RetiredFieldValues from './RetiredFieldValues'
 
-const EMPTY_DRAFT: FindingCreate = {
-  title: '', description: '', severity: 'moderate', severity_other: null, harm_type: null, harm_type_other: null,
-}
+const NO_KEYS: ReadonlySet<string> = new Set()
 
 /** One save attempt. The id repeats while the input does, so a retry returns a finding a lost response saved. */
 export interface FindingSaveAttempt {
@@ -23,59 +22,107 @@ export interface FindingSaveAttempt {
   attackResultId: string
 }
 
+/** The finding Save sends. An edit lists its retired values by key: those it keeps and those to delete. */
+export interface FindingDraft extends FindingCreate {
+  keep_retired_keys?: string[]
+  remove_retired_keys?: string[]
+}
+
 interface FindingDialogProps {
-  initialValues?: FindingCreate
+  /** Read once, when the dialog opens. A reload while it's open doesn't change its inputs or retired values. */
+  fields: FindingFields
+  /** An edit's finding, with the retired values the findings list sets apart. */
+  initialValues?: FindingCreate & Pick<FindingListItem, 'retired'>
   editing?: boolean
   context?: React.ReactNode
   /** Shows an optional attack ID to link as evidence. */
   evidenceField?: boolean
   saveDisabled?: boolean
-  onSave: (draft: FindingCreate, attempt: FindingSaveAttempt) => Promise<void>
+  onSave: (draft: FindingDraft, attempt: FindingSaveAttempt) => Promise<void>
   onClose: () => void
 }
 
+interface RetiredValue {
+  key: string
+  value: string
+}
+
+/** A new finding starts from the field defaults. An edit starts from its values, with retired ones set apart. */
+function openingState(
+  fields: FindingFields, initialValues: FindingDialogProps['initialValues'],
+): { draft: FindingCreate; retired: RetiredValue[] } {
+  if (initialValues === undefined) {
+    const defaults: Record<string, string> = {}
+    for (const field of fields.fields) {
+      if (field.default !== null) defaults[field.key] = field.default
+    }
+    return { draft: { title: '', severity: fields.severity.default ?? '', field_values: defaults }, retired: [] }
+  }
+  const retiredKeys = new Set(initialValues.retired.map(([key]: [string, string]) => key))
+  const current = Object.entries(initialValues.field_values).filter(([key]: [string, string]) => !retiredKeys.has(key))
+  return {
+    draft: { title: initialValues.title, severity: initialValues.severity, field_values: Object.fromEntries(current) },
+    retired: initialValues.retired.map(([key, value]: [string, string]) => ({ key, value })),
+  }
+}
+
+/** The draft as the backend stores it, which drops blank values. */
+function filledFinding(draft: FindingCreate): FindingCreate {
+  const filled = Object.entries(draft.field_values).filter(([, value]: [string, string]) => value.trim() !== '')
+  return { title: draft.title, severity: draft.severity, field_values: Object.fromEntries(filled) }
+}
+
+function sameFinding(left: FindingCreate, right: FindingCreate): boolean {
+  const leftValues = Object.entries(filledFinding(left).field_values)
+  const rightValues = filledFinding(right).field_values
+  return left.title === right.title && left.severity === right.severity
+    && leftValues.length === Object.keys(rightValues).length
+    && leftValues.every(([key, value]: [string, string]) => rightValues[key] === value)
+}
+
+/** Each field's section heading, shown where the section differs from the field before it. */
+function sectionHeading(field: FindingField, slots: FindingField[], index: number): string | null {
+  const section = field.section
+  return section !== null && section !== slots[index - 1]?.section ? section : null
+}
+
 export default function FindingDialog({
-  initialValues = EMPTY_DRAFT, editing = false, context, evidenceField = false, saveDisabled = false, onSave, onClose,
+  fields, initialValues, editing = false, context, evidenceField = false, saveDisabled = false, onSave, onClose,
 }: FindingDialogProps) {
   const styles = useFindingDialogStyles()
-  const [initialDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
-  const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
+  const [openFields] = useState(fields)
+  const [opening] = useState(() => openingState(openFields, initialValues))
+  const [draft, setDraft] = useState<FindingCreate>(opening.draft)
+  const [removed, setRemoved] = useState<ReadonlySet<string>>(NO_KEYS)
+  // Whether each field shows Other with blank text, which leaves its value '' just like Not set.
+  const [blankOther, setBlankOther] = useState<Record<string, boolean>>({})
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
   const [attackResultIdError, setAttackResultIdError] = useState('')
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
   const attempt = useRef<{ signature: string; id: string } | null>(null)
-  const [harmTypes, setHarmTypes] = useState<string[] | null>(null)
-  const [optionsError, setOptionsError] = useState('')
-  const [optionsRevision, setOptionsRevision] = useState(0)
-  const [harmOpen, setHarmOpen] = useState(false)
-  const [harmSearch, setHarmSearch] = useState('')
-  const classificationsValid = (draft.severity !== 'other' || Boolean(draft.severity_other?.trim()))
-    && (draft.harm_type !== 'Other' || Boolean(draft.harm_type_other?.trim()))
-  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
-    && !optionsError
+  const slots = [openFields.severity, ...openFields.fields]
+  const values = { ...draft.field_values, [SEVERITY_KEY]: draft.severity }
+  // Title and severity are part of every finding. The server checks the configured required values and names a
+  // missing one; only blank Other text, which it never sees, is held here.
+  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim()) && Boolean(draft.severity.trim())
+    && !Object.values(blankOther).some(Boolean)
+  const changed = !sameFinding(draft, opening.draft) || removed.size > 0 || attackResultId !== ''
 
   useEffect(() => {
-    let ignore = false
-    operationsApi.getFindingOptions()
-      .then(options => { if (!ignore) { setHarmTypes(options.harm_types); setOptionsError('') } })
-      .catch((cause: unknown) => { if (!ignore) setOptionsError(toApiError(cause).detail) })
-    return () => { ignore = true }
-  }, [optionsRevision])
-
-  useEffect(() => {
-    // Clean means the draft still equals its initial values. An edit dialog
-    // opens prefilled, so emptiness can never prove it clean; every watched
-    // field is compared against what the dialog started with.
-    const unchanged = (field: keyof FindingCreate): boolean => draft[field] === initialDraft[field]
-    if (unchanged('title') && unchanged('description') && unchanged('severity_other')
-      && unchanged('harm_type') && unchanged('harm_type_other') && unchanged('severity')
-      && !attackResultId) return
+    if (!changed) return
     const protectDraft = (event: BeforeUnloadEvent): void => { event.preventDefault() }
     window.addEventListener('beforeunload', protectDraft)
     return () => { window.removeEventListener('beforeunload', protectDraft) }
-  }, [draft, initialDraft, attackResultId])
+  }, [changed])
+
+  const applyChanges = (changes: Record<string, string>): void => {
+    setDraft((current: FindingCreate) => {
+      const { [SEVERITY_KEY]: severity = current.severity, ...fieldChanges } = changes
+      return { ...current, severity, field_values: { ...current.field_values, ...fieldChanges } }
+    })
+  }
 
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return
@@ -84,15 +131,26 @@ export default function FindingDialog({
     setError('')
     setAttackResultIdError('')
     const trimmedAttackResultId = attackResultId.trim()
-    const signature = JSON.stringify([draft, trimmedAttackResultId])
+    // The server keeps a listed retired value even if a live apply has configured its field again.
+    const filled = filledFinding(draft)
+    const finding: FindingDraft = editing
+      ? {
+        ...filled,
+        keep_retired_keys: opening.retired.map(({ key }: RetiredValue) => key).filter((key: string) => !removed.has(key)),
+        remove_retired_keys: [...removed],
+      }
+      : filled
+    const signature = JSON.stringify([finding, trimmedAttackResultId])
     if (attempt.current?.signature !== signature) attempt.current = { signature, id: generateClientId() }
     try {
-      await onSave(draft, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
+      await onSave(finding, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
       const apiError = toApiError(cause)
-      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
-        .map(item => item.message)
-      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
+      // Match the whole path: a deployment's own field can also be keyed attack_result_id under field_values.
+      const isEvidenceError = (item: FieldError): boolean =>
+        evidenceField && item.field.replace(/^body\./, '') === 'attack_result_id'
+      const evidenceMessages = apiError.fieldErrors.filter(isEvidenceError).map(item => item.message)
+      const otherMessages = apiError.fieldErrors.filter(item => !isEvidenceError(item))
         .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
       setAttackResultIdError(evidenceMessages.join(' '))
       if (evidenceMessages.length === 0 || otherMessages.length > 0) {
@@ -111,74 +169,35 @@ export default function FindingDialog({
         <DialogContent>
           <form className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
             {context ?? <Text>Record a human assessment. No attack is required.</Text>}
-            {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <Field label="Title" required>
-              <Input value={draft.title} disabled={saving} name="title" autoComplete="off"
+              <Input className={styles.input} value={draft.title} disabled={saving} name="title" autoComplete="off"
                 onChange={(_, data) => { setDraft(value => ({ ...value, title: data.value })) }} />
             </Field>
-            <Field label="Severity" required>
-              <Select value={draft.severity} disabled={saving} name="severity" onChange={event => {
-                const severity = event.target.value
-                if (severity in FINDING_SEVERITY_LABELS) setDraft(value => ({
-                  ...value, severity: severity as FindingSeverity, severity_other: severity === 'other' ? '' : null,
-                }))
-              }}>
-                {Object.entries(FINDING_SEVERITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </Select>
-            </Field>
-            {draft.severity === 'other' && <Field label="Other severity" required>
-              <Input value={draft.severity_other ?? ''} disabled={saving} name="severity_other" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, severity_other: data.value })) }} />
-            </Field>}
-            {optionsError && <MessageBar intent="error" aria-live="polite"><MessageBarBody>
-              Could not load harm categories: {optionsError}{' '}
-              <Button className={styles.button} aria-label="Retry harm categories" onClick={() => {
-                setOptionsError('')
-                setHarmTypes(null)
-                setOptionsRevision(value => value + 1)
-              }}>Retry</Button>
-            </MessageBarBody></MessageBar>}
-            <Field label="Harm-type" hint={harmTypes === null && !optionsError
-              ? 'Loading harm categories…' : 'Optional. Select a category, or choose Other for custom text.'}>
-              <Combobox className={styles.harmPicker} inlinePopup open={harmOpen}
-                disabled={saving || harmTypes === null || Boolean(optionsError)}
-                placeholder="Not set" value={harmOpen ? harmSearch : draft.harm_type ?? ''}
-                selectedOptions={[draft.harm_type ?? '']}
-                onOpenChange={(_, data) => { setHarmOpen(data.open); setHarmSearch('') }}
-                onChange={event => { setHarmSearch(event.target.value); setHarmOpen(true) }}
-                onOptionSelect={(_, data) => {
-                  const harmType = data.optionValue
-                  if (harmType !== '' && !harmTypes?.includes(harmType ?? '')) return
-                  setDraft(value => ({
-                    ...value, harm_type: harmType || null,
-                    harm_type_other: harmType === 'Other' ? (value.harm_type === 'Other' ? value.harm_type_other : '') : null,
-                  }))
-                  setHarmOpen(false)
-                  setHarmSearch('')
-                }}
-                listbox={{ className: styles.harmListbox }}>
-                <Option value="">Not set</Option>
-                {harmTypes?.filter(category => category === 'Other'
-                  || category.toLowerCase().includes(harmSearch.toLowerCase()))
-                  .map(category => <Option key={category} value={category}>{category}</Option>)}
-                {harmTypes && !harmTypes.some(category => category.toLowerCase().includes(harmSearch.toLowerCase()))
-                  && <Option disabled>No matching categories. Choose Other to enter custom text.</Option>}
-              </Combobox>
-            </Field>
-            {draft.harm_type === 'Other' && <Field label="Other harm-type" required>
-              <Input value={draft.harm_type_other ?? ''} disabled={saving} name="harm_type_other" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, harm_type_other: data.value })) }} />
-            </Field>}
-            <Field label="Description" hint="Optional">
-              <Textarea value={draft.description} disabled={saving} resize="vertical" name="description" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, description: data.value })) }} />
-            </Field>
+            {slots.map((field: FindingField, index: number) => {
+              const heading = sectionHeading(field, slots, index)
+              return (
+                <Fragment key={field.key}>
+                  {heading !== null && <Text as="h3" size={400} weight="semibold" className={styles.section}>
+                    {heading}
+                  </Text>}
+                  <FindingFieldInput field={field} values={values} disabled={saving} onChange={applyChanges}
+                    onOtherBlankChange={(blank: boolean) => {
+                      setBlankOther(current => ({ ...current, [field.key]: blank }))
+                    }} />
+                </Fragment>
+              )
+            })}
+            <RetiredFieldValues values={opening.retired} removed={removed} disabled={saving}
+              onRemove={(key: string) => { setRemoved(previous => new Set([...previous, key])) }}
+              onUndo={() => { setRemoved(new Set()) }} />
             {evidenceField && <Field label="Evidence attack ID"
               validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
-              <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
+              <Input className={styles.input} value={attackResultId} disabled={saving} name="attack_result_id"
+                autoComplete="off"
                 onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />
             </Field>}
+            {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>
               <Button type="submit" appearance="primary" className={styles.button} disabledFocusable={saving}

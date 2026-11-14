@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { attacksApi, operationsApi } from '@/services/api'
+import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
+import type { FindingListItem } from '@/types'
 
 import AttachToFindingsButton from './AttachToFindingsButton'
 
@@ -11,14 +13,14 @@ jest.mock('@/services/api', () => ({
   attacksApi: { getAttack: jest.fn() },
   operationsApi: {
     get: jest.fn(), list: jest.fn(), listFindings: jest.fn(), attachFindingEvidence: jest.fn(), createFinding: jest.fn(),
-    getFindingOptions: jest.fn(),
+    getFindingFields: jest.fn(),
   },
 }))
 
 const OPERATION = { id: 'scan-operation', name: 'Scan operation', created_at: '2026-10-08T12:00:00Z' }
-const FINDING = {
-  id: 'finding', operation_id: OPERATION.id, title: 'Proof', severity: 'low', description: '',
-  created_at: '2026-10-08T12:00:00Z', evidence_count: 0,
+const FINDING: FindingListItem = {
+  id: 'finding', operation_id: OPERATION.id, title: 'Proof', severity: 'low', field_values: {},
+  created_at: '2026-10-08T12:00:00Z', evidence_count: 0, rows: [], retired: [],
 }
 
 function TestWrapper({ children }: { readonly children: React.ReactNode }) {
@@ -33,6 +35,7 @@ describe('AttachToFindingsButton', () => {
     jest.mocked(operationsApi.list).mockResolvedValue({ items: [{ ...OPERATION, finding_counts: {} }] } as never)
     jest.mocked(operationsApi.listFindings).mockResolvedValue({ items: [FINDING], has_more: false, next_offset: null } as never)
     jest.mocked(operationsApi.attachFindingEvidence).mockResolvedValue({ item: { id: 'evidence' }, created: true } as never)
+    jest.mocked(operationsApi.getFindingFields).mockResolvedValue(DEFAULT_FINDING_FIELDS_FIXTURE)
   })
 
   it('should attach the attack to a finding in the default operation and report it', async () => {
