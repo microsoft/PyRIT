@@ -265,6 +265,41 @@ class TestDeployInstanceContract(unittest.TestCase):
         self.assertEqual(sql_command[sql_command.index("--end-ip-address") + 1], "20.30.40.50")
         self.assertNotIn("0.0.0.0", sql_command)
 
+    def _database_create_command(self, **kwargs) -> list[str]:
+        with (
+            patch.object(DEPLOY, "run_az") as run_az,
+            patch.object(
+                DEPLOY,
+                "run_az_json",
+                side_effect=[{"displayName": "Operator", "id": GROUP_ID}, "demo-sql.database.windows.net"],
+            ),
+        ):
+            DEPLOY.create_sql_server_and_db(
+                resource_group=RESOURCE_GROUP,
+                location="eastus2",
+                server_name=f"{RESOURCE_GROUP}-sql",
+                database_name="pyrit-demo",
+                **kwargs,
+            )
+        commands = [call.kwargs["args"] for call in run_az.call_args_list]
+        return next(command for command in commands if command[:3] == ["sql", "db", "create"])
+
+    def test_sql_database_defaults_to_basic_service_objective(self):
+        command = self._database_create_command()
+        self.assertEqual(command[command.index("--service-objective") + 1], "Basic")
+        self.assertNotIn("--capacity", command)
+        required = [
+            "--instance-name", INSTANCE, "--env-file", "instance.env", "--subscription", SUBSCRIPTION_ID,
+            "--acr-name", "sharedacr", "--container-image", "sharedacr.azurecr.io/pyrit:abc123",
+            "--allowed-groups", GROUP_ID, "--admin-group", GROUP_ID,
+        ]  # fmt: skip
+        self.assertEqual(DEPLOY.parse_args(required).sql_service_objective, "Basic")
+        self.assertEqual(DEPLOY.parse_args([*required, "--sql-service-objective", "S3"]).sql_service_objective, "S3")
+
+    def test_sql_database_uses_requested_service_objective(self):
+        command = self._database_create_command(service_objective="S3")
+        self.assertEqual(command[command.index("--service-objective") + 1], "S3")
+
 
 class TestTeardownInstanceContract(unittest.TestCase):
     """Verify teardown cannot bypass ownership and egress-release checks."""
