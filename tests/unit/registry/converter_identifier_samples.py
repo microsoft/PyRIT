@@ -224,7 +224,13 @@ SELECTION_STRATEGY_SETTINGS: dict[type, tuple[dict[str, Any], ...]] = {
 }
 
 KEYWORD_SETTINGS: dict[str, tuple[dict[str, Any], ...]] = {
-    "LLMGenericTextConverter": ({"tone": "first"}, {"tone": "third"}, {"style": "first"}),
+    "LLMGenericTextConverter": (
+        {"tone": "first"},
+        {"tone": "third"},
+        {"style": "first"},
+        # Set iteration order depends on PYTHONHASHSEED, so this also checks it does not reach the identifier.
+        {"tone": {"alpha", "beta", "gamma", "delta", "epsilon", "zeta"}},
+    ),
 }
 
 
