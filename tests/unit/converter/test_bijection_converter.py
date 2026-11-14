@@ -642,6 +642,28 @@ async def test_token_converter_round_trips_literal_hyphens(original: str):
     assert converter.decode(encoded.output_text) == original
 
 
+@pytest.mark.parametrize("seed", [1, 3, 7])
+@pytest.mark.parametrize("original", ["mp3 player", "covid19", "x2", "a_b", "MP3_file", "café", "naïve", "日本a"])
+async def test_token_converter_round_trips_letters_next_to_word_characters(original: str, seed: int):
+    # Regression test: encode() writes a code-word run directly next to a digit, "_" or
+    # non-ASCII letter. Those are word characters, so a \b-bounded decode pattern dropped
+    # the code word that touched them ("mp3" decoded as "m-<p>3").
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=seed)
+
+    encoded = await converter.convert_async(prompt=original)
+    assert converter.decode(encoded.output_text) == original
+
+
+def test_token_converter_decode_ignores_code_word_inside_longer_word():
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=1)
+    code_word = converter.mapping["a"]
+
+    assert converter.decode(f"x{code_word}") == f"x{code_word}"
+    assert converter.decode(f"{code_word}y") == f"{code_word}y"
+
+
 async def test_token_converter_literal_hyphen_is_distinct_from_delimiter():
     mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
