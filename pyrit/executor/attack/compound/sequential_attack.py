@@ -215,6 +215,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     FIXED_PARAMS_TYPE = AttackParameters.excluding("next_message", "prepended_conversation")
 
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+    IS_COMPOUND: ClassVar[bool] = True
 
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""

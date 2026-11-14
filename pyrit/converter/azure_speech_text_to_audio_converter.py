@@ -3,7 +3,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk  # noqa: F401
@@ -41,6 +41,10 @@ class AzureSpeechTextToAudioConverter(Converter):
     AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_KEY"
     #: The resource ID for accessing the service when using Entra ID auth.
     AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_RESOURCE_ID"
+
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"azure_speech_region", "azure_speech_key", "azure_speech_resource_id"}
+    )
 
     #: Supported audio formats for output.
     AzureSpeechAudioFormat = Literal["wav", "mp3"]

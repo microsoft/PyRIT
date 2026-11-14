@@ -35,6 +35,8 @@ interface MainLayoutProps extends OperationControlProps {
   onStartTour?: () => void
   labelsBusy?: boolean
   featureNavigation?: React.ReactNode
+  /** Shown above the top bar, so the content below gets smaller instead of losing its bottom. */
+  banner?: React.ReactNode
 }
 
 export default function MainLayout({
@@ -53,6 +55,7 @@ export default function MainLayout({
   onStartTour,
   labelsBusy = false,
   featureNavigation,
+  banner,
 }: MainLayoutProps) {
   usePreventFileNavigation()
   const styles = useMainLayoutStyles()
@@ -89,6 +92,7 @@ export default function MainLayout({
       <a href="#main-content" className={styles.skipLink}>
         Skip to main content
       </a>
+      {banner && <div className={styles.banner}>{banner}</div>}
       <div className={styles.topBar}>
         <Tooltip
           content={

@@ -213,6 +213,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.requirements = TechniqueRequirements()
     technique_instance = MagicMock(spec=AttackTechnique)
     technique_instance.attack = MagicMock(spec=AttackStrategy)
+    technique_instance.attack.IS_COMPOUND = False
     technique_instance.seed_technique = seed_technique
     technique_instance.requirements = factory.requirements
     technique_instance.get_identifier.return_value = ComponentIdentifier(
@@ -2202,6 +2203,7 @@ def _make_exact_cached_result(
 
 def _make_cache_reuse_candidate(*, seed_groups: list[AttackSeedGroup]) -> MagicMock:
     candidate = MagicMock(spec=AtomicAttack)
+    candidate.attack_technique.attack.IS_COMPOUND = False
     candidate.atomic_attack_name = "attack_a"
     candidate.display_group = "adv_target"
     candidate.technique_name = None
@@ -2499,6 +2501,7 @@ class TestReusableCachedResults:
         bench._memory_labels = {"pipeline_build_id": "42"}
         bench._precomputed_cached_results = {"attack_a": [source_result]}
         candidate = MagicMock(spec=AtomicAttack)
+        candidate.attack_technique.attack.IS_COMPOUND = False
         candidate.atomic_attack_name = "attack_a"
         candidate.technique_eval_hash = "technique-hash"
         candidate.seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]

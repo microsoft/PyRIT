@@ -6,13 +6,18 @@ Tests for the merged ``TargetRegistry`` (buildable catalog + instance container)
 and its introspection helpers.
 """
 
+import asyncio
 import re
+import threading
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece
 from pyrit.prompt_target import (
     CopilotType,
+    HuggingFaceChatTarget,
     PlaywrightCopilotTarget,
     PromptTarget,
     RoundRobinTarget,
@@ -473,3 +478,34 @@ class TestRegistrationGate:
             assert target_cls.get_auth_mode_parameters(auth_mode="none") == {"auth_mode": "none"}, (
                 f"{name} advertises no-key support but does not forward an explicit auth_mode"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateInstanceAsync:
+    @pytest.mark.parametrize(("use_cuda", "asks_for_cuda"), [("false", False), ("true", True)])
+    async def test_hugging_face_prepares_torch_off_the_calling_loop_then_builds_on_it_async(
+        self, registry: TargetRegistry, use_cuda: str, asks_for_cuda: bool
+    ) -> None:
+        prepared: list[tuple[threading.Thread, bool]] = []
+        torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+
+        def import_torch(*, use_cuda: bool) -> None:
+            prepared.append((threading.current_thread(), use_cuda))
+
+        with (
+            patch.dict("sys.modules", {"torch": torch}),
+            patch.object(HuggingFaceChatTarget, "_import_torch", side_effect=import_torch),
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock),
+        ):
+            target = await registry.create_instance_async(
+                name="HuggingFaceChatTarget", params={"model_path": "test-model", "use_cuda": use_cuda}
+            )
+            await target.load_model_and_tokenizer_task
+
+        [(thread, cuda)] = prepared
+        assert thread is not threading.current_thread()
+        assert cuda is asks_for_cuda
+        assert isinstance(target, HuggingFaceChatTarget)
+        assert target.use_cuda is asks_for_cuda
+        assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
+        assert registry.instances.get_names() == []

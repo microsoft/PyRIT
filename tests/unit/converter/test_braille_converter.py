@@ -231,7 +231,7 @@ async def test_braille_converter_letter_sign_after_number(prompt, expected):
     [
         ("$", "\u2808\u280e"),
         ("$5", "\u2808\u280e\u283c\u2811"),
-        (".5", "\u2832\u283c\u2811"),
+        (".5", "\u283c\u2832\u2811"),
     ],
     ids=["dollar", "dollar-amount", "period-before-digit"],
 )
@@ -293,6 +293,36 @@ async def test_braille_converter_slash_is_solidus(prompt, expected):
     """A printed slash is the UEB solidus (dots 456, 34; rule 7.4), also between digits
     (rule 11.3.3: "3/8" is written with the solidus), and it ends numeric mode. The single
     cell dots 34 is the numeric fraction line, which reads as "st" outside a number."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("a .75 b", "\u2801 \u283c\u2832\u281b\u2811 \u2803"),
+        ("$.99", "\u2808\u280e\u283c\u2832\u280a\u280a"),
+        ("= .375", "\u2810\u2836 \u283c\u2832\u2809\u281b\u2811"),
+        ("No.16", "\u2820\u281d\u2815\u2832\u283c\u2801\u280b"),
+        ("K.545.", "\u2820\u2805\u2832\u283c\u2811\u2819\u2811\u2832"),
+        (". 5", "\u2832 \u283c\u2811"),
+        ("Wait...5", "\u2820\u283a\u2801\u280a\u281e\u2832\u2832\u2832\u283c\u2811"),
+    ],
+    ids=[
+        "after-space",
+        "after-symbol",
+        "ueb-rulebook-decimal",
+        "ueb-rulebook-no",
+        "ueb-rulebook-k",
+        "period-space",
+        "ellipsis",
+    ],
+)
+async def test_braille_converter_leading_decimal_point(prompt, expected):
+    """A decimal point that starts a number takes the number indicator before it,
+    so ".5" reads as one number. After a letter the period stays punctuation."""
     converter = BrailleConverter()
 
     result = await converter.convert_async(prompt=prompt, input_type="text")

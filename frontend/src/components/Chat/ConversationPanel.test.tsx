@@ -32,6 +32,73 @@ describe("ConversationPanel", () => {
     jest.clearAllMocks();
   });
 
+  it("preserves unknown recorded-only counts and main identity through the view reader", async () => {
+    const readConversations = jest.fn(async () => ({
+      attack_result_id: defaultProps.attackResultId, main_conversation_id: null,
+      conversations: [{ conversation_id: "recorded", message_count: null }],
+    }));
+    render(<TestWrapper><ConversationPanel {...defaultProps} readConversations={readConversations}
+      lockedReason="Recorded evidence is read-only." /></TestWrapper>);
+    const row = await screen.findByRole("button", { name: "Select conversation recorded" });
+    expect(within(row).getByText("Not counted")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Main conversation recorded" })).not.toBeInTheDocument();
+    expect(mockedAttacksApi.getConversations).not.toHaveBeenCalled();
+  });
+
+  describe("live polling", () => {
+    const conversation = (id: string, count: number): ConversationSummary => ({ conversation_id: id, message_count: count })
+    beforeEach(() => { jest.useFakeTimers(); });
+    afterEach(() => { jest.useRealTimers(); });
+
+    it("should settle a slow read without overlapping polls and discard a prior attack's late response", async () => {
+      let finishFirst: (response: AttackConversationsResponse) => void = () => { throw new Error("No first read"); };
+      let finishNext: (response: AttackConversationsResponse) => void = () => { throw new Error("No next read"); };
+      mockedAttacksApi.getConversations.mockReset();
+      mockedAttacksApi.getConversations
+        .mockResolvedValue({ attack_result_id: "other", main_conversation_id: "other-main", conversations: [] })
+        .mockImplementationOnce(() => new Promise<AttackConversationsResponse>((resolve) => { finishFirst = resolve; }))
+        .mockImplementationOnce(() => new Promise<AttackConversationsResponse>((resolve) => { finishNext = resolve; }));
+      const rendered = render(<TestWrapper><ConversationPanel {...defaultProps} pollIntervalMs={2_500} /></TestWrapper>);
+      await act(async () => { await jest.advanceTimersByTimeAsync(7_500); });
+      expect(mockedAttacksApi.getConversations).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        finishFirst({ attack_result_id: defaultProps.attackResultId, main_conversation_id: "attack-123", conversations: [conversation("attack-123", 1)] });
+      });
+      expect(screen.getByTestId("conversation-item-attack-123")).toBeInTheDocument();
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_500); });
+      expect(mockedAttacksApi.getConversations).toHaveBeenCalledTimes(2);
+      rendered.rerender(<TestWrapper><ConversationPanel {...defaultProps} attackResultId="other" pollIntervalMs={2_500} /></TestWrapper>);
+      await act(async () => {
+        finishNext({ attack_result_id: defaultProps.attackResultId, main_conversation_id: "stale", conversations: [conversation("stale", 1)] });
+      });
+      expect(screen.queryByTestId("conversation-item-stale")).not.toBeInTheDocument();
+      rendered.unmount();
+      const calls = mockedAttacksApi.getConversations.mock.calls.length;
+      await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+      expect(mockedAttacksApi.getConversations).toHaveBeenCalledTimes(calls);
+    });
+
+    it("should refresh at the poll interval, keep rows through a failed read, and recover", async () => {
+      mockedAttacksApi.getConversations
+        .mockResolvedValueOnce({ attack_result_id: "ar-attack-123", main_conversation_id: "attack-123", conversations: [conversation("attack-123", 1)] })
+        .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503, data: { detail: "Live references unavailable" } } })
+        .mockResolvedValueOnce({
+          attack_result_id: "ar-attack-123", main_conversation_id: "branch-2",
+          conversations: [conversation("attack-123", 2), conversation("branch-2", 1)],
+        });
+      render(<TestWrapper><ConversationPanel {...defaultProps} pollIntervalMs={2_500} /></TestWrapper>);
+      const row = await screen.findByTestId("conversation-item-attack-123");
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_500); });
+      expect(screen.getByText("Live references unavailable")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-attack-123")).toBe(row);
+      expect(screen.getByTestId("conversation-retry-btn")).toBeInTheDocument();
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_500); });
+      expect(screen.queryByText("Live references unavailable")).not.toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-branch-2")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-attack-123")).toBe(row);
+      expect(mockedAttacksApi.getConversations.mock.calls).toEqual([["ar-attack-123"], ["ar-attack-123"], ["ar-attack-123"]]);
+    });
+  });
   describe("bounded saved references", () => {
     const props = { ...defaultProps, referencePageSize: 50 };
     const references: ConversationSummary[] = Array.from({ length: 55 }, (_value: unknown, index: number) => ({

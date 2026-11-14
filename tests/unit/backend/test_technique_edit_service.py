@@ -23,7 +23,13 @@ from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.converter import Base64Converter, CaesarConverter, ImageOverlayConverter, ROT13Converter
+from pyrit.converter import (
+    AzureSpeechTextToAudioConverter,
+    Base64Converter,
+    CaesarConverter,
+    ImageOverlayConverter,
+    ROT13Converter,
+)
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
@@ -163,6 +169,16 @@ def test_temporary_converter_effective_hash_is_checked(edit_catalog: AttackTechn
         effective_hash="stale",
     )
     with pytest.raises(ValueError, match="Temporary converter configuration has changed"):
+        TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
+
+
+def test_temporary_converter_keeps_its_source_connection(edit_catalog: AttackTechniqueRegistry) -> None:
+    converter = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key")
+    ConverterRegistry.get_registry_singleton().instances.register(converter, name="speech")
+    spec = SourceInstanceSpec(
+        source_name="speech", source_hash=converter.get_identifier().hash, params={"azure_speech_key": "other-key"}
+    )
+    with pytest.raises(ValueError, match="can't set azure_speech_key"):
         TechniqueEditService.validate(_specification(changes=TechniqueChanges(request_converters=[spec])))
 
 

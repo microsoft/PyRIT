@@ -1,8 +1,8 @@
-import { useCallback, useId, type MouseEvent, type ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 
-import { Button, TableCell, TableRow, Text, mergeClasses, type TableRowProps } from '@fluentui/react-components'
-import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
+import { TableCell, TableRow, Text, mergeClasses, type TableRowProps } from '@fluentui/react-components'
 
+import { IdentityDisclosureButton, IdentityJson } from './IdentityDisclosure'
 import { useRegistryIdentityRowStyles } from './RegistryIdentityRow.styles'
 
 interface RegistryIdentityRowProps {
@@ -27,33 +27,21 @@ export default function RegistryIdentityRow({
 }: RegistryIdentityRowProps) {
   const styles = useRegistryIdentityRowStyles()
   const detailsId = useId()
-  const revealDetails = useCallback((element: HTMLDivElement | null): void => {
-    element?.scrollIntoView({ block: 'nearest', inline: 'start' })
-  }, [])
 
   return (
     <>
       <TableRow {...rowProps} className={mergeClasses(styles.row, rowClassName)} data-testid={rowTestId}>
         {leadingCell}
         <TableCell className={nameCellClassName}>
-          {identity ? <Button appearance="transparent" className={styles.name}
-            icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-            aria-expanded={expanded} aria-controls={detailsId}
-            aria-label={`Identity for ${name}`} onClick={(event: MouseEvent<HTMLButtonElement>) => {
-              event.stopPropagation()
-              onToggle()
-            }}>
-            {name}
-          </Button> : <Text size={200}>{name}</Text>}
+          {identity ? <IdentityDisclosureButton name={name} expanded={expanded} controlsId={detailsId}
+            className={styles.name} onToggle={onToggle} /> : <Text size={200}>{name}</Text>}
           {nameContent}
         </TableCell>
         {children}
       </TableRow>
       {expanded && identity && <TableRow className={styles.row}>
         <TableCell colSpan={columns}>
-          <div ref={revealDetails} id={detailsId} role="region" aria-label={`Identity for ${name}`} className={styles.details}>
-            <pre className={styles.json}>{JSON.stringify(identity, null, 2)}</pre>
-          </div>
+          <IdentityJson id={detailsId} name={name} identity={identity} />
         </TableCell>
       </TableRow>}
       {additionalRows}

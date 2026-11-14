@@ -10,6 +10,7 @@ configurations together with consistent group IDs and roles.
 
 from __future__ import annotations
 
+import copy
 import logging
 import uuid
 from collections import defaultdict
@@ -460,7 +461,7 @@ class SeedGroup(BaseModel):
                     original_value_data_type=prompt.data_type or "text",
                     conversation_id=str(prompt.prompt_group_id),
                     sequence=sequence,
-                    prompt_metadata=prompt.metadata or {},
+                    prompt_metadata=copy.deepcopy(prompt.metadata or {}),
                 )
                 if is_history or piece.api_role in {"assistant", "tool"}:
                     piece.set_simulated_role()

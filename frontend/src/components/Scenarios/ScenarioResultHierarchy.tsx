@@ -42,14 +42,7 @@ export default function ScenarioResultHierarchy({
             <Button className={styles.touchTarget} onClick={hierarchy.reloadRoots}>Retry</Button>
           </MessageBarActions>
         </MessageBar>
-      ) : (
-        <Text size={200} className={styles.hint}>
-          Result rows are saved attacks. Orchestration rows are compound parents: expand them to see the attacks
-          they ran in saved order, not chat messages or retries. Unresolved rows are references, not extra results.
-          Click a result with a saved chat to open it; Details shows metadata. Group metrics come from the run
-          summary, not a count of these rows.
-        </Text>
-      )}
+      ) : null}
       {roots.status === 'ready' && (runActive || statusChanged) && (
         <div className={styles.footer}>
           <Text size={200} className={styles.hint}>

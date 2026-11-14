@@ -211,6 +211,21 @@ background accessibility.
 
 ## Running the other test tiers
 
+### SQL Server migration check
+
+The `SQL Server migrations` CI job uses disposable SQL Server 2022 Developer on
+GitHub-hosted Linux, without Azure credentials. On PRs and merge groups, it runs
+migrations on a fresh database to the **checked-out branch's Alembic head**, then
+checks schema agreement with models. It does not test data-dependent backfills.
+
+To run locally, install ODBC Driver 18 and the normal `uv sync` dependencies.
+Set `PYRIT_TEST_SQLSERVER_URL` to a disposable server's `mssql+pyodbc://.../master`
+SQL-authentication URL with permission to create/drop test databases:
+
+```bash
+uv run --frozen python -m build_scripts.check_sqlserver_migrations
+```
+
 ```{note}
 Avoid `pytest tests`. It collects the integration, end-to-end, and partner-integration tiers
 alongside the unit tests. The end-to-end tier is not gated behind `RUN_ALL_TESTS`, and its

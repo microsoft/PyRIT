@@ -918,4 +918,171 @@ describe('ScenarioHistory', () => {
     })
     expect(await screen.findByTestId('scenario-history-table')).toBeInTheDocument()
   })
+
+  describe('pagination across filter visits', () => {
+    const FILTERS_A = { ...DEFAULT_SCENARIO_HISTORY_FILTERS }
+    const FILTERS_B = { ...DEFAULT_SCENARIO_HISTORY_FILTERS, statuses: ['FAILED' as const] }
+    const PAGE_TWO_RUN: ScenarioRunListItem = { ...RUN, scenario_result_id: 'run-2' }
+    const FILTERED_RUN: ScenarioRunListItem = { ...RUN, scenario_result_id: 'run-b', status: 'FAILED' }
+
+    type ListRunsParams = Parameters<typeof scenariosApi.listRuns>[0]
+
+    function mockListRuns({ pendingFiltered = false } = {}) {
+      mockedScenariosApi.listRuns.mockImplementation((params: ListRunsParams = {}) => {
+        if (params.run_statuses?.includes('FAILED')) {
+          if (pendingFiltered) return new Promise<ScenarioRunListResponse>(() => {})
+          return Promise.resolve({ items: [FILTERED_RUN], pagination: { limit: 25, has_more: false } })
+        }
+        if (params.cursor === 'a-page-2') {
+          return Promise.resolve({ items: [PAGE_TWO_RUN], pagination: { limit: 25, has_more: false } })
+        }
+        return Promise.resolve({
+          items: [RUN],
+          pagination: { limit: 25, has_more: true, next_cursor: 'a-page-2' },
+        })
+      })
+    }
+
+    function renderWithFilters(filters: typeof FILTERS_A) {
+      return (
+        <FluentProvider theme={webLightTheme}>
+          <main>
+            <ScenarioHistory {...defaultProps} filters={filters} />
+          </main>
+        </FluentProvider>
+      )
+    }
+
+    async function openPageTwo(user: ReturnType<typeof userEvent.setup>) {
+      await screen.findByTestId('scenario-history-row-run-1')
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'First' })).toBeDisabled()
+      await user.click(screen.getByRole('button', { name: 'Next' }))
+      expect(await screen.findByTestId('scenario-history-row-run-2')).toBeInTheDocument()
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'First' })).toBeEnabled()
+    }
+
+    async function expectFirstPageOfA() {
+      expect(await screen.findByTestId('scenario-history-row-run-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('scenario-history-row-run-2')).not.toBeInTheDocument()
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'First' })).toBeDisabled()
+      const lastCall = mockedScenariosApi.listRuns.mock.calls.at(-1)?.[0]
+      expect(lastCall).toEqual(expect.objectContaining({ cursor: undefined, run_statuses: undefined }))
+    }
+
+    it('retains the current page during a quiet refresh failure and resets on the next filter visit', async () => {
+      const user = userEvent.setup()
+      mockListRuns()
+      const history = render(renderWithFilters(FILTERS_A))
+      await openPageTwo(user)
+
+      const refresh = deferred<ScenarioRunListResponse>()
+      mockedScenariosApi.listRuns.mockReturnValueOnce(refresh.promise)
+      await advanceAutoRefresh()
+      expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: 'a-page-2' }),
+      )
+      expect(screen.getByTestId('scenario-history-row-run-2')).toBeInTheDocument()
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
+      expect(screen.queryByText('Loading scanner history...')).not.toBeInTheDocument()
+
+      await act(async () => { refresh.reject(new Error('Refresh unavailable')) })
+      expect(screen.getByText('Refresh unavailable')).toBeInTheDocument()
+      expect(screen.getByTestId('scenario-history-row-run-2')).toBeInTheDocument()
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
+
+      history.rerender(renderWithFilters(FILTERS_B))
+      expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
+      expect(await screen.findByTestId('scenario-history-row-run-b')).toBeInTheDocument()
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      history.rerender(renderWithFilters(FILTERS_A))
+      await expectFirstPageOfA()
+    })
+
+    it('keeps navigation loading when a queue update reloads the pending page', async () => {
+      const user = userEvent.setup()
+      mockListRuns()
+      const history = render(renderWithFilters(FILTERS_A))
+      await screen.findByTestId('scenario-history-row-run-1')
+      const nextPage = deferred<ScenarioRunListResponse>()
+      const reloadedPage = deferred<ScenarioRunListResponse>()
+      mockedScenariosApi.listRuns
+        .mockReturnValueOnce(nextPage.promise)
+        .mockReturnValueOnce(reloadedPage.promise)
+      await user.click(screen.getByRole('button', { name: 'Next' }))
+
+      mockUseScenarioQueue.mockReturnValue({
+        snapshot: { revision: 1, snapshot_at: '2026-01-01T00:01:00Z', active: null, queued: [] },
+        loading: false, stale: false, error: null, retry: mockQueueRetry,
+      })
+      history.rerender(renderWithFilters(FILTERS_A))
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(3))
+      expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: 'a-page-2' }),
+      )
+      expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
+      expect(screen.queryByTestId('scenario-history-row-run-1')).not.toBeInTheDocument()
+      expect(screen.queryByText('Page 2')).not.toBeInTheDocument()
+
+      await act(async () => {
+        nextPage.resolve({ items: [RUN], pagination: { limit: 25, has_more: false } })
+      })
+      expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
+      await act(async () => {
+        reloadedPage.resolve({ items: [PAGE_TWO_RUN], pagination: { limit: 25, has_more: false } })
+      })
+      expect(screen.getByTestId('scenario-history-row-run-2')).toBeInTheDocument()
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
+    })
+
+    it('keeps the page label and First button in sync with rows during first/next navigation', async () => {
+      const user = userEvent.setup()
+      mockListRuns()
+      renderHistory()
+
+      await openPageTwo(user)
+      expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: 'a-page-2' }),
+      )
+
+      await user.click(screen.getByRole('button', { name: 'First' }))
+      await expectFirstPageOfA()
+      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(3)
+    })
+
+    it('starts A on the first page again after an A-to-B-to-A change once B has loaded', async () => {
+      const user = userEvent.setup()
+      mockListRuns()
+      const history = render(renderWithFilters(FILTERS_A))
+      await openPageTwo(user)
+
+      history.rerender(renderWithFilters(FILTERS_B))
+      expect(await screen.findByTestId('scenario-history-row-run-b')).toBeInTheDocument()
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+      expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: undefined, run_statuses: ['FAILED'] }),
+      )
+
+      history.rerender(renderWithFilters(FILTERS_A))
+      await expectFirstPageOfA()
+      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(4)
+    })
+
+    it('starts A on the first page again after an A-to-B-to-A change while B is still loading', async () => {
+      const user = userEvent.setup()
+      mockListRuns({ pendingFiltered: true })
+      const history = render(renderWithFilters(FILTERS_A))
+      await openPageTwo(user)
+
+      history.rerender(renderWithFilters(FILTERS_B))
+      expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(3))
+
+      history.rerender(renderWithFilters(FILTERS_A))
+      await expectFirstPageOfA()
+      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(4)
+    })
+  })
 })

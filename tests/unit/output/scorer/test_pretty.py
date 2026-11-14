@@ -56,6 +56,7 @@ def _make_harm_metrics(**overrides) -> HarmScorerMetrics:
         "p_value": 0.13,
         "krippendorff_alpha_combined": 0.85,
         "krippendorff_alpha_model": 0.82,
+        "krippendorff_alpha_gold_model": 0.75,
         "average_score_time_seconds": 0.8,
     }
     defaults.update(overrides)
@@ -215,6 +216,7 @@ async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys
     assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
+    assert "Krippendorff Alpha (Gold vs Model): 0.7500" in output
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
 
 

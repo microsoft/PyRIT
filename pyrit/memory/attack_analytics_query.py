@@ -687,7 +687,7 @@ class AttackAnalyticsQueryCompiler:
         *, label: ColumnElement[Any], search: str | None, pattern: str | None = None
     ) -> ColumnElement[bool]:
         """
-        Match literal display-text substrings with Unicode-aware lowercase semantics.
+        Match display text with Unicode-aware literal-search case folding.
 
         Escape LIKE wildcards and its escape character, including SQL Server's
         bracket character classes. The bound pattern remains data, never SQL text.
@@ -695,7 +695,7 @@ class AttackAnalyticsQueryCompiler:
         Returns:
             ColumnElement[bool]: A case-insensitive substring predicate.
         """
-        return text_match(column=label, value=search, pattern=pattern)
+        return text_match(column=label, value=search, pattern=pattern, casefold=pattern is None)
 
     def results(self, *, limit: int, after: DecodedKeysetCursor | None = None) -> Select[*tuple[Any, ...]]:
         """

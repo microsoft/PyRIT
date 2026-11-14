@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk
@@ -43,6 +43,10 @@ class AzureSpeechAudioToTextConverter(Converter):
     AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_KEY"
     #: The resource ID for accessing the service when using Entra ID auth.
     AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_RESOURCE_ID"
+
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"azure_speech_region", "azure_speech_key", "azure_speech_resource_id"}
+    )
 
     def __init__(
         self,
@@ -179,7 +183,7 @@ class AzureSpeechAudioToTextConverter(Converter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "

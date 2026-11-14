@@ -15,7 +15,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioOverloadSummary,
     ScenarioProducerCounts,
     ScenarioTargetSummary,
-)  # noqa: TC001
+)
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -78,6 +78,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
+    #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
+    is_compound: bool | None = None
 
 
 class ScenarioRunPlan(BaseModel):

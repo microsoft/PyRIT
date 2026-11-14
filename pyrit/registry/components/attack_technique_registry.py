@@ -31,7 +31,12 @@ from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, RegistryNameTakenError
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    RegistryNameTakenError,
+    _record_saved_entry_refusal,
+    refuse_saved_entry,
+)
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -143,9 +148,13 @@ class TechniqueAdmissionError(ValueError):
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
-    def register_runtime(self, factory: AttackTechniqueFactory) -> None:
+    def register_runtime(self, factory: AttackTechniqueFactory, *, metadata: dict[str, Any] | None = None) -> None:
         """
         Check selector collisions while holding the same lock as registration.
+
+        Args:
+            factory (AttackTechniqueFactory): The technique to register.
+            metadata (dict[str, Any] | None): Optional per-entry metadata. Defaults to None.
 
         Raises:
             TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
@@ -162,6 +171,8 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
             folded_name = factory.name.casefold()
             if folded_name in names:
+                # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
+                _record_saved_entry_refusal(self.get_entry(names[folded_name]))
                 raise TechniqueSelectorConflictError(
                     f"Technique '{factory.name}' already exists (names are case-insensitive)"
                 )
@@ -186,7 +197,7 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
                 )
             except ValueError as error:
                 raise TechniqueAdmissionError(str(error)) from error
-            self.register(factory, name=factory.name, tags=factory.technique_tags)
+            self.register(factory, name=factory.name, tags=factory.technique_tags, metadata=metadata)
 
 
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):
@@ -769,8 +780,13 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             factories (list[AttackTechniqueFactory]): Self-describing factories to
                 register. Each factory's ``name`` and ``technique_tags`` properties are
                 used directly.
+
+        Raises:
+            SavedEntryReplacementError: If a factory's name belongs to a technique rebuilt
+                from a saved recipe, which skipping would quietly use in its place.
         """
         for factory in factories:
+            refuse_saved_entry(self.instances.get_entry(factory.name))
             if factory.name not in self.instances:
                 tags: dict[str, str] = dict.fromkeys(factory.technique_tags, "")
                 self.register_technique(

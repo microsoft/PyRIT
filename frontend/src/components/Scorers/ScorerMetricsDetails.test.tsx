@@ -1,9 +1,9 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { render, screen, within } from '@testing-library/react'
 
-import type { ScenarioObjectiveScorer, ScenarioObjectiveScorerMetrics } from '@/types'
+import type { ScenarioObjectiveScorerMetrics } from '@/types'
 
-import ObjectiveScorerDetails from './ObjectiveScorerDetails'
+import ScorerMetricsDetails from './ScorerMetricsDetails'
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
@@ -12,17 +12,14 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const PERCENT_METRIC_LABELS = ['Accuracy', 'Precision', 'Recall']
 
 function renderScorer(metrics: ScenarioObjectiveScorerMetrics | null): void {
-  const scorer: ScenarioObjectiveScorer = {
-    component_name: 'SelfAskTrueFalseScorer', parameters: {}, children: {}, metrics,
-  }
-  render(<TestWrapper><ObjectiveScorerDetails scorer={scorer} /></TestWrapper>)
+  render(<TestWrapper><ScorerMetricsDetails metrics={metrics && { ...metrics }} fallback="Unavailable" /></TestWrapper>)
 }
 
 function expectMetric(label: string, value: string): void {
   expect(within(screen.getByRole('group', { name: label })).getByText(value)).toBeInTheDocument()
 }
 
-describe('ObjectiveScorerDetails', () => {
+describe('ScorerMetricsDetails', () => {
   beforeEach(() => { jest.clearAllMocks() })
 
   it('should show accuracy, precision, and recall as percentages and keep F1 on its 0-to-1 scale', () => {
@@ -56,11 +53,5 @@ describe('ObjectiveScorerDetails', () => {
     expectMetric('F1 score', 'Unavailable')
     expectMetric('Precision', 'Unavailable')
     expectMetric('Recall', 'Unavailable')
-  })
-
-  it('should explain when no official evaluation exists', () => {
-    renderScorer(null)
-    expect(screen.getByText('Official evaluation has not been run for this scorer configuration.')).toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Accuracy' })).not.toBeInTheDocument()
   })
 })

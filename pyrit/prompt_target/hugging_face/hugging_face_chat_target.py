@@ -5,9 +5,11 @@ import asyncio
 import json
 import logging
 import warnings
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from pyrit.common import default_values
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
@@ -41,6 +43,10 @@ class HuggingFaceChatTarget(PromptTarget):
     )
 
     code_execution_parameter: ClassVar[str | None] = "trust_remote_code"
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"hf_access_token": None})
+    not_saveable_reason: ClassVar[str | None] = (
+        "It needs a Hugging Face token or model files on this server, and saved targets can hold neither yet."
+    )
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None
@@ -639,3 +645,36 @@ class HuggingFaceChatTarget(PromptTarget):
         cls._cached_tokenizer = None
         cls._cached_model_id = None
         logger.info("Class-level cache disabled and cleared.")
+
+    @classmethod
+    async def create_async(cls, **kwargs: Any) -> Self:
+        """
+        Build the target after importing torch, and checking for CUDA when ``use_cuda`` is set, in a worker thread.
+
+        Both can take seconds the first time and are quick after it, so the constructor, which runs on the calling
+        loop and starts model loading there, doesn't hold that loop. A missing torch is left for the constructor to
+        report.
+
+        Args:
+            **kwargs (Any): The constructor arguments.
+
+        Returns:
+            Self: The new target.
+        """
+        await asyncio.to_thread(cls._import_torch, use_cuda=bool(kwargs.get("use_cuda", False)))
+        return await super().create_async(**kwargs)
+
+    @staticmethod
+    def _import_torch(*, use_cuda: bool) -> None:
+        """
+        Import torch, and check for CUDA when asked, as the constructor does.
+
+        Args:
+            use_cuda (bool): Whether the target asks for CUDA.
+        """
+        try:
+            import torch  # type: ignore[ty:unresolved-import]
+        except ModuleNotFoundError:
+            return
+        if use_cuda:
+            torch.cuda.is_available()
