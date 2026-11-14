@@ -15,13 +15,13 @@ from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Py
 )
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
-from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
 
 
-class Scorable(BaseModel, ABC):  # noqa: B024  root type; each scorer family declares its own contract
+class Scorable(BaseModel, ABC):  # root type; each scorer family declares its own contract
     """
     What a scorer looks at.
 
