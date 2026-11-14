@@ -11,6 +11,7 @@ import {
   formatScorerComparisonMetric, scorerComparisonValue, scorerEvidenceLabel, scorerMetricDescription, scorerMetricLabel,
 } from '@/utils/scorerPresentation'
 
+import OriginBadge from './OriginBadge'
 import { useConverterRegistryStyles } from './Registry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useScorerRegistryStyles } from './ScorerRegistry.styles'
@@ -136,7 +137,8 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
             <RegistryIdentityRow key={scorer.scorer_registry_name}
               name={scorer.scorer_registry_name} identity={scorer.identifier} columns={metrics.length + 4}
               expanded={expanded.has(scorer.scorer_registry_name)}
-              onToggle={() => toggleDetails(scorer.scorer_registry_name)}>
+              onToggle={() => toggleDetails(scorer.scorer_registry_name)}
+              nameContent={scorer.origin && <OriginBadge origin={scorer.origin} />}>
               <TableCell>
                 <Text className={scorerStyles.type}>
                   {(scorer.display_type ?? scorer.identifier.class_name).split('(').map((part: string, index: number) => (

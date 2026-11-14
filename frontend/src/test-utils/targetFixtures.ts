@@ -1,4 +1,4 @@
-import type { TargetCapabilities, TargetIdentifier, TargetInstance } from '../types'
+import type { RegistryEntryOrigin, TargetCapabilities, TargetIdentifier, TargetInstance } from '../types'
 
 /**
  * Flat description of a target for tests, mirroring the old pre-slimming
@@ -22,6 +22,9 @@ export interface FlatTargetInput {
   supports_history_replay?: boolean
   target_specific_params?: Record<string, unknown> | null
   inner_targets?: FlatTargetInput[] | null
+  origin?: RegistryEntryOrigin | null
+  saved_by?: string | null
+  saved_by_me?: boolean
 }
 
 export function makeTarget(flat: FlatTargetInput): TargetInstance {
@@ -38,6 +41,9 @@ export function makeTarget(flat: FlatTargetInput): TargetInstance {
   }
   return {
     target_registry_name: flat.target_registry_name,
+    ...(flat.origin !== undefined ? { origin: flat.origin } : {}),
+    ...(flat.saved_by !== undefined ? { saved_by: flat.saved_by } : {}),
+    ...(flat.saved_by_me !== undefined ? { saved_by_me: flat.saved_by_me } : {}),
     identifier,
     capabilities: flat.capabilities ?? null,
     generation_ranges: flat.generation_ranges ?? {},

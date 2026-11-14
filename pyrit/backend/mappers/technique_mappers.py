@@ -10,6 +10,7 @@ from typing import Any
 
 from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueInstance
 from pyrit.models import Identifiable, SeedPrompt
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.models.technique_edit import TechniqueSettings
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
 from pyrit.registry.resolution import project_parameter_value
@@ -84,9 +85,17 @@ def _format_creation_calls(factory: AttackTechniqueFactory) -> str:
     return ".".join(calls)
 
 
-def technique_to_instance(*, name: str, factory: AttackTechniqueFactory) -> TechniqueInstance:
+def technique_to_instance(
+    *, name: str, factory: AttackTechniqueFactory, origin: RegistryEntryOrigin | None = None
+) -> TechniqueInstance:
     """
     Map a real factory without constructing an attack or resolving default targets.
+
+    Args:
+        name (str): The technique's registry name.
+        factory (AttackTechniqueFactory): The registered factory.
+        origin (RegistryEntryOrigin | None): Where the technique comes from, or None when it isn't known.
+            Defaults to None.
 
     Returns:
         TechniqueInstance: Catalog metadata and the supplied factory creation inputs.
@@ -100,6 +109,7 @@ def technique_to_instance(*, name: str, factory: AttackTechniqueFactory) -> Tech
         uses_default_adversarial_target=factory.uses_default_adversarial_target,
         identifier=factory.get_identifier(),
         creation_statement=_format_creation_calls(factory),
+        origin=origin,
     )
 
 

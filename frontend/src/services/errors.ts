@@ -136,6 +136,14 @@ export function toApiError(err: unknown): ApiError {
   }
 }
 
+/** Problem type the backend gives a target it refused to save, which can still be created without saving it. */
+const NOT_SAVEABLE_ERROR_TYPE = '/errors/not-saveable'
+
+/** Whether the backend refused to save an entry that it would still create without saving it. */
+export function isNotSaveableError(error: ApiError): boolean {
+  return error.status === 400 && error.type === NOT_SAVEABLE_ERROR_TYPE
+}
+
 /** Respect a server-directed cooldown before a user retries a busy read. */
 export function retryAfterMilliseconds(error: unknown): number {
   if (!isAxiosError(error) || error.response?.status !== 503) return 0

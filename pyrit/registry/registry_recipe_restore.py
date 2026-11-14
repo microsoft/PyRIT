@@ -75,12 +75,11 @@ class RegistryRecipeRestorer:
     way the caller's create builds one; the backend's builder calls the API's create for each kind. A
     file never chooses what gets imported: classes and attack types are looked up among the ones already
     registered. Server paths are refused as they are for API input, and ``check_saved_entry_params``
-    refuses a recipe that stores a credential, or a target recipe that would let its target use one from
-    this server or send requests where this server's settings say. Entries that can't come back are
+    refuses a recipe that stores a credential, that would let its entry use one from this server, or, for
+    a target, that would send requests where this server's settings say. Entries that can't come back are
     reported with the reason instead of being skipped.
 
-    Stored files are otherwise trusted the way configuration is. Converters and scorers don't
-    declare the credentials they read from server settings yet, so those rules cover targets only.
+    Stored files are otherwise trusted the way configuration is.
     """
 
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
@@ -502,7 +501,7 @@ class RegistryRecipeRestorer:
         from pyrit.registry.components.attack_technique_registry import TechniqueAdmissionError
 
         try:
-            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name):
+            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name, owner=stored.recipe.owner):
                 await build_async(stored)
         except (RecipeRejectedError, SavedEntryRefusedError) as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))
