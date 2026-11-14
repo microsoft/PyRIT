@@ -112,14 +112,14 @@ def test_preset_from_yaml_file(tmp_path: Path) -> None:
     [
         ("- not a mapping\n", "YAML mapping"),
         ("kind: judge_preset\nname: empty\n", "at least one dimension"),
-        ("kind: behavior\nname: wrong\nbuiltin_dimensions: [overrefusal]\n", "kind: Input should be"),
+        ("kind: behavior\nname: wrong\nbuiltin_dimensions: [overrefusal]\n", r"kind\n\s+Input should be"),
         ("kind: judge_preset\nname: unknown\nbuiltin_dimensions: [refusal]\n", "Unknown built-in"),
         (
             (
                 "kind: judge_preset\nname: graded\ndimensions:\n  quality:\n    description: Good?\n"
                 "    rubric: Grade it.\n    scale:\n      type: ordinal\n      values: {1: Bad, 2: Good}\n"
             ),
-            "dimensions.0: Value error, Dimension 'quality' has a scale but no violation_at",
+            r"dimensions\.0\n\s+Value error, Dimension 'quality' has a scale but no violation_at",
         ),
     ],
 )

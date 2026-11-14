@@ -74,7 +74,9 @@ print(transcript)
 # ## Audio to Audio
 #
 # Audio-to-audio converters modify existing audio files. All of these converters accept `audio_path` input
-# and produce `audio_path` output, preserving the original sample rate, bit depth, and channel count.
+# and produce `audio_path` output, preserving the original bit depth and channel count.
+# `AudioFrequencyConverter` increases the sample rate for nonzero shifts to prevent aliasing; a zero
+# shift preserves it. Fixed-rate PCM conversion does not accept a changed sample rate.
 #
 # Available converters:
 # - **`AudioFrequencyConverter`** — Shifts the audio frequency (pitch) higher

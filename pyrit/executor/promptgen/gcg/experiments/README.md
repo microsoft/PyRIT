@@ -74,6 +74,14 @@ have a finite, nonzero norm before normalization. The Gemma, Llama 3.2, and
 Mistral 7B/Nemo rows use unsloth's ungated mirrors, so no Hugging Face token is
 needed.
 
+`tests/integration/executor/promptgen/gcg/test_gcg_gpu_smoke_integration.py`
+runs `GCGGenerator` for five steps on the full Qwen2.5-0.5B-Instruct checkpoint
+with real worker subprocesses. It checks that the target loss goes down and that
+the logged loss for the final suffix matches the model's own loss for it. A
+second test checks that the token gradient predicts which single-token swaps
+lower the loss. Both need a CUDA GPU and `RUN_ALL_TESTS=true`, and together take
+about two minutes on a T4.
+
 Set `RUN_ALL_TESTS=true` to opt into these integration tests. Without that opt-in,
 the integration test runner skips them without downloading tokenizers or configs.
 

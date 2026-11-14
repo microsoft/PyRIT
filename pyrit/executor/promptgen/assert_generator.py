@@ -418,6 +418,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             group_id=group_id,
             behavior_category=assignment["behavior"],
             dimension_values={key: value for key, value in assignment.items() if key != "behavior"},
+            tester_instructions=content.adversarial_instructions,
             config=config,
             taxonomy=taxonomy,
             dimensions=dimensions,

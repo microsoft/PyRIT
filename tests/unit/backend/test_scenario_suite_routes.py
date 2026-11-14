@@ -3,6 +3,7 @@
 
 """Tests for scenario suite definition routes."""
 
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from azure.core.exceptions import AzureError
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
@@ -48,6 +48,7 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -181,7 +182,9 @@ def unavailable_preset_backend(
 ) -> Iterator[tuple[ScenarioSuiteService, ScenarioSuiteStorage]]:
     """Run routes against real suite storage and an unavailable preset registry."""
     registry = MagicMock(spec=ScenarioPresetRegistry)
-    registry.get_preset.side_effect = AzureError("expired preset container signature")
+    registry.get_preset.side_effect = DocumentStorageUnavailableError(
+        label="Scenario preset", source="/srv/presets", reason="Permission denied"
+    )
     storage = ScenarioSuiteStorage(source=str(tmp_path))
     scenario_service = ScenarioSuiteService(registry=ScenarioSuiteRegistry(storage=storage))
     with (
@@ -257,7 +260,10 @@ def test_launch_is_rejected_during_runtime_reinitialization(
         (ScenarioSuiteLaunchConflictError("changed"), 409),
         (ScenarioSuiteNotRunnableError("not runnable"), 400),
         (ScenarioSuiteExecutionCapacityError("wait for an active suite"), 429),
-        (AzureError("storage unavailable"), 503),
+        (
+            DocumentStorageUnavailableError(label="Scenario suite", source="/srv/suites", reason="Permission denied"),
+            503,
+        ),
         (RuntimeError("scheduling is stopping"), 503),
     ],
 )
@@ -273,8 +279,8 @@ def test_launch_maps_preflight_failures(
     response = anonymous_client.post(f"/api/scenario-suites/{SUITE_NAME}/launch", json=_launch_body())
 
     assert response.status_code == expected_status
-    if isinstance(error, AzureError):
-        assert "storage unavailable" not in response.text
+    if isinstance(error, DocumentStorageUnavailableError):
+        assert response.json()["detail"] == "Scenario suite storage is unavailable"
     if isinstance(error, ScenarioSuiteExecutionCapacityError):
         assert response.json()["detail"] == "wait for an active suite"
 
@@ -369,14 +375,25 @@ def test_get_registered_suite_returns_origin_and_null_version(client: TestClient
     assert response.json()["version"] is None
 
 
-def test_storage_failure_is_sanitized(client: TestClient, service: MagicMock) -> None:
-    """Test that Azure SDK details do not reach API callers."""
-    service.list_suites_async = AsyncMock(side_effect=AzureError("container key=secret"))
+def test_storage_failure_names_the_source_only_in_the_log(
+    client: TestClient, service: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test that the log names the storage location and the response doesn't."""
+    service.list_suites_async = AsyncMock(
+        side_effect=DocumentStorageUnavailableError(
+            label="Scenario suite",
+            source="https://account.blob.core.windows.net/suites",
+            reason="ClientAuthenticationError",
+        )
+    )
 
-    response = client.get("/api/scenario-suites")
+    with caplog.at_level(logging.WARNING, logger="pyrit.backend.middleware.error_handlers"):
+        response = client.get("/api/scenario-suites")
 
     assert response.status_code == 503
-    assert "secret" not in response.text
+    assert response.json()["detail"] == "Scenario suite storage is unavailable"
+    assert "account.blob.core.windows.net" not in response.text
+    assert "https://account.blob.core.windows.net/suites is unavailable: ClientAuthenticationError" in caplog.text
 
 
 def test_create_succeeds_when_preset_storage_is_unavailable(
@@ -674,7 +691,12 @@ def test_delete_of_a_changed_suite_is_a_conflict(client: TestClient, service: Ma
 
 @pytest.mark.parametrize(
     "error",
-    [AzureError("key=secret"), TimeoutError("Timed out waiting to write 'secret.lock'")],
+    [
+        DocumentStorageUnavailableError(label="Scenario suite", source="https://secret.test/c", reason="AzureError"),
+        DocumentStorageUnavailableError(
+            label="Scenario suite", source="/srv/secret", reason="Timed out waiting to write '.secret.lock'"
+        ),
+    ],
 )
 def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock, error: Exception) -> None:
     """Test that blob failures and local lock timeouts during delete map to a sanitized 503."""

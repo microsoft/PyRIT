@@ -1041,7 +1041,9 @@ class TestCrescendoTerminalBoundaries:
             "objective",
         ]
         pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
-        assert len(pieces) == 8
+        # Four completed turns, plus the fifth request that was in flight, with no response.
+        assert len(pieces) == 9
+        assert pieces[-1].api_role == "user"
         assert [piece.original_value for piece in pieces if piece.api_role == "assistant"] == [
             "response-1",
             "response-2",

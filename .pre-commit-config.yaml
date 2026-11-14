@@ -47,6 +47,12 @@ repos:
         language: python
         files: ^pyrit/.*\.py$
         pass_filenames: false
+      - id: check-keyword-only-params
+        name: Enforce keyword-only parameters
+        entry: python -m build_scripts.check_keyword_only_params
+        language: python
+        files: ^(pyrit/.*\.py|build_scripts/(check_keyword_only_params\.py|keyword_only_baseline\.txt))$
+        pass_filenames: false
       - id: check-public-imports
         name: Prefer public PyRIT package imports
         entry: python -m build_scripts.check_public_imports
@@ -80,7 +86,7 @@ repos:
         args: [--fix]
 
   - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.9.1
+    rev: 1.10.0
     hooks:
     - id: nbqa-ruff
       name: Ruff (Jupyter Notebooks)

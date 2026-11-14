@@ -1271,11 +1271,12 @@ describe('ScenarioDetail', () => {
     await user.click(launch)
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
+    const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(cancel).toHaveFocus())
     await user.tab()
-    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => expect(confirmLaunch).toHaveFocus())
     await user.tab({ shift: true })
-    expect(cancel).toHaveFocus()
+    await waitFor(() => expect(cancel).toHaveFocus())
     await user.keyboard(' ')
     expect(await screen.findByRole('checkbox', { name: 'default_technique', exact: true })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
@@ -1284,7 +1285,9 @@ describe('ScenarioDetail', () => {
     const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
     await user.tab()
-    expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => {
+      expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    })
     await user.keyboard(' ')
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
       techniques: ['default_technique'], include_baseline: false,

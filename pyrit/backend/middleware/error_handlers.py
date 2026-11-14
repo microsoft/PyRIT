@@ -15,6 +15,7 @@ from pyrit.backend.middleware.request_size import RequestTooLargeError, request_
 from pyrit.backend.models import FieldError, ProblemDetail
 from pyrit.exceptions.analytics_exception import AnalyticsException
 from pyrit.exceptions.dataset_exception import DatasetAPIException
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,38 @@ def register_error_handlers(app: FastAPI) -> None:
 
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
+            content=problem.model_dump(exclude_none=True),
+        )
+
+    @app.exception_handler(DocumentStorageUnavailableError)
+    async def storage_unavailable_handler(  # pyrit-async-suffix-exempt
+        request: Request,
+        exc: DocumentStorageUnavailableError,
+    ) -> JSONResponse:  # pyrit-keyword-only-exempt Starlette exception handler (request, exc)
+        """
+        Handle stored documents that can't be read or written as 503 Service Unavailable.
+
+        The log names the storage location, without credentials, and the reason. It leaves out the traceback,
+        since the error behind it can carry a SAS URL. The response never carries a path or URL.
+
+        Returns:
+            JSONResponse: RFC 7807 problem detail response with 503 status.
+        """
+        logger.warning(f"{exc} ({request.method} {request.url.path})")
+        if isinstance(exc, DocumentUnreadableError):
+            detail = f"{exc.label} '{exc.name}' can't be read: {exc.reason}"
+        else:
+            detail = f"{exc.label} storage is unavailable"
+        problem = ProblemDetail(
+            type="/errors/storage-unavailable",
+            title="Service Unavailable",
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+            instance=str(request.url.path),
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=problem.model_dump(exclude_none=True),
         )
 

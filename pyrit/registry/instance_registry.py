@@ -44,6 +44,10 @@ class SupportsIdentifier(Protocol):
 T = TypeVar("T", bound=SupportsIdentifier)  # The type of items stored
 
 
+class RegistryNameTakenError(ValueError):
+    """A name is already registered, so another entry can't take it."""
+
+
 @dataclass
 class RegistryEntry(Generic[T]):
     """
@@ -286,8 +290,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
-            ValueError: If the name is reserved or already registered and ``replace``
-                is False.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered and ``replace`` is False.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -334,13 +338,14 @@ class DefaultInstanceRegistry(Generic[T]):
             name (str): The proposed registry name.
 
         Raises:
-            ValueError: If the name is reserved or already registered.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered.
         """
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if name in self._registry_items:
-                raise ValueError(f"Instance '{name}' already exists")
+                raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """

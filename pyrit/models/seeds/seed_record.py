@@ -41,5 +41,6 @@ class SeedRecord(BaseModel):
     parameters: list[str] | None
     conditions: ConditionTuple | None
     response_json_schema: JsonSchemaDefinition | None
+    is_general_technique: bool = False
     parent_objective_id: UUID | None = None
     paths: tuple[DecompositionPath, ...] = ()

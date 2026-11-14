@@ -6,7 +6,6 @@
 from typing import Annotated
 from uuid import UUID
 
-from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
@@ -37,19 +36,6 @@ from pyrit.registry import (
 router = APIRouter(prefix="/scenario-suites", tags=["scenario-suites"])
 
 
-def _storage_unavailable() -> HTTPException:
-    """
-    Create a sanitized response for unavailable suite storage.
-
-    Returns:
-        HTTPException: A service-unavailable response without SDK details.
-    """
-    return HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Scenario suite storage is temporarily unavailable",
-    )
-
-
 def _not_found(name: str) -> HTTPException:
     """
     Create a not-found response for a missing suite.
@@ -72,8 +58,6 @@ async def _load_suite_or_404_async(name: str) -> ScenarioSuiteResponse:
     """
     try:
         suite = await get_scenario_suite_service().get_suite_async(name=name)
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
@@ -90,10 +74,7 @@ async def list_scenario_suites() -> ScenarioSuiteListResponse:  # pyrit-async-su
     Returns:
         ScenarioSuiteListResponse: Suites from both origins with current entry statuses.
     """
-    try:
-        return await get_scenario_suite_service().list_suites_async()
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
+    return await get_scenario_suite_service().list_suites_async()
 
 
 @router.post("/{name}/readiness", response_model=ScenarioReadiness)
@@ -116,8 +97,6 @@ async def get_scenario_suite_readiness_async(
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
 
 
 @router.get(
@@ -211,8 +190,6 @@ async def launch_scenario_suite(  # pyrit-async-suffix-exempt
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     except ScenarioSuiteExecutionCapacityError as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from None
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from None
 
@@ -269,8 +246,6 @@ async def create_scenario_suite(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario suite '{suite.name}' already exists",
         ) from exc
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
 
 
 @router.put(
@@ -319,8 +294,6 @@ async def update_scenario_suite(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario suite '{name}' changed since it was read; re-read it and retry",
         ) from exc
-    except AzureError as exc:
-        raise _storage_unavailable() from exc
 
 
 @router.delete(
@@ -350,8 +323,6 @@ async def delete_scenario_suite(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scenario suite '{name}' changed since it was read; re-read it and retry",
         ) from None
-    except (AzureError, TimeoutError) as exc:
-        raise _storage_unavailable() from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 

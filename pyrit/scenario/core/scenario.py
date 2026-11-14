@@ -113,6 +113,7 @@ if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 logger = logging.getLogger(__name__)
 
@@ -1198,6 +1199,19 @@ class Scenario(ABC):
             factories[local_factory.name] = local_factory
         return factories
 
+    @staticmethod
+    def _get_target_requirements(factory: "AttackTechniqueFactory") -> "TechniqueRequirements":
+        """
+        Return the effective technique requirements used by readiness and execution.
+
+        Args:
+            factory (AttackTechniqueFactory): The selected attack technique.
+
+        Returns:
+            TechniqueRequirements: Effective requirements for the selected technique.
+        """
+        return factory.requirements
+
     def _check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
         """
         Check scenario-owned generation consumers in addition to the selected factories.
@@ -1222,7 +1236,7 @@ class Scenario(ABC):
                 factory
                 for factory in selected
                 if factory is None
-                or not factory.requirements.check_target(
+                or not self._get_target_requirements(factory).check_target(
                     target=self._objective_target,
                     attack_class=factory.attack_class,
                 )
@@ -1294,7 +1308,7 @@ class Scenario(ABC):
                 )
             )
             if self._objective_target is not None:
-                errors = factory.requirements.check_target(
+                errors = self._get_target_requirements(factory).check_target(
                     target=self._objective_target, attack_class=factory.attack_class
                 )
                 compatible += not errors
@@ -1387,7 +1401,7 @@ class Scenario(ABC):
                     if (
                         self._objective_target is not None
                         and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
-                        and factory.requirements.check_target(
+                        and self._get_target_requirements(factory).check_target(
                             target=self._objective_target, attack_class=factory.attack_class
                         )
                     ):

@@ -442,6 +442,42 @@ Both paged and unpaged reads expose only main and pruned conversations.
 Adversarial and preparation contexts are excluded from lists, reference totals,
 and transcript reads, including hierarchy node expansion.
 
+### Running scan attacks
+
+A scan saves each `AttackResult` only when its attack finishes. While an active scan
+is still running an attack, `GET /api/attacks/{attack_result_id}`, `/metadata`,
+`/conversations`, and `/messages` (paged or not) resolve it from the live run instead
+of returning 404. The attack summary and metadata responses set `in_progress: true`,
+report outcome `undetermined`, and set `execution_read_only: true`. Read these
+endpoints for running state; conversation and message responses do not include
+the running-state flags. Write routes still require a saved result. The
+conversation the attack is working on is the main conversation,
+and every other objective conversation started so far is listed as a pruned
+reference. Messages are read from memory as they are saved. A saved result always
+wins, so once the attack finishes the same IDs resolve to its saved result; restart
+reference paging if a cursor becomes stale at that transition. An attack that has
+not started an objective conversation yet still returns 404.
+
+Attack summaries and metadata also include `scenario_result_id`, the scan run that
+produced the attack (`null` for attacks outside a scan). Scan progress
+`active_conversations` entries list every objective conversation so far in
+`conversation_ids`, alongside the current `conversation_id`. Each scan progress
+result and hierarchy node `score` summarizes the objective score: `scorer_name`,
+`score_type`, `status`, `score_value`, `score_rationale`, and `score_category`.
+
+The attack service reads running attacks through a read-only lookup
+(`LiveAttackLookup`) that the scenario run service provides; it does not import
+scenario scheduling.
+
+### Findings linked to an attack
+
+`GET /api/attacks/{attack_result_id}/findings` lists every finding, across all
+Operations, that links the attack as evidence: highest severity first, then
+newest. Each item is the finding plus `operation_name` and the `evidence_id` that
+unlinks it through the Operation evidence route. An attack with no linked
+findings, including one that is not saved yet, returns an empty list; a non-UUID
+ID returns 422.
+
 The saved Scenario Chat viewer consumes these bounded reads with independent
 reference/message continuation controls. It merges stable piece IDs into their
 ordered turns and reconciles page-local partial-sequence markers against the
@@ -655,8 +691,9 @@ The chat preserves failed drafts across replacement, but requires converter choi
 to be reviewed again rather than restoring outputs tied to the previous registry.
 
 The offline browser fixture `frontend.e2e.fixtures.manual_send_backend:app` uses the real
-backend lifecycle with isolated in-memory SQLite, no environment files, and no default
-providers. The recovery tests register deterministic loopback targets. For example, start
+backend lifecycle with isolated in-memory SQLite, no environment files, no saved registry
+entries, and no default providers. The recovery tests register deterministic loopback
+targets. For example, start
 it with `uv run python -m uvicorn frontend.e2e.fixtures.manual_send_backend:app --host 127.0.0.1 --port 18213`
 (set `PYTHONUTF8=1` on Windows). In another shell, set `PYRIT_BACKEND_URL=http://127.0.0.1:18213`
 and `E2E_FRONTEND_PORT=31213`, then run `npx playwright test chat-recovery --project seeded --workers 1`
