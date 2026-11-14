@@ -20,6 +20,7 @@ policies together:
 | Field | Denominator | Meaning |
 |---|---|---|
 | `success_rate_decided` | Successes + failures | Success among decided outcomes, the existing ASR default. |
+| `success_rate_ci_lower`, `success_rate_ci_upper` | Successes + failures | 95% Wilson score confidence interval bounds for the observed decided-outcome rate (`None` when `total_decided == 0`). |
 | `success_rate_all` | All four outcomes | Success among every selected result, including errors and undetermined outcomes. |
 
 `success_rate` remains the compatible stored field; `success_rate_decided` is its
@@ -32,6 +33,8 @@ has `success_rate_decided=None` and `success_rate_all=0.0`. Neither rate require
 use that whole selected cohort. Empty outcome shares are zero, and an empty
 cohort's decided share is `None`. All proportions are between 0 and 1.
 Both success rates are calculated from counts, never by averaging subgroup rates.
+If a positive Wilson upper bound is too small to represent as a float, it rounds
+outward to the smallest positive float rather than collapsing the interval to zero.
 
 Population selection is separate from denominator selection. A failed
 attempt followed by a successful retry yields 50% raw-result ASR even if the

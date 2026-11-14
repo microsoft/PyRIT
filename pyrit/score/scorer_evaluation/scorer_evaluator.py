@@ -907,13 +907,16 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         gold_scores = np.round(np.median(all_human_scores, axis=0))
         majority_model_scores = np.round(np.median(all_model_scores, axis=0))
 
-        true_positive = np.sum((gold_scores == 1) & (majority_model_scores == 1))
-        false_positive = np.sum((gold_scores == 0) & (majority_model_scores == 1))
-        true_negative = np.sum((gold_scores == 0) & (majority_model_scores == 0))
-        false_negative = np.sum((gold_scores == 1) & (majority_model_scores == 0))
+        true_positive = int(np.sum((gold_scores == 1) & (majority_model_scores == 1)))
+        false_positive = int(np.sum((gold_scores == 0) & (majority_model_scores == 1)))
+        true_negative = int(np.sum((gold_scores == 0) & (majority_model_scores == 0)))
+        false_negative = int(np.sum((gold_scores == 1) & (majority_model_scores == 0)))
         accuracy = (true_positive + true_negative) / gold_scores.size
         precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) > 0 else 0.0
         recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) > 0 else 0.0
+        specificity = (
+            float(true_negative / (true_negative + false_positive)) if (true_negative + false_positive) > 0 else None
+        )
         f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
         num_responses = all_human_scores.shape[1]
@@ -937,7 +940,12 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             accuracy_standard_error=np.sqrt(accuracy * (1 - accuracy) / gold_scores.size),
             precision=precision,
             recall=recall,
+            specificity=specificity,
             f1_score=f1_score,
+            true_positive=true_positive,
+            false_positive=false_positive,
+            true_negative=true_negative,
+            false_negative=false_negative,
             num_scorer_trials=num_scorer_trials,
             dataset_name=dataset_name,
             dataset_version=dataset_version,
