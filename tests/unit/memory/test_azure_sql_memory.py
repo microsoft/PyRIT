@@ -621,6 +621,27 @@ def test_get_conversation_stats_types_created_at_as_utc_datetime(
     assert isinstance(sql.selected_columns.created_at.type, UTCDateTime)
 
 
+def test_get_conversation_stats_orders_the_last_piece_canonically(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The last message lookup orders pieces the way the conversation page does.
+
+    SQL Server UUID ordering differs from the SDK string comparison the page
+    uses, so the lookup sorts ids through the same lowered collation, and the
+    timestamp decides between pieces that share a sequence number.
+    """
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = str(session.execute.call_args.args[0])
+    assert "p2.sequence DESC" in sql
+    assert "p2.timestamp DESC" in sql
+    assert "LOWER(CAST(p2.id AS VARCHAR(36))) COLLATE Latin1_General_100_BIN2 DESC" in sql
+
+
 def test_get_conversation_stats_uses_one_latest_row_apply(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:

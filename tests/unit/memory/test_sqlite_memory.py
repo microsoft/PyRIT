@@ -845,7 +845,7 @@ async def test_get_conversation_stats_uses_indexed_latest_message_lookup(sqlite_
 
     sql = "\n".join(statements).upper()
     assert 'LEFT JOIN "PROMPTMEMORYENTRIES" LATEST' in sql
-    assert "ORDER BY P2.SEQUENCE DESC, P2.ID DESC" in sql
+    assert "ORDER BY P2.SEQUENCE DESC, P2.TIMESTAMP DESC, P2.ID DESC" in sql
     assert "ROW_NUMBER" not in sql
 
 
@@ -926,6 +926,52 @@ async def test_get_conversation_stats_does_not_read_labels_from_prompt_entries(s
     result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
     assert conv_id in result
     assert result[conv_id].labels == {}
+
+
+async def test_get_conversation_stats_picks_the_canonical_last_piece(sqlite_instance):
+    """The preview names the piece the conversation page orders last.
+
+    Pieces of one turn share their sequence number, and the page orders them
+    by timestamp before the id tiebreak, so the preview lookup has to honor
+    the same order instead of handing the win to the bigger id.
+    """
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    earlier = MessagePiece(
+        id=uuid.UUID("ffffffff-0000-0000-0000-000000000001"),
+        role="assistant",
+        original_value="earlier piece",
+        original_value_data_type="text",
+        converted_value="earlier piece",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=2,
+        timestamp=base,
+    )
+    later = MessagePiece(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+        role="assistant",
+        original_value="later piece",
+        original_value_data_type="text",
+        converted_value="later piece",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=2,
+        timestamp=base + timedelta(seconds=10),
+    )
+    for piece in (earlier, later):
+        sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    stats = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
+    page = await sqlite_instance.get_conversation_message_page_async(conversation_id=conv_id, limit=100)
+
+    assert stats[conv_id].last_message_preview == "later piece"
+    assert page.messages[-1].message_pieces[-1].converted_value == "later piece"
 
 
 async def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
