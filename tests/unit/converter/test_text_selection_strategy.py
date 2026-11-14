@@ -612,6 +612,38 @@ class TestContentWordSelectionStrategy:
         result = strategy.select_words(words=words)
         assert result == [1]
 
+    @pytest.mark.parametrize(
+        "token",
+        ["“the”", "«the»", "‘the’", "¿the?", "the…", "「the」", "—the"],
+    )
+    def test_select_words_strips_unicode_punctuation_before_stopword_check(self, token):
+        strategy = ContentWordSelectionStrategy(max_words=2, skip_first=0)
+        words = [token, "device"]
+        result = strategy.select_words(words=words)
+        assert result == [1]
+
+    @pytest.mark.parametrize(
+        "token",
+        ['"bomb"', "“bomb”", "«bomb»", "¡bomb!", "bomb…", "「bomb」", "(bomb)。"],
+    )
+    def test_select_words_candidate_allowlist_strips_unicode_punctuation(self, token):
+        strategy = ContentWordSelectionStrategy(max_words=2, skip_first=0, candidate_words=["bomb"])
+        words = ["build", "a", token]
+        result = strategy.select_words(words=words)
+        assert result == [2]
+
+    def test_select_words_keeps_inner_unicode_punctuation(self):
+        strategy = ContentWordSelectionStrategy(max_words=1, skip_first=0, candidate_words=["don’t"])
+        words = ["“don’t”"]
+        result = strategy.select_words(words=words)
+        assert result == [0]
+
+    def test_select_words_unicode_punctuation_only_token_is_not_content(self):
+        strategy = ContentWordSelectionStrategy(max_words=2, skip_first=0, min_word_length=0)
+        words = ["—", "…", "¿?", "device"]
+        result = strategy.select_words(words=words)
+        assert result == [3]
+
     def test_select_words_candidate_allowlist(self):
         strategy = ContentWordSelectionStrategy(max_words=2, skip_first=0, candidate_words=["bomb", "device"])
         words = ["Give", "instructions", "for", "a", "bomb", "or", "device"]

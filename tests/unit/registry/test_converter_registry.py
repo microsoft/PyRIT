@@ -270,6 +270,44 @@ class TestConverterRegistryRegisterInstance:
         assert variant.get_identifier().params["base_image"] == "other.png"
         assert source.get_identifier().params["base_image"] == "input.png"
 
+    @pytest.mark.parametrize("type_name", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"azure_speech_region": "westus2"},
+            {"azure_speech_region": "eastus"},
+            {"azure_speech_key": "other-key"},
+            {"azure_speech_resource_id": "other-resource"},
+        ],
+    )
+    def test_recreate_instance_keeps_speech_connection_settings(
+        self, registry: ConverterRegistry, type_name: str, params: dict[str, str]
+    ):
+        source = registry.create_named_instance(
+            name="speech",
+            type_name=type_name,
+            params={"azure_speech_region": "eastus", "azure_speech_key": "source-key"},
+        )
+
+        with pytest.raises(ValueError, match=f"can't set {next(iter(params))}"):
+            registry.recreate_instance(source=source, params=params, external_input=True)
+
+    def test_recreate_instance_still_changes_other_speech_settings(self, registry: ConverterRegistry):
+        source = registry.create_named_instance(
+            name="speech",
+            type_name="AzureSpeechTextToAudioConverter",
+            params={"azure_speech_region": "eastus", "azure_speech_key": "source-key"},
+        )
+
+        copy = registry.recreate_instance(
+            source=source, params={"synthesis_voice_name": "en-US-JennyNeural"}, external_input=True
+        )
+        trusted = registry.recreate_instance(source=source, params={"azure_speech_region": "westus2"})
+
+        assert copy.get_identifier().params["synthesis_voice_name"] == "en-US-JennyNeural"
+        assert copy._azure_speech_region == "eastus"
+        assert trusted._azure_speech_region == "westus2"
+
     @pytest.mark.parametrize("name", ["preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
         with pytest.raises(ValueError, match="reserved"):

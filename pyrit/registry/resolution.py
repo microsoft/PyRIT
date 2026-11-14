@@ -265,6 +265,7 @@ def _parameters_from_signature(
     sensitive_parameter_names: frozenset[str],
     multiline_parameter_names: frozenset[str],
     identity_conflicting_parameter_names: frozenset[str],
+    copy_locked_parameter_names: frozenset[str],
 ) -> list[Parameter]:
     """
     Build parameters declared by one constructor signature.
@@ -280,6 +281,8 @@ def _parameters_from_signature(
             names whose values require multiline controls.
         identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
             names that must be omitted for identity-based authentication.
+        copy_locked_parameter_names (frozenset[str]): Component-declared names whose
+            values a private copy keeps from its source.
 
     Returns:
         list[Parameter]: Parameters declared by the constructor.
@@ -315,6 +318,7 @@ def _parameters_from_signature(
             sensitive=name in sensitive_parameter_names,
             multiline=name in multiline_parameter_names,
             identity_conflicting=name in identity_conflicting_parameter_names,
+            copy_locked=name in copy_locked_parameter_names,
         )
         if parameter.is_seed_prompt:
             parameter = parameter.model_copy(update={"multiline": True})
@@ -341,6 +345,10 @@ def derive_parameters(
     A component can declare ``MULTILINE_PARAMETER_NAMES`` as a ``frozenset[str]``
     of constructor parameters whose controls must preserve line breaks. These
     names supplement the identifier's shared multiline names for that component only.
+
+    A component can also declare ``COPY_LOCKED_PARAMETER_NAMES``: the constructor
+    parameters that choose where its requests go or how they authenticate. A private
+    copy built from external input keeps the source's values for these.
 
     A non-required reference parameter declared by ``seam_base_type`` is a
     construction seam, not a build input of every subclass: the base accepts it so
@@ -377,6 +385,7 @@ def derive_parameters(
     identity_conflicting_parameter_names = (
         identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
     )
+    copy_locked_parameter_names = getattr(cls, "COPY_LOCKED_PARAMETER_NAMES", frozenset[str]())
     parameters: list[Parameter] = []
     seen: set[str] = set()
     for owner, signature in _constructor_sources(cls):
@@ -387,6 +396,7 @@ def derive_parameters(
             sensitive_parameter_names=sensitive_parameter_names,
             multiline_parameter_names=multiline_parameter_names,
             identity_conflicting_parameter_names=identity_conflicting_parameter_names,
+            copy_locked_parameter_names=copy_locked_parameter_names,
         ):
             if parameter.name in seen:
                 continue
