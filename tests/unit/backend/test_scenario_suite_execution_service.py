@@ -644,6 +644,20 @@ async def test_cancel_recovers_and_cancels_child_admitted_before_response(
     assert len(calls) == 1
 
 
+def test_execution_status_surfaces_failures_behind_cancellations() -> None:
+    """A failed entry outranks cancelled entries in the aggregate."""
+    entries = [
+        MagicMock(state=ScenarioRunState.FAILED),
+        MagicMock(state=ScenarioRunState.CANCELLED),
+    ]
+    assert ScenarioSuiteExecutionService._execution_status(entries=entries) == ScenarioSuiteExecutionStatus.FAILED
+    # Pure cancellations keep reporting CANCELLED.
+    assert (
+        ScenarioSuiteExecutionService._execution_status(entries=[MagicMock(state=ScenarioRunState.CANCELLED)])
+        == ScenarioSuiteExecutionStatus.CANCELLED
+    )
+
+
 async def test_retention_rejects_active_capacity_and_evicts_terminal_execution(
     execution_context: tuple[
         ScenarioSuiteExecutionService,

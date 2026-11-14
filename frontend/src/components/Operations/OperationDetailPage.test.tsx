@@ -97,6 +97,8 @@ it('renames the operation and edits its description, keeping the draft after a f
   expect(within(dialog).getByRole('button', { name: 'Save operation' })).toBeDisabled()
 })
 
+
+
 it('sends only the fields that were edited', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.update).mockResolvedValue({ ...SAVED, description: 'Web app only' })
