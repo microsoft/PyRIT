@@ -4,6 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
 
 import TechniqueEditor from './TechniqueEditor'
@@ -53,6 +54,42 @@ describe('TechniqueEditor', () => {
       { converter_id: 'base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } },
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
     ] })
+  })
+
+  it('should offer techniques with required nullable numeric parameters', async () => {
+    const user = userEvent.setup()
+    techniques.listTypes.mockResolvedValue({ items: [{
+      attack_type: 'nullable_attack', description: '', supports_converters: false, supports_adversarial: false,
+      parameters: [{ name: 'count', type_name: 'int | None', required: true }],
+    }] })
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider>
+      <TechniqueEditor />
+    </UserPreferencesProvider></FluentProvider>)
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Attack type' }), 'nullable_attack')
+    expect(screen.getByRole('spinbutton', { name: 'count' })).toBeEnabled()
+    await user.type(screen.getByRole('spinbutton', { name: 'count' }), '7')
+    expect(screen.getByRole('spinbutton', { name: 'count' })).toHaveValue(7)
+  })
+
+  it('should exclude SDK-only targets from technique references', async () => {
+    const original = configuration()
+    original.parameters = [{
+      name: 'helper_target', type_name: 'PromptTarget', reference_type: 'target', required: false,
+    }]
+    jest.mocked(targetsApi.listTargets)
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'sdk-demo', target_type: 'TextTarget' })],
+        pagination: { limit: 200, has_more: true, next_cursor: 'next' },
+      })
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'endpoint' })],
+        pagination: { limit: 200, has_more: false },
+      })
+    render(tree(original))
+    const picker = await screen.findByRole('combobox', { name: 'helper_target' })
+    expect(within(picker).queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: /endpoint/ })).toBeInTheDocument()
+    expect(targetsApi.listTargets).toHaveBeenCalledWith(200, 'next')
   })
 
   it('should prefill the named factory without creation controls or an attack selector', async () => {
@@ -350,10 +387,10 @@ describe('TechniqueEditor', () => {
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
   })
 
-  it('should distinguish an explicit empty text value from an untouched default', async () => {
+  it.each(['str', 'str | None'])('should preserve explicit empty %s values', async (typeName: string) => {
     const user = userEvent.setup()
     const original = configuration()
-    original.parameters.push({ name: 'text_setting', type_name: 'str', required: false })
+    original.parameters.push({ name: 'text_setting', type_name: typeName, required: false })
     original.settings.params = { ...original.settings.params, text_setting: 'source text' }
     render(tree(original))
     await user.clear(await screen.findByRole('textbox', { name: 'text_setting' }))

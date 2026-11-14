@@ -16,23 +16,28 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
     ScenarioSuiteEntryStatus,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
+from pyrit.backend.services import (
+    ScenarioSuiteExecutionService,
+    ScenarioSuiteService,
+)
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
-    ScenarioSuiteExecutionService,
 )
-from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService
 from pyrit.models import (
+    PresetIssue,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
     ScenarioSuiteExecutionEntrySummary,
     ScenarioSuiteExecutionStatus,
     ScenarioSuiteExecutionSummary,
     ScenarioSuiteSubmissionState,
 )
-from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, ScenarioSuiteRegistryEntry
+from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,
@@ -639,6 +644,46 @@ def test_delete_requires_confirmation_from_storage(client: TestClient, service: 
 
     assert client.delete(f"/api/scenario-suites/{SUITE_NAME}").status_code == 204
     assert client.delete(f"/api/scenario-suites/{SUITE_NAME}").status_code == 404
+
+
+def test_delete_forwards_the_version_that_was_read(client: TestClient, service: MagicMock) -> None:
+    """Test that an optional version query reaches the service."""
+    service.delete_suite_async = AsyncMock(return_value=True)
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 204
+    service.delete_suite_async.assert_awaited_once_with(name=SUITE_NAME, expected_version="suite-v1")
+
+
+def test_delete_of_a_changed_suite_is_a_conflict(client: TestClient, service: MagicMock) -> None:
+    """Test that a stale delete maps to 409 rather than the generic invalid-input 400."""
+    service.delete_suite_async = AsyncMock(
+        side_effect=ScenarioSuiteConflictError(
+            name=SUITE_NAME, expected_version="suite-v1", actual_version="suite-v2", action="deleted"
+        )
+    )
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        f"Scenario suite '{SUITE_NAME}' changed since it was read; re-read it and retry"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [AzureError("key=secret"), TimeoutError("Timed out waiting to write 'secret.lock'")],
+)
+def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock, error: Exception) -> None:
+    """Test that blob failures and local lock timeouts during delete map to a sanitized 503."""
+    service.delete_suite_async = AsyncMock(side_effect=error)
+
+    response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
+
+    assert response.status_code == 503
+    assert "secret" not in response.text
 
 
 def test_delete_requires_admin(anonymous_client: TestClient, service: MagicMock) -> None:

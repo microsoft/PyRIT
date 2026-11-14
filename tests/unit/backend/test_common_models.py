@@ -11,13 +11,21 @@ import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
+    ConverterPreviewRequest,
     CreateAttackRequest,
+    CreateConverterRequest,
+    CreateTargetRequest,
+    FieldError,
     MessagePieceRequest,
-    SaveConversationRequest,
+    PaginationInfo,
+    ProblemDetail,
+    RegisterInitializerRequest,
     UpdateAttackRequest,
+    filter_sensitive_fields,
 )
+from pyrit.backend.models.attacks import SaveConversationRequest
 from pyrit.backend.models.common import (
     MAX_FILE_CONTENT_LENGTH,
     MAX_IDENTIFIER_LENGTH,
@@ -25,22 +33,15 @@ from pyrit.backend.models.common import (
     MAX_LABEL_KEY_LENGTH,
     MAX_LABEL_VALUE_LENGTH,
     MAX_TEXT_LENGTH,
-    FieldError,
     LabelFilterStr,
-    PaginationInfo,
-    ProblemDetail,
-    filter_sensitive_fields,
 )
 from pyrit.backend.models.configuration import (
     ReinitializeRequest,
     UpdateConfigurationFileRequest,
     UpdateEnvironmentFileRequest,
 )
-from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
-from pyrit.backend.models.initializers import RegisterInitializerRequest
 from pyrit.backend.models.message_sends import MessageSendRequest
 from pyrit.backend.models.scores import ManualScoreRequest
-from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.models.component_spec import TargetBinding
 
@@ -556,7 +557,11 @@ def test_openapi_shows_the_target_binding_limit_on_requests_only() -> None:
         assert {field: binding["properties"][field].get("maxLength") for field in limited} == dict.fromkeys(
             limited, MAX_IDENTIFIER_LENGTH
         )
-    assert all("maxLength" not in field for field in schemas["TargetBinding"]["properties"].values())
+    saved_bindings = [
+        schema for name, schema in schemas.items() if name in {"TargetBinding-Input", "TargetBinding-Output"}
+    ]
+    assert saved_bindings
+    assert all("maxLength" not in field for schema in saved_bindings for field in schema["properties"].values())
 
 
 @pytest.mark.parametrize(

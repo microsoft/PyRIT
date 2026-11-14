@@ -6,6 +6,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
@@ -60,7 +61,8 @@ def test_private_score_participation_has_unique_head_and_upgrades_current_parent
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["e7c4a2d9f013"]
+    assert len(scripts.get_heads()) == 1
+    assert "e7c4a2d9f013" in {revision.revision for revision in scripts.walk_revisions()}
     assert scripts.get_revision("e7c4a2d9f013").down_revision == "c8d3e5f7a901"
     engine = sa.create_engine("sqlite:///:memory:")
     try:
@@ -72,6 +74,34 @@ def test_private_score_participation_has_unique_head_and_upgrades_current_parent
                 column["name"] for column in sa.inspect(connection).get_columns("ScoreEntries")
             }
             command.upgrade(config, "head")
+        check_schema_migrations(engine=engine)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("parent", ["a9c3e7f1b205", "d6de1045cca4", "5d7f9b1c3e2a"])
+def test_dataset_and_http_fingerprint_heads_upgrade_to_one_complete_schema(parent: str) -> None:
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    heads = scripts.get_heads()
+    assert len(heads) == 1
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            config.attributes["version_table"] = "pyrit_memory_alembic_version"
+            command.upgrade(config, parent)
+            command.upgrade(config, "head")
+            inspector = sa.inspect(connection)
+            assert "DatasetLifecycleEntries" in inspector.get_table_names()
+            assert "http_request_fingerprint" in {
+                column["name"] for column in inspector.get_columns("TargetIdentifiers")
+            }
+            assert {"parent_objective_id", "paths"} <= {
+                column["name"] for column in inspector.get_columns("SeedPromptEntries")
+            }
+            assert connection.scalar(sa.text("SELECT version_num FROM pyrit_memory_alembic_version")) == heads[0]
         check_schema_migrations(engine=engine)
     finally:
         engine.dispose()

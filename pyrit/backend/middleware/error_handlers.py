@@ -12,14 +12,37 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
-from pyrit.backend.models.common import FieldError, ProblemDetail
+from pyrit.backend.models import FieldError, ProblemDetail
 from pyrit.exceptions.analytics_exception import AnalyticsException
+from pyrit.exceptions.dataset_exception import DatasetAPIException
 
 logger = logging.getLogger(__name__)
 
 
 def register_error_handlers(app: FastAPI) -> None:
     """Register all error handlers with the FastAPI app."""
+
+    @app.exception_handler(DatasetAPIException)
+    async def dataset_exception_handler_async(request: Request, exc: DatasetAPIException) -> JSONResponse:
+        """
+        Return sanitized dataset errors with durable cleanup guidance.
+
+        Returns:
+            JSONResponse: An RFC 7807 problem, with Location when cleanup remains pending.
+        """
+        problem = ProblemDetail(
+            type="/errors/dataset",
+            title="Dataset request failed",
+            status=exc.status_code,
+            detail=exc.message,
+            instance=request.url.path,
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            media_type="application/problem+json",
+            content=problem.model_dump(exclude_none=True),
+            headers={"Location": f"/api/datasets/deletions/{exc.cleanup_id}"} if exc.cleanup_id else None,
+        )
 
     @app.exception_handler(AnalyticsException)
     async def analytics_exception_handler_async(request: Request, exc: AnalyticsException) -> JSONResponse:

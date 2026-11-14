@@ -26,8 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.models.identifiers import ConverterIdentifier
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentType, ConverterIdentifier
 from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 

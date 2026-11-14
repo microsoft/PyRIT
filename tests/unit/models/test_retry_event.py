@@ -3,7 +3,7 @@
 
 from datetime import UTC, datetime
 
-from pyrit.models.retry_event import RetryEvent
+from pyrit.models import RetryEvent
 
 
 class TestRetryEvent:
