@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions import EmptyResponseException, PyritException
-from pyrit.models import JsonResponseConfig, Message, MessagePiece, TokenUsage
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, ReasoningContentMetadata, TokenUsage
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -22,7 +22,6 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     should_skip_audio_piece,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
-    REASONING_CONTENT_METADATA_KEY,
     _build_audio_pieces_async,
     build_content_filter_message,
     build_response_pieces_async,
@@ -689,22 +688,28 @@ def test_capture_reasoning_content_writes_only_to_first_piece():
     resp = _mock_response("42")
     resp.choices[0].message.reasoning_content = "First, add the numbers."
     pieces = [_request_piece("a"), _request_piece("b")]
+    for piece in pieces:
+        piece.prompt_metadata.update(ReasoningContentMetadata(content="earlier reasoning").to_metadata())
 
     capture_reasoning_content(pieces=pieces, response=resp)
 
-    assert pieces[0].prompt_metadata[REASONING_CONTENT_METADATA_KEY] == "First, add the numbers."
-    assert REASONING_CONTENT_METADATA_KEY not in pieces[1].prompt_metadata
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[0].prompt_metadata) == ReasoningContentMetadata(
+        content="First, add the numbers."
+    )
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[1].prompt_metadata) is None
 
 
 def test_capture_reasoning_content_clears_inherited_value_when_none_reported():
     """Response pieces inherit request metadata, so an earlier turn's reasoning must not survive."""
     pieces = [_request_piece("a"), _request_piece("b")]
     for piece in pieces:
-        piece.prompt_metadata[REASONING_CONTENT_METADATA_KEY] = "reasoning from an earlier turn"
+        piece.prompt_metadata.update(ReasoningContentMetadata(content="reasoning from an earlier turn").to_metadata())
+        piece.prompt_metadata["reasoning_content"] = "legacy inherited reasoning"
 
     capture_reasoning_content(pieces=pieces, response=_mock_response("42"))
 
-    assert all(REASONING_CONTENT_METADATA_KEY not in piece.prompt_metadata for piece in pieces)
+    assert all(ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) is None for piece in pieces)
+    assert all("reasoning_content" not in piece.prompt_metadata for piece in pieces)
 
 
 def test_capture_reasoning_content_leaves_other_metadata_untouched():
@@ -715,7 +720,29 @@ def test_capture_reasoning_content_leaves_other_metadata_untouched():
 
     capture_reasoning_content(pieces=[piece], response=resp)
 
-    assert piece.prompt_metadata == {"caller_key": "caller_value", REASONING_CONTENT_METADATA_KEY: "thinking"}
+    assert piece.prompt_metadata == {
+        "caller_key": "caller_value",
+        **ReasoningContentMetadata(content="thinking").to_metadata(),
+    }
+
+
+def test_reasoning_metadata_survives_json_round_trip():
+    reasoning = ReasoningContentMetadata(content="First, add the numbers.\nThen answer.")
+    metadata = json.loads(json.dumps(reasoning.to_metadata()))
+
+    assert metadata == {"pyrit_reasoning_content": {"content": "First, add the numbers.\nThen answer."}}
+    assert ReasoningContentMetadata.from_metadata(metadata=metadata) == reasoning
+
+
+@pytest.mark.parametrize("metadata", [{}, {"reasoning_content": "legacy reasoning"}])
+def test_reasoning_metadata_missing_or_legacy_is_unset(metadata):
+    assert ReasoningContentMetadata.from_metadata(metadata=metadata) is None
+
+
+@pytest.mark.parametrize("value", [None, "reasoning", {}, {"content": ""}, {"content": 7}])
+def test_reasoning_metadata_rejects_malformed_namespaced_values(value):
+    with pytest.raises(ValueError):
+        ReasoningContentMetadata.from_metadata(metadata={"pyrit_reasoning_content": value})
 
 
 def test_capture_reasoning_content_noop_without_pieces():
@@ -732,5 +759,5 @@ def test_capture_usage_and_finish_reason_captures_reasoning_content():
 
     assert pieces[0].prompt_metadata == {
         "finish_reason": "stop",
-        REASONING_CONTENT_METADATA_KEY: "First, add the numbers.",
+        **ReasoningContentMetadata(content="First, add the numbers.").to_metadata(),
     }

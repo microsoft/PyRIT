@@ -26,6 +26,7 @@ from pyrit.memory import data_serializer_factory
 from pyrit.models import (
     Message,
     MessagePiece,
+    ReasoningContentMetadata,
     TokenUsage,
     construct_response_from_request,
     read_usage_int,
@@ -39,9 +40,6 @@ logger = logging.getLogger(__name__)
 # included because it is handled separately (see ``is_content_filter_response``) before
 # validation; a target should check for content filtering first.
 DEFAULT_VALID_FINISH_REASONS: frozenset[str] = frozenset({"stop", "length", "content_filter", "tool_calls"})
-
-#: ``prompt_metadata`` key that holds the model's reasoning text (see ``capture_reasoning_content``).
-REASONING_CONTENT_METADATA_KEY = "reasoning_content"
 
 # Message fields that carry reasoning text in Chat Completions responses. Neither is part of the
 # OpenAI schema, so providers settled on two names: ``reasoning_content`` (DeepSeek, LiteLLM, xAI,
@@ -368,10 +366,9 @@ def capture_reasoning_content(*, pieces: list[MessagePiece], response: Any) -> N
     """
     Copy the model's reasoning text into the first piece's metadata.
 
-    The reasoning is stored under ``prompt_metadata["reasoning_content"]`` rather than as a piece
-    of its own, so it is kept in memory for scoring and review but is never sent back to the
-    model as conversation history. Response pieces inherit the request's metadata, so the key is
-    cleared from every piece first; a response without reasoning then records none.
+    Read the stored text with ``ReasoningContentMetadata.from_metadata``. Keeping it in metadata
+    rather than a piece leaves outbound history unchanged. Response pieces inherit the request's
+    metadata, so reasoning is cleared from every piece first.
 
     Args:
         pieces (list[MessagePiece]): The constructed response pieces.
@@ -381,11 +378,11 @@ def capture_reasoning_content(*, pieces: list[MessagePiece], response: Any) -> N
         return
 
     for piece in pieces:
-        piece.prompt_metadata.pop(REASONING_CONTENT_METADATA_KEY, None)
+        ReasoningContentMetadata.clear_metadata(metadata=piece.prompt_metadata)
 
     reasoning = extract_reasoning_content(response)
     if reasoning:
-        pieces[0].prompt_metadata[REASONING_CONTENT_METADATA_KEY] = reasoning
+        pieces[0].prompt_metadata.update(ReasoningContentMetadata(content=reasoning).to_metadata())
 
 
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:

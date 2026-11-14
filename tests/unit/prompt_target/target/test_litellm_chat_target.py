@@ -32,6 +32,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     MessageScorable,
+    ReasoningContentMetadata,
     RequestTraceContext,
     ScoringExpectation,
     ToolCallRequirement,
@@ -774,7 +775,9 @@ async def test_reasoning_content_is_stored_in_response_metadata(target, litellm_
 
     pieces = result[0].message_pieces
     assert [piece.converted_value for piece in pieces] == ["The answer is 4."]
-    assert pieces[0].prompt_metadata["reasoning_content"] == "2 + 2 is 4."
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[0].prompt_metadata) == ReasoningContentMetadata(
+        content="2 + 2 is 4."
+    )
 
 
 async def test_reasoning_content_absent_when_model_returns_none(target, litellm_stub):
@@ -782,7 +785,7 @@ async def test_reasoning_content_absent_when_model_returns_none(target, litellm_
 
     result = await target.send_prompt_async(message=_user_message())
 
-    assert "reasoning_content" not in result[0].message_pieces[0].prompt_metadata
+    assert ReasoningContentMetadata.from_metadata(metadata=result[0].message_pieces[0].prompt_metadata) is None
 
 
 async def test_reasoning_content_kept_when_token_limit_leaves_no_answer(target, litellm_stub):
@@ -796,7 +799,9 @@ async def test_reasoning_content_kept_when_token_limit_leaves_no_answer(target, 
     piece = result[0].message_pieces[0]
     assert piece.response_error == "empty"
     assert piece.is_truncated is True
-    assert piece.prompt_metadata["reasoning_content"] == "Let me think about this step by step"
+    assert ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) == ReasoningContentMetadata(
+        content="Let me think about this step by step"
+    )
 
 
 async def test_reasoning_content_kept_when_response_is_content_filtered(target, litellm_stub):
@@ -808,7 +813,9 @@ async def test_reasoning_content_kept_when_response_is_content_filtered(target, 
 
     piece = result[0].message_pieces[0]
     assert piece.converted_value_data_type == "error"
-    assert piece.prompt_metadata["reasoning_content"] == "The user is asking for"
+    assert ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) == ReasoningContentMetadata(
+        content="The user is asking for"
+    )
 
 
 # ---------------------------------------------------------------------------
