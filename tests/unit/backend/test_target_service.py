@@ -876,12 +876,15 @@ class TestCreateTargetServerCredential:
     """Admin gate for targets that would authenticate with the server's own stored credentials."""
 
     @staticmethod
-    def _request(params: dict[str, object] | None = None, *, auth_mode: str = "api_key") -> CreateTargetRequest:
+    def _request(
+        params: dict[str, object] | None = None, *, auth_mode: str = "api_key", persist: bool = False
+    ) -> CreateTargetRequest:
         return CreateTargetRequest(
             name="blob",
             type="AzureBlobStorageTarget",
             params={"container_url": "https://test.blob.core.windows.net/test", **(params or {})},
             auth_mode=auth_mode,  # type: ignore[arg-type]
+            persist=persist,
         )
 
     @pytest.mark.parametrize("value", ["sas-token", "   leading-space"])
@@ -916,17 +919,25 @@ class TestCreateTargetServerCredential:
             target_type="OpenAIChatTarget", params={"endpoint": "https://example.test"}, is_admin=False
         )
 
-    async def test_create_target_identity_mode_requires_admin_before_construction(self) -> None:
+    @pytest.mark.parametrize("persist", [False, True])
+    async def test_create_target_identity_mode_requires_admin_before_construction(
+        self, persist: bool, tmp_path: Path
+    ) -> None:
         service = TargetService()
 
         with (
             patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
-            await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=False)
+            await service.create_target_async(
+                request=self._request(auth_mode="identity", persist=persist),
+                is_admin=False,
+                recipes_source=str(tmp_path),
+            )
 
         create_instance.assert_not_called()
         assert service.get_target_object(target_registry_name="blob") is None
+        assert not (tmp_path / "targets").exists()
 
     async def test_create_target_identity_mode_with_caller_sas_requires_admin(self) -> None:
         """Identity mode drops the caller SAS, so it still authenticates with the server's credentials."""

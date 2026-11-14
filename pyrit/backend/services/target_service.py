@@ -64,15 +64,6 @@ from pyrit.registry.instance_registry import RegistryNameTakenError, registry_en
 
 logger = logging.getLogger(__name__)
 
-_ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
-    "OpenAITarget": frozenset({"endpoint", "model_name"}),
-    "AzureBlobStorageTarget": frozenset({"container_url"}),
-    "AzureMLChatTarget": frozenset({"endpoint"}),
-    "HackAPromptTarget": frozenset({"cookie", "session_id"}),
-    "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
-    "PromptShieldTarget": frozenset({"endpoint"}),
-}
-
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
 
@@ -175,8 +166,10 @@ class TargetService:
                     if isinstance(target, RoundRobinTarget)
                     else results[0]
                 )
+                entry = self._registry.instances.get_entry(target_registry_name)
                 if (
-                    self.get_target_object(target_registry_name=target_registry_name) is not target
+                    entry is None
+                    or entry.instance is not target
                     or any(source.configuration is not configuration for source, configuration in snapshots)
                     or target.get_identifier().hash != expected_hash
                     or (isinstance(target, RoundRobinTarget) and target.inner_targets != sources)
@@ -186,7 +179,11 @@ class TargetService:
                     )
                 self._legacy_binding_capabilities.setdefault(target, target.capabilities)
                 target.apply_capabilities(capabilities=capabilities)
-                return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target)
+                return self._build_instance_from_object(
+                    target_registry_name=target_registry_name,
+                    target_obj=target,
+                    origin=registry_entry_origin(entry.metadata),
+                )
         finally:
             self._detecting.discard(target_registry_name)
             self._detecting_sources.difference_update(source_ids)
@@ -373,11 +370,10 @@ class TargetService:
             list[Parameter]: Parameters projected for dynamic form generation.
         """
         target_cls = self._registry.get_class(target_type)
-        required_names = frozenset().union(
-            *(_ENV_BACKED_REQUIRED_PARAMETERS.get(base.__name__, frozenset()) for base in target_cls.__mro__)
-        )
         return [
-            parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
+            parameter.model_copy(update={"default": REQUIRED_VALUE})
+            if parameter.name in target_cls.environment_backed_parameters
+            else parameter
             for parameter in parameters
             if parameter.name != target_cls.upload_directory_parameter
             and parameter.is_allowed_external_input(allowed_path_params=target_cls.caller_path_parameters)
