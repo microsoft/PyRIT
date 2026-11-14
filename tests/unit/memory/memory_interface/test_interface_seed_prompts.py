@@ -2084,6 +2084,31 @@ async def test_get_seed_groups_keeps_multiple_ungrouped_and_grouped_matches(sqli
     assert len(all_ids) == len(set(all_ids)) == 6
 
 
+async def test_get_seed_groups_reads_matched_groups_back_within_bind_var_limit(sqlite_instance: MemoryInterface):
+    """Each matched group id takes a bind, so many matched groups must be read back in chunks."""
+    groups = [
+        SeedGroup(
+            seeds=[
+                SeedObjective(value=f"Objective {index}", dataset_name="grouped"),
+                SeedPrompt(value=f"Prompt {index}", data_type="text", dataset_name="grouped"),
+            ]
+        )
+        for index in range(5)
+    ]
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=groups, added_by="test_user")
+
+    with patch.object(type(sqlite_instance), "_MAX_BIND_VARS", 2):
+        with patch.object(sqlite_instance, "_execute_get_seeds", wraps=sqlite_instance._execute_get_seeds) as spied:
+            result = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in result) == [
+        [f"Objective {index}", f"Prompt {index}"] for index in range(5)
+    ]
+    # The first call is the filtered match; the rest read the matched groups back.
+    group_reads = [call.kwargs["prompt_group_ids"] for call in spied.call_args_list[1:]]
+    assert [len(group_ids) for group_ids in group_reads] == [2, 2, 1]
+
+
 async def test_replace_seeds_for_dataset_async_replaces_all(sqlite_instance: MemoryInterface):
     """replace_seeds_for_dataset_async swaps the target dataset's seeds and leaves others intact."""
     await sqlite_instance.add_seeds_to_memory_async(
