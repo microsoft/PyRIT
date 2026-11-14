@@ -362,7 +362,9 @@ export default function ChatWindow({
   }, [noticeId])
   const [editorError, setEditorError] = useState<string | null>(null)
   const [acceptedSendCheck, setAcceptedSendCheck] = useState<
-    { key: string; status: MessageSendStatus } | { key: string; error: unknown } | null
+    { key: string; converterPipelineSignature: string; status: MessageSendStatus }
+    | { key: string; converterPipelineSignature: string; error: unknown }
+    | null
   >(null)
   const [importSystemConflict, setImportSystemConflict] = useState<string | null>(null)
   const [importSystemChoice, setImportSystemChoice] = useState<{ id: string; choice: 'destination' | 'imported' } | null>(null)
@@ -838,8 +840,10 @@ export default function ChatWindow({
       const canContainAcceptedSend = historyMayContainAcceptedDraft(preserved.draft, preservedMessages)
       const acceptedSendId = preserved.draft.acceptedSendId
       let acceptedSendStatus: MessageSendStatus | undefined
+      let preserveCurrentConverters = false
       if (canContainAcceptedSend && acceptedSendId && draftAttackId && draftConversationId) {
         const checkKey = JSON.stringify([preserved.sequence, draftAttackId, draftConversationId, acceptedSendId])
+        const converterPipelineSignature = stableMetadataString(converters.snapshot().pipelines)
         const check = acceptedSendCheck?.key === checkKey ? acceptedSendCheck : undefined
         if (!check) {
           if (acceptedSendCheckRef.current !== checkKey) {
@@ -848,16 +852,17 @@ export default function ChatWindow({
               if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
                 || currentAttackIdRef.current !== draftAttackId
                 || currentConversationIdRef.current !== draftConversationId) return
-              setAcceptedSendCheck({ key: checkKey, status })
+              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, status })
             }).catch((error: unknown) => {
               if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
                 || currentAttackIdRef.current !== draftAttackId
                 || currentConversationIdRef.current !== draftConversationId) return
-              setAcceptedSendCheck({ key: checkKey, error })
+              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, error })
             })
           }
           return
         }
+        preserveCurrentConverters = check.converterPipelineSignature !== converterPipelineSignature
         if ('error' in check) {
           setEditorNotice(`${toApiError(check.error).detail || 'Could not verify send status.'} The preserved draft was kept.`)
         } else {
@@ -882,6 +887,7 @@ export default function ChatWindow({
       const completedAcceptedSend = sendProgressConfirmed && historyContainsAcceptedDraft(
         consumed, preservedMessages, acceptedSendConversation?.request_turn_number,
       )
+      const converterSnapshot = preserveCurrentConverters ? converters.snapshot() : consumed.converters
       restoredAcceptedSendRef.current = consumed.acceptedSendId && consumed.acceptedSendHistory
         && !completedAcceptedSend
         ? {
@@ -895,12 +901,16 @@ export default function ChatWindow({
         ? {
           ...consumed, text: '', attachments: [], textMetadata: undefined,
           acceptedSendId: undefined, acceptedSendHistory: undefined,
-          converters: consumed.converters && {
-            ...consumed.converters, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+          converters: converterSnapshot && {
+            ...converterSnapshot, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
           },
           systemPrompt: consumed.systemPrompt ?? '',
         }
-        : { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
+        : {
+          ...consumed,
+          ...(converterSnapshot ? { converters: converterSnapshot } : {}),
+          systemPrompt: consumed.systemPrompt ?? '',
+        }
       if (consumed.conversation) {
         let editorTarget: TargetInstance | null = consumed.conversation.target === null ? null : activeTarget
         if (consumed.conversation.target) {

@@ -1449,6 +1449,53 @@ describe("ChatWindow Integration", () => {
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
     });
 
+    it("preserves a converter pipeline change made while checking an accepted send", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt retained while converter settings change";
+      const acceptedSendId = "backend-send-a";
+      let finishStatus: ((status: MessageSendStatus) => void) | undefined;
+      mockedConvertersApi.listConverters.mockResolvedValue({
+        items: [makeConverterInstance("first", "Base64Converter")],
+      });
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, send_id: acceptedSendId });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await sendPrompt(user, prompt);
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor("Request from client B"));
+      mockedAttacksApi.getMessageSend.mockImplementation((_attackId, sendId) => (
+        sendId === acceptedSendId
+          ? new Promise((resolve) => { finishStatus = resolve; })
+          : new Promise(() => {})
+      ));
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await waitFor(() => expect(finishStatus).toBeDefined());
+
+      await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+      await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+      await user.click(await screen.findByRole("option", { name: /^first/ }));
+      expect(screen.getByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
+
+      await act(async () => {
+        finishStatus?.({
+          ...queued,
+          send_id: acceptedSendId,
+          state: "failed",
+          failure_stage: "preparation",
+          target_invoked: false,
+        });
+      });
+      await settleDraftRestore();
+
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      expect(screen.getByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps the converter pipeline when a send completes while Chat is unmounted", async () => {
       const user = userEvent.setup();
       const prompt = "Prompt sent through a converter";
