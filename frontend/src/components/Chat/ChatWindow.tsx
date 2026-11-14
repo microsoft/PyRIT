@@ -2031,6 +2031,8 @@ export default function ChatWindow({
           </MessageBar>
         )}
         {editDraft === null && <MessageList
+          key={viewedConversationId ?? 'no-conversation'}
+          conversationId={viewedConversationId}
           messages={isEvidenceUnavailable ? [] : messages}
           showGenerationInfo={activeTarget?.capabilities?.supports_temperature !== false}
           onCopyToInput={handleCopyToInput}
