@@ -2208,7 +2208,7 @@ describe("ChatWindow Integration", () => {
         <RouterProvider router={router} />
       </UserPreferencesProvider></FluentProvider>);
       await screen.findByText("Existing assistant");
-      expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Repetitions: 1" })).toHaveAttribute("aria-disabled", "true");
       await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[1]);
       expect(screen.getByRole("menuitem", { name: "Branch conversation", exact: true })).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("menuitem", { name: "Branch attack", exact: true })).not.toHaveAttribute("aria-disabled", "true");
@@ -2217,7 +2217,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.queryByRole("button", { name: "Undo last send" })).not.toBeInTheDocument();
       await user.dblClick(screen.getByTestId("message-list"));
       await screen.findByTestId("conversation-editor");
-      expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Save", exact: true })).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("button", { name: "Save to new attack", exact: true })).toBeDisabled();
       const field = within(screen.getByRole("region", { name: "Message 1" })).getByPlaceholderText("Type prompt here");
       await user.type(field, " edited");
@@ -2225,7 +2225,7 @@ describe("ChatWindow Integration", () => {
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
       expect(screen.getByTestId("conversation-editor")).toBeInTheDocument();
       await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable-history");
-      expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Save", exact: true })).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("button", { name: "Save to new attack", exact: true })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "Save to new attack", exact: true }));
       await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
@@ -2735,7 +2735,7 @@ describe("ChatWindow Integration", () => {
       });
       await user.click(screen.getByRole("button", { name: "Remove converter second" }));
       await user.type(screen.getByRole("textbox", { name: "Working input - Text" }), "Keep my working input");
-      expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Undo last send" })).toHaveAttribute("aria-disabled", "true");
       await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
       const branch = screen.getByRole("menuitem", { name: "Branch conversation", exact: true });
       expect(branch).toHaveAttribute("aria-disabled", "true");
@@ -2857,7 +2857,7 @@ describe("ChatWindow Integration", () => {
       const draftInput = input === "composer" ? screen.getByPlaceholderText("Type prompt here")
         : screen.getByRole("textbox", { name: "Working input - Text" });
       await user.type(draftInput, "Keep my new draft");
-      expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Undo last send" })).toHaveAttribute("aria-disabled", "true");
       await user.click(screen.getByRole("button", { name: "Undo last send" }));
       expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
       expect(draftInput).toHaveValue("Keep my new draft");
@@ -2870,7 +2870,7 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByText(/conversation changed after this send/)).toBeInTheDocument();
       expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
       expect(screen.getByText("Accepted result")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Undo last send" })).toHaveAttribute("aria-disabled", "true");
     });
 
     it.each(["removed", "cleared", "replaced"])("undoes with a %s pipeline without stale conversion state", async (edit: string) => {
@@ -2977,7 +2977,7 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByText(/Check the conversation list before trying again.*Connection lost/)).toBeInTheDocument();
       expect(screen.getByText("Accepted result")).toBeInTheDocument();
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("");
-      expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Undo last send" })).toHaveAttribute("aria-disabled", "true");
       expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1);
     });
   });
@@ -3098,7 +3098,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
     await screen.findByTestId("conversation-editor");
     const toolbarSave = screen.getByRole("button", { name: "Save to new attack", exact: true });
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toHaveAttribute("aria-disabled", "true");
     expect(toolbarSave).toBeDisabled();
     await user.hover(toolbarSave);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Retry or remove attachments whose uploads failed.");
@@ -8686,7 +8686,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByRole("button", { name: "Add converted value" })).not.toBeInTheDocument();
     expect(screen.getByTestId("chat-input")).toHaveValue(original);
     expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue(appliedResult);
-    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toHaveAttribute("aria-disabled", "true");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockSendResult).toHaveBeenCalledWith("ar-edited", expect.objectContaining({
       pieces: [{
