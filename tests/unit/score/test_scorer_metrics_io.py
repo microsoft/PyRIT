@@ -166,6 +166,22 @@ def test_metrics_to_registry_dict_includes_values():
     assert result["num_responses"] == 100
 
 
+def test_metrics_to_registry_dict_omits_none_specificity_and_keeps_zero_counts():
+    metrics = _make_objective_metrics(
+        specificity=None,
+        true_positive=10,
+        false_positive=0,
+        true_negative=0,
+        false_negative=0,
+    )
+    result = _metrics_to_registry_dict(metrics)
+    assert "specificity" not in result
+    assert result["true_positive"] == 10
+    assert result["false_positive"] == 0
+    assert result["true_negative"] == 0
+    assert result["false_negative"] == 0
+
+
 # --- find_objective_metrics_by_eval_hash tests ---
 
 

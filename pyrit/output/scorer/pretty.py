@@ -362,6 +362,21 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 )
             )
 
+        if metrics.krippendorff_alpha_gold_model is not None:
+            alpha_gold_color = self._get_quality_color(
+                metrics.krippendorff_alpha_gold_model,
+                higher_is_better=True,
+                good_threshold=0.8,
+                bad_threshold=0.6,
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Krippendorff Alpha (Gold vs Model): "
+                    f"{metrics.krippendorff_alpha_gold_model:.4f}",
+                    alpha_gold_color,
+                )
+            )
+
         if metrics.krippendorff_alpha_combined is not None:
             alpha_color = self._get_quality_color(
                 metrics.krippendorff_alpha_combined, higher_is_better=True, good_threshold=0.8, bad_threshold=0.6
