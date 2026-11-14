@@ -137,6 +137,41 @@ replayed = (
 print(f"Saved snapshot holds EXAMPLE: {replayed.get_value()}")
 
 # %% [markdown]
+# ## Withhold sensitive text
+#
+# Pass a `RedactionPolicy` to keep sensitive text out of saved evidence. The source applies it when
+# it writes each entry, baseline entries included. A policy withholds a whole field, either always
+# (`fields=["content"]`) or when one of its regular expressions matches. Text the source kept only
+# in part is withheld too, because a cut can split a match. A withheld entry keeps its size and
+# digest and records `content_redacted=True`. A criterion that needs its text is undetermined, never
+# false, while presence still counts. The policy is off by default; without it, saved evidence and
+# the source's identity are unchanged.
+#
+# Bytes that are not UTF-8 text, such as images, are never stored raw: their entries keep only the
+# size and digest, with or without a policy.
+
+# %%
+from pyrit.score.observation import RedactionPolicy
+
+private_workspace = Path(tempfile.mkdtemp())
+(private_workspace / "data").mkdir()
+(private_workspace / "data" / "config.txt").write_text("api_key=EXAMPLE-ONLY", encoding="utf-8")
+private_scorer = FileWriteScorer(
+    source=LocalFileSurfaceSource(root=private_workspace, redaction=RedactionPolicy(patterns=[r"api_key=\S+"]))
+)
+private_scope = SurfaceScorable(uri="/data/config.txt")
+written = (await private_scorer.score_async(scorable=private_scope, expectation=expects(uri="/data/config.txt")))[0]  # type: ignore
+asked = (
+    await private_scorer.score_async(  # type: ignore
+        scorable=private_scope, expectation=expects(uri="/data/config.txt", matcher=Contains(value="other"))
+    )
+)[0]
+entry = (await memory.get_observations_async(observation_ids=asked.observation_ids))[0].payload.entries[0]  # type: ignore
+print(f"File was written: {written.get_value()}")
+print(f"Withheld text holds 'other': {asked.status.value}")
+print(f"Saved text: {entry.content}, redacted: {entry.content_redacted}")
+
+# %% [markdown]
 # ## Score a file write through an attack
 #
 # This local agent writes whatever it is sent to `/data/out.txt` in its workspace. Each attempt gets

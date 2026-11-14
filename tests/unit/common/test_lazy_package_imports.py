@@ -559,6 +559,7 @@ def test_observation_acquisition_and_scorer_do_not_load_otel_sdk() -> None:
         "NonReplayableObservationError",
         "ObservationSource",
         "OtelTraceSource",
+        "RedactionPolicy",
         "TraceAcquisitionError",
         "TraceClient",
     ],
