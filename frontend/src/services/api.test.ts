@@ -699,11 +699,13 @@ describe("api service", () => {
       (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
 
       const result = await targetsApi.createTarget({
+        name: "new-target",
         type: "OpenAIChatTarget",
         params: { endpoint: "https://test.openai.azure.com/" },
       });
 
       expect(apiClient.post).toHaveBeenCalledWith("/targets", {
+        name: "new-target",
         type: "OpenAIChatTarget",
         params: { endpoint: "https://test.openai.azure.com/" },
       });
