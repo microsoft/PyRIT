@@ -164,11 +164,12 @@ _JinjaCallable = TypeVar("_JinjaCallable", bound="Callable[..., Any]")
 
 
 def _deferring(function: _JinjaCallable) -> _JinjaCallable:
-    # Jinja tests such as `is defined` and the `default` filter check the value's type, not its truth.
+    # Jinja tests and filters get the placeholder itself: `is defined` and `default` check its type,
+    # and a filter like `upper` or `length` would turn it into fixed text.
     # functools.wraps keeps Jinja's pass_environment marker, so the value may not be the first argument.
     @functools.wraps(function)
     def deferring(*args: Any, **kwargs: Any) -> Any:
-        for arg in args:
+        for arg in (*args, *kwargs.values()):
             if isinstance(arg, _DeferringUndefined):
                 raise _DeferRenderError(arg._undefined_name)
         return function(*args, **kwargs)
@@ -423,7 +424,7 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         Render a trusted template at load time, keeping the decisions its later render must make.
 
         Behaves like render_template_value_silent, except when a missing parameter would decide a branch,
-        a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
+        a loop, a comparison or a Jinja test, or is passed to a filter. Then the template is kept as-is, with a
         `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
         Supplied concrete paths reach the template as filesystem-free ``PurePath`` views, so it can format and
         manipulate them but cannot read, write, or list files. Their `{% set %}` bindings keep the lexical
@@ -439,7 +440,7 @@ class Seed(BaseModel, Generic[_SeedDataTypeT]):
         kwargs = {name: _filesystem_free_view(value) for name, value in kwargs.items()}
         env = _template_environment(_DeferringUndefined)
         env.tests = {name: _deferring(test) for name, test in env.tests.items()}
-        env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
+        env.filters = {name: _deferring(function) for name, function in env.filters.items()}
 
         try:
             return env.from_string(self.value).render(**kwargs)
