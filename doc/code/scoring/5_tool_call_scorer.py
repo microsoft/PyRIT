@@ -295,13 +295,33 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # not count either.
 #
 # Stored messages are partial evidence. Hosted tools, several response section
-# types, and targets that execute tools themselves leave no output pieces, so the
-# scorer returns true or undetermined and never false. `OpenAIResponseTarget`
+# types, and targets that execute tools themselves leave no output pieces. For
+# subset conditions, the scorer returns true or undetermined and never false. `OpenAIResponseTarget`
 # records these pieces when it runs `custom_functions`. Combine it with
 # `OtelToolCallScorer` under `TrueFalseScoreAggregator.OR` when trace evidence is
 # also available.
 
 # %% [markdown]
+# ## Require that nothing else ran
+#
+# `ToolsCalled` is a subset match: a run that calls the required tools and three
+# others satisfies it. Set `exhaustive=True` to ask for an exact match instead, so
+# the required tools ran and no other tool did. With no tools, an exhaustive
+# condition asks that no tool ran at all, which suits confirmation gates.
+#
+# The two halves need different evidence. One observed execution of an unnamed
+# tool disproves the match, even when acquisition reports `Acquisition.PARTIAL`
+# or `Acquisition.ERROR`, provided the event was retained. Confirming it needs
+# complete evidence, because only that rules out every other tool. So
+# `OtelToolCallScorer` returns true only for complete, fully correlated traces,
+# and `MessageToolCallScorer` returns false for a stored execution of an unnamed
+# tool and is otherwise undetermined. Use `OtelToolCallScorer` when an exhaustive
+# check needs to be able to pass.
+#
+# ```python
+# ToolsCalled(tools=(ToolCallRequirement(name="read_file"),), exhaustive=True)
+# ```
+#
 # ## Require arguments
 #
 # A `ToolCallRequirement` can also constrain the arguments of the call. Each
