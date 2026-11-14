@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, NonCallableMagicMock, call, create_autospec
 from uuid import UUID, uuid4
 
 import pytest
-from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async, wait_for_event_async
 from unit.mocks import store_message_async
 
 from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation
@@ -31,7 +31,7 @@ from pyrit.prompt_target import (
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Awaitable, Callable, Iterator
     from pathlib import Path
 
     from copilot import CopilotSession
@@ -190,12 +190,10 @@ async def _message_values_and_errors_async(
 
 
 def _expected_session_configuration(*, system_message: dict[str, Any]) -> dict[str, Any]:
-    from copilot.generated.rpc import RemoteSessionMode
-
     return {
         "model": "gpt-5-mini",
         "system_message": system_message,
-        "remote_session": RemoteSessionMode.OFF,
+        "cloud": None,
         "available_tools": [],
         "skip_custom_instructions": True,
         "instruction_directories": [],
@@ -207,7 +205,86 @@ def _expected_session_configuration(*, system_message: dict[str, Any]) -> dict[s
         "memory": {"enabled": False},
         "enable_session_store": False,
         "enable_file_hooks": False,
+        "enable_skills": False,
+        "included_builtin_skills": [],
+        "skip_embedding_retrieval": True,
+        "custom_agents_local_only": True,
+        "coauthor_enabled": False,
+        "manage_schedule_enabled": False,
+        "enable_experimental_mode": False,
+        "enable_session_telemetry": False,
     }
+
+
+@pytest.mark.parametrize(
+    "system_message",
+    [
+        {"mode": "replace", "content": "initial system instructions"},
+        {
+            "mode": "customize",
+            "sections": {
+                "environment_context": {"action": "remove"},
+                "custom_instructions": {"action": "remove"},
+            },
+        },
+    ],
+    ids=["replacement", "default-customize"],
+)
+async def test_session_configuration_preserves_sdk_wire_isolation_async(
+    *, sdk: Any, system_message: dict[str, Any]
+) -> None:
+    from copilot._jsonrpc import JsonRpcClient
+
+    # Exercise the real SDK serializer without starting a runtime or making network requests.
+    sdk_client = sdk.CopilotClient(connection=sdk.RuntimeConnection.for_uri("localhost:3000"))
+    transport = create_autospec(JsonRpcClient, instance=True)
+    transport.request.return_value = {"sessionId": "local-session", "success": True}
+    with (
+        patch.object(sdk_client, "_client", transport),
+        patch.object(sdk_client, "start", side_effect=AssertionError("Unexpected runtime startup")) as start,
+    ):
+        session = await sdk_client.create_session(
+            session_id="local-session",
+            **_expected_session_configuration(system_message=system_message),
+        )
+        try:
+            start.assert_not_called()
+            assert session.session_id == "local-session"
+            requests = transport.request.await_args_list
+            assert [request.args[0] for request in requests] == ["session.create", "session.options.update"]
+            payload = requests[0].args[1]
+            assert payload["sessionId"] == "local-session"
+            assert "cloud" not in payload
+            assert "remoteSession" not in payload
+            assert payload["availableTools"] == []
+            assert payload["systemMessage"] == system_message
+            assert payload["instructionDirectories"] == []
+            assert payload["organizationCustomInstructions"] == ""
+            assert payload["infiniteSessions"] == {"enabled": False}
+            assert payload["memory"] == {"enabled": False}
+            assert payload["skipEmbeddingRetrieval"] is True
+            assert payload["customAgentsLocalOnly"] is True
+            for flag in (
+                "enableHostGitOperations",
+                "enableConfigDiscovery",
+                "enableOnDemandInstructionDiscovery",
+                "enableSessionStore",
+                "enableFileHooks",
+                "enableSkills",
+                "isExperimentalMode",
+                "enableSessionTelemetry",
+            ):
+                assert payload[flag] is False
+            assert requests[1].args[1] == {
+                "sessionId": "local-session",
+                "skipCustomInstructions": True,
+                "customAgentsLocalOnly": True,
+                "coauthorEnabled": False,
+                "manageScheduleEnabled": False,
+                "includedBuiltinSkills": [],
+            }
+        finally:
+            await session.disconnect()
 
 
 async def _cancel_tasks_async(*tasks: asyncio.Task[Any] | None) -> None:
@@ -268,7 +345,7 @@ async def test_normalizer_round_trip_and_retention_async(
         "runtime_version=6.5.4",
         "runtime_protocol_version=3",
         f"retain_session={retain_session}",
-        "remote_mode=OFF",
+        "cloud_session=False",
     ):
         assert field in records[0]
     if retain_session:
@@ -1616,26 +1693,57 @@ async def test_normalizer_surfaces_lifecycle_failures_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("completion_rpc", [True, False], ids=["completion", "legacy-fallback"])
 async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay_async(
     *,
     native_session: tuple[CopilotSession, AsyncMock],
     client: NonCallableMagicMock,
+    completion_rpc: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session, request = native_session
-    target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=0.01)
+    from copilot._jsonrpc import JsonRpcError
 
-    async def stall_send_async(*_args: Any, **_kwargs: Any) -> None:
-        await asyncio.Event().wait()
+    session, request = native_session
+    target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=TEST_WATCHDOG_SECONDS)
+    dispatch_started = asyncio.Event()
+    dispatch_cancelled = asyncio.Event()
+    response_deadline = asyncio.timeout(None)
+
+    async def controlled_wait_for_async(
+        awaitable: Awaitable[SessionEvent | None], *, timeout: float
+    ) -> SessionEvent | None:
+        assert timeout == TEST_WATCHDOG_SECONDS
+        async with response_deadline:
+            return await awaitable
+
+    deadline = AsyncMock(side_effect=controlled_wait_for_async)
+    monkeypatch.setattr(asyncio, "wait_for", deadline)
+
+    async def stall_send_async(method: str, *_args: Any, **_kwargs: Any) -> None:
+        if method == "session.sendAndWait" and not completion_rpc:
+            raise JsonRpcError(-32601, "Method not found")
+        dispatch_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            dispatch_cancelled.set()
 
     request.side_effect = stall_send_async
     send_task = asyncio.create_task(_send_normalized_async(target=target, original_value="Reply exactly HELLO."))
     try:
+        await wait_for_event_async(event=dispatch_started, tasks=[send_task])
+        # Expire only after dispatch: a short Windows timer can fire before the SDK reaches fallback.
+        response_deadline.reschedule(asyncio.get_running_loop().time())
         with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
             # A bare watchdog TimeoutError must not satisfy the normalizer-wrapped failure.
             await wait_for_completion_async(future=send_task)
         assert isinstance(exc_info.value.__cause__, TimeoutError)
-        request.assert_awaited_once()
-        assert request.await_args.args[0] == "session.send"
+        deadline.assert_awaited_once()
+        assert response_deadline.expired()
+        assert dispatch_cancelled.is_set()
+        assert [entry.args[0] for entry in request.await_args_list] == (
+            ["session.sendAndWait"] if completion_rpc else ["session.sendAndWait", "session.send"]
+        )
         client.delete_session.assert_awaited_once_with("sdk-session-id")
         client.stop.assert_not_awaited()
     finally:
@@ -1739,6 +1847,7 @@ async def test_empty_reply_keeps_native_conversation_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("completion_rpc", [True, False], ids=["completion", "legacy-fallback"])
 @pytest.mark.parametrize(
     ("event_stream", "expected_error"),
     [("completed", None), ("aborted-idle", "abort"), ("abort-then-idle", "abort"), ("tool-then-idle", "tool")],
@@ -1751,11 +1860,14 @@ async def test_normalizer_handles_sdk_turn_events_async(
     sqlite_instance: MemoryInterface,
     event_stream: str,
     expected_error: str | None,
+    completion_rpc: bool,
 ) -> None:
+    from copilot._jsonrpc import JsonRpcError
     from copilot.generated.session_events import AbortData, SessionEventType, SessionIdleData, ToolExecutionStartData
 
     session, request = native_session
     reply = _assistant_reply("HELLO")
+    reply = replace(reply, data=replace(reply.data, originating_message_id="sdk-request-id"))
     events = {
         "completed": [
             reply,
@@ -1789,9 +1901,17 @@ async def test_normalizer_handles_sdk_turn_events_async(
         ],
     }[event_stream]
 
-    async def send_events_async(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+    async def send_events_async(method: str, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        if method == "session.sendAndWait" and not completion_rpc:
+            raise JsonRpcError(-32601, "Method not found")
         for event in events:
             session._dispatch_event(event)
+        if completion_rpc:
+            return {
+                "response": reply.to_dict(),
+                "aborted": event_stream == "aborted-idle",
+                "completionEventId": str(events[-1].id),
+            }
         return {"messageId": "sdk-request-id"}
 
     request.side_effect = send_events_async
@@ -1816,8 +1936,9 @@ async def test_normalizer_handles_sdk_turn_events_async(
         ("user", "none"),
         ("assistant", "none" if expected_error is None else "processing"),
     ]
-    request.assert_awaited_once()
-    assert request.await_args.args[0] == "session.send"
+    assert [entry.args[0] for entry in request.await_args_list] == (
+        ["session.sendAndWait"] if completion_rpc else ["session.sendAndWait", "session.send"]
+    )
     client.stop.assert_not_awaited()
     await target.cleanup_target_async()
     client.delete_session.assert_awaited_once_with("sdk-session-id")

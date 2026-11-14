@@ -387,7 +387,7 @@ class GitHubCopilotTarget(PromptTarget):
             raise RuntimeError("Copilot runtime status is unavailable after client startup.")
         logger.info(
             "Attempting Copilot session creation: pyrit_conversation_id=%s requested_sdk_session_id=%s "
-            "sdk_version=%s runtime_version=%s runtime_protocol_version=%s retain_session=%s remote_mode=OFF",
+            "sdk_version=%s runtime_version=%s runtime_protocol_version=%s retain_session=%s cloud_session=False",
             conversation_id,
             session_id,
             self._sdk.__version__,
@@ -414,7 +414,8 @@ class GitHubCopilotTarget(PromptTarget):
                 session_id=session_id,
                 model=self._model_name,
                 system_message=system_message,
-                remote_session=self._sdk.RemoteSessionMode.OFF,
+                # Cloud sessions are opt-in in the current SDK; keep this conversation local.
+                cloud=None,
                 available_tools=[],
                 skip_custom_instructions=True,
                 instruction_directories=[],
@@ -426,6 +427,14 @@ class GitHubCopilotTarget(PromptTarget):
                 memory={"enabled": False},
                 enable_session_store=False,
                 enable_file_hooks=False,
+                enable_skills=False,
+                included_builtin_skills=[],
+                skip_embedding_retrieval=True,
+                custom_agents_local_only=True,
+                coauthor_enabled=False,
+                manage_schedule_enabled=False,
+                enable_experimental_mode=False,
+                enable_session_telemetry=False,
             )
             async with self._lifecycle_condition:
                 conversation.session = session
