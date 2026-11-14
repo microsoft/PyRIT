@@ -84,9 +84,7 @@ def _match_tools_called(
     for event in payload.events:
         # Trace events do not retain arguments, so they cannot confirm an argument requirement.
         calls.setdefault(event.name, []).append(None)
-    verdicts = [
-        match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) for tool in condition.tools
-    ]
+    verdicts = [match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) for tool in condition.tools]
     complete = acquisition is Acquisition.COMPLETE and payload.coverage.complete
     if all(verdict is True for verdict in verdicts):
         if not condition.exhaustive:

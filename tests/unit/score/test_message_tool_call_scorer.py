@@ -614,9 +614,7 @@ async def test_exhaustive_argument_match_stays_open_until_other_tool_evidence_as
                 tools=(
                     ToolCallRequirement(
                         name="send_email",
-                        arguments=(
-                            ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),
-                        ),
+                        arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),),
                     ),
                 ),
                 exhaustive=True,
@@ -625,9 +623,7 @@ async def test_exhaustive_argument_match_stays_open_until_other_tool_evidence_as
     )
 
     score = (
-        await MessageToolCallScorer().score_async(
-            scorable=MessageScorable.from_message(reply), expectation=expectation
-        )
+        await MessageToolCallScorer().score_async(scorable=MessageScorable.from_message(reply), expectation=expectation)
     )[0]
 
     assert score.score_value == (None if expected is None else str(expected).lower())
