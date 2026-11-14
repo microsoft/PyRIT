@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.message_normalizer import ChatMessageNormalizer
-from pyrit.models import ChatMessage, ChatMessageRole, Message, MessagePiece, PromptDataType
+from pyrit.models import ChatMessage, ChatMessageRole, Message, MessagePiece, PromptDataType, PromptResponseError
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:
@@ -181,6 +181,46 @@ class TestChatMessageNormalizerNormalizeAsync:
                 original_value_data_type="unsupported_type",
                 converted_value_data_type="unsupported_type",
             )
+
+
+class TestChatMessageNormalizerErrorPieces:
+    """A content-filtered turn stays in history and must replay; other error pieces must not."""
+
+    @staticmethod
+    def _error_piece(*, response_error: PromptResponseError) -> MessagePiece:
+        return MessagePiece(
+            role="assistant",
+            original_value='{"status_code": 400, "message": "content_filter"}',
+            original_value_data_type="error",
+            converted_value_data_type="error",
+            response_error=response_error,
+        )
+
+    async def test_blocked_turn_replays_as_text_async(self) -> None:
+        piece = self._error_piece(response_error="blocked")
+
+        result = await ChatMessageNormalizer().normalize_async([Message(message_pieces=[piece])])
+
+        assert result[0].role == "assistant"
+        assert result[0].content == piece.converted_value
+
+    async def test_blocked_piece_in_multipart_message_replays_as_text_async(self) -> None:
+        piece = self._error_piece(response_error="blocked")
+        text = MessagePiece(role="assistant", original_value="partial answer")
+
+        result = await ChatMessageNormalizer().normalize_async([Message(message_pieces=[text, piece])])
+
+        assert result[0].content == [
+            {"type": "text", "text": "partial answer"},
+            {"type": "text", "text": piece.converted_value},
+        ]
+
+    @pytest.mark.parametrize("response_error", ["processing", "unknown"])
+    async def test_failed_exchange_error_still_raises_async(self, *, response_error: PromptResponseError) -> None:
+        piece = self._error_piece(response_error=response_error)
+
+        with pytest.raises(ValueError, match="Data type 'error' is not yet supported"):
+            await ChatMessageNormalizer().normalize_async([Message(message_pieces=[piece])])
 
 
 class TestChatMessageNormalizerAudioConversion:

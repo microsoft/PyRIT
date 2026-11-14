@@ -86,6 +86,42 @@ def test_build_text_chat_messages_preserves_roles():
     assert result[1] == {"role": "assistant", "content": "hi"}
 
 
+def _error_message(*, response_error):
+    return MessagePiece(
+        role="assistant",
+        conversation_id="c",
+        original_value='{"status_code": 400, "message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error=response_error,
+    ).to_message()
+
+
+def test_blocked_error_piece_counts_as_text():
+    conversation = [_text_message("a"), _error_message(response_error="blocked")]
+    assert is_text_only_conversation(conversation) is True
+
+    result = build_text_chat_messages(conversation)
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"] == '{"status_code": 400, "message": "content_filter"}'
+
+
+@pytest.mark.parametrize("response_error", ["processing", "unknown"])
+def test_non_blocked_error_piece_is_not_text(response_error):
+    conversation = [_text_message("a"), _error_message(response_error=response_error)]
+    assert is_text_only_conversation(conversation) is False
+
+    with pytest.raises(ValueError, match="only supports text and blocked error pieces"):
+        build_text_chat_messages(conversation)
+
+
+@pytest.mark.parametrize("response_error", ["processing", "unknown"])
+async def test_multimodal_builder_rejects_non_blocked_error_piece(response_error):
+    conversation = [_text_message("a"), _error_message(response_error=response_error)]
+    with pytest.raises(ValueError, match="Multimodal data type error is not yet supported"):
+        await build_multimodal_chat_messages_async(conversation=conversation)
+
+
 def test_build_text_content_entry():
     piece = _request_piece("describe this")
     assert build_text_content_entry(message_piece=piece) == {"type": "text", "text": "describe this"}

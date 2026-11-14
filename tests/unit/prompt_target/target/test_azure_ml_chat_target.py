@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import os
+import uuid
 from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from httpx import HTTPStatusError
 from openai import RateLimitError
@@ -13,6 +15,7 @@ from unit.mocks import get_sample_conversations
 from pyrit.exceptions import EmptyResponseException, RateLimitException
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import AzureMLChatTarget
 
 
@@ -187,6 +190,48 @@ async def test_complete_chat_async_bad_json_response(aml_online_chat: AzureMLCha
         mock.return_value = mock_response
         with pytest.raises(TypeError):
             await aml_online_chat._complete_chat_async(messages)
+
+
+async def test_send_after_content_filtered_turn_replays_it_as_text_async(*, aml_online_chat: AzureMLChatTarget) -> None:
+    request = httpx.Request("POST", "https://example.com/score")
+    filtered = HTTPStatusError(
+        "400",
+        request=request,
+        response=httpx.Response(
+            400, request=request, json={"error": {"code": "content_filter", "message": "ResponsibleAIPolicyViolation"}}
+        ),
+    )
+    answered = httpx.Response(200, request=request, json={"output": "second answer"})
+    normalizer = PromptNormalizer()
+    conversation_id = str(uuid.uuid4())
+
+    with patch(
+        "pyrit.common.net_utility.make_request_and_raise_if_error_async",
+        new_callable=AsyncMock,
+        side_effect=[filtered, answered],
+    ) as mock:
+        first = await normalizer.send_prompt_async(
+            message=Message(
+                message_pieces=[
+                    MessagePiece(role="user", original_value="gets filtered", conversation_id=conversation_id)
+                ]
+            ),
+            target=aml_online_chat,
+            conversation_id=conversation_id,
+        )
+        second = await normalizer.send_prompt_async(
+            message=Message(
+                message_pieces=[MessagePiece(role="user", original_value="follow-up", conversation_id=conversation_id)]
+            ),
+            target=aml_online_chat,
+            conversation_id=conversation_id,
+        )
+
+    assert first.get_piece().response_error == "blocked"
+    assert second.get_piece().converted_value == "second answer"
+    sent = mock.call_args_list[1].kwargs["request_body"]["input_data"]["input_string"]
+    assert [message["role"] for message in sent] == ["user", "assistant", "user"]
+    assert sent[1]["content"] == first.get_piece().converted_value
 
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_chat: AzureMLChatTarget):
