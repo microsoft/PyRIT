@@ -78,7 +78,7 @@ class ScorerMetrics:
     ``to_json``) and loading them from JSON files on disk (see
     ``from_json_file``).
 
-    Args:
+    Attributes:
         num_responses (int): Total number of responses evaluated.
         num_input_responses (int | None): Number of responses supplied before excluding scores that
             could not reach a verdict. None for metrics recorded before this field existed.
@@ -168,7 +168,7 @@ class HarmScorerMetrics(ScorerMetrics):
     """
     Metrics for evaluating a harm scorer against a HumanLabeledDataset.
 
-    Args:
+    Attributes:
         mean_absolute_error (float): The mean absolute error between the model scores and the gold scores.
         mae_standard_error (float): The standard error of the mean absolute error. This can be used to calculate
             a confidence interval for the mean absolute error.
@@ -277,7 +277,7 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     """
     Metrics for evaluating an objective scorer against a HumanLabeledDataset.
 
-    Args:
+    Attributes:
         accuracy (float): The accuracy of the model scores when using the majority vote of
             human scores as the gold label.
         f1_score (float): The F1 score of the model scores, an indicator of performance of the
@@ -321,7 +321,7 @@ class ScorerMetricsWithIdentity(Generic[M]):
     - ScorerMetricsWithIdentity[ObjectiveScorerMetrics] has metrics: ObjectiveScorerMetrics
     - ScorerMetricsWithIdentity[HarmScorerMetrics] has metrics: HarmScorerMetrics
 
-    Args:
+    Attributes:
         scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
         metrics (M): The evaluation metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """

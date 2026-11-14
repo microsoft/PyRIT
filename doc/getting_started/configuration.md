@@ -39,6 +39,7 @@ await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInit
 
 This gives you an in-memory database with configured targets and scorers registered for selection by name or tag. Replace the endpoint/key/model for your provider (Azure, Ollama, Groq, HuggingFace, etc.).
 
+(for-persistent-setup)=
 ## For Persistent Setup
 
 For anything beyond a quick test — especially `pyrit_scan`, scenarios, and repeated use — you'll want to save your configuration to files in `~/.pyrit/`:

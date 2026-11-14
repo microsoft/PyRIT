@@ -5,8 +5,12 @@ import json
 from pathlib import Path
 
 import jupytext
+import nbformat
 import pytest
 import yaml
+from jupytext.combine import combine_inputs_with_outputs
+from jupytext.config import load_jupytext_config, notebook_formats
+from jupytext.paired_paths import paired_paths
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMMONS_SOURCE = "https://commons.wikimedia.org/wiki/File:Gorch_Fock_unter_Segeln_Kieler_Foerde_2006.jpg"
@@ -35,12 +39,10 @@ def test_html_build_prepares_api_without_selecting_pdf() -> None:
     assert "build_scripts.gen_api_md" in api_commands[1]
 
 
-def test_pdf_targets_share_checked_export_and_all_builds_html_first() -> None:
-    pdf_dependencies, pdf_commands = _target("docs-build-pdf")
-    all_dependencies, all_commands = _target("docs-build-all")
-    assert pdf_dependencies == ["docs-api"]
-    assert all_dependencies == ["docs-build"]
-    assert pdf_commands == all_commands == ["uv run python -m build_scripts.build_docs_pdf"]
+def test_documentation_config_does_not_select_or_suppress_pdf_exports() -> None:
+    config = yaml.safe_load((REPO_ROOT / "doc" / "myst.yml").read_text(encoding="utf-8"))
+    assert all(export["format"] != "pdf" for export in config["project"].get("exports", []))
+    assert all(rule["rule"] != "tex-renders" for rule in config["project"]["error_rules"])
 
 
 @pytest.mark.parametrize(
@@ -89,3 +91,54 @@ def test_modality_feedback_citation_and_paired_cells() -> None:
     assert "#/media/" not in attribution
     assert any(cell.get("outputs") for cell in notebook["cells"])
     assert (path.parent / "assets" / "three_masted_ship_color.jpg").is_file()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "code/executor/2_multi_turn.ipynb",
+        "code/targets/1_openai_chat_target.ipynb",
+        "code/converters/0_converters.ipynb",
+    ],
+)
+def test_jupytext_pairing_uses_repository_configuration(relative_path: str) -> None:
+    path = REPO_ROOT / "doc" / relative_path
+    notebook = jupytext.read(path)
+    config = load_jupytext_config(path)
+    assert config is not None
+    formats = notebook_formats(notebook, config, str(path))
+    pairs = paired_paths(str(path), {"extension": ".ipynb"}, formats)
+    assert {Path(pair_path) for pair_path, _ in pairs} == {path, path.with_suffix(".py")}
+    assert all(Path(pair_path).is_file() for pair_path, _ in pairs)
+    assert next(fmt for pair_path, fmt in pairs if Path(pair_path).suffix == ".py")["format_name"] == "percent"
+
+
+@pytest.mark.parametrize("metadata_filter", ["-all", "class,-all"])
+def test_jupytext_metadata_filters_preserve_outputs_during_pairing(metadata_filter: str) -> None:
+    notebook = nbformat.v4.new_notebook(
+        metadata={
+            "jupytext": {"formats": "ipynb,py:percent", "cell_metadata_filter": metadata_filter},
+            "language_info": {"name": "python"},
+        },
+        cells=[
+            nbformat.v4.new_code_cell(
+                "print('retained output')",
+                metadata={"class": "example", "tags": ["hide-input"]},
+                execution_count=7,
+                outputs=[nbformat.v4.new_output("stream", name="stdout", text="retained output\n")],
+            ),
+            nbformat.v4.new_code_cell("%%bash\necho 'another language'"),
+        ],
+    )
+    percent = jupytext.writes(notebook, fmt="py:percent")
+    companion = jupytext.reads(percent, fmt="py:percent")
+    assert companion.cells[0].metadata == ({"class": "example"} if metadata_filter == "class,-all" else {})
+    assert companion.metadata.jupytext.main_language == "python"
+    assert "kernelspec" not in companion.metadata
+    assert companion.metadata.jupytext.formats == "ipynb,py:percent"
+    assert companion.metadata.jupytext.cell_metadata_filter == metadata_filter
+
+    combined = combine_inputs_with_outputs(companion, notebook, fmt="py:percent")
+    assert combined.cells == notebook.cells
+    assert combined.metadata.jupytext.formats == "ipynb,py:percent"
+    assert combined.metadata.jupytext.cell_metadata_filter == metadata_filter

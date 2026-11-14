@@ -55,7 +55,7 @@ class ScorerEvalDatasetFiles:
     Multiple files matching the patterns will be concatenated before evaluation.
     Each matched path is loaded once, even when patterns overlap or repeat.
 
-    Args:
+    Attributes:
         human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
             Examples: ``["objective/*.csv"]``, ``["objective/hate_speech.csv", "objective/violence.csv"]``
         result_file (str): Name of the result file (stem used as dict key in results).

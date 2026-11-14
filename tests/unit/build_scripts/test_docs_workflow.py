@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -179,15 +180,43 @@ def test_only_main_push_or_dispatch_can_publish_with_write_permissions() -> None
         assert jobs[name].get("permissions", workflow["permissions"]) == {"contents": "read"}
         assert "environment" not in jobs[name]
     deploy = jobs["deploy"]
-    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert deploy["permissions"] == {"actions": "read", "contents": "read", "pages": "write", "id-token": "write"}
     assert deploy["needs"] == "compose"
     assert " ".join(deploy["if"].split()) == PUBLISH_IF
     upload = _step(job="compose", name="Upload Pages artifact")
     assert " ".join(upload["if"].split()) == PUBLISH_IF
     assert jobs["compose"]["needs"] == ["versions", "build"]
     assert jobs["compose"]["if"] == "needs.versions.outputs.compose == 'true'"
-    assert len(deploy["steps"]) == 1
-    assert deploy["steps"][0]["uses"].startswith("actions/deploy-pages@")
+    assert _step(job="deploy", name="Deploy to GitHub Pages")["uses"].startswith("actions/deploy-pages@")
+
+
+def test_pages_recovery_reuses_composed_artifact_and_fails_closed() -> None:
+    steps = _workflow()["jobs"]["deploy"]["steps"]
+    check = _step(job="deploy", name="Check deployment recovery safety")
+    deploy = _step(job="deploy", name="Deploy to GitHub Pages")
+    diagnose = _step(job="diagnose", name="Diagnose failed Pages deployment")
+    assert _checkout("deploy")["with"] == {
+        "ref": "${{ github.sha }}",
+        "persist-credentials": "false",
+        "sparse-checkout": "build_scripts",
+    }
+    assert steps.index(check) < steps.index(deploy)
+    assert "if" not in check
+    diagnosis = _workflow()["jobs"]["diagnose"]
+    assert diagnosis["needs"] == "deploy"
+    assert diagnosis["if"] == "failure() && needs.deploy.result == 'failure'"
+    assert diagnosis["permissions"] == {"actions": "read", "contents": "read", "pages": "read"}
+    assert _checkout("diagnose")["with"] == _checkout("deploy")["with"]
+    for step, mode in [(check, "preflight"), (diagnose, "diagnose")]:
+        assert step["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+        assert step["with"]["retries"] == "0"
+        assert f"mode: '{mode}'" in step["with"]["script"]
+        assert "docs_deployment.cjs" in step["with"]["script"]
+        assert "Number(process.env.GITHUB_RUN_ATTEMPT)" in step["with"]["script"]
+    assert "with" not in deploy
+    assert _step(job="compose", name="Upload Pages artifact")["with"] == {"path": "dist", "retention-days": "7"}
+    assert all("download-artifact" not in step.get("uses", "") for step in steps)
+    assert all("continue-on-error" not in step for step in steps)
 
 
 def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None:
@@ -202,11 +231,29 @@ def test_workflow_preserves_full_build_and_frozen_release_dependencies() -> None
     assert "dependency-groups" in install
     assert "--group dev" in install and "--extra dev" in install
     build = _step(job="build", name="Build the static HTML site")
-    assert build["run"] == "uv run --frozen --no-sync jupyter-book build --all --html"
+    assert build["run"] == "uv run --frozen --no-sync jupyter-book build --html"
     upload = _step(job="build", name="Upload built site")
     assert upload["with"]["name"] == "site-${{ matrix.slug }}"
     assert upload["with"]["if-no-files-found"] == "error"
     assert all("continue-on-error" not in step for job in jobs.values() for step in job["steps"])
+
+
+def test_pages_build_never_selects_pdf_exports() -> None:
+    commands = [
+        shlex.split(line)
+        for step in _workflow()["jobs"]["build"]["steps"]
+        for line in step.get("run", "").splitlines()
+        if "jupyter-book build" in line
+    ]
+    assert commands
+    for command in commands:
+        assert "--html" in command or "--site" in command
+        assert "--all" not in command
+        assert "--pdf" not in command
+    upload = _step(job="build", name="Upload built site")
+    assert upload["with"]["path"] == "doc/_build/html"
+    cache = _step(job="build", name="Restore built site from cache")
+    assert cache["with"]["path"] == "doc/_build/html"
 
 
 def test_workflow_checks_current_docs_links_before_rendering() -> None:

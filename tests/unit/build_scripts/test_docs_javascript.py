@@ -17,7 +17,14 @@ from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-@pytest.mark.parametrize("suite", ["test_closest_page.cjs", "test_landing_video_players.cjs"])
+@pytest.mark.parametrize(
+    "suite",
+    [
+        "test_closest_page.cjs",
+        "test_landing_video_players.cjs",
+        "test_docs_deployment.cjs",
+    ],
+)
 def test_docs_javascript(suite: str) -> None:
     result = subprocess.run(
         ["node", "--test-reporter=tap", str(Path(__file__).with_name(suite))],

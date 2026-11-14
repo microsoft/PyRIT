@@ -19,6 +19,7 @@ Usage:
 import json
 import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 # Import sibling script for post-generation TOC validation.
@@ -63,6 +64,37 @@ def _method_anchor(module: str, class_name: str, method_name: str) -> str:
     return f"api-{_module_slug(module)}-{class_name}-{method_name}"
 
 
+def _unique_symbol_anchors(index: dict[str, list[SymbolEntry]]) -> dict[str, list[SymbolEntry]]:
+    """Disambiguate MyST's case-insensitive labels, retaining non-colliding anchors."""
+    entries = {entry for matches in index.values() for entry in matches}
+    reserved = {entry.anchor.lower() for entry in entries}
+    used: set[str] = set()
+    replacements: dict[SymbolEntry, SymbolEntry] = {}
+    # Functions render before classes, so keep the old destination for shared labels.
+    for entry in sorted(entries, key=lambda e: (e.module, e.kind != "function", e.qualname)):
+        anchor = entry.anchor
+        if anchor.lower() in used:
+            anchor = f"{entry.anchor}-{entry.kind}"
+            suffix = 2
+            while anchor.lower() in reserved or anchor.lower() in used:
+                anchor = f"{entry.anchor}-{entry.kind}-{suffix}"
+                suffix += 1
+        used.add(anchor.lower())
+        replacements[entry] = replace(entry, anchor=anchor)
+    return {key: [replacements[entry] for entry in matches] for key, matches in index.items()}
+
+
+def _indexed_anchor(
+    anchor: str,
+    *,
+    qualified_name: str,
+    symbol_index: dict[str, list[SymbolEntry]] | None,
+) -> str:
+    """Use the same resolved label for rendered definitions and references."""
+    entries = symbol_index.get(qualified_name, []) if symbol_index is not None else []
+    return entries[0].anchor if len(entries) == 1 else anchor
+
+
 def render_params(params: list[dict]) -> str:
     """Render parameter list as a markdown table."""
     if not params:
@@ -70,12 +102,13 @@ def render_params(params: list[dict]) -> str:
     lines = ["| Parameter | Type | Description |", "|---|---|---|"]
     for p in params:
         name = f"`{p['name']}`"
-        ptype = p.get("type", "")
+        ptype = f"`{p['type']}`" if p.get("type") else ""
         desc = p.get("desc", "").replace("\n", " ")
         default = p.get("default", "")
         if default:
             desc += f" Defaults to `{default}`."
-        lines.append(f"| {name} | `{ptype}` | {desc} |")
+        cells = [re.sub(r"(?<!\\)\|", r"\\|", cell) for cell in (name, ptype, desc)]
+        lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -211,7 +244,7 @@ def _build_symbol_index(modules: list[dict]) -> dict[str, list[SymbolEntry]]:
                 )
                 _add(name, entry)
                 _add(f"{mod_name}.{name}", entry)
-    return index
+    return _unique_symbol_anchors(index)
 
 
 def _resolve_symbol(raw: str, index: dict[str, list[SymbolEntry]], current_class: str | None) -> SymbolEntry | None:
@@ -411,6 +444,8 @@ def render_function(
     ret_str = f" → {ret}" if ret else ""
 
     anchor = _method_anchor(module, class_name, name) if class_name else _function_anchor(module, name)
+    qualname = f"{class_name}.{name}" if class_name else name
+    anchor = _indexed_anchor(anchor, qualified_name=f"{module}.{qualname}", symbol_index=symbol_index)
 
     # Anchor label precedes the heading so MyST cross-refs can target it.
     parts = [f"({anchor})=", f"{heading_level} `{prefix}{name}`\n"]
@@ -421,6 +456,12 @@ def render_function(
         text = _process_docstring_text(ds.get("text"), symbol_index, current_class=class_name)
         if text:
             parts.append(text + "\n")
+        for key, title in (("type_params", "Type Parameters"), ("attributes", "Attributes")):
+            entries = [dict(entry) for entry in ds.get(key, [])]
+            if entries:
+                if symbol_index is not None:
+                    _rewrite_param_table(entries, symbol_index, class_name)
+                parts.extend([f"**{title}:**\n", render_params(entries) + "\n"])
         params = list(ds.get("params", []))
         if params and symbol_index is not None:
             params = [dict(p) for p in params]
@@ -460,8 +501,10 @@ def render_class(
     """Render a class as markdown."""
     name = cls["name"]
     bases = cls.get("bases", [])
+    if symbol_index is None:
+        symbol_index = _build_symbol_index([{"name": module, "members": [cls]}])
 
-    anchor = _class_anchor(module, name)
+    anchor = _indexed_anchor(_class_anchor(module, name), qualified_name=f"{module}.{name}", symbol_index=symbol_index)
     parts = [f"({anchor})=", f"## `{name}`\n"]
     bases_md = _format_bases(bases, symbol_index)
     if bases_md:
@@ -472,14 +515,19 @@ def render_class(
     if text:
         parts.append(text + "\n")
 
+    for key, title in (("type_params", "Type Parameters"), ("attributes", "Attributes")):
+        entries = [dict(entry) for entry in (ds or {}).get(key, [])]
+        if entries:
+            _rewrite_param_table(entries, symbol_index, name)
+            parts.extend([f"**{title}:**\n", render_params(entries) + "\n"])
+
     # __init__
     init = cls.get("init")
     if init:
         init_ds = init.get("docstring", {})
         if init_ds and init_ds.get("params"):
             init_params = [dict(p) for p in init_ds["params"]]
-            if symbol_index is not None:
-                _rewrite_param_table(init_params, symbol_index, name)
+            _rewrite_param_table(init_params, symbol_index, name)
             parts.append("**Constructor Parameters:**\n")
             parts.append(render_params(init_params) + "\n")
 
@@ -494,7 +542,7 @@ def render_class(
         parts.extend(
             render_function(
                 m,
-                heading_level="####",
+                heading_level="###",
                 module=module,
                 class_name=name,
                 symbol_index=symbol_index,
@@ -523,6 +571,8 @@ def render_module(
 ) -> str:
     """Render a full module page."""
     mod_name = data["name"]
+    if symbol_index is None:
+        symbol_index = _build_symbol_index([data])
     short_name = mod_name.rsplit(".", 1)[-1]
     mod_label = f"api-{_module_slug(mod_name)}"
     parts = [
@@ -754,14 +804,13 @@ def main() -> None:
 
         # Link each class/function in the preview directly to its anchor so the
         # index page is a fast jumping-off point.
-        class_links = [
-            f"[`{m['name']}`](#{_class_anchor(mod_name, m['name'])})" for m in members if m.get("kind") == "class"
-        ]
-        function_links = [
-            f"[`{m['name']}()`](#{_function_anchor(mod_name, m['name'])})"
+        anchors = {
+            m["name"]: symbol_index[f"{mod_name}.{m['name']}"][0].anchor
             for m in members
-            if m.get("kind") == "function"
-        ]
+            if m.get("kind") in ("class", "function")
+        }
+        class_links = [f"[`{m['name']}`](#{anchors[m['name']]})" for m in members if m.get("kind") == "class"]
+        function_links = [f"[`{m['name']}()`](#{anchors[m['name']]})" for m in members if m.get("kind") == "function"]
         rendered_count = len(class_links) + len(function_links)
         preview_items = (class_links + function_links)[:8]
         preview = ", ".join(preview_items)

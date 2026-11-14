@@ -452,7 +452,7 @@ class PromptMemoryEntry(Base):
 
     Because of the nature of database and sql alchemy, type ignores are abundant :)
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the memory entry.
@@ -1304,7 +1304,7 @@ class EmbeddingDataEntry(Base):
     Represents the embedding data associated with conversation entries in the database.
     Each embedding is linked to a specific conversation entry via an id.
 
-    Parameters:
+    Attributes:
         id (Uuid): The primary key, which is a foreign key referencing the UUID in the PromptMemoryEntries table.
         embedding (ARRAY(Float)): An array of floats representing the embedding vector.
         embedding_type_name (String): The name or type of the embedding, indicating the model or method used.
@@ -1690,7 +1690,7 @@ class SeedEntry(Base):
     running through models with corresponding attack strategies, and applying converters.
     PromptMemoryEntry captures the processed prompt data before and after the above steps.
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the memory entry.
@@ -2050,7 +2050,7 @@ class AttackResultEntry(Base):
     """
     Represents the attack result data in the database.
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the attack result entry.

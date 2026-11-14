@@ -1,7 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
+import re
 from pathlib import Path
+from unittest.mock import patch
+
+from markdown_it import MarkdownIt
 
 from build_scripts import example_index as example_index_module
 from build_scripts import gen_api_md as gen_api_md_module
@@ -22,11 +27,55 @@ from build_scripts.gen_api_md import (
     render_class,
     render_function,
     render_module,
+    render_params,
 )
+
+
+def test_parameter_table_preserves_union_types_and_pipes_inside_cells() -> None:
+    markdown = render_params(
+        [
+            {"name": "objective_target", "type": "PromptTarget", "desc": "The chat model."},
+            {
+                "name": "processing_model",
+                "type": "PromptTarget | None",
+                "desc": "Choose `left | right`.\nPreserve an escaped \\| too.",
+                "default": "'left|right'",
+            },
+            {"name": "converter_config", "type": "StrategyConverterConfig | None", "desc": "Converters."},
+            {"name": "prompt_normalizer", "type": "PromptNormalizer | None", "desc": "Normalizer."},
+        ]
+    )
+    tokens = MarkdownIt("commonmark").enable("table").parse(markdown)
+    rows = []
+    cells: list[str] = []
+    for token in tokens:
+        if token.type == "tr_open":
+            cells = []
+        elif token.type == "inline":
+            cells.append("".join(child.content for child in token.children or []))
+        elif token.type == "tr_close":
+            rows.append(cells)
+
+    assert [len(row) for row in rows] == [3, 3, 3, 3, 3]
+    assert rows[2] == [
+        "processing_model",
+        "PromptTarget | None",
+        "Choose left | right. Preserve an escaped | too. Defaults to 'left|right'.",
+    ]
+    assert rows[3][1] == "StrategyConverterConfig | None"
+    assert rows[4][1] == "PromptNormalizer | None"
 
 
 def test_docs_scripts_share_validate_docs_module() -> None:
     assert example_index_module.validate_docs is gen_api_md_module.validate_docs
+
+
+def test_parameter_table_missing_type_renders_empty_cell_not_backticks() -> None:
+    markdown = render_params([{"name": "T", "desc": "The stored type."}])
+    html = MarkdownIt("commonmark").enable("table").render(markdown)
+    assert "<td></td>" in html
+    assert "`" not in html
+    assert "<td>The stored type.</td>" in html
 
 
 def _fake_class(name: str, methods: list[str] | None = None) -> dict:
@@ -109,6 +158,50 @@ def test_build_symbol_index_marks_duplicates_as_ambiguous() -> None:
     # FQN entries stay distinct
     assert len(index["pyrit.first.Scorer"]) == 1
     assert len(index["pyrit.second.Scorer"]) == 1
+
+
+def test_generated_labels_and_references_disambiguate_case_collisions(tmp_path: Path) -> None:
+    module = _fake_module(
+        "pyrit.prompt_target",
+        [_fake_class("Tool", methods=["Run", "run"]), _fake_function("tool"), _fake_class("PromptTarget")],
+    )
+    module["docstring"] = {"text": "Use ``Tool``, ``tool``, ``Tool.Run`` or ``Tool.run``."}
+    symbol_index = _build_symbol_index([module])
+    class_anchor = symbol_index["Tool"][0].anchor
+    function_anchor = symbol_index["tool"][0].anchor
+    assert function_anchor == "api-pyrit_prompt_target-tool"
+    assert class_anchor == "api-pyrit_prompt_target-Tool-class"
+    assert symbol_index["PromptTarget"][0].anchor == "api-pyrit_prompt_target-PromptTarget"
+    assert _build_symbol_index([_fake_module(module["name"], list(reversed(module["members"])))]) == symbol_index
+
+    api_json_dir = tmp_path / "_api"
+    api_json_dir.mkdir()
+    (api_json_dir / "pyrit.json").write_text(json.dumps(module), encoding="utf-8")
+    api_md_dir = tmp_path / "api"
+    example = ExampleReference(title="Tool guide", path="guide/tools.md")
+    with (
+        patch.object(gen_api_md_module, "API_JSON_DIR", api_json_dir),
+        patch.object(gen_api_md_module, "API_MD_DIR", api_md_dir),
+        patch.object(gen_api_md_module, "DOC_ROOT", tmp_path),
+        patch.object(gen_api_md_module, "_build_example_index", return_value={class_anchor: [example]}),
+        patch.object(gen_api_md_module.validate_docs, "main", return_value=0),
+    ):
+        gen_api_md_module.main()
+
+    page = (api_md_dir / "pyrit_prompt_target.md").read_text(encoding="utf-8")
+    labels = re.findall(r"^\(([^)]+)\)=$", page, re.MULTILINE)
+    assert len(labels) == 5
+    assert len({label.lower() for label in labels}) == len(labels)
+    assert render_module(module) == render_module(module, symbol_index=symbol_index)
+    assert f"[``Tool``](#{class_anchor})" in page
+    assert f"[``tool``](#{function_anchor})" in page
+    for qualname in ("Tool.Run", "Tool.run"):
+        assert f"[``{qualname}``](#{symbol_index[qualname][0].anchor})" in page
+    assert "- [Tool guide](../guide/tools.md)" in page
+    index_page = (api_md_dir / "index.md").read_text(encoding="utf-8")
+    assert f"[`Tool`](#{class_anchor})" in index_page
+    assert f"[`tool()`](#{function_anchor})" in index_page
+    assert set(re.findall(r"\]\(#([^)]+)\)", page + index_page)) <= set(labels)
 
 
 def test_rewrite_symbol_refs_links_unique_class() -> None:

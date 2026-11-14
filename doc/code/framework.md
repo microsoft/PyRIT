@@ -100,6 +100,7 @@ Surfaces run the core components, and the shared library supports both. The orch
 
 Converters, targets, and scorers are the bricks that attacks use. The registry builds components, and memory holds the shared record of conversations, scores, and results.
 
+(core-components)=
 # Core Components
 
 Core components are pluggable bricks. Each one can be swapped, combined, or replaced with a no-op, such as a converter that doesn't convert or a target that only prints. Most contributions belong in one of them. If yours doesn't fit, open an issue so we can discuss the architecture, and tell us what you want, or don't want, under Framework Plans.

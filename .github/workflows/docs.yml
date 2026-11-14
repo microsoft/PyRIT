@@ -199,13 +199,13 @@ jobs:
 
       - name: Build the static HTML site
         if: steps.cache.outputs.cache-hit != 'true'
-        # --all builds frontmatter exports (PDF, per doc/myst.yml).
-        # --html is required to produce the static HTML site we deploy.
+        # Pages publishes HTML only. Avoid --all so historical release
+        # configurations cannot select PDF exports or require LaTeX.
         # NOT using --strict because older release branches have known
         # warnings (e.g. unresolved cross-refs) that aren't worth fixing
         # retroactively just to satisfy strict mode.
         working-directory: doc
-        run: uv run --frozen --no-sync jupyter-book build --all --html
+        run: uv run --frozen --no-sync jupyter-book build --html
 
       - name: Upload built site
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -275,6 +275,7 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
+          retention-days: 7
 
   # ------------------------------------------------------------------
   # 4. Only main push/manual runs can publish the complete composed site.
@@ -287,12 +288,55 @@ jobs:
       ${{ github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     permissions:
+      actions: read
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: build_scripts
+
+      - name: Check deployment recovery safety
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const check = require('./build_scripts/docs_deployment.cjs');
+            await check({ github, context, core, mode: 'preflight',
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) });
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # Job logs are downloadable only after Deploy completes.
+  diagnose:
+    name: Diagnose Pages deployment
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: failure() && needs.deploy.result == 'failure'
+    permissions:
+      actions: read
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: build_scripts
+
+      - name: Diagnose failed Pages deployment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const check = require('./build_scripts/docs_deployment.cjs');
+            await check({ github, context, core, mode: 'diagnose',
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) });

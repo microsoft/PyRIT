@@ -4,15 +4,22 @@ When deploying Hugging Face (HF) models on Azure Machine Learning (Azure ML), yo
 
 ## 1. ResourceNotReady Error During Azure ML Model Deployment
 
-### Symptom:
+(symptom)=
+**Symptom:**
+
 You've deployed your model on Azure ML, but the deployment fails, and you encounter a `ResourceNotReady` error.
 
-### Potential Cause:
+(potential-cause)=
+**Potential Cause:**
+
 This error typically occurs when the container initialization takes longer than expected. Azure ML has liveness probes that check the health of the deployment. If the container doesn't initialize within the expected timeframe, the liveness probe fails, leading to a `ResourceNotReady` error.
 
-### Solution:
+(solution)=
+**Solution:**
 
-#### Step 1: Check Deployment Logs
+(step-1-check-deployment-logs)=
+**Step 1: Check Deployment Logs**
+
 1. Navigate to the Azure ML studio.
 2. Go to the **Endpoints** section.
 3. Select the endpoint you created.
@@ -28,13 +35,19 @@ This error typically occurs when the container initialization takes longer than 
    ![Azure ML Deployment ResourceNotReady Error](../../../assets/aml_deployment_resource_not_ready_error.png)
 
 
-#### Step 2: Adjust Environment Variable
+(step-2-adjust-environment-variable)=
+**Step 2: Adjust Environment Variable**
+
 1. Locate the `.env` file in your project directory.
 2. Modify the environment variable `AZURE_ML_MODEL_DEPLOY_LIVENESS_PROBE_INIT_DELAY_SECS` related to liveness probe initial delay time to a value greater than the default. For instance, the default value is 600 seconds, you might change it to 1800 seconds.
 3. Save the changes to your `.env` file.
 
-#### Step 3: Redeploy
+(step-3-redeploy)=
+**Step 3: Redeploy**
+
 Redeploy your model by running the deployment script again. This will apply the new settings.
 
-### Additional Resources:
+(additional-resources)=
+**Additional Resources:**
+
 For more detailed troubleshooting steps and explanations, refer to the official Azure ML documentation on troubleshooting online endpoints: [Troubleshoot online endpoints](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-troubleshoot-online-endpoints?view=azureml-api-2&tabs=cli#error-resourcenotready).
