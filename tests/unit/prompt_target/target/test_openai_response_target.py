@@ -852,6 +852,19 @@ async def test_build_input_for_multi_modal_async_rejects_generic_error(target: O
         await target._build_input_for_multi_modal_async([Message(message_pieces=[error_piece])])
 
 
+async def test_construct_input_item_rejects_non_blocked_error_piece(target: OpenAIResponseTarget):
+    error_piece = MessagePiece(
+        role="assistant",
+        original_value="transport failed",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="processing",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported piece type for inline content: error"):
+        await target._construct_input_item_from_piece_async(error_piece)
+
+
 async def test_send_after_content_filtered_turn_replays_it_as_text_async(*, target: OpenAIResponseTarget) -> None:
     content_filter_response = {
         "id": "resp_123",
