@@ -14,6 +14,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,6 +37,7 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
+from pyrit.registry import InitializerRegistry
 from pyrit.setup import ConfigurationLoader
 
 
@@ -359,43 +361,53 @@ class TestLifespan:
 
             assert str(load_mock.call_args.kwargs["config_file"]).endswith("foo.yaml")
 
-    async def test_lifespan_configures_custom_initializer_source_from_config(self, mock_scenario_run_lifecycle) -> None:
+    async def test_lifespan_configures_custom_initializer_source_from_config(
+        self, *, mock_scenario_run_lifecycle: object, tmp_path: Path
+    ) -> None:
         """Test that YAML config determines the custom script source."""
-        fake_config = ConfigurationLoader(custom_initializers_source="C:/yaml/initializers")
-        registry = MagicMock()
+        source = str(tmp_path / "initializers")
+        fake_config = ConfigurationLoader(custom_initializers_source=source)
+        registry = MagicMock(spec=InitializerRegistry)
+
+        async def initialize_async(**kwargs: Any) -> None:
+            await asyncio.to_thread(kwargs["initializer_factory"])
+
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
-            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
             patch(
-                "pyrit.backend.services.runtime_lifecycle.InitializerRegistry.get_registry_singleton",
-                return_value=registry,
+                "pyrit.setup.configuration_loader.initialize_pyrit_async", new=AsyncMock(side_effect=initialize_async)
             ),
+            patch.object(InitializerRegistry, "get_registry_singleton", return_value=registry),
+            patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
                 pass
 
-        registry.configure_custom_scripts_source.assert_called_once_with("C:/yaml/initializers")
+        registry.configure_custom_scripts_source.assert_called_once_with(source)
         registry.register_stored_initializers.assert_not_called()
 
-    async def test_lifespan_registers_stored_initializers_when_enabled(self, mock_scenario_run_lifecycle) -> None:
+    async def test_lifespan_registers_stored_initializers_when_enabled(
+        self, *, mock_scenario_run_lifecycle: object, tmp_path: Path
+    ) -> None:
         """Test that enabled custom initializers are registered before configured initialization."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
         call_order: list[str] = []
-        registry = MagicMock()
+        registry = MagicMock(spec=InitializerRegistry)
         registry.register_stored_initializers.side_effect = lambda **kwargs: call_order.append("custom")
 
-        async def initialize_async(*, raise_on_initializer_error: bool) -> None:
-            assert raise_on_initializer_error is True
+        async def initialize_async(**kwargs: Any) -> None:
+            assert kwargs["raise_on_initializer_error"] is True
+            await asyncio.to_thread(kwargs["initializer_factory"])
             call_order.append("configured")
 
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
-            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock(side_effect=initialize_async)),
             patch(
-                "pyrit.backend.services.runtime_lifecycle.InitializerRegistry.get_registry_singleton",
-                return_value=registry,
+                "pyrit.setup.configuration_loader.initialize_pyrit_async", new=AsyncMock(side_effect=initialize_async)
             ),
+            patch.object(InitializerRegistry, "get_registry_singleton", return_value=registry),
+            patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):

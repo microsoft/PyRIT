@@ -19,8 +19,9 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 @pytest.mark.parametrize("existing_memory", [False, True])
+@pytest.mark.parametrize("failure_phase", ["validation", "construction"])
 async def test_initializer_failure_closes_only_newly_installed_memory(
-    existing_memory: bool, sqlite_instance: SQLiteMemory
+    *, existing_memory: bool, sqlite_instance: SQLiteMemory, failure_phase: str
 ) -> None:
     previous = sqlite_instance if existing_memory else None
     instances = {SQLiteMemory: sqlite_instance} if existing_memory else {}
@@ -33,7 +34,13 @@ async def test_initializer_failure_closes_only_newly_installed_memory(
         mock.patch.object(SQLiteMemory, "dispose_engine_async", new_callable=mock.AsyncMock) as dispose,
     ):
         with pytest.raises(ValueError, match="invalid initializer"):
-            await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[initializer])
+            if failure_phase == "construction":
+                await initialize_pyrit_async(
+                    memory_db_type=IN_MEMORY,
+                    initializer_factory=mock.MagicMock(side_effect=ValueError("invalid initializer")),
+                )
+            else:
+                await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[initializer])
         assert CentralMemory._memory_instance is previous
         memory = instances[SQLiteMemory]
     if existing_memory:
@@ -41,6 +48,17 @@ async def test_initializer_failure_closes_only_newly_installed_memory(
     else:
         dispose.assert_awaited_once()
         await memory.dispose_engine_async()
+
+
+async def test_initializer_factory_conflict_is_rejected_before_setup_async() -> None:
+    with (
+        mock.patch(
+            "pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock
+        ) as load_environment,
+        pytest.raises(ValueError, match="either initializers or initializer_factory"),
+    ):
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[], initializer_factory=list)
+    load_environment.assert_not_awaited()
 
 
 @pytest.mark.parametrize("central_is_set", [False, True])

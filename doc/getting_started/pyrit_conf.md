@@ -224,6 +224,14 @@ Suites store ordered references to scenario presets and resolve each preset's cu
 
 A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
 
+Custom-initializer, preset, and suite storage sources are applied by `ConfigurationLoader`
+for both backend and programmatic initialization, before configured initializers are
+constructed for execution. At startup, environment and memory setup precede initializer
+construction and stored-script loading. During live
+reinitialization, code registrations are discarded and the requested storage sources are
+reapplied before initializers rebuild them; stored documents are not deleted. Removing a
+source setting selects its default location rather than retaining the previous source.
+
 ### `registry_recipes_source`
 
 Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. An Azure URI may include a blob-name prefix:

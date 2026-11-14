@@ -262,10 +262,14 @@ class ConfigurationLoader(YamlLoadable):
             value: The configured value.
 
         Raises:
-            ValueError: If the source is not a non-empty string.
+            ValueError: If the source is not a supported local directory or Azure Blob URI.
         """
+        from pyrit.registry.file_document_storage import FileDocumentStorage
+
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise ValueError(f"{name} must be a non-empty local directory or container URI.")
+        if value is not None:
+            FileDocumentStorage(source=value, extension="", source_label=name)
 
     def _validate_target_upload_directory(self) -> None:
         """
@@ -732,7 +736,7 @@ class ConfigurationLoader(YamlLoadable):
         from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         registry = await asyncio.to_thread(InitializerRegistry)
-        registry.configure_custom_scripts_source(self.custom_initializers_source)
+        await asyncio.to_thread(registry.configure_custom_scripts_source, self.custom_initializers_source)
         if self.allow_custom_initializers:
             await asyncio.to_thread(registry.register_stored_initializers, strict=True)
 
@@ -782,6 +786,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
+        self._configure_registry_sources()
         initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
         initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)
         if not initializers:
@@ -886,9 +891,6 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
-        resolved_initializers = self.resolve_initializers(
-            raise_on_initializer_error=raise_on_initializer_error,
-        )
         resolved_scripts = self.resolve_initialization_scripts()
         resolved_env_files = self.resolve_env_files()
 
@@ -898,7 +900,9 @@ class ConfigurationLoader(YamlLoadable):
         await initialize_pyrit_async(
             memory_db_type=internal_memory_db_type,
             initialization_scripts=resolved_scripts,
-            initializers=resolved_initializers if resolved_initializers else None,
+            initializer_factory=lambda: self._construct_initializers(
+                raise_on_initializer_error=raise_on_initializer_error
+            ),
             env_files=resolved_env_files,
             env_akv_ref=self.env_akv_ref,
             env_akv_strict=self.env_akv_strict,
@@ -906,6 +910,33 @@ class ConfigurationLoader(YamlLoadable):
             seed=self.seed,
             raise_on_initializer_error=raise_on_initializer_error,
         )
+
+    def _configure_registry_sources(self) -> None:
+        """Bind configuration-owned storage before initializer construction or execution."""
+        from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
+
+        InitializerRegistry.get_registry_singleton().configure_custom_scripts_source(self.custom_initializers_source)
+        presets = ScenarioPresetRegistry.get_registry_singleton()
+        suites = ScenarioSuiteRegistry.get_registry_singleton()
+        presets.configure_source(self.scenario_presets_source)
+        suites.configure_source(self.scenario_suites_source)
+        presets.scan_stored_presets()
+        suites.scan_stored_suites()
+
+    def _construct_initializers(self, *, raise_on_initializer_error: bool) -> Sequence["PyRITInitializer"]:
+        """
+        Load stored classes and construct configured initializers after environment and memory setup.
+
+        Returns:
+            Sequence[PyRITInitializer]: Configured instances ready to execute.
+        """
+        from pyrit.registry import InitializerRegistry
+
+        self._configure_registry_sources()
+        registry = InitializerRegistry.get_registry_singleton()
+        if self.allow_custom_initializers:
+            registry.register_stored_initializers(strict=raise_on_initializer_error)
+        return self.resolve_initializers(raise_on_initializer_error=raise_on_initializer_error, registry=registry)
 
 
 async def initialize_from_config_async(

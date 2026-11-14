@@ -3,11 +3,13 @@
 
 """Catalog selection, construction, registration, and main's ordinary launch path."""
 
+import asyncio
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
@@ -29,8 +31,10 @@ from pyrit.registry import (
     InitializerRegistry,
     Registry,
     ScenarioPresetRegistry,
+    ScenarioPresetStorage,
     ScenarioSuiteLaunchResolver,
     ScenarioSuiteRegistry,
+    ScenarioSuiteStorage,
     TargetRegistry,
 )
 from pyrit.scenario.scenarios.airt import Multilingual
@@ -41,6 +45,8 @@ from pyrit.setup.initializers import (
     HorizontalTechniquesSuite,
     ScenarioSuiteConfig,
     ScenarioSuiteInitializer,
+    TargetInitializer,
+    TechniqueInitializer,
 )
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -49,7 +55,10 @@ SUITE = "horizontal_techniques"
 
 @pytest.fixture
 def isolated_registries(tmp_path: Path) -> Iterator[None]:
-    with patch.dict(Registry._singletons, {}, clear=True):
+    with (
+        patch.dict(Registry._singletons, {}, clear=True),
+        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
+    ):
         ScenarioPresetRegistry.get_registry_singleton().configure_source(str(tmp_path / "presets"))
         ScenarioSuiteRegistry.get_registry_singleton().configure_source(str(tmp_path / "suites"))
         yield
@@ -232,6 +241,7 @@ async def test_reset_allows_changed_and_removed_configuration_async(tmp_path: Pa
     original = ScenarioPresetRegistry.get_registry_singleton().instances.get(f"{SUITE}_jailbreaks")
 
     reset_setup_registries()
+    ScenarioPresetRegistry.get_registry_singleton().configure_source(str(tmp_path / "presets"))
     ScenarioSuiteRegistry.get_registry_singleton().configure_source(str(tmp_path / "suites"))
     await _configured({"num_jailbreaks": 1}).initialize_async()
     changed = ScenarioPresetRegistry.get_registry_singleton().instances.get(f"{SUITE}_jailbreaks")
@@ -242,6 +252,140 @@ async def test_reset_allows_changed_and_removed_configuration_async(tmp_path: Pa
     reset_setup_registries()
     assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
     assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
+
+
+@pytest.mark.usefixtures("isolated_registries", "catalogs", "patch_central_database")
+@pytest.mark.parametrize("phase", ["startup", "reload"])
+@pytest.mark.parametrize("destination", ["custom", "default"])
+async def test_configuration_binds_requested_storage_before_suite_initialization_async(
+    *, tmp_path: Path, phase: str, destination: str
+) -> None:
+    conflicting_preset = ScenarioPreset(name=f"{SUITE}_obfuscation", scenario_name="airt.jailbreak")
+    conflicting_suite = ScenarioSuite(name=SUITE, description="Wrong storage source")
+    old_presets = ScenarioPresetRegistry.get_registry_singleton()
+    old_suites = ScenarioSuiteRegistry.get_registry_singleton()
+    await asyncio.to_thread(old_presets.save_preset, preset=conflicting_preset, expected_version=None)
+    await asyncio.to_thread(old_suites.save_suite, suite=conflicting_suite, expected_version=None)
+    if destination == "custom":
+        await asyncio.to_thread(
+            ScenarioPresetStorage(source=str(tmp_path / "defaults" / "scenario_presets")).save_preset,
+            preset=conflicting_preset,
+            expected_version=None,
+        )
+        await asyncio.to_thread(
+            ScenarioSuiteStorage(source=str(tmp_path / "defaults" / "scenario_suites")).save_suite,
+            suite=conflicting_suite,
+            expected_version=None,
+        )
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[],
+        initializers=["scenario_suite"],
+        scenario_presets_source=str(tmp_path / "requested_presets") if destination == "custom" else None,
+        scenario_suites_source=str(tmp_path / "requested_suites") if destination == "custom" else None,
+    )
+    if phase == "startup":
+        await config.initialize_pyrit_async()
+    else:
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        assert ScenarioPresetRegistry.get_registry_singleton() is old_presets
+        assert ScenarioSuiteRegistry.get_registry_singleton() is old_suites
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
+        assert ScenarioPresetRegistry.get_registry_singleton() is not old_presets
+        assert ScenarioSuiteRegistry.get_registry_singleton() is not old_suites
+
+    presets = ScenarioPresetRegistry.get_registry_singleton()
+    suites = ScenarioSuiteRegistry.get_registry_singleton()
+    assert presets.source == (config.scenario_presets_source or str(tmp_path / "defaults" / "scenario_presets"))
+    assert suites.source == (config.scenario_suites_source or str(tmp_path / "defaults" / "scenario_suites"))
+    assert len(presets.instances.get_names()) == 4
+    assert suites.instances.get_names() == [SUITE]
+    assert (
+        await asyncio.to_thread(
+            ScenarioPresetStorage(source=str(tmp_path / "presets")).load_preset, conflicting_preset.name
+        )
+        is not None
+    )
+    assert (
+        await asyncio.to_thread(
+            ScenarioSuiteStorage(source=str(tmp_path / "suites")).load_suite, conflicting_suite.name
+        )
+        is not None
+    )
+
+
+@pytest.mark.usefixtures("isolated_registries", "catalogs", "patch_central_database")
+@pytest.mark.parametrize("phase", ["startup", "reload"])
+@pytest.mark.parametrize("kind", ["preset", "suite"])
+async def test_configuration_checks_conflicts_in_requested_storage_async(
+    *, tmp_path: Path, phase: str, kind: str
+) -> None:
+    preset_source, suite_source = str(tmp_path / "requested_presets"), str(tmp_path / "requested_suites")
+    if kind == "preset":
+        await asyncio.to_thread(
+            ScenarioPresetStorage(source=preset_source).save_preset,
+            preset=ScenarioPreset(name=f"{SUITE}_obfuscation", scenario_name="airt.jailbreak"),
+            expected_version=None,
+        )
+    else:
+        await asyncio.to_thread(
+            ScenarioSuiteStorage(source=suite_source).save_suite,
+            suite=ScenarioSuite(name=SUITE, description="Conflicting operator definition"),
+            expected_version=None,
+        )
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[],
+        initializers=["scenario_suite"],
+        scenario_presets_source=preset_source,
+        scenario_suites_source=suite_source,
+    )
+    with pytest.raises(ValueError, match="conflicts with a stored document"):
+        if phase == "startup":
+            await config.initialize_pyrit_async()
+        else:
+            prepared = await config.preflight_reinitialization_async(environment_values={})
+            await config.apply_prepared_reinitialization_async(prepared=prepared)
+    assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
+    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
+
+
+@pytest.mark.usefixtures("isolated_registries", "catalogs", "patch_central_database")
+async def test_live_reload_changes_and_removes_suite_registration_async(tmp_path: Path) -> None:
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[],
+        initializers=["scenario_suite"],
+        scenario_presets_source=str(tmp_path / "presets"),
+        scenario_suites_source=str(tmp_path / "suites"),
+    )
+    await config.initialize_pyrit_async()
+    preset = ScenarioPreset(name="operator_preset", scenario_name="airt.jailbreak")
+    stored = await asyncio.to_thread(
+        ScenarioPresetRegistry.get_registry_singleton().save_preset, preset=preset, expected_version=None
+    )
+    for args in ({"num_jailbreaks": 1}, {"num_jailbreaks": 2}):
+        config = replace(config, initializers=[{"name": "scenario_suite", "args": {"suite_args": {SUITE: args}}}])
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
+        changed = ScenarioPresetRegistry.get_registry_singleton().instances.get(f"{SUITE}_jailbreaks")
+        assert changed is not None
+        assert len(changed.scenario_params["jailbreak_names"]) == args["num_jailbreaks"]
+
+    config = replace(config, initializers=[])
+    with (
+        patch.object(TechniqueInitializer, "initialize_async", AsyncMock()),
+        patch.object(TargetInitializer, "initialize_async", AsyncMock()),
+    ):
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
+    assert ScenarioPresetRegistry.get_registry_singleton().instances.get_names() == []
+    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == []
+    retained = await asyncio.to_thread(ScenarioPresetRegistry.get_registry_singleton().get_preset, name=preset.name)
+    assert retained is not None and retained.version == stored.version
 
 
 @pytest.mark.usefixtures("isolated_registries", "catalogs")
