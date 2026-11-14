@@ -13,10 +13,11 @@ from pydantic import ValidationError
 from pyrit.models import MessageScorable, Score, ToolExecutionMetadata, ToolsCalled
 from pyrit.models.messages.tool_content import FunctionCallContent, FunctionOutputContent
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.tool_argument_matching import describe_tool_requirement, match_tool_requirement
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from pyrit.models import ComponentIdentifier, MessagePiece, Scorable, ScoringExpectation
 
@@ -41,21 +42,23 @@ def _json_object(value: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _requested_call(piece: MessagePiece) -> tuple[str, str] | None:
+def _requested_call(piece: MessagePiece) -> tuple[str, str, dict[str, Any] | None] | None:
     """
-    Read the call id and function name from a model-authored function_call piece.
+    Read the call id, function name, and arguments from a model-authored function_call piece.
 
     Simulated history is skipped: an injected call is not a request this run made.
 
     Returns:
-        tuple[str, str] | None: The call id and name, or None if the piece is not a readable call.
+        tuple[str, str, dict[str, Any] | None] | None: The call id, name, and arguments, or None if
+            the piece is not a readable call. Arguments that are not a JSON object are None.
     """
     if piece.role != "assistant" or piece.converted_value_data_type != "function_call":
         return None
     try:
         # The shared model reads both the Chat Completions and the Responses shapes.
         content = FunctionCallContent.model_validate_json(piece.converted_value)
-        return content.validated_call_id(), content.validated_function().name
+        function = content.validated_function()
+        return content.validated_call_id(), function.name, _json_object(function.arguments)
     except (ValidationError, ValueError):
         return None
 
@@ -85,6 +88,25 @@ def _executed_call_id(piece: MessagePiece) -> str | None:
     return content.call_id
 
 
+def _executed_message_tool_calls(*, pieces: Iterable[MessagePiece]) -> list[tuple[str, dict[str, Any] | None]]:
+    """
+    Return each function call that ran, pairing each request with its output by call id.
+
+    Returns:
+        list[tuple[str, dict[str, Any] | None]]: The name and requested arguments of each execution.
+    """
+    requested: dict[str, tuple[str, dict[str, Any] | None]] = {}
+    executed: list[tuple[str, dict[str, Any] | None]] = []
+    # Walking in sequence order means an output only pairs with a request made before it.
+    for piece in sorted(pieces, key=lambda piece: piece.sequence):
+        if (call := _requested_call(piece)) is not None:
+            call_id, name, arguments = call
+            requested.setdefault(call_id, (name, arguments))
+        elif (call_id := _executed_call_id(piece)) is not None and call_id in requested:
+            executed.append(requested[call_id])
+    return executed
+
+
 def match_message_tool_calls(*, pieces: Iterable[MessagePiece]) -> set[str]:
     """
     Return the names of functions that ran, pairing each request with its output by call id.
@@ -95,15 +117,7 @@ def match_message_tool_calls(*, pieces: Iterable[MessagePiece]) -> set[str]:
     Returns:
         set[str]: Names of functions with an execution attempt in the given pieces.
     """
-    requested: dict[str, str] = {}
-    executed: set[str] = set()
-    # Walking in sequence order means an output only pairs with a request made before it.
-    for piece in sorted(pieces, key=lambda piece: piece.sequence):
-        if (call := _requested_call(piece)) is not None:
-            requested.setdefault(*call)
-        elif (call_id := _executed_call_id(piece)) is not None and call_id in requested:
-            executed.add(requested[call_id])
-    return executed
+    return {name for name, _ in _executed_message_tool_calls(pieces=pieces)}
 
 
 class MessageToolCallScorer(TrueFalseScorer):
@@ -113,6 +127,9 @@ class MessageToolCallScorer(TrueFalseScorer):
     This scorer needs no trace pipeline. Stored messages are partial evidence, so it reports true
     when every required tool ran and undetermined otherwise; it never reports false. Compose it
     with ``OtelToolCallScorer`` under an OR aggregator when trace evidence is also available.
+
+    A requirement with argument constraints needs one execution whose requested arguments, as
+    stored in its function_call piece, satisfy every constraint.
     """
 
     SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
@@ -130,16 +147,33 @@ class MessageToolCallScorer(TrueFalseScorer):
         if not piece.conversation_id or piece.sequence < 0:
             raise ValueError("Message tool-call scoring requires a stored conversation and message sequence.")
         conversation = await self._memory.get_message_pieces_async(conversation_id=piece.conversation_id)
-        executed = match_message_tool_calls(pieces=(p for p in conversation if p.sequence <= piece.sequence))
-        missing = [tool.name for tool in condition.tools if tool.name not in executed]
+        calls: dict[str, list[Mapping[str, Any] | None]] = {}
+        for name, arguments in _executed_message_tool_calls(
+            pieces=(p for p in conversation if p.sequence <= piece.sequence)
+        ):
+            calls.setdefault(name, []).append(arguments)
+        unmet = [
+            tool
+            for tool in condition.tools
+            if match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) is not True
+        ]
         piece_id = self._piece_id_from_scorable(scorable)
-        names = ", ".join(tool.name for tool in condition.tools)
-        if missing:
+        names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        if unmet:
+            # A tool that ran with other arguments did run, so say so rather than report no execution.
+            not_run = [describe_tool_requirement(tool) for tool in unmet if tool.name not in calls]
+            unmatched = [describe_tool_requirement(tool) for tool in unmet if tool.name in calls]
+            reasons = []
+            if not_run:
+                reasons.append(f"Stored messages show no execution of: {', '.join(not_run)}.")
+            if unmatched:
+                reasons.append(
+                    f"Stored messages show execution of {', '.join(unmatched)}, but no stored call matches "
+                    "the required arguments."
+                )
             return [
                 self._build_undetermined_score(
-                    rationale=(
-                        f"Stored messages show no execution of: {', '.join(missing)}. {_INCOMPLETE_EVIDENCE_REASON}"
-                    ),
+                    rationale=" ".join([*reasons, _INCOMPLETE_EVIDENCE_REASON]),
                     description="Tool invocation; successful completion is not required.",
                     scorable=scorable,
                     message_piece_id=piece_id,
