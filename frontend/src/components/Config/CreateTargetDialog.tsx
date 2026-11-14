@@ -32,10 +32,11 @@ import {
   buildParametersFromForm,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { useSaveability } from '@/hooks/useSaveability'
 import { targetsApi } from '@/services/api'
 import { isNotSaveableError, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
-import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
+import type { TargetAuthMode, TargetInstance, TargetSaveabilityRequest, TargetTypeEntry } from '@/types'
 import { suggestRegistryName, validateRegistryName } from '@/utils/registryName'
 import { isGuiTarget } from '@/utils/targetVisibility'
 import {
@@ -486,6 +487,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     return null
   })()
   const showIdentityEndpointError = identityEndpointError !== null
+  // Shown with the field after it loses focus, so a narrow screen still shows why Save is disabled.
+  const endpointMessage = fieldErrors.endpoint ?? (endpointFocused ? null : identityEndpointError)
   // The parent's list is current; the round-robin list is a snapshot from when it was fetched.
   const takenNames = useMemo(
     () => new Set((existingTargets ?? availableTargets).map((t) => t.target_registry_name)),
@@ -505,17 +508,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     ?? (nameTaken ? `A target named '${nameValue}' already exists.` : null)
     ?? (nameEdited ? validateRegistryName(nameValue) : null)
   const nameBlocked = nameConflictDetail !== null || nameTaken || validateRegistryName(nameValue) !== null
-  const predictedTemporaryReason: string | null = (() => {
+  // A type's own reasons are known upfront; whether the entered values can be saved is the backend's call.
+  const typeTemporaryReason: string | null = (() => {
     if (!targetType) return null
-    if (isRoundRobin) {
-      const temporaryMembers = selectedInnerTargets
-        .map((selected) => selected.registryName)
-        .filter((name) => availableTargets.find((t) => t.target_registry_name === name)?.origin === 'temporary')
-      if (temporaryMembers.length === 0) return null
-      return `Uses temporary ${temporaryMembers.length === 1 ? 'target' : 'targets'} ${
-        temporaryMembers.map((name) => `'${name}'`).join(', ')
-      }, which won't exist after a restart.`
-    }
     if (targetTypeEntry?.not_saveable_reason) return targetTypeEntry.not_saveable_reason
     const saveableAuthModes = targetTypeEntry?.saveable_auth_modes
     if (showAuthField && saveableAuthModes && !saveableAuthModes.includes(authMode)) {
@@ -523,16 +518,41 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       const current = authMode === 'api_key' ? 'an API key' : AUTH_MODE_LABELS[authMode]
       return `Saved targets can't use ${current} yet. Choose ${choices} to save this one.`
     }
-    const typedCredential = hasApiKeyField && !isIdentity && !isNoKey && apiKey !== ''
-      ? 'api_key'
-      : metadataDrivenParameters.find((parameter) => (
-        parameter.sensitive
-        && isParameterValueSet(parameterValues[parameter.name])
-        && !(isIdentity && parameter.identity_conflicting)
-      ))?.name
-    if (typedCredential) return `Saved targets can't hold credentials ('${typedCredential}') yet.`
     return null
   })()
+  const requestAuthMode: TargetAuthMode | undefined = isIdentity ? 'identity' : isNoKey ? 'none' : undefined
+  // The parameters a create request sends for the standard fields, or why the form can't give them.
+  const buildFormParams = (): { ok: true, params: Record<string, unknown> } | { ok: false, error: string } => {
+    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
+    if (!metadataParams.ok) return metadataParams
+    const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
+    // Identity-based auth must be enforceable: strip any metadata-driven
+    // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
+    // backend authenticate a different way than the selected identity.
+    if (isIdentity) {
+      for (const parameter of metadataDrivenParameters) {
+        if (parameter.identity_conflicting) delete params[parameter.name]
+      }
+    }
+    if (hasEndpointField && endpoint) params.endpoint = endpoint
+    if (hasModelNameField && modelName) params.model_name = modelName
+    if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
+    if ((underlyingModelRequired || hasDifferentUnderlying) && underlyingModel && hasUnderlyingModelField) {
+      params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
+    }
+    return { ok: true, params }
+  }
+  const saveabilityRequest: TargetSaveabilityRequest | null = (() => {
+    if (!targetType || typeTemporaryReason !== null) return null
+    if (isRoundRobin) {
+      if (selectedInnerTargets.length === 0) return null
+      return { type: targetType, params: { targets: selectedInnerTargets.map((selected) => selected.registryName) } }
+    }
+    const formParams = buildFormParams()
+    if (!formParams.ok) return null
+    return { type: targetType, params: formParams.params, ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}) }
+  })()
+  const checkedReason = useSaveability(saveabilityRequest, targetsApi.checkSaveability)
   // A refused save only applies to the values it was refused for, so any edit lets the user try saving again.
   const formKey = JSON.stringify([
     targetType,
@@ -546,7 +566,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     selectedInnerTargets,
   ])
   const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
-  const temporaryReason = predictedTemporaryReason ?? refusedReason
+  const temporaryReason = typeTemporaryReason ?? checkedReason ?? refusedReason
   const submitLabel = submitting ? 'Creating...' : (temporaryReason === null ? 'Save Target' : 'Create as Temporary')
   const temporaryWarningRef = useRef<HTMLDivElement>(null)
 
@@ -757,10 +777,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     }
     setFieldErrors({})
 
-    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
-    if (!metadataParams.ok) {
+    const formParams = buildFormParams()
+    if (!formParams.ok) {
       setHttpRequestError(null)
-      setError(metadataParams.error)
+      setError(formParams.error)
       return
     }
 
@@ -769,33 +789,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setHttpRequestError(null)
 
     try {
-      const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
-      // Identity-based auth must be enforceable: strip any metadata-driven
-      // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
-      // backend authenticate a different way than the selected identity.
-      if (isIdentity) {
-        for (const parameter of metadataDrivenParameters) {
-          if (parameter.identity_conflicting) delete params[parameter.name]
-        }
-      }
-      if (hasEndpointField && endpoint) params.endpoint = endpoint
-      if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
-
-      if (
-        (underlyingModelRequired || hasDifferentUnderlying)
-        && underlyingModel
-        && hasUnderlyingModelField
-      ) {
-        params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
-      }
-
       await targetsApi.createTarget({
         name: nameValue,
         type: targetType,
-        params,
-        ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
-        ...(isNoKey ? { auth_mode: 'none' as const } : {}),
+        params: formParams.params,
+        ...(requestAuthMode ? { auth_mode: requestAuthMode } : {}),
         persist,
       })
 
@@ -1088,8 +1086,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       label="Endpoint URL"
                       hint={endpointParameter?.description || undefined}
                       required={endpointRequired}
-                      validationMessage={fieldErrors.endpoint}
-                      validationState={fieldErrors.endpoint ? 'error' : 'none'}
+                      validationMessage={endpointMessage ?? undefined}
+                      validationState={endpointMessage ? 'error' : 'none'}
                     >
                       <Input
                         placeholder={isAzureML
@@ -1226,14 +1224,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         )}
                       </RadioGroup>
                     </Field>
-                  )}
-
-                  {showIdentityEndpointError && !endpointFocused && (
-                    <MessageBar intent="error" className={styles.warningMessage} role="status">
-                      <MessageBarBody className={styles.warningMessageBody}>
-                        {identityEndpointError}
-                      </MessageBarBody>
-                    </MessageBar>
                   )}
 
                   {hasApiKeyField && !isIdentity && !isNoKey && (
