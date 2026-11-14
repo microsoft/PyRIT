@@ -1447,6 +1447,39 @@ class TestTargetRoutes:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json() == {"detail": "bad endpoint"}
 
+    def test_check_target_saveability_answers_with_the_save_checks(self, client: TestClient) -> None:
+        params = {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "api_key": "sk-1"}
+
+        with_key = client.post("/api/targets/saveability", json={"type": "OpenAIChatTarget", "params": params})
+        with_identity = client.post(
+            "/api/targets/saveability", json={"type": "OpenAIChatTarget", "params": params, "auth_mode": "identity"}
+        )
+
+        assert with_key.status_code == status.HTTP_200_OK
+        assert with_key.json() == {
+            "not_saveable_reason": "Saved entries can't hold credentials ('api_key'). "
+            "It can still be created without saving it."
+        }
+        assert with_identity.json() == {"not_saveable_reason": None}
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (ValueError("bad endpoint"), status.HTTP_400_BAD_REQUEST),
+            (PermissionError("requires administrator access"), status.HTTP_403_FORBIDDEN),
+        ],
+    )
+    def test_check_target_saveability_refuses_what_creating_would(
+        self, client: TestClient, error: Exception, status_code: int
+    ) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.check_saveability_async = AsyncMock(side_effect=error)
+
+            response = client.post("/api/targets/saveability", json={"type": "TextTarget", "params": {}})
+
+        assert response.status_code == status_code
+        assert response.json() == {"detail": str(error)}
+
     def test_create_target_passes_the_saved_entries_source_and_no_owner_when_sign_in_is_off(
         self, client: TestClient
     ) -> None:
