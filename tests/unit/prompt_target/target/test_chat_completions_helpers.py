@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions import EmptyResponseException, PyritException
-from pyrit.models import JsonResponseConfig, Message, MessagePiece, TokenUsage
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, ReasoningContentMetadata, TokenUsage
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -25,9 +25,11 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     _build_audio_pieces_async,
     build_content_filter_message,
     build_response_pieces_async,
+    capture_reasoning_content,
     capture_token_usage,
     capture_usage_and_finish_reason,
     extract_partial_content,
+    extract_reasoning_content,
     get_finish_reason,
     is_content_filter_response,
     save_audio_response_async,
@@ -636,3 +638,126 @@ def test_set_response_metadata_rejects_an_unreserved_key():
 
     with pytest.raises(TypeError, match="reasoning_status"):
         set_response_metadata(pieces=[piece], reasoning_status="not_reserved")
+
+
+@pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
+def test_extract_reasoning_content_reads_either_provider_field(field):
+    resp = _mock_response("42")
+    setattr(resp.choices[0].message, field, "First, add the numbers.")
+
+    assert extract_reasoning_content(resp) == "First, add the numbers."
+
+
+def test_extract_reasoning_content_prefers_reasoning_content_over_reasoning():
+    resp = _mock_response("42")
+    resp.choices[0].message.reasoning_content = "from reasoning_content"
+    resp.choices[0].message.reasoning = "from reasoning"
+
+    assert extract_reasoning_content(resp) == "from reasoning_content"
+
+
+def test_extract_reasoning_content_falls_back_when_first_field_is_empty():
+    resp = _mock_response("42")
+    resp.choices[0].message.reasoning_content = ""
+    resp.choices[0].message.reasoning = "from reasoning"
+
+    assert extract_reasoning_content(resp) == "from reasoning"
+
+
+@pytest.mark.parametrize("value", [None, "", 7, ["step"], {"text": "step"}])
+def test_extract_reasoning_content_ignores_missing_and_non_string_values(value):
+    resp = _mock_response("42")
+    resp.choices[0].message.reasoning_content = value
+    resp.choices[0].message.reasoning = value
+
+    assert extract_reasoning_content(resp) is None
+
+
+def test_extract_reasoning_content_none_for_message_without_the_fields():
+    resp = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="42"))])
+
+    assert extract_reasoning_content(resp) is None
+
+
+def test_extract_reasoning_content_tolerates_response_without_choices():
+    assert extract_reasoning_content(_SyntheticContentFilterResponse()) is None
+    assert extract_reasoning_content(SimpleNamespace(choices=[])) is None
+
+
+def test_capture_reasoning_content_writes_only_to_first_piece():
+    resp = _mock_response("42")
+    resp.choices[0].message.reasoning_content = "First, add the numbers."
+    pieces = [_request_piece("a"), _request_piece("b")]
+    for piece in pieces:
+        piece.prompt_metadata.update(ReasoningContentMetadata(content="earlier reasoning").to_metadata())
+
+    capture_reasoning_content(pieces=pieces, response=resp)
+
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[0].prompt_metadata) == ReasoningContentMetadata(
+        content="First, add the numbers."
+    )
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[1].prompt_metadata) is None
+
+
+def test_capture_reasoning_content_clears_inherited_value_when_none_reported():
+    """Response pieces inherit request metadata, so an earlier turn's reasoning must not survive."""
+    pieces = [_request_piece("a"), _request_piece("b")]
+    for piece in pieces:
+        piece.prompt_metadata.update(ReasoningContentMetadata(content="reasoning from an earlier turn").to_metadata())
+        piece.prompt_metadata["reasoning_content"] = "legacy inherited reasoning"
+
+    capture_reasoning_content(pieces=pieces, response=_mock_response("42"))
+
+    assert all(ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) is None for piece in pieces)
+    assert all("reasoning_content" not in piece.prompt_metadata for piece in pieces)
+
+
+def test_capture_reasoning_content_leaves_other_metadata_untouched():
+    piece = _request_piece("a")
+    piece.prompt_metadata["caller_key"] = "caller_value"
+    resp = _mock_response("42")
+    resp.choices[0].message.reasoning_content = "thinking"
+
+    capture_reasoning_content(pieces=[piece], response=resp)
+
+    assert piece.prompt_metadata == {
+        "caller_key": "caller_value",
+        **ReasoningContentMetadata(content="thinking").to_metadata(),
+    }
+
+
+def test_reasoning_metadata_survives_json_round_trip():
+    reasoning = ReasoningContentMetadata(content="First, add the numbers.\nThen answer.")
+    metadata = json.loads(json.dumps(reasoning.to_metadata()))
+
+    assert metadata == {"pyrit_reasoning_content": {"content": "First, add the numbers.\nThen answer."}}
+    assert ReasoningContentMetadata.from_metadata(metadata=metadata) == reasoning
+
+
+@pytest.mark.parametrize("metadata", [{}, {"reasoning_content": "legacy reasoning"}])
+def test_reasoning_metadata_missing_or_legacy_is_unset(metadata):
+    assert ReasoningContentMetadata.from_metadata(metadata=metadata) is None
+
+
+@pytest.mark.parametrize("value", [None, "reasoning", {}, {"content": ""}, {"content": 7}])
+def test_reasoning_metadata_rejects_malformed_namespaced_values(value):
+    with pytest.raises(ValueError):
+        ReasoningContentMetadata.from_metadata(metadata={"pyrit_reasoning_content": value})
+
+
+def test_capture_reasoning_content_noop_without_pieces():
+    capture_reasoning_content(pieces=[], response=_mock_response("42"))
+
+
+def test_capture_usage_and_finish_reason_captures_reasoning_content():
+    resp = _mock_response("42")
+    resp.usage = None
+    resp.choices[0].message.reasoning_content = "First, add the numbers."
+    pieces = [_request_piece("ok")]
+
+    capture_usage_and_finish_reason(pieces=pieces, response=resp)
+
+    assert pieces[0].prompt_metadata == {
+        "finish_reason": "stop",
+        **ReasoningContentMetadata(content="First, add the numbers.").to_metadata(),
+    }
