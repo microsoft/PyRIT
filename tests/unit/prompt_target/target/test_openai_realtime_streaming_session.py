@@ -23,8 +23,10 @@ from pyrit.prompt_target.common.realtime_audio import (
     CommittedEvent,
     RealtimeTargetResult,
 )
+from pyrit.prompt_target.openai import _openai_realtime_streaming_session as streaming_session_module
 from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
     _OpenAIRealtimeStreamingSession,
+    _SentinelError,
 )
 from tests.unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 
@@ -562,6 +564,79 @@ async def test_run_async_propagates_audio_source_failure_and_cleans_up():
     connection.input_audio_buffer.commit.assert_not_awaited()
     connection.close.assert_awaited_once()
     normalizer.hash_and_persist_message_async.assert_not_awaited()
+
+
+async def test_run_async_teardown_failures_are_logged_and_do_not_replace_the_error(caplog):
+    """A dispatcher stop or connection close that raises during teardown is logged; the session's error surfaces."""
+    target = _build_target()
+    connection = target._connect_async.return_value
+    connection.close.side_effect = RuntimeError("close failed")
+
+    async def _failing_chunks():
+        yield b"\x01" * 100
+        raise RuntimeError("audio source disconnected")
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_failing_chunks(),
+        prompt_normalizer=_build_normalizer(),
+    )
+    _mock_session_wire(session)
+
+    with _patched_dispatcher() as captured:
+        dispatcher_factory = streaming_session_module._OpenAIRealtimeDispatcher
+        build_dispatcher = dispatcher_factory.side_effect
+
+        def _build_failing_dispatcher(**kwargs):
+            dispatcher = build_dispatcher(**kwargs)
+            dispatcher.stop_async.side_effect = RuntimeError("stop failed")
+            return dispatcher
+
+        dispatcher_factory.side_effect = _build_failing_dispatcher
+        with caplog.at_level("WARNING", logger=streaming_session_module.logger.name):
+            with pytest.raises(RuntimeError, match="audio source disconnected"):
+                async for _ in session.run_async():
+                    pytest.fail("no message should be yielded after the audio source fails")
+
+    captured["dispatcher"].stop_async.assert_awaited_once()
+    connection.close.assert_awaited_once()
+    assert "dispatcher.stop_async() raised during session teardown: stop failed" in caplog.text
+    assert "connection.close() raised during session teardown: close failed" in caplog.text
+
+
+def test_on_dispatcher_failure_logs_when_the_queue_rejects_the_sentinel(caplog):
+    """The dispatcher failure bridge never raises, even when the queue rejects the failure sentinel."""
+    session = _OpenAIRealtimeStreamingSession(
+        target=_build_target(),
+        audio_chunks=_paced_chunks([], asyncio.Event()),
+        prompt_normalizer=_build_normalizer(),
+    )
+    session._queue = MagicMock()
+    session._queue.put_nowait.side_effect = asyncio.QueueFull()
+
+    with caplog.at_level("WARNING", logger=streaming_session_module.logger.name):
+        session._on_dispatcher_failure(RuntimeError("dispatch loop died"))
+
+    session._queue.put_nowait.assert_called_once()
+    assert "Failed to bridge dispatcher failure into session queue" in caplog.text
+
+
+async def test_on_committed_bridges_a_turn_failure_to_the_consumer_queue():
+    """A turn that raises is put on the queue as a failure sentinel instead of escaping the callback."""
+    session = _OpenAIRealtimeStreamingSession(
+        target=_build_target(),
+        audio_chunks=_paced_chunks([], asyncio.Event()),
+        prompt_normalizer=_build_normalizer(),
+    )
+    session._queue = asyncio.Queue()
+    turn_failure = RuntimeError("turn failed")
+    session._handle_committed_turn_async = AsyncMock(side_effect=turn_failure)
+
+    await session._on_committed_async(CommittedEvent(item_id="item-1"))
+
+    item = session._queue.get_nowait()
+    assert isinstance(item, _SentinelError)
+    assert item.exc is turn_failure
 
 
 # ---------------------------------------------------------------------------

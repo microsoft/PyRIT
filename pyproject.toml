@@ -412,6 +412,7 @@ select = [
     "ERA",  # https://docs.astral.sh/ruff/rules/#eradicate-era
     "EXE",  # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
     "F401",  # unused-import
+    "F821",  # undefined-name
     "FA",  # https://docs.astral.sh/ruff/rules/#flake8-future-annotations-fa
     "FLY",  # https://docs.astral.sh/ruff/rules/#flynt-fly
     "I",  # isort
@@ -426,6 +427,10 @@ select = [
     "Q",  # https://docs.astral.sh/ruff/rules/#flake8-quotes-q
     "RET",  # https://docs.astral.sh/ruff/rules/#flake8-return-ret
     "RSE",  # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "RUF006",  # asyncio-dangling-task
+    "RUF013",  # implicit-optional
+    "RUF019",  # unnecessary-key-check
+    "RUF100",  # unused-noqa
     "SIM",  # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
     "SLOT",  # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
     "T10",  # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
@@ -494,6 +499,22 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
 "tests/**/*.py" = ["ANN", "B017"]
+# Migration revisions are immutable once added. Keep RUF100 enabled for new
+# revisions while exempting only existing files with stale noqa directives.
+"pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/24b44ef076b6_drop_v1_deprecated_columns.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/5a1d3c7e9f04_add_score_status_and_scorable.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/5d7f9b1c3e2a_add_seed_decomposition.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/6ea3eb4b61c3_link_conversations_to_attack_results.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/9b2d4f6a8c0e_add_seed_conditions.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/9c8b7a6d5e4f_add_attribution_to_attack_results.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/a6c8e0f2b4d7_add_seed_origin.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/a8f3c1d9e620_preserve_legacy_simulation_technique_flags.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/b2f4c6a8d1e3_add_conversations_table.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/c8d3e5f7a901_add_operations_and_findings.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/d7e9f1a3b5c6_index_attack_result_recency.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/e5f7a9c1b3d2_add_identifiers_tables.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/e7a1b3c5d9f0_add_seed_is_general_technique.py" = ["RUF100"]
 # Infrastructure/utility scripts — not part of the library API
 "build_scripts/**/*.py" = ["ANN"]
 "docker/**/*.py" = ["ANN"]

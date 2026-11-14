@@ -183,7 +183,7 @@ class AzureSpeechAudioToTextConverter(Converter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
