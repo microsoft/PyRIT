@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 
+import hashlib
+
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.datasets import TextJailBreak
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -26,7 +28,7 @@ class TextJailbreakConverter(Converter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build identifier with jailbreak template path.
+        Build identifier with the jailbreak template source and a hash of the resolved template value.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
@@ -34,6 +36,9 @@ class TextJailbreakConverter(Converter):
         return self._create_identifier(
             params={
                 "jailbreak_template_path": self.jail_break_template.template_source,
+                "jailbreak_template_hash": hashlib.sha256(
+                    str(self.jail_break_template.template.value).encode("utf-8")
+                ).hexdigest()[:16],
             }
         )
 
