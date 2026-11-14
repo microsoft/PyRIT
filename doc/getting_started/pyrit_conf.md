@@ -154,6 +154,36 @@ initializers:
 
 Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
+#### Optional Scenario Suites
+
+The `scenario_suite` initializer registers read-only suites and their presets from
+a configurable catalog. The default `horizontal_techniques` suite applies jailbreak
+templates, translation, encodings, and obfuscations to the same `airt_harms`
+text objectives, with one baseline. Launch it under **Scenario suites** in the GUI Scanner.
+
+```yaml
+initializers:
+  - name: target
+  - name: scorer
+  - name: technique
+  - name: scenario_suite
+    args:
+      tags:
+        - default
+      suite_args:
+        horizontal_techniques:
+          num_jailbreaks: 5
+          languages: [French, Spanish]
+          encoding_techniques: [all]
+          num_obfuscations: 4
+          selection_seed: 42
+```
+
+`suite_args` supplies validated per-suite constructor overrides without modifying the catalog. Lists replace the defaults; `null` restores them. Technique names and sample counts are mutually exclusive per family. This suite is text-only and uses the existing scenario scoring behavior.
+
+See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for selector options,
+validation, text-objective selection, and running a suite.
+
 ### `custom_initializers_source`
 
 Stores custom initializer Python files in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:
@@ -193,6 +223,8 @@ scenario_suites_source: https://account.blob.core.windows.net/pyrit-storage/scen
 Suites store ordered references to scenario presets and resolve each preset's current status when read. The `ScenarioSuiteRegistry` merges editable suites from this source with read-only suites registered by code. A stored document takes precedence when both layers use the same name, while creating or updating a document under a registered name is rejected so one name has one owner. Registered suites report no document version.
 
 A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
+
+Custom initializer, preset, and suite storage sources are applied by `ConfigurationLoader` for both backend and programmatic initialization, before configured initializers are constructed for execution. At startup, environment and memory setup precede initializer construction and stored-script loading. During live reinitialization, code registrations are discarded and the requested storage sources are reapplied before initializers rebuild them; stored documents are not deleted. Removing a source setting selects its default location rather than retaining the previous source.
 
 ### `registry_recipes_source`
 

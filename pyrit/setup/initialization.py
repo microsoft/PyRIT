@@ -69,6 +69,7 @@ def reset_setup_registries() -> None:
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
+        ScenarioPresetRegistry,
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
@@ -84,6 +85,7 @@ def reset_setup_registries() -> None:
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
+        ScenarioPresetRegistry,
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
@@ -146,6 +148,7 @@ async def initialize_pyrit_async(
     *,
     initialization_scripts: Sequence[str | pathlib.Path] | None = None,
     initializers: Sequence["PyRITInitializer"] | None = None,
+    initializer_factory: Callable[[], Sequence["PyRITInitializer"]] | None = None,
     load_defaults: bool = True,
     env_files: Sequence[pathlib.Path] | None = None,
     env_akv_ref: Sequence[str] | None = None,
@@ -166,6 +169,8 @@ async def initialize_pyrit_async(
             executed. Loading is handled by the InitializerRegistry.
         initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
+        initializer_factory (Callable[[], Sequence[PyRITInitializer]] | None): Optional factory run in a worker
+            after environment and memory setup, before script loading. Mutually exclusive with ``initializers``.
         load_defaults (bool): If True (default) AND the caller supplies neither ``initializers`` nor
             ``initialization_scripts``, a default initializer set is run so a bare
             ``initialize_pyrit_async(...)`` yields a usable environment: the core attack-technique catalog
@@ -196,8 +201,10 @@ async def initialize_pyrit_async(
 
     Raises:
         TypeError: If ``env_akv_strict`` is not a bool or seed is not an int or None.
-        ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
+        ValueError: If the memory type or environment files are invalid, or both initializer inputs are supplied.
     """
+    if initializers is not None and initializer_factory is not None:
+        raise ValueError("Provide either initializers or initializer_factory, not both.")
     validate_env_akv_strict(env_akv_strict=env_akv_strict)
     await load_environment_async(
         env_akv_ref=env_akv_ref, env_files=env_files, env_akv_strict=env_akv_strict, silent=silent
@@ -245,7 +252,10 @@ async def initialize_pyrit_async(
     try:
         await memory.recover_dataset_cleanup_async()
         # Combine directly provided initializers with those loaded from scripts.
-        all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
+        configured_initializers = (
+            await asyncio.to_thread(initializer_factory) if initializer_factory is not None else initializers
+        )
+        all_initializers: list[PyRITInitializer] = list(configured_initializers or [])
 
         # Load additional initializers from scripts — the registry owns turning
         # external script files into initializer instances.
