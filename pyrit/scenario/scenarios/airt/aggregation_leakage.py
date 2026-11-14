@@ -281,7 +281,7 @@ class AggregationLeakage(Scenario):
         )
         return factory.create(
             objective_target=objective_target,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=cast("TrueFalseScorer", self._objective_scorer)),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
             extra_request_converters=ConverterConfiguration.from_converters(converters=converters)
             if converters
             else None,
@@ -318,7 +318,7 @@ class AggregationLeakage(Scenario):
         include_context = cast("bool", self.params.get("include_context", True))
         if not include_context:
             await self._validate_external_context_async(context)
-        scorer = cast("TrueFalseScorer", self._objective_scorer)
+        scorer = self._objective_scorer
         techniques = sorted({technique.value for technique in context.scenario_techniques})
 
         atomic_attacks: list[AtomicAttack] = []
