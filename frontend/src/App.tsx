@@ -155,7 +155,7 @@ function LegacyAttackRedirect() {
     ? attackRoutePath(routerPathParamValue(attackId))
     : attackConversationRoutePath(routerPathParamValue(attackId), routerPathParamValue(conversationId))
 
-  return <Navigate replace to={`${path}${location.search}${location.hash}`} />
+  return <Navigate replace to={`${path}${location.search}${location.hash}`} state={location.state} />
 }
 
 /** Status of the in-flight attack load for an /attack/chat/:id route. */
@@ -871,10 +871,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const chatElement = isAttackNotFound || isAttackError || isEvidenceConversationMissing ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
-      variant={isAttackError ? 'error' : 'not-found'}
+      conversationId={isEvidenceConversationMissing ? routeConversationId : undefined}
+      variant={isAttackError ? 'error' : isEvidenceConversationMissing ? 'evidence-missing' : 'not-found'}
       findingEvidenceId={findingEvidenceId}
       onStartNew={handleNewAttack}
       onBackToHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
+      onViewAttack={isEvidenceConversationMissing && routeAttackId ? () => {
+        navigate(attackRoutePath(routeAttackId, scenarioResultId), { state: location.state })
+      } : undefined}
     />
   ) : (
     <ChatWindow
