@@ -137,4 +137,5 @@ def test_unicode_migration_preserves_sql_server_collation_and_refuses_lossy_down
     assert "NVARCHAR(MAX)" in ddl
     assert "[DatasetLifecycleEntries]" in ddl and "NVARCHAR(256) COLLATE" in ddl
     assert "collation_name FROM sys.columns" in ddl
-    assert "QUOTENAME(@collation)" in ddl
+    assert "QUOTENAME" not in ddl
+    assert "COLLATE ' + @collation" in ddl

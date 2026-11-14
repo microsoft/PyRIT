@@ -4,6 +4,15 @@ Notebooks are the primary way many of our operators interact with PyRIT. As such
 
 We use notebooks to ensure that we can connect to actual endpoints and that broad functionality is working as expected.
 
+## Writing docs
+
+These rules apply the [docs principles](../code/framework.md#docs).
+
+- Cover one task or concept per page, and lead with the common case.
+- Show working code instead of describing it. Link to the API reference instead of restating parameters.
+- Keep change history and design rationale in the pull request, not in the docs.
+- When behavior changes, update the docs that describe it, and delete what is no longer true.
+
 ## Updates using percent files
 
 All documentation should be a `.md` file or a `.py` file in the percent format file. We then use jupytext to execute this code and convert to `.ipynb` for consumption. We have several reasons for this. 1) `.py` and `.md` files are much easier to review. 2) documentation code was tough to keep up to date without running it (which we can do automatically with jupytext). 3) It gives us some level of integration testing; if models change from underneath us, we have some way of detecting the changes.

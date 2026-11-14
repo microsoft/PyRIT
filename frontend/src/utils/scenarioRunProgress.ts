@@ -180,7 +180,10 @@ export function getEtaMilliseconds(
   return Number.isFinite(estimate) && estimate >= 0 ? estimate : null
 }
 
-function compareAttempts(left: ScenarioProgressResult, right: ScenarioProgressResult): number {
+export function compareAttempts(
+  left: Pick<ScenarioProgressResult, 'timestamp' | 'attack_result_id'>,
+  right: Pick<ScenarioProgressResult, 'timestamp' | 'attack_result_id'>,
+): number {
   const timestampDifference = Date.parse(left.timestamp) - Date.parse(right.timestamp)
   if (Number.isFinite(timestampDifference) && timestampDifference !== 0) {
     return timestampDifference
