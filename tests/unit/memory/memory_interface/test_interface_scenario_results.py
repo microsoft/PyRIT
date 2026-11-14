@@ -1034,6 +1034,39 @@ async def test_try_update_scenario_run_state_preserves_a_terminal_state(
     assert hydrated.error_type == "CancelledError"
 
 
+async def test_try_update_scenario_run_state_compares_expected_metadata_fields(
+    sqlite_instance: MemoryInterface,
+):
+    """A state transition can also be guarded by an execution-specific metadata value."""
+    scenario_result = create_scenario_result(name="CAS Metadata", attack_results={"a": []})
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+    sid = str(scenario_result.id)
+    token_key = "scenario_run_execution_token_v1"
+    await sqlite_instance.update_scenario_run_state_and_metadata_fields_async(
+        scenario_result_id=sid,
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        metadata_fields={token_key: "resumed-execution"},
+    )
+
+    stale_update = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        expected_metadata_fields={token_key: "original-execution"},
+    )
+    matching_update = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        expected_metadata_fields={token_key: "resumed-execution"},
+    )
+
+    assert stale_update is False
+    assert matching_update is True
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
+
+
 async def test_try_update_scenario_run_state_reports_a_missing_row(
     sqlite_instance: MemoryInterface,
 ):

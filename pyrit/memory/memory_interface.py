@@ -7793,6 +7793,7 @@ class MemoryInterface(abc.ABC):
         scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
+        expected_metadata_fields: Mapping[str, str] | None = None,
     ) -> bool:
         """
         Update the run state only when the stored state is one of ``expected_states``.
@@ -7808,6 +7809,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
+            expected_metadata_fields (Mapping[str, str] | None): Optional metadata fields that must match.
 
         Returns:
             bool: True if the row was updated, False if it was missing or in another state.
@@ -7831,14 +7833,15 @@ class MemoryInterface(abc.ABC):
             values["completion_time"] = datetime.now(tz=UTC)
 
         with closing(self._get_session()) as session:
-            updated_rows = (
-                session.query(ScenarioResultEntry)
-                .filter(
-                    ScenarioResultEntry.id == scenario_result_id,
-                    ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
-                )
-                .update(values, synchronize_session=False)
+            filters = [
+                ScenarioResultEntry.id == scenario_result_id,
+                ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
+            ]
+            filters.extend(
+                ScenarioResultEntry.scenario_metadata[key].as_string() == value
+                for key, value in (expected_metadata_fields or {}).items()
             )
+            updated_rows = session.query(ScenarioResultEntry).filter(*filters).update(values, synchronize_session=False)
             session.commit()
 
         if updated_rows:
@@ -12604,6 +12607,7 @@ class MemoryInterface(abc.ABC):
         scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
+        expected_metadata_fields: Mapping[str, str] | None = None,
     ) -> bool:
         """
         Use ``try_update_scenario_run_state_async``.
@@ -12624,6 +12628,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state=scenario_run_state,
             error_message=error_message,
             error_type=error_type,
+            expected_metadata_fields=expected_metadata_fields,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.try_update_scenario_run_state)
@@ -12635,6 +12640,7 @@ class MemoryInterface(abc.ABC):
         scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
+        expected_metadata_fields: Mapping[str, str] | None = None,
     ) -> bool:
         """
         Update the run state only when the stored state is one of ``expected_states``.
@@ -12650,6 +12656,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
+            expected_metadata_fields (Mapping[str, str] | None): Optional metadata fields that must match.
 
         Returns:
             bool: True if the row was updated, False if it was missing or in another state.
@@ -12664,6 +12671,7 @@ class MemoryInterface(abc.ABC):
             scenario_run_state=scenario_run_state,
             error_message=error_message,
             error_type=error_type,
+            expected_metadata_fields=expected_metadata_fields,
         )
 
     def update_scenario_metadata(self, *, scenario_result_id: str, metadata: dict[str, Any]) -> None:

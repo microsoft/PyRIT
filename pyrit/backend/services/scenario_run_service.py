@@ -89,6 +89,7 @@ from pyrit.models import (
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
+    ScenarioRunExecutionToken,
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -134,6 +135,7 @@ _RESERVED_INITIAL_METADATA_KEYS = frozenset(
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
         _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
+        ScenarioRunExecutionToken.METADATA_KEY,
         SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -223,6 +225,7 @@ class _ActiveTask:
     created_at: datetime | None = None
     enqueued_at: datetime | None = None
     started_at: datetime | None = None
+    execution_token: ScenarioRunExecutionToken | None = None
     cancellation_state: ScenarioRunState = ScenarioRunState.CANCELLED
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
@@ -1473,12 +1476,15 @@ class ScenarioRunService:
     async def _start_scheduled_run_locked_async(self, *, scheduled: _ActiveTask) -> None:
         """Start one run while the scheduler lock guarantees exclusive ownership."""
         scheduled.started_at = datetime.now(UTC)
+        execution_token = ScenarioRunExecutionToken(token=uuid.uuid4().hex)
+        scheduled.execution_token = execution_token
         await self._memory.update_scenario_run_state_and_metadata_fields_async(
             scenario_result_id=scheduled.scenario_result_id,
             scenario_run_state=ScenarioRunState.IN_PROGRESS,
             metadata_fields={
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
+                **execution_token.to_metadata(),
             },
         )
         self._launch_scheduled_run_locked(scheduled=scheduled)
@@ -1855,14 +1861,29 @@ class ScenarioRunService:
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:
+            expected_metadata_fields = (
+                active.execution_token.to_metadata() if active.execution_token is not None else None
+            )
             try:
-                await self._memory.try_update_scenario_run_state_async(
+                updated = await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=active.cancellation_state,
                     error_message=active.cancellation_reason,
                     error_type=active.cancellation_error_type,
+                    expected_metadata_fields=expected_metadata_fields,
                 )
+                if not updated and active.cancellation_state != ScenarioRunState.CANCELLED:
+                    # Scenario.run_async may already have stored CANCELLED.
+                    # Match it atomically so a concurrent continuation is not overwritten.
+                    await self._memory.try_update_scenario_run_state_async(
+                        scenario_result_id=scenario_result_id,
+                        expected_states={ScenarioRunState.CANCELLED},
+                        scenario_run_state=active.cancellation_state,
+                        error_message=active.cancellation_reason,
+                        error_type=active.cancellation_error_type,
+                        expected_metadata_fields=expected_metadata_fields,
+                    )
             except Exception as exc:
                 handoff_ready = False
                 active.error = str(exc)
