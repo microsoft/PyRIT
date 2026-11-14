@@ -3,6 +3,7 @@
 
 import dataclasses
 import json
+import os
 import sys
 import threading
 from collections.abc import Iterator
@@ -37,7 +38,11 @@ _IDENTITY_TARGET = {
     "class_module": _OPENAI_MODULE,
     "class_name": "OpenAIChatTarget",
     "auth_mode": "identity",
-    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o"},
+    "params": {
+        "endpoint": "https://contoso.openai.azure.com/openai/v1",
+        "headers": "{}",
+        "model_name": "gpt-4o",
+    },
 }
 _ROUND_ROBIN_MODULE = "pyrit.prompt_target.round_robin_target"
 _TECHNIQUE = {
@@ -471,6 +476,45 @@ class TestRestoreFailures:
         assert "sk-secret-value" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
+    @pytest.mark.parametrize(
+        ("name", "left_out"),
+        [("server_key", "auth_mode"), ("server_headers", "headers"), ("server_endpoint", "endpoint")],
+    )
+    async def test_refuses_a_target_that_would_use_this_servers_credentials(
+        self, tmp_path: Path, name: str, left_out: str
+    ) -> None:
+        recipe = {key: value for key, value in _IDENTITY_TARGET.items() if key != left_out}
+        recipe["params"] = {key: value for key, value in _IDENTITY_TARGET["params"].items() if key != left_out}
+        _save(tmp_path, RegistryRecipeKind.TARGETS, name, recipe)
+        server_settings = {
+            "OPENAI_CHAT_KEY": "sk-server-key",
+            "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"api-key": "sk-server-key"}',
+            "OPENAI_CHAT_ENDPOINT": "https://operator:sk-server-key@contoso.openai.azure.com/openai/v1",
+        }
+
+        with patch.dict(os.environ, server_settings):
+            report = await _restore(tmp_path)
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == (name, RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert f"'{left_out if left_out != 'auth_mode' else 'api_key'}' is empty" in failure.message
+        assert "sk-server-key" not in failure.message
+        assert name not in TargetRegistry.get_registry_singleton().instances.get_names()
+
+    async def test_refuses_a_target_that_signs_in_with_this_servers_account(self, tmp_path: Path) -> None:
+        _save(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "copilot",
+            {"class_module": "pyrit.prompt_target.websocket_copilot_target", "class_name": "WebSocketCopilotTarget"},
+        )
+
+        report = await _restore(tmp_path)
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("copilot", RestoreFailureReason.UNSUPPORTED_CLASS)
+        assert "Copilot account" in failure.message
+
     async def test_restores_a_class_whose_optional_credentials_are_left_empty(self, tmp_path: Path) -> None:
         TargetRegistry.get_registry_singleton().register_class(_OptionalKeyTarget)
         _save(
@@ -490,6 +534,39 @@ class TestRestoreFailures:
         target = TargetRegistry.get_registry_singleton().instances.get("anonymous_agent")
         assert isinstance(target, _OptionalKeyTarget)
         assert (target.endpoint, target.api_key) == ("https://agent.example.test", None)
+
+    async def test_refuses_a_class_that_needs_the_server_upload_folder(self, tmp_path: Path) -> None:
+        _save(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "uploader",
+            {
+                "class_module": "pyrit.prompt_target.http_target.httpx_api_target",
+                "class_name": "HTTPXAPITarget",
+                "params": {"http_url": "https://example.test/upload", "file_path": "/etc/hosts"},
+            },
+        )
+
+        report = await _restore(tmp_path)
+
+        (failure,) = report.failures
+        assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
+        assert "uploader" not in TargetRegistry.get_registry_singleton().instances.get_names()
+
+    @pytest.mark.parametrize("auth_mode", [[], {}, ["identity"]])
+    async def test_reports_malformed_values_without_stopping_the_restore(
+        self, tmp_path: Path, auth_mode: object
+    ) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "malformed", {**_IDENTITY_TARGET, "auth_mode": auth_mode})
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "good", _IDENTITY_TARGET)
+
+        report = await _restore(tmp_path)
+
+        assert [(failure.name, failure.reason) for failure in report.failures] == [
+            ("malformed", RestoreFailureReason.INVALID_RECIPE)
+        ]
+        assert "auth_mode" in report.failures[0].message
+        assert [ref.name for ref in report.restored] == ["good"]
 
     async def test_a_planning_bug_fails_only_that_entry_as_a_logged_build_error(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
