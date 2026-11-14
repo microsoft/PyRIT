@@ -3,7 +3,8 @@
 
 """REST endpoints for scorer types and named scorer instances."""
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from pyrit.backend.models import (
     CreateScorerRequest,
@@ -15,8 +16,14 @@ from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.scorers import (
     UnregisteredScorer,
 )
+from pyrit.backend.routes.common import (
+    NOT_SAVEABLE_PROBLEM_TYPE,
+    not_saveable_response,
+    saved_entry_owner_from_request,
+)
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog import ScorerInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 
@@ -50,19 +57,42 @@ async def list_scorers(
     "",
     response_model=ScorerInstance | UnregisteredScorer,
     status_code=status.HTTP_201_CREATED,
-    responses={400: {"model": ProblemDetail, "description": "Invalid scorer type, parameters, or name"}},
+    responses={
+        400: {
+            "model": ProblemDetail,
+            "description": (
+                f"Invalid scorer type, parameters, or name, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a scorer that "
+                "can't be saved as asked but can be created without saving it"
+            ),
+        },
+        409: {"model": ProblemDetail, "description": "A scorer to save has the name of a registered or saved scorer"},
+        503: {"model": ProblemDetail, "description": "Saved scorers can't be written right now"},
+    },
 )
 async def create_scorer(
-    request: CreateScorerRequest,
-) -> ScorerInstance | UnregisteredScorer:  # pyrit-async-suffix-exempt
+    *,
+    body: CreateScorerRequest,
+    request: Request,
+) -> ScorerInstance | UnregisteredScorer | JSONResponse:  # pyrit-async-suffix-exempt
     """
     Construct a scorer through ScorerRegistry, with optional registration.
 
     Returns:
-        ScorerInstance | UnregisteredScorer: A named instance or an unregistered descriptor.
+        ScorerInstance | UnregisteredScorer | JSONResponse: A named instance or an unregistered descriptor, or the
+            problem response for a scorer that can't be saved as asked.
     """
     try:
-        return await get_scorer_service().create_scorer_async(request=request)
+        return await get_scorer_service().create_scorer_async(
+            request=body,
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
+            recipes_source=getattr(request.app.state, "registry_recipes_source", None),
+        )
+    except NotSaveableError as exc:
+        return not_saveable_response(detail=str(exc), request=request)
+    except SavedEntryConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SavedEntryStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:

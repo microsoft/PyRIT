@@ -1,3 +1,7 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { defineConfig, devices } from "@playwright/test";
 
 import type { UserPreferences } from "./src/types";
@@ -23,6 +27,28 @@ const VITE_SERVER_OPTIONS =
   `--host 127.0.0.1 --port ${E2E_FRONTEND_PORT} --strictPort`;
 const E2E_BACKEND_PORT = process.env.PYRIT_E2E_BACKEND_PORT ?? "18000";
 const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
+
+/**
+ * Copies the seeded backend's configuration into a fresh folder that also holds
+ * its saved targets, converters, scorers, and techniques, so a run never reads
+ * or writes the ones saved on the machine running it.
+ */
+function createSeededBackendConfigFile(): string {
+  const folder = mkdtempSync(path.join(tmpdir(), "pyrit-seeded-backend-"));
+  // The runner stops the backend before it exits, so nothing still uses the folder by then.
+  process.once("exit", () => rmSync(folder, { recursive: true, force: true }));
+  const configFile = path.join(folder, "browser_config.yaml");
+  const config = readFileSync(new URL("../tests/end_to_end/browser_config.yaml", import.meta.url), "utf-8");
+  const recipesSource = JSON.stringify(path.join(folder, "registry_recipes"));
+  writeFileSync(configFile, `${config}\nregistry_recipes_source: ${recipesSource}\n`);
+  return configFile;
+}
+
+// Workers load this file too, but only the main process starts the backend.
+const SEEDED_BACKEND_CONFIG_FILE =
+  SEEDED_MODE && process.env.TEST_WORKER_INDEX === undefined
+    ? createSeededBackendConfigFile()
+    : "";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -113,7 +139,7 @@ export default defineConfig({
           command:
             `cd .. && uv run --no-sync python -m pyrit.backend.pyrit_backend ` +
             `--auth-mode local --host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
-            "--config-file tests/end_to_end/browser_config.yaml",
+            `--config-file "${SEEDED_BACKEND_CONFIG_FILE}"`,
           env: { PYRIT_DEV_MODE: "true" },
           url: `${E2E_BACKEND_URL}/api/health`,
           reuseExistingServer: false,

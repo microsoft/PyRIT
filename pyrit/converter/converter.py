@@ -8,6 +8,7 @@ import functools
 import inspect
 import re
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 
 from pyrit import converter
@@ -18,7 +19,7 @@ from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
     import random
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from pyrit.prompt_target import PromptTarget
 
@@ -72,6 +73,12 @@ class Converter(Identifiable):
     #: Subclasses that use a target should override this and pass the target to
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    # Credential parameters that, left empty, let the converter fall back to a credential from this
+    # server (an environment variable, or the server's Azure identity), each mapped to the value that
+    # turns that off, or None when no value does. A saved converter never falls back to this server's
+    # credentials, so a saved entry that would is refused.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
 
     _identifier: ComponentIdentifier | None = None
     _seed: int | None = None

@@ -470,6 +470,9 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
     _CATEGORY: ClassVar[str] = "refusal"
     _RECIPE_VERSION: ClassVar[int] = 4
     _DEFAULT_VALIDATOR: ClassVar[ScorerPromptValidator] = ScorerPromptValidator(supported_data_types=["text"])
+    not_saveable_reason: ClassVar[str | None] = (
+        "Its model can come from a folder on this server, or be downloaded with this server's Hugging Face sign-in."
+    )
 
     def __init__(
         self,

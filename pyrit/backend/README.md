@@ -54,6 +54,10 @@ its database collation.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
+  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
+  at all (`not_saveable_reason`)
+- `POST /api/targets` - Create a target
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -81,6 +85,66 @@ Range declarations remain Python-only constructor inputs, not REST `params`
 overrides; reconstruction preserves declarations from the source target.
 Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
+A created target is Temporary: a restart or a configuration apply removes it. With `"persist": true` (and `register`
+left on), the target is saved under `registry_recipes_source` and restored at every start, and the signed-in user is
+recorded as the one who saved it. A saved target can't hold or use a key: it signs in with Microsoft Entra ID
+(`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI target's empty `headers`
+is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save
+itself is the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a
+target the same way; the API adds the signed-in user, the configured source, and the responses below.
+
+| A request with `persist` that... | Gets |
+|---|---|
+| names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
+| would save a key, or use one of this server's keys or address settings | **400** not-saveable |
+| gives an address that can carry a credential | **400** not-saveable |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** not-saveable |
+| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
+| uses a Temporary target | **400** not-saveable |
+| gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
+| takes a name that a target or a saved file already has | **409** |
+| can't be written to storage | **503** |
+
+A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
+other **400** needs the address fixed. `GET /api/targets/types` gives the same class-level answer before a request is
+sent. When storage can't be written, the server log names the target and its folder, since the target comes back at
+the next start if the write reached storage anyway.
+
+Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
+(gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
+launch scripts). A saved target can only use targets that come back after a restart; targets from configuration keep
+their own sign-in. A saved target's `saved_by` is the name of the user who saved it (null when it was saved with sign-in
+off), and `saved_by_me` says whether that's the signed-in user asking. The user's object ID isn't returned.
+
+A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
+API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
+constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
+changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
+restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
+the file is fixed or deleted, so nothing runs without the saved target.
+
+### Converters and scorers
+
+- `GET /api/converters/types` - List the converter types that can be created, with their parameters, and why a
+  type can't be saved at all (`not_saveable_reason`)
+- `POST /api/converters` - Create a converter
+- `DELETE /api/converters/{converter_id}` - Remove a converter
+- `POST /api/scorers` - Create a scorer
+
+A created converter or scorer is Temporary unless the request sets `"persist": true`, which works as it does for
+targets: it needs `register` left on and a name of lowercase letters, digits, and underscores (otherwise **422**), the
+entry is saved under `registry_recipes_source` with the signed-in user recorded, and it's restored at every start. A
+request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if the entry
+would save a key, use one of this server's keys or its Azure identity (the Azure Speech converters, the Azure Content
+Safety scorer, and the audio scorers), or a model from this server (the local refusal classifier scorer), use a
+Temporary target, converter, or scorer, be of a type that only a scan's launch scripts added, or, for a converter, need
+or keep an uploaded file. A target left out of the
+request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
+converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
+be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
+`temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
+`registry_recipes_source` and restart the backend.
 
 ### Dataset creation, batch mutation, and deletion
 
