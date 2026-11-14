@@ -9,6 +9,7 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 from pyrit.models import AttackOutcome, OutcomeStatistics
+from pyrit.models.analytics import compute_wilson_ci
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -22,15 +23,17 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
 
     This function neither queries memory nor chooses result IDs, retries, roles,
     or scenario units. ``success_rate_decided`` (also ``success_rate``) uses success + failure; ``success_rate_all``
-    uses every outcome. Both are proportions, not rounded percentages.
+    uses every outcome. ``success_rate_ci_lower`` and ``success_rate_ci_upper`` give the 95% Wilson
+    score confidence interval for the decided rate. All are proportions, not rounded percentages.
 
     Args:
         counts (Mapping[str, int] | Mapping[AttackOutcome, int]): Nonnegative saved-outcome
             counts. Omitted outcomes mean zero observations.
 
     Returns:
-        OutcomeStatistics: Counts, both denominator policies, and whole-population shares.
-            Empty denominators produce None; empty outcome shares are zero.
+        OutcomeStatistics: Counts, both denominator policies, 95% Wilson confidence interval bounds
+            for the decided rate, and whole-population shares. Empty denominators produce None; empty
+            outcome shares are zero.
 
     Raises:
         ValueError: If an outcome is unsupported or a count is not a nonnegative integer.
@@ -42,6 +45,7 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
     errors = values.get(AttackOutcome.ERROR, 0)
     decided = successes + failures
     total = decided + undetermined + errors
+    ci_lower, ci_upper = compute_wilson_ci(successes=successes, total=decided)
     return OutcomeStatistics(
         successes=successes,
         failures=failures,
@@ -51,6 +55,8 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
         total_results=total,
         success_rate=_rate(successes=successes, total=decided),
         success_rate_all=_rate(successes=successes, total=total),
+        success_rate_ci_lower=ci_lower,
+        success_rate_ci_upper=ci_upper,
         decided_share=_rate(successes=decided, total=total),
         outcome_shares={
             outcome: _rate(successes=values.get(outcome, 0), total=total) or 0.0 for outcome in AttackOutcome

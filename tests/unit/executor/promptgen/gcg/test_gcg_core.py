@@ -25,7 +25,7 @@ from pyrit.executor.promptgen.gcg import (  # noqa: E402
     GCGAlgorithmConfig,
     GCGModelConfig,
     GCGStrategyConfig,
-    SuffixInitializer,  # noqa: E402
+    SuffixInitializer,
 )
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
     AttackPrompt,
@@ -2546,7 +2546,7 @@ class TestRandomSeedDeterminism:
                     barrier=barrier,
                     switches=switches,
                 )
-            except BaseException as exc:  # noqa: BLE001 - release the peer thread, then surface the error
+            except BaseException as exc:  # release the peer thread, then surface the error
                 barrier.abort()
                 outcomes[run_id] = exc
 

@@ -14,11 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+import respx
 
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 from pyrit.cli._cli_args import parse_run_arguments
-from pyrit.models import Operation, Parameter
+from pyrit.models import Operation, Parameter, TargetCapabilities
 from unit.mocks import make_scenario_result
 
 # A valid UTF-8 initializer whose text is not pure ASCII. Decoded with a Windows ANSI code page
@@ -572,6 +573,33 @@ class TestMain:
 
         assert result == 0
         mock_client.list_targets_async.assert_awaited_once()
+
+    @respx.mock
+    def test_main_list_targets_prints_total_across_pages(self, capsys: pytest.CaptureFixture[str]) -> None:
+        base_url = "http://testserver:8000"
+        compatibility_id = "0.14.0+g" + "a" * 40
+        capabilities = TargetCapabilities().model_dump(mode="json")
+        items = [
+            {
+                "target_registry_name": f"target-{i}",
+                "identifier": {"class_name": "OpenAIChatTarget", "class_module": "pyrit.prompt_target"},
+                "capabilities": capabilities,
+            }
+            for i in range(205)
+        ]
+        respx.get(f"{base_url}/api/health").respond(200, json={"status": "healthy", "service": "pyrit-backend"})
+        respx.get(f"{base_url}/api/version").respond(200, json={"compatibility_id": compatibility_id})
+        respx.get(f"{base_url}/api/targets", params__eq={"limit": "200"}).respond(
+            200, json={"items": items[:200], "pagination": {"has_more": True, "next_cursor": "next-page"}}
+        )
+        respx.get(f"{base_url}/api/targets", params__eq={"limit": "200", "cursor": "next-page"}).respond(
+            200, json={"items": items[200:], "pagination": {"has_more": False, "next_cursor": None}}
+        )
+
+        with patch("pyrit._compatibility.get_compatibility_id", return_value=compatibility_id):
+            assert pyrit_scan.main(["list-targets", "--server-url", base_url, "--auth-mode", "none"]) == 0
+
+        assert "Total targets: 205" in capsys.readouterr().out.splitlines()
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
