@@ -24,10 +24,10 @@ def doc_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def command(tmp_path: Path) -> Iterator[MagicMock]:
-    run = MagicMock(spec=build_docs_pdf.subprocess.run, return_value=CompletedProcess([], 0))
+    run = MagicMock(spec=build_docs_pdf.run, return_value=CompletedProcess([], 0))
     with (
-        patch.object(build_docs_pdf.shutil, "which", return_value=str(tmp_path / "tool")),
-        patch.object(build_docs_pdf.subprocess, "run", new=run),
+        patch.object(build_docs_pdf, "which", return_value=str(tmp_path / "tool")),
+        patch.object(build_docs_pdf, "run", new=run),
     ):
         yield run
 
@@ -45,7 +45,7 @@ def _write_output(*, doc_root: Path, log: str = "LaTeX Warning: Label may have c
 
 
 def test_build_pdf_requires_tools_before_running(*, doc_root: Path, command: MagicMock) -> None:
-    with patch.object(build_docs_pdf.shutil, "which", return_value=None):
+    with patch.object(build_docs_pdf, "which", return_value=None):
         with pytest.raises(ValueError, match="Missing PDF prerequisites on PATH: latexmk, xelatex"):
             build_docs_pdf.build_pdf(doc_root)
     command.assert_not_called()
@@ -53,7 +53,7 @@ def test_build_pdf_requires_tools_before_running(*, doc_root: Path, command: Mag
 
 @pytest.mark.parametrize("missing", ["latexmk", "xelatex"])
 def test_build_pdf_checks_each_tool(*, doc_root: Path, command: MagicMock, missing: str) -> None:
-    with patch.object(build_docs_pdf.shutil, "which", side_effect=lambda tool: None if tool == missing else tool):
+    with patch.object(build_docs_pdf, "which", side_effect=lambda tool: None if tool == missing else tool):
         with pytest.raises(ValueError, match=f"Missing PDF prerequisites on PATH: {missing}"):
             build_docs_pdf.build_pdf(doc_root)
     command.assert_not_called()
