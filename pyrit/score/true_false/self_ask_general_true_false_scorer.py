@@ -121,6 +121,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
         self._prompt_format_string = prompt_format_string
 
         self._score_category = category
+
         wire_format_handler = response_handler or JsonSchemaResponseHandler(
             score_value_output_key=score_value_output_key,
             rationale_output_key=rationale_output_key,
@@ -148,6 +149,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
+            children={"response_handler": self._response_handler.get_identifier()},
         )
 
     async def _score_piece_with_expectation_async(
