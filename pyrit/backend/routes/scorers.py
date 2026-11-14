@@ -3,8 +3,12 @@
 
 """REST endpoints for scorer types and named scorer instances."""
 
-from fastapi import APIRouter, HTTPException, Query, status
+from typing import Annotated
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
+
+from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import (
     CreateScorerRequest,
     ProblemDetail,
@@ -15,8 +19,14 @@ from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.scorers import (
     UnregisteredScorer,
 )
+from pyrit.backend.routes.common import (
+    NOT_SAVEABLE_PROBLEM_TYPE,
+    not_saveable_response,
+    saved_entry_owner_from_request,
+)
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog import ScorerInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 
@@ -34,6 +44,7 @@ async def list_scorer_types() -> ScorerTypeResponse:  # pyrit-async-suffix-exemp
 
 @router.get("", response_model=ScorerListResponse)
 async def list_scorers(
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Scorer registry name to start after"),
 ) -> ScorerListResponse:  # pyrit-async-suffix-exempt
@@ -43,26 +54,49 @@ async def list_scorers(
     Returns:
         ScorerListResponse: The requested page of scorer instances.
     """
-    return await get_scorer_service().list_scorers_async(limit=limit, cursor=cursor)
+    return await get_scorer_service().list_scorers_async(limit=limit, cursor=cursor, current_user_oid=user_oid)
 
 
 @router.post(
     "",
     response_model=ScorerInstance | UnregisteredScorer,
     status_code=status.HTTP_201_CREATED,
-    responses={400: {"model": ProblemDetail, "description": "Invalid scorer type, parameters, or name"}},
+    responses={
+        400: {
+            "model": ProblemDetail,
+            "description": (
+                f"Invalid scorer type, parameters, or name, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a scorer that "
+                "can't be saved as asked but can be created without saving it"
+            ),
+        },
+        409: {"model": ProblemDetail, "description": "A scorer to save has the name of a registered or saved scorer"},
+        503: {"model": ProblemDetail, "description": "Saved scorers can't be written right now"},
+    },
 )
 async def create_scorer(
-    request: CreateScorerRequest,
-) -> ScorerInstance | UnregisteredScorer:  # pyrit-async-suffix-exempt
+    *,
+    body: CreateScorerRequest,
+    request: Request,
+) -> ScorerInstance | UnregisteredScorer | JSONResponse:  # pyrit-async-suffix-exempt
     """
     Construct a scorer through ScorerRegistry, with optional registration.
 
     Returns:
-        ScorerInstance | UnregisteredScorer: A named instance or an unregistered descriptor.
+        ScorerInstance | UnregisteredScorer | JSONResponse: A named instance or an unregistered descriptor, or the
+            problem response for a scorer that can't be saved as asked.
     """
     try:
-        return await get_scorer_service().create_scorer_async(request=request)
+        return await get_scorer_service().create_scorer_async(
+            request=body,
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
+            recipes_source=getattr(request.app.state, "registry_recipes_source", None),
+        )
+    except NotSaveableError as exc:
+        return not_saveable_response(detail=str(exc), request=request)
+    except SavedEntryConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SavedEntryStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
@@ -77,14 +111,20 @@ async def create_scorer(
     response_model=ScorerInstance,
     responses={404: {"model": ProblemDetail, "description": "Scorer not found"}},
 )
-async def get_scorer(scorer_registry_name: IdentifierStr) -> ScorerInstance:  # pyrit-async-suffix-exempt
+async def get_scorer(  # pyrit-async-suffix-exempt
+    *,
+    scorer_registry_name: IdentifierStr,
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
+) -> ScorerInstance:
     """
     Get a named scorer instance.
 
     Returns:
         ScorerInstance: The requested scorer.
     """
-    scorer = await get_scorer_service().get_scorer_async(scorer_registry_name=scorer_registry_name)
+    scorer = await get_scorer_service().get_scorer_async(
+        scorer_registry_name=scorer_registry_name, current_user_oid=user_oid
+    )
     if scorer is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

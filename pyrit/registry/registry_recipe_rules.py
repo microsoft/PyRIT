@@ -69,6 +69,44 @@ def check_saved_entry_params(
     _check_destinations(cls=cls, params=params)
 
 
+def check_saveable_class(cls: type) -> tuple[str, ...]:
+    """
+    Return the auth modes a saved entry of ``cls`` can use, before any of its values are known.
+
+    Runs the class checks, then the server-fallback check once per auth mode the class supports, with each
+    fallback set to the value that turns it off and every credential left empty. That's the best a saved entry
+    of the class can do; the values it's given are checked when it's saved.
+
+    Returns:
+        tuple[str, ...]: The supported auth modes that let a saved entry avoid this server's credentials.
+
+    Raises:
+        SavedEntryRefusedError: If the class can't be saved, its client would send headers this server sets, or
+            every auth mode it supports would leave it reading a credential from this server.
+    """
+    _check_class(cls)
+    _check_server_headers(cls)
+    fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
+    turned_off = {name: value for name, value in fallbacks.items() if value is not None}
+    supported_auth_modes: tuple[str, ...] = tuple(getattr(cls, "supported_auth_modes", None) or ("api_key",))
+    saveable_modes: list[str] = []
+    for auth_mode in supported_auth_modes:
+        try:
+            _check_server_fallbacks(cls=cls, params=turned_off, auth_mode=auth_mode)
+        except SavedEntryRefusedError:
+            continue
+        saveable_modes.append(auth_mode)
+    if not saveable_modes:
+        # Only a fallback that no value turns off can refuse every mode, so one exists here.
+        needed = [name for name, value in fallbacks.items() if value is None][0]
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=f"'{cls.__name__}' needs a credential in '{needed}', which saved entries can't hold or take "
+            "from this server yet.",
+        )
+    return tuple(saveable_modes)
+
+
 def _check_class(cls: type) -> None:
     """
     Refuse a class that a saved entry can't build.
@@ -132,11 +170,9 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any], auth_mode: 
     """
     if auth_mode is None:
         auth_mode = "api_key"
-    supported_auth_modes = getattr(cls, "supported_auth_modes", None)
-    if supported_auth_modes is not None and not supported_auth_modes:
-        # A class that declares no auth modes, such as TextTarget, takes no credentials of its own.
-        supported_auth_modes = ("api_key",)
-    if supported_auth_modes is not None and auth_mode not in supported_auth_modes:
+    # A class that declares no auth modes takes none, as check_saveable_class assumes.
+    supported_auth_modes = getattr(cls, "supported_auth_modes", None) or ("api_key",)
+    if auth_mode not in supported_auth_modes:
         modes = ", ".join(f"'{mode}'" for mode in supported_auth_modes)
         raise SavedEntryRefusedError(
             reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,

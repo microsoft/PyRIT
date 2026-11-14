@@ -2,7 +2,7 @@ import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 
 
 import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
+  Input, MessageBar, MessageBarBody, MessageBarTitle, Select, Spinner, Text, Textarea,
 } from '@fluentui/react-components'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
@@ -15,8 +15,9 @@ import {
   buildParametersFromForm, getInitialFormValues, nonNullableTypeName, type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 import { convertersApi, techniquesApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { isNotSaveableError, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
+import { validateRegistryName } from '@/utils/registryName'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
@@ -27,6 +28,7 @@ import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
+const TEMPORARY_TECHNIQUE_NOTE = 'A Temporary technique is gone after the backend restarts or is reinitialized.'
 
 function canConfigure(parameter: Parameter, allowStructured = true): boolean {
   if (parameter.reference_type) return false
@@ -86,6 +88,7 @@ export default function TechniqueEditor({
   const configuration = initial ?? original
   const [types, setTypes] = useState<TechniqueTypeEntry[]>([])
   const [targetOptions, setTargetOptions] = useState<RegistryReferenceOption[]>([])
+  const [temporaryTargets, setTemporaryTargets] = useState<ReadonlySet<string>>(new Set())
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const converterOptions = converters.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name }))
   const [selectedType, setSelectedType] = useState(configuration?.attack_type ?? '')
@@ -111,6 +114,8 @@ export default function TechniqueEditor({
   const [submitError, setSubmitError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [validating, setValidating] = useState(false)
+  const [saveRefusal, setSaveRefusal] = useState<{ formKey: string, reason: string } | null>(null)
+  const [nameConflict, setNameConflict] = useState<{ name: string, tags: string, detail: string } | null>(null)
 
   function update<Value>(setter: Dispatch<SetStateAction<Value>>, value: Value): void {
     if (autoApply) {
@@ -149,6 +154,8 @@ export default function TechniqueEditor({
         setTypes(original ? metadata.items : metadata.items.filter((entry) =>
           getAttackParameters(entry).every((parameter) => !parameter.required || canConfigure(parameter))))
         setTargetOptions(targets.map((entry) => ({ name: entry.target_registry_name, type: entry.identifier.class_name })))
+        setTemporaryTargets(new Set(targets.filter((entry) => entry.origin === 'temporary')
+          .map((entry) => entry.target_registry_name)))
         setConverters(converters.items)
       } catch (err) {
         if (!ignore) setError(toApiError(err).detail)
@@ -166,6 +173,25 @@ export default function TechniqueEditor({
   const selected = types.find((entry) => entry.attack_type === selectedType)
   const parameters = original ? original.parameters : guiParameters(getAttackParameters(selected))
   const editable = (field: string): boolean => !original || original.editable_fields.includes(field)
+
+  // A new technique is saved unless it uses a Temporary entry, which won't exist after a restart.
+  const chosenConverters = selected?.supports_converters
+    ? [...requestConverters, ...responseConverters].filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const temporaryConverter = chosenConverters.find((entry) =>
+    converters.find((converter) => converter.converter_id === entry)?.origin === 'temporary')
+  const predictedTemporaryReason = temporaryConverter
+    ? `Uses temporary converter '${temporaryConverter}', which won't exist after a restart.`
+    : selected?.supports_adversarial && temporaryTargets.has(adversarialTarget)
+      ? `Uses temporary target '${adversarialTarget}', which won't exist after a restart.`
+      : null
+  // A refused save only applies to the values it was refused for, so any edit lets the user try saving again.
+  const formKey = JSON.stringify([selectedType, values, requestConverters, responseConverters, adversarialTarget])
+  const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
+  const temporaryReason = editing ? null : predictedTemporaryReason ?? refusedReason
+  const nameConflictDetail = nameConflict?.name === name && nameConflict.tags === tags ? nameConflict.detail : null
+  const nameMessage = editing ? null
+    : nameConflictDetail ?? (temporaryReason === null && name ? validateRegistryName(name) : null)
 
   const editChanges = (): TechniqueChanges => {
     if (!original) throw new Error('A source technique is required for editing.')
@@ -272,11 +298,21 @@ export default function TechniqueEditor({
         })
         if (active.current) onApplied?.(response)
       } else {
-        await techniquesApi.createTechnique(request)
+        await techniquesApi.createTechnique({ ...request, persist: temporaryReason === null })
         if (active.current) onCreated?.()
       }
     } catch (err) {
-      if (active.current) fail(toApiError(err).detail)
+      if (active.current) {
+        const apiError = toApiError(err)
+        if (!original && temporaryReason === null && isNotSaveableError(apiError)) {
+          setSaveRefusal({ formKey, reason: apiError.detail })
+        } else if (!original && apiError.status === 409 && apiError.type === undefined) {
+          // A taken name or tag is a 409 without a problem type, so changing either lets the user try again.
+          setNameConflict({ name, tags, detail: apiError.detail })
+        } else {
+          fail(apiError.detail)
+        }
+      }
     } finally {
       if (active.current) setSubmitting(false)
     }
@@ -295,8 +331,10 @@ export default function TechniqueEditor({
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>
-                  {!editing && <HelpField label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores."
-                    help="A unique name used to find and reuse this technique. Adding a technique does not run an attack.">
+                  {!editing && <HelpField label="Registry name" required
+                    hint="Start with a lowercase letter. Use lowercase letters, digits, and underscores."
+                    help="A unique name used to find and reuse this technique. Adding a technique does not run an attack."
+                    validationMessage={nameMessage ?? undefined}>
                     <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
                   </HelpField>}
                   {editing
@@ -390,6 +428,14 @@ export default function TechniqueEditor({
                   )}
                 </>
               )}
+              {!editing && temporaryReason && (
+                <MessageBar intent="warning" role="status">
+                  <MessageBarBody>
+                    <MessageBarTitle>This technique can&apos;t be saved</MessageBarTitle>
+                    {temporaryReason} {TEMPORARY_TECHNIQUE_NOTE}
+                  </MessageBarBody>
+                </MessageBar>
+              )}
               {autoApply && validating && !editError && <Spinner size="tiny" label="Validating technique settings..." />}
               {autoApply && !validating && revision > 0 && !displayedError && <Text role="status">Technique settings applied to this run.</Text>}
             </div>
@@ -406,8 +452,13 @@ export default function TechniqueEditor({
           </DialogContent>
           <DialogActions>
             <Button className={styles.action} onClick={onClose}>Cancel</Button>
-            <Button className={styles.action} appearance="primary" disabled={loading || submitting || !name.trim() || !selected}
-              onClick={() => { void submit() }}>{submitting ? editing ? 'Applying...' : 'Adding...' : editing ? 'Apply to run' : 'Add technique'}</Button>
+            <Button className={styles.action} appearance="primary"
+              disabled={loading || submitting || !name.trim() || !selected || nameMessage !== null}
+              onClick={() => { void submit() }}>
+              {submitting
+                ? editing ? 'Applying...' : temporaryReason === null ? 'Saving...' : 'Adding...'
+                : editing ? 'Apply to run' : temporaryReason === null ? 'Save technique' : 'Create as Temporary'}
+            </Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

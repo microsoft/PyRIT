@@ -133,6 +133,83 @@ describe('ConverterRegistry', () => {
     expect(screen.queryByRole('button', { name: /set active/i })).not.toBeInTheDocument()
   })
 
+  it('labels each converter with where it comes from', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'saved_base64', origin: 'saved' },
+        { ...converter, converter_id: 'startup_base64', origin: 'configuration' },
+        { ...converter, converter_id: 'launch_base64', origin: 'temporary' },
+        { ...converter, converter_id: 'unlabeled_base64' },
+      ],
+    })
+    renderRegistry()
+
+    const table = await screen.findByRole('table', { name: 'Converter instances' })
+    const row = (name: string) => within(table).getByRole('row', { name: new RegExp(name) })
+    expect(within(row('saved_base64')).getByText('Saved')).toBeInTheDocument()
+    expect(within(row('startup_base64')).getByText('From configuration')).toBeInTheDocument()
+    expect(within(row('launch_base64')).getByText('Temporary')).toBeInTheDocument()
+    expect(within(row('unlabeled_base64')).queryByText(/Saved|From configuration|Temporary/)).not.toBeInTheDocument()
+  })
+
+  it('says who saved each converter and lists only yours on request', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'mine_base64', origin: 'saved', saved_by: 'Ada', saved_by_me: true },
+        { ...converter, converter_id: 'bobs_base64', origin: 'saved', saved_by: 'Bob' },
+        { ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null },
+        { ...converter, converter_id: 'startup_base64', origin: 'configuration' },
+      ],
+    })
+    renderRegistry()
+
+    const table = await screen.findByRole('table', { name: 'Converter instances' })
+    const caption = (name: string): string | null => (
+      within(within(table).getByRole('row', { name: new RegExp(name) })).queryByText(/^Saved by /)?.textContent ?? null
+    )
+    expect(['mine_base64', 'bobs_base64', 'local_base64', 'startup_base64'].map(caption)).toEqual([
+      'Saved by you', 'Saved by Bob', null, null,
+    ])
+    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
+    expect(within(table).queryByRole('row', { name: /bobs_base64/ })).not.toBeInTheDocument()
+    expect(within(table).getByRole('row', { name: /mine_base64/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
+    expect(within(table).getByRole('row', { name: /bobs_base64/ })).toBeInTheDocument()
+  })
+
+  it('offers no list of your own converters when none are yours, such as with sign-in off', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [{ ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null }],
+    })
+    renderRegistry()
+
+    await screen.findByRole('table', { name: 'Converter instances' })
+    expect(screen.queryByRole('checkbox', { name: /Only converters I saved/ })).not.toBeInTheDocument()
+  })
+
+  it('keeps a saved converter from being removed and says why', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'saved_base64', origin: 'saved' },
+        { ...converter, converter_id: 'launch_base64', origin: 'temporary' },
+      ],
+    })
+    renderRegistry()
+
+    const savedRemove = await screen.findByRole('button', { name: 'Remove saved_base64' })
+    expect(savedRemove).toHaveAttribute('aria-disabled', 'true')
+    expect(savedRemove).toHaveAccessibleDescription(
+      "Saved converters can't be removed here yet. Delete the converter's saved file and restart the backend.",
+    )
+    await user.click(savedRemove)
+    expect(screen.queryByRole('dialog', { name: 'Remove converter?' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Remove launch_base64' }))
+    expect(await screen.findByRole('dialog', { name: 'Remove converter?' })).toBeInTheDocument()
+  })
+
   it('filters by name, type, and output without changing the registered instances', async () => {
     const audio = {
       ...converter, converter_id: 'speech',

@@ -44,6 +44,12 @@ export const useTargetTableStyles = makeStyles({
   registryNameCell: {
     minWidth: 0,
   },
+  savedBy: {
+    display: 'block',
+    marginTop: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground2,
+    overflowWrap: 'anywhere',
+  },
   registryNameText: {
     display: 'block',
     maxWidth: '100%',

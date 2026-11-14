@@ -71,7 +71,7 @@ export default function SaveConverterDialog({
             void save()
           }}>
             <Text>Save these settings under a new name. The original converter stays unchanged.
-              Saved converters are available until the backend restarts.</Text>
+              The new converter is Temporary: it&apos;s gone after the backend restarts or is reinitialized.</Text>
             {error && <MessageBar intent="error">
               <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
             </MessageBar>}

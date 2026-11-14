@@ -28,6 +28,15 @@ describe('SaveConverterDialog', () => {
     jest.mocked(convertersApi.createConverter).mockResolvedValue(saved)
   })
 
+  it('should say the copy is Temporary, since a copy cannot be saved yet', () => {
+    render(tree())
+
+    expect(
+      screen.getByText(/The new converter is Temporary: it's gone after the backend restarts or is reinitialized\./),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/available until the backend restarts/)).not.toBeInTheDocument()
+  })
+
   it('should require a name before creating a registry entry', async () => {
     const user = userEvent.setup()
     render(tree())

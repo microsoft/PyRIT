@@ -23,7 +23,7 @@ import pyrit.backend.services.runtime_lifecycle as lifecycle_module
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health
+from pyrit.backend.routes import configuration, health, targets
 from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
@@ -31,13 +31,22 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
+from pyrit.converter import Base64Converter
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog import RunScenarioRequest
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RunScenarioRequest, SavedEntryOwner
+from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import (
+    CONFIGURATION_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    registry_entry_origin,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
-from pyrit.scenario import Scenario
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
+from pyrit.scenario import AttackTechniqueFactory, Scenario
+from pyrit.score import SubStringScorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -703,11 +712,17 @@ async def test_management_publishes_target_upload_directory(tmp_path: Path) -> N
     app = FastAPI()
     with patch.dict(os.environ, {}, clear=True):
         service = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=None))
-    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=str(tmp_path))
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        target_upload_directory=str(tmp_path),
+        registry_recipes_source=str(tmp_path / "recipes"),
+    )
 
     await service._management_async(config)
 
     assert app.state.target_upload_directory == str(tmp_path)
+    assert app.state.registry_recipes_source == str(tmp_path / "recipes")
 
 
 async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repair(tmp_path: Path) -> None:
@@ -720,6 +735,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
     assert service.state == "restart-required"
     assert not app.state.allow_custom_initializers
     assert app.state.target_upload_directory is None
+    assert app.state.registry_recipes_source is None
     assert app.state.environment_file_service is None
     content, version = await source.read_with_version_async()
     assert content == "broken: ["
@@ -1073,6 +1089,101 @@ async def test_startup_restores_an_entry_that_uses_a_startup_target_async(
     assert converter._converter_target is startup_chat
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_startup_marks_the_targets_its_scripts_register_but_not_saved_ones_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    text_target = {"class_module": TextTarget.__module__, "class_name": "TextTarget", "params": {}}
+    _save_recipe(recipes, kind="targets", name="saved_text", document=text_target)
+    targets = TargetRegistry.get_registry_singleton()
+
+    await _start_with_recipes_async(
+        runtime, recipes=recipes, initialize=lambda **_: targets.instances.register(startup_chat, name="startup_chat")
+    )
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    startup_entry, saved_entry = targets.instances.get_entry("startup_chat"), targets.instances.get_entry("saved_text")
+    assert startup_entry is not None and saved_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
+    assert CONFIGURATION_ENTRY_METADATA_KEY not in saved_entry.metadata
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_marks_the_converters_and_scorers_its_scripts_register_but_not_saved_ones_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    ScorerRegistry.reset_registry_singleton()
+    recipes = tmp_path / "recipes"
+    base64 = {"class_module": Base64Converter.__module__, "class_name": "Base64Converter", "params": {}}
+    leak = {"class_module": SubStringScorer.__module__, "class_name": "SubStringScorer", "params": {"substring": "x"}}
+    _save_recipe(recipes, kind="converters", name="saved_base64", document=base64)
+    _save_recipe(recipes, kind="scorers", name="saved_leak", document=leak)
+    converters = ConverterRegistry.get_registry_singleton().instances
+    scorers = ScorerRegistry.get_registry_singleton().instances
+
+    def register_startup_entries(**_: object) -> None:
+        converters.register(Base64Converter(), name="startup_base64")
+        scorers.register(SubStringScorer(substring="y"), name="startup_leak")
+
+    try:
+        await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_entries)
+
+        assert (runtime.state, runtime.outcome) == ("ready", "success")
+        entries = {
+            name: instances.get_entry(name)
+            for instances, name in (
+                (converters, "startup_base64"),
+                (converters, "saved_base64"),
+                (scorers, "startup_leak"),
+                (scorers, "saved_leak"),
+            )
+        }
+        assert {name: registry_entry_origin(entry.metadata) for name, entry in entries.items() if entry} == {
+            "startup_base64": RegistryEntryOrigin.CONFIGURATION,
+            "saved_base64": RegistryEntryOrigin.SAVED,
+            "startup_leak": RegistryEntryOrigin.CONFIGURATION,
+            "saved_leak": RegistryEntryOrigin.SAVED,
+        }
+        assert all(
+            CONFIGURATION_ENTRY_METADATA_KEY not in entry.metadata
+            for name, entry in entries.items()
+            if entry and name.startswith("saved_")
+        )
+    finally:
+        ScorerRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_marks_the_techniques_its_scripts_register_and_restores_saved_ones_with_their_owner_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    recipes = tmp_path / "recipes"
+    owner = {"oid": "00000000-0000-0000-0000-000000000001", "name": "Ada"}
+    _save_recipe(
+        recipes, kind="techniques", name="saved_send", document={"type": "PromptSendingAttack", "owner": owner}
+    )
+    techniques = AttackTechniqueRegistry.get_registry_singleton().instances
+
+    def register_startup_technique(**_: object) -> None:
+        techniques.register_runtime(AttackTechniqueFactory(name="startup_send", attack_class=PromptSendingAttack))
+
+    try:
+        await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_technique)
+
+        assert (runtime.state, runtime.outcome) == ("ready", "success")
+        startup, saved = techniques.get_entry("startup_send"), techniques.get_entry("saved_send")
+        assert startup is not None and saved is not None
+        assert (registry_entry_origin(startup.metadata), registry_entry_origin(saved.metadata)) == (
+            RegistryEntryOrigin.CONFIGURATION,
+            RegistryEntryOrigin.SAVED,
+        )
+        assert saved.metadata[SAVED_ENTRY_OWNER_METADATA_KEY] == SavedEntryOwner(**owner)
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
 class _LoopBoundTarget(MockPromptTarget):
     """A target whose constructor needs the running event loop, as HuggingFaceChatTarget's does."""
 
@@ -1165,6 +1276,9 @@ async def test_apply_after_a_startup_restore_restores_the_same_entries_async(
     assert converter is not None
     assert converter._converter_target is startup_chat
     assert ScorerRegistry.get_registry_singleton().instances.get("refusal") is not None
+    startup_entry = TargetRegistry.get_registry_singleton().instances.get_entry("startup_chat")
+    assert startup_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
 
 
 class _UnreachableTarget(MockPromptTarget):
@@ -1458,6 +1572,39 @@ async def test_restore_cancellation_propagates_from_startup_async(runtime: Runti
             await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
 
     assert runtime.state == "initializing"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_target_save_in_flight_makes_apply_busy_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    TargetRegistry.reset_registry_singleton()
+    writing, finish_writing = Event(), Event()
+    create_recipe = RegistryRecipeStorage.create_recipe
+
+    def create_recipe_slowly(storage: RegistryRecipeStorage, *, name: str, recipe: ComponentRecipe) -> str:
+        writing.set()
+        finish_writing.wait(TEST_WATCHDOG_SECONDS)
+        return create_recipe(storage, name=name, recipe=recipe)
+
+    runtime.app.include_router(targets.router, prefix="/api")
+    runtime.app.state.registry_recipes_source = str(tmp_path / "recipes")
+    body = {"name": "saved_text", "type": "TextTarget", "params": {}, "persist": True}
+    try:
+        with patch.object(RegistryRecipeStorage, "create_recipe", create_recipe_slowly):
+            transport = httpx.ASGITransport(app=runtime.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                save = asyncio.create_task(client.post("/api/targets", json=body))
+                assert await asyncio.to_thread(writing.wait, TEST_WATCHDOG_SECONDS)
+                await apply_async(runtime)
+                assert (runtime.outcome, runtime.state, runtime.generation) == ("busy", "ready", "original")
+                finish_writing.set()
+                response = await save
+
+        assert response.status_code == 201
+        assert (tmp_path / "recipes" / "targets" / "saved_text.json").exists()
+        lifecycle_module.close_services_async.assert_not_awaited()
+    finally:
+        finish_writing.set()
+        TargetRegistry.reset_registry_singleton()
 
 
 _RESTORABLE_TARGET = {
