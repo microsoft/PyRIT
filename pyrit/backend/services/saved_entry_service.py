@@ -207,7 +207,9 @@ class SavedEntryService:
                     ),
                 )
             except BaseException:
-                _put_back(kind=kind, entry=entry)
+                # A cancelled edit finishes saving before it stops, so the rebuilt entry may hold the name by now.
+                if instances.get_entry(name) is None:
+                    _put_back(kind=kind, entry=entry)
                 raise
             # Listed after the rebuild, since a request that finished during it may have registered an entry that
             # holds the old one.

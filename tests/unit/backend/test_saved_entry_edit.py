@@ -4,6 +4,7 @@
 import asyncio
 import hashlib
 import json
+import threading
 from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
@@ -59,6 +60,7 @@ from pyrit.registry.instance_registry import (
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.setup.initializers.techniques import build_technique_factories
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 ADA = SavedEntryOwner(oid="00000000-0000-0000-0000-000000000001", name="Ada")
@@ -688,3 +690,41 @@ async def test_a_new_entry_that_cant_be_registered_puts_the_old_file_and_entry_b
     assert type(refusal.value) is raised
     assert _file(tmp_path, CONVERTERS, "cat_replace").read_bytes() == before
     assert instances.get("cat_replace") is old
+
+
+async def test_a_cancelled_edit_keeps_the_new_entry_it_finished_saving(tmp_path: Path) -> None:
+    await _save_replace(tmp_path)
+    instances = ConverterRegistry.get_registry_singleton().instances
+    old = instances.get("cat_replace")
+    details = await _read(tmp_path, CONVERTERS, "cat_replace")
+    writing, release = threading.Event(), threading.Event()
+    replace_recipe = RegistryRecipeStorage.replace_recipe
+
+    def slow_replace_recipe(storage: RegistryRecipeStorage, **kwargs: Any) -> str:
+        writing.set()
+        release.wait(TEST_WATCHDOG_SECONDS)
+        return replace_recipe(storage, **kwargs)
+
+    with patch.object(RegistryRecipeStorage, "replace_recipe", slow_replace_recipe):
+        edit = asyncio.create_task(
+            _edit(
+                tmp_path,
+                CONVERTERS,
+                "cat_replace",
+                version=details.version,
+                recipe={**details.recipe, "params": {"pattern": "cat", "replace": "bird"}},
+            )
+        )
+        try:
+            await asyncio.to_thread(writing.wait, TEST_WATCHDOG_SECONDS)
+            edit.cancel()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await edit
+
+    entry = instances.get_entry("cat_replace")
+    assert entry is not None
+    assert entry.instance is not old
+    assert entry.instance.get_identifier().params["replace_list"] == ["bird"]
+    assert json.loads(_file(tmp_path, CONVERTERS, "cat_replace").read_text())["params"]["replace"] == "bird"
