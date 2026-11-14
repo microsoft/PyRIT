@@ -28,6 +28,8 @@ import type {
   TechniqueOverride,
   TechniqueEditResponse,
   CreateTargetRequest,
+  SaveabilityResponse,
+  TargetSaveabilityRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
   CustomInitializerListResponse,
@@ -421,6 +423,13 @@ export const targetsApi = {
 
   createTarget: async (request: CreateTargetRequest): Promise<TargetInstance> => {
     const response = await apiClient.post('/targets', request)
+    return response.data
+  },
+  checkSaveability: async (
+    request: TargetSaveabilityRequest,
+    signal?: AbortSignal,
+  ): Promise<SaveabilityResponse> => {
+    const response = await apiClient.post('/targets/saveability', request, { signal })
     return response.data
   },
   buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {

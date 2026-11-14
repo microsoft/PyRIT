@@ -57,6 +57,7 @@ class AzureBlobStorageTarget(PromptTarget):
     server_credential_parameter: ClassVar[str | None] = "sas_token"
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"sas_token": None})
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"container_url": True})
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"container_url"})
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
