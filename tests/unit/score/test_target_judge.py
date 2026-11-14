@@ -50,6 +50,7 @@ from pyrit.score import (
     SelfAskTrueFalseScorer,
     ShieldGemmaGuideline,
     ShieldGemmaScorer,
+    StrongRejectScorer,
     TrueFalseScorer,
     WildGuardScorer,
 )
@@ -298,6 +299,7 @@ def test_legacy_constructor_rejects_invalid_target(legacy_scorer_type: type[Scor
         (LlamaGuardScorer, {}),
         (ShieldGemmaScorer, {"guideline": ShieldGemmaGuideline(name="Harm", description="Harmful content.")}),
         (WildGuardScorer, {}),
+        (StrongRejectScorer, {}),
         (InsecureCodeScorer, {"system_prompt": "Judge the code.", "harm_categories": ["test"]}),
         (
             SelfAskGeneralFloatScaleScorer,
