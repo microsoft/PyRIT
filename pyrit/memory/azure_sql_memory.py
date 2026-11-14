@@ -656,12 +656,18 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         with closing(self._get_session()) as session:
             rows = session.execute(
                 text(
-                    """SELECT DISTINCT JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack_technique.children.attack.class_name') AS cls
+                    """SELECT DISTINCT COALESCE(
+                        JSON_VALUE(atomic_attack_identifier,
+                            '$.children.attack_technique.children.attack.class_name'),
+                        JSON_VALUE(atomic_attack_identifier, '$.children.attack.class_name')
+                    ) AS cls
                     FROM "AttackResultEntries"
                     WHERE ISJSON(atomic_attack_identifier) = 1
-                    AND JSON_VALUE(atomic_attack_identifier,
-                        '$.children.attack_technique.children.attack.class_name') IS NOT NULL"""
+                    AND COALESCE(
+                        JSON_VALUE(atomic_attack_identifier,
+                            '$.children.attack_technique.children.attack.class_name'),
+                        JSON_VALUE(atomic_attack_identifier, '$.children.attack.class_name')
+                    ) IS NOT NULL"""
                 )
             ).fetchall()
         return sorted(row[0] for row in rows)
@@ -682,6 +688,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     FROM "AttackResultEntries"
                     CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
                         '$.children.attack_technique.children.attack.children.request_converters')) AS c
+                    WHERE ISJSON(atomic_attack_identifier) = 1
+                    AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL
+                    UNION
+                    SELECT DISTINCT JSON_VALUE(c.value, '$.class_name') AS cls
+                    FROM "AttackResultEntries"
+                    CROSS APPLY OPENJSON(JSON_QUERY(atomic_attack_identifier,
+                        '$.children.attack.children.request_converters')) AS c
                     WHERE ISJSON(atomic_attack_identifier) = 1
                     AND JSON_VALUE(c.value, '$.class_name') IS NOT NULL"""
                 )
