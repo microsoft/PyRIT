@@ -14,12 +14,14 @@ from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
     ContentScorable,
+    Equals,
     Message,
     MessagePiece,
     MessageScorable,
     Score,
     ScoreStatus,
     ScoringExpectation,
+    ToolArgumentRequirement,
     ToolCallRequirement,
     ToolExecutionMetadata,
     ToolsCalled,
@@ -282,6 +284,115 @@ async def test_every_required_tool_must_run_async(sqlite_instance: SQLiteMemory)
     assert (await _score(full, "lookup", "summarize")).get_value() is True
 
 
+def _send_email(call_format, call_id: str, arguments: object) -> dict:
+    call = call_format(call_id, "send_email")
+    text = arguments if isinstance(arguments, str) else json.dumps(arguments)
+    if "function" in call:
+        call["function"]["arguments"] = text
+    else:
+        call["arguments"] = text
+    return call
+
+
+def _argument_expectation(**matchers: str) -> ScoringExpectation:
+    arguments = tuple(
+        ToolArgumentRequirement(name=name, matcher=Equals(value=value)) for name, value in matchers.items()
+    )
+    return ScoringExpectation(
+        conditions=(ToolsCalled(tools=(ToolCallRequirement(name="send_email", arguments=arguments),)),)
+    )
+
+
+async def _score_arguments(message: Message, **matchers: str):
+    scorer = MessageToolCallScorer()
+    scores = await scorer.score_async(
+        scorable=MessageScorable.from_message(message), expectation=_argument_expectation(**matchers)
+    )
+    assert len(scores) == 1
+    return scores[0]
+
+
+@pytest.mark.parametrize("call_format", [_responses_call, _chat_completions_call])
+async def test_executed_call_with_matching_arguments_is_true_async(sqlite_instance: SQLiteMemory, call_format) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(call_format, "call_1", {"to": "a@example.com", "subject": "hi"}))
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    score = await _score_arguments(reply, to="a@example.com")
+
+    assert score.get_value() is True
+    assert "send_email(to)" in score.score_rationale
+
+
+@pytest.mark.parametrize("call_format", [_responses_call, _chat_completions_call])
+@pytest.mark.parametrize("arguments", [{"to": "b@example.com"}, {"cc": "a@example.com"}, {}, "not json", "[1]"])
+async def test_executed_call_without_matching_arguments_is_undetermined_not_false_async(
+    sqlite_instance: SQLiteMemory, call_format, arguments: object
+) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(call_format, "call_1", arguments))
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    score = await _score_arguments(reply, to="a@example.com")
+
+    assert score.status == ScoreStatus.UNDETERMINED
+    assert score.score_value is None
+    assert "send_email(to)" in score.score_rationale
+    # The tool ran, so the rationale must not report that it did not.
+    assert "show execution of send_email(to), but no stored call matches the required arguments" in (
+        score.score_rationale
+    )
+    assert "no execution of" not in score.score_rationale
+
+
+async def test_a_tool_that_never_ran_is_reported_as_not_executed_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    reply = await conversation.reply_async()
+
+    score = await _score_arguments(reply, to="a@example.com")
+
+    assert score.status == ScoreStatus.UNDETERMINED
+    assert "Stored messages show no execution of: send_email(to)." in score.score_rationale
+    assert "required arguments" not in score.score_rationale
+
+
+async def test_one_matching_execution_among_several_is_enough_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", {"to": "b@example.com"}))
+    await conversation.output_async("call_1")
+    await conversation.call_async(_send_email(_responses_call, "call_2", {"to": "a@example.com"}))
+    await conversation.output_async("call_2")
+
+    assert (await _score_arguments(await conversation.reply_async(), to="a@example.com")).get_value() is True
+
+
+async def test_argument_requirements_must_match_within_one_execution_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", {"to": "a@example.com", "subject": "no"}))
+    await conversation.output_async("call_1")
+    await conversation.call_async(_send_email(_responses_call, "call_2", {"to": "b@example.com", "subject": "hi"}))
+    await conversation.output_async("call_2")
+    reply = await conversation.reply_async()
+
+    assert (await _score_arguments(reply, to="a@example.com", subject="hi")).status == ScoreStatus.UNDETERMINED
+    assert (await _score_arguments(reply, to="b@example.com", subject="hi")).get_value() is True
+
+
+async def test_arguments_of_a_requested_call_that_did_not_run_are_not_evidence_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", {"to": "a@example.com"}))
+    await conversation.call_async(_send_email(_responses_call, "call_2", {"to": "b@example.com"}))
+    await conversation.output_async("call_2")
+    reply = await conversation.reply_async()
+
+    assert (await _score_arguments(reply, to="a@example.com")).status == ScoreStatus.UNDETERMINED
+    assert (await _score_arguments(reply, to="b@example.com")).get_value() is True
+
+
 async def test_tool_names_match_exactly_async(sqlite_instance: SQLiteMemory) -> None:
     conversation = await _Conversation.create_async(memory=sqlite_instance)
     await conversation.call_async(_responses_call("call_1", "Lookup"))
@@ -484,6 +595,45 @@ async def test_exhaustive_match_is_never_true_from_stored_messages_async(
 
     assert score.status == ScoreStatus.UNDETERMINED
     assert score.score_value is None
+
+
+@pytest.mark.parametrize(("extra_tool", "expected"), [(False, None), (True, False)])
+async def test_exhaustive_argument_match_stays_open_until_other_tool_evidence_async(
+    sqlite_instance: SQLiteMemory, extra_tool: bool, expected: bool | None
+) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", {"to": "a@example.com"}))
+    await conversation.output_async("call_1")
+    if extra_tool:
+        await conversation.call_async(_responses_call("call_2", "delete"))
+        await conversation.output_async("call_2")
+    reply = await conversation.reply_async()
+    expectation = ScoringExpectation(
+        conditions=(
+            ToolsCalled(
+                tools=(
+                    ToolCallRequirement(
+                        name="send_email",
+                        arguments=(
+                            ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),
+                        ),
+                    ),
+                ),
+                exhaustive=True,
+            ),
+        )
+    )
+
+    score = (
+        await MessageToolCallScorer().score_async(
+            scorable=MessageScorable.from_message(reply), expectation=expectation
+        )
+    )[0]
+
+    assert score.score_value == (None if expected is None else str(expected).lower())
+    assert score.status == (ScoreStatus.UNDETERMINED if expected is None else ScoreStatus.COMPLETE)
+    if extra_tool:
+        assert "outside the required set: delete" in score.score_rationale
 
 
 async def test_exhaustive_ignores_unnamed_calls_that_did_not_run_async(sqlite_instance: SQLiteMemory) -> None:

@@ -14,7 +14,8 @@
 # `OtelToolCallScorer` answers "Did these tools run?" It matches exact,
 # case-sensitive names in execution spans, not claims in a response or
 # model-proposed calls. A failed execution attempt counts; the scorer does not
-# check tool success, arguments, order, or call count.
+# check tool success, arguments, order, or call count. For argument matching, use
+# `MessageToolCallScorer` (see "Require arguments" below).
 #
 # The example tool is named **`my_tool_call`**, implemented by the `my_tool_call()` function
 # below. Its span records `"gen_ai.tool.name": "my_tool_call"`.
@@ -319,3 +320,27 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # ```python
 # ToolsCalled(tools=(ToolCallRequirement(name="read_file"),), exhaustive=True)
 # ```
+#
+# ## Require arguments
+#
+# A `ToolCallRequirement` can also constrain the arguments of the call. Each
+# `ToolArgumentRequirement` names one top-level argument, exactly and
+# case-sensitively, and compares its value with the same text matchers other
+# conditions use: `Equals`, `Contains`, or `Regex`. A string value is compared as
+# it is; any other JSON value is compared as its compact JSON text. The match is
+# textual, so the string `"3"` and the number `3` both read as `3`, as do `"true"`
+# and `true`, and `"null"` and `null`. One execution of the tool must satisfy every
+# argument requirement.
+#
+# ```python
+# ToolCallRequirement(
+#     name="send_email",
+#     arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),),
+# )
+# ```
+#
+# `MessageToolCallScorer` reads the arguments from the stored `function_call`
+# piece of each execution. Trace events do not retain arguments, so
+# `OtelToolCallScorer` cannot confirm an argument requirement and leaves it
+# undetermined. Complete trace evidence with no execution of the tool still makes
+# it false, because no call means no matching call.

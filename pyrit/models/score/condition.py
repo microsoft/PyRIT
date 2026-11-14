@@ -166,12 +166,35 @@ class MatchesObjective(Condition):
     condition_type: Literal["matches_objective"] = "matches_objective"
 
 
+class ToolArgumentRequirement(BaseModel):
+    """
+    One argument a tool call must have been made with, compared by a text matcher.
+
+    ``name`` is an exact, case-sensitive top-level argument key. A string value is compared
+    as it is; any other JSON value is compared as its compact JSON text, with sorted keys.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1, strict=True)
+    matcher: TextMatcher
+
+
 class ToolCallRequirement(BaseModel):
-    """One exact, case-sensitive tool name required as execution evidence."""
+    """
+    One exact, case-sensitive tool name required as execution evidence.
+
+    ``arguments`` optionally narrows the requirement to a call made with matching arguments:
+    one execution of the tool must satisfy every argument requirement. Evidence that does not
+    retain a call's arguments cannot show that it does, so it leaves the requirement
+    undetermined rather than satisfied.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: ToolName
+    #: Left out of serialization while empty, so name-only requirements keep their stored form and fingerprint.
+    arguments: tuple[ToolArgumentRequirement, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ToolsCalled(Condition):
