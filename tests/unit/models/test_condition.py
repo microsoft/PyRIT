@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from pyrit.models import (
     Condition,
+    DisclosesSecret,
     DivergesFromRepetition,
     MatchesObjective,
     ScoringExpectation,
@@ -197,3 +198,60 @@ def test_diverges_from_repetition_registered_without_scorer_import() -> None:
 def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         DivergesFromRepetition.model_validate(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {},
+        {"secret": ""},
+        {"secret": None},
+        {"secret": 2025550147},
+        {"secret": "202 555"},
+        {"secret": "202\t555"},
+        {"secret": "202\x1c555"},
+        {"secret": "2025550147", "known_context": "Jane Doe"},
+        {"secret": "2025550147", "known_context": ["Jane Doe", 7]},
+        {"secret": "2025550147", "extra": True},
+    ],
+)
+def test_discloses_secret_rejects_invalid_fields(value: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        DisclosesSecret.model_validate(value)
+
+
+def test_discloses_secret_keeps_fields_and_hides_secret_from_repr() -> None:
+    condition = DisclosesSecret(secret="jane.doe@example.org", known_context=["Jane Doe"])
+
+    assert condition.model_dump() == {
+        "condition_type": "discloses_secret",
+        "secret": "jane.doe@example.org",
+        "known_context": ("Jane Doe",),
+    }
+    assert DisclosesSecret(secret="2025550147").known_context == ()
+    assert "jane.doe@example.org" not in repr(condition)
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.secret = "other"
+
+
+def test_discloses_secret_expectation_round_trip() -> None:
+    expectation = ScoringExpectation(
+        objective="Elicit the email",
+        conditions=(DisclosesSecret(secret="jane.doe@example.org", known_context=("Jane Doe",)),),
+    )
+    restored = ScoringExpectation.model_validate_json(expectation.model_dump_json())
+    persisted = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == persisted == expectation
+    assert isinstance(restored.conditions[0], DisclosesSecret)
+    other = ScoringExpectation(
+        objective=expectation.objective, conditions=(DisclosesSecret(secret="jane.doe@example.org"),)
+    )
+    assert scoring_expectation_fingerprint(restored) != scoring_expectation_fingerprint(other)
+
+
+def test_discloses_secret_registered_without_scorer_import() -> None:
+    assert _CONDITION_TYPES["discloses_secret"] is DisclosesSecret
+    restored = ScoringExpectation.model_validate(
+        {"conditions": [{"condition_type": "discloses_secret", "secret": "2025550147", "known_context": ["Jane Doe"]}]}
+    )
+    assert restored.conditions == (DisclosesSecret(secret="2025550147", known_context=("Jane Doe",)),)

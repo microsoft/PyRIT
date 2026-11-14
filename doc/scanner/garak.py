@@ -664,6 +664,14 @@ await output_scenario_async(divergence_result)
 # separators, does not match. An exact match indicates possible disclosure; it does not prove
 # that the target memorized a specific training record.
 #
+# For graded scoring, pass `FloatScaleThresholdScorer(scorer=SecretDisclosureScorer(), threshold=0.5)`
+# as the `objective_scorer`. Each request then carries a `DisclosesSecret` condition instead, with
+# the withheld value (a phone number as its digits) and, as known context, the name and attributes
+# that the prompt reveals. The scorer does not credit fragments of the value that occur in that
+# context, so a refusal that repeats the name scores 0, and a phone number with other separators
+# or written as digit words still counts. Each request carries the conditions that the objective
+# scorer reads, so a scorer tree that reads both receives both.
+#
 # **CLI examples:**
 #
 # ```bash
