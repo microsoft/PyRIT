@@ -14,8 +14,9 @@ import {
   Text,
   Textarea,
 } from '@fluentui/react-components'
-import { useNavigate, useParams } from 'react-router'
+import { useBeforeUnload, useBlocker, useNavigate, useParams } from 'react-router'
 
+import ConfirmDialog from '@/components/ConfirmDialog'
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
 import ScenarioDatasetTable from '@/components/Scenarios/ScenarioDatasetTable'
@@ -62,6 +63,16 @@ interface DatasetProjectionResult {
   error: string | null
 }
 
+interface PresetDraft {
+  name: string
+  description: string
+  showInScanner: boolean
+  scenarioName: string
+  config: ScenarioConfigFormState | null
+}
+
+const presetDraftSignature = (draft: PresetDraft): string => JSON.stringify(draft)
+
 export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {
   const { presetName } = useParams<{ presetName: string }>()
   // Remount on navigation between two presets so every field resets to the
@@ -78,6 +89,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const styles = useScenarioPresetEditorStyles()
   const navigate = useNavigate()
   const decodedName = presetName === undefined ? '' : routerPathParamValue(presetName)
+  const allowNavigation = useRef(false)
 
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -101,6 +113,13 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const [saving, setSaving] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [savedDraft, setSavedDraft] = useState<PresetDraft>({
+    name: mode === 'edit' ? decodedName : '',
+    description: '',
+    showInScanner: true,
+    scenarioName: '',
+    config: null,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -141,9 +160,23 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
           setScenario(full)
           setConfig(presetToConfigState(full, response.preset))
           setResolvedScenarioRequestSequence(scenarioRequestSequence.current)
+          setSavedDraft({
+            name: response.preset.name,
+            description: response.preset.description ?? '',
+            showInScanner: response.preset.show_in_scanner !== false,
+            scenarioName: response.preset.scenario_name,
+            config: presetToConfigState(full, response.preset),
+          })
         } catch (scenarioErr) {
           if (cancelled) return
           setScenarioUnavailable(toApiError(scenarioErr).detail)
+          setSavedDraft({
+            name: response.preset.name,
+            description: response.preset.description ?? '',
+            showInScanner: response.preset.show_in_scanner !== false,
+            scenarioName: response.preset.scenario_name,
+            config: null,
+          })
         } finally {
           if (!cancelled) {
             setScenarioLoading(false)
@@ -164,6 +197,27 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
       scenarioRequestSequence.current += 1
     }
   }, [decodedName, mode])
+
+  const readOnly = loaded !== null && loaded.version === null
+  const currentDraft: PresetDraft = {
+    name, description, showInScanner, scenarioName: selectedScenarioName, config,
+  }
+  const hasUnsavedChanges = status === 'ready'
+    && !readOnly
+    && !scenarioLoading
+    && presetDraftSignature(currentDraft) !== presetDraftSignature(savedDraft)
+  const shouldBlockNavigation = useCallback(
+    (): boolean => hasUnsavedChanges && !allowNavigation.current,
+    [hasUnsavedChanges],
+  )
+  const blocker = useBlocker(shouldBlockNavigation)
+
+  useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
+    if (hasUnsavedChanges && !allowNavigation.current) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  }, [hasUnsavedChanges]))
 
   const handleScenarioChange = useCallback(async (nextScenarioName: string): Promise<void> => {
     const requestSequence = scenarioRequestSequence.current + 1
@@ -322,6 +376,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
       } else {
         await scenarioPresetsApi.update(loaded.preset.name, preset, loaded.version)
       }
+      allowNavigation.current = true
       navigate(PRESETS_ROUTE)
     } catch (err) {
       setSaveError(toApiError(err).detail)
@@ -357,6 +412,18 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   }
 
   const editing = loaded !== null
+
+  const discardAndLeave = (): void => {
+    if (blocker.state === 'blocked') {
+      blocker.proceed()
+    }
+  }
+
+  const keepEditing = (): void => {
+    if (blocker.state === 'blocked') {
+      blocker.reset()
+    }
+  }
 
   return (
     <section
@@ -547,6 +614,17 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
           </Button>
         </div>
       </form>
+
+      <ConfirmDialog
+        open={blocker.state === 'blocked'}
+        title="Discard unsaved changes?"
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        onConfirm={discardAndLeave}
+        onCancel={keepEditing}
+      >
+        Your unsaved preset changes will be lost if you continue.
+      </ConfirmDialog>
     </section>
   )
 }
