@@ -1,4 +1,4 @@
-import { decodeBlobErrorAsync, retryAfterMilliseconds, toApiError } from './errors'
+import { decodeBlobErrorAsync, isNotSaveableError, retryAfterMilliseconds, toApiError } from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -297,5 +297,21 @@ describe('decodeBlobErrorAsync', () => {
     await decodeBlobErrorAsync(makeAxiosError({ hasResponse: false }))
 
     expect(notAxios.response.data).toBe(body)
+  })
+})
+
+describe('isNotSaveableError', () => {
+  it('should recognize the typed refusal to save', () => {
+    const refused = toApiError(makeAxiosError({ status: 400, data: { type: '/errors/not-saveable', detail: 'No.' } }))
+
+    expect(isNotSaveableError(refused)).toBe(true)
+  })
+
+  it.each([
+    ['an untyped bad request', 400, { detail: 'Bad endpoint.' }],
+    ['another problem type', 400, { type: '/errors/validation-error', detail: 'Bad name.' }],
+    ['the problem type on another status', 409, { type: '/errors/not-saveable', detail: 'Taken.' }],
+  ])('should not treat %s as a refusal to save', (_, status, data) => {
+    expect(isNotSaveableError(toApiError(makeAxiosError({ status, data })))).toBe(false)
   })
 })

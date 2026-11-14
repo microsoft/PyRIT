@@ -21,7 +21,7 @@ from fastapi import Request, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.middleware.auth import AuthenticatedUser
+from pyrit.backend.middleware.auth import AuthenticatedUser, current_user_oid
 from pyrit.backend.models import (
     AddMessageResponse,
     AttackListResponse,
@@ -50,16 +50,18 @@ from pyrit.backend.models.common import (
 from pyrit.backend.models.scores import ApplyChatScorerResponse
 from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
-from pyrit.backend.routes.common import parse_label_query_params
+from pyrit.backend.routes.common import parse_label_query_params, saved_entry_owner_from_request
 from pyrit.backend.routes.scores import _get_user_identifier
 from pyrit.backend.services import AttackService
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
+from pyrit.backend.services.saved_entries import SavedEntryRemovalError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog import TargetInstance
+from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1394,6 +1396,121 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_403_FORBIDDEN
             assert "administrator access" in response.json()["detail"]
 
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (SavedEntryConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
+            (SavedEntryStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
+        ],
+    )
+    def test_create_target_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=error)
+
+            response = client.post(
+                "/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status_code
+        assert response.json()["detail"] == str(error)
+
+    def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = NotSaveableError(
+            "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
+        )
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
+            "instance": "/api/targets",
+        }
+
+    def test_create_target_leaves_other_bad_requests_unmarked(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("bad endpoint"))
+
+            response = client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {"detail": "bad endpoint"}
+
+    def test_create_target_passes_the_saved_entries_source_and_no_owner_when_sign_in_is_off(
+        self, client: TestClient
+    ) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch.object(client.app.state, "registry_recipes_source", "/srv/registry-recipes", create=True),
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True})
+
+        kwargs = mock_get_service.return_value.create_target_async.call_args.kwargs
+        assert (kwargs["recipes_source"], kwargs["owner"], kwargs["request"].persist) == (
+            "/srv/registry-recipes",
+            None,
+            True,
+        )
+
+    def test_create_target_records_the_signed_in_user_as_the_owner(self, client: TestClient) -> None:
+        owner = SavedEntryOwner(oid="user-oid", name="Ada")
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets.saved_entry_owner_from_request", return_value=owner),
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True})
+
+        assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] == owner
+
+    def test_create_target_records_no_owner_when_not_saving(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets.saved_entry_owner_from_request") as saved_entry_owner,
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] is None
+        saved_entry_owner.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({}, "persist requires a name"),
+            ({"name": "Contoso-GPT"}, "Invalid registry name"),
+            ({"name": "contoso", "register": False}, "persist requires register=true"),
+        ],
+    )
+    def test_create_target_checks_what_persist_needs(
+        self, client: TestClient, fields: dict[str, object], message: str
+    ) -> None:
+        response = client.post("/api/targets", json={"type": "TextTarget", "params": {}, "persist": True, **fields})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in json.dumps(response.json())
+
+    @pytest.mark.parametrize(("name", "expected"), [("Ada", "Ada"), ("", "ada@example.invalid")])
+    def test_saved_entry_owner_is_the_signed_in_user(self, name: str, expected: str) -> None:
+        request = Request({"type": "http"})
+        request.state.user = AuthenticatedUser(oid="user-oid", name=name, email="ada@example.invalid", groups=[])
+
+        assert saved_entry_owner_from_request(request) == SavedEntryOwner(oid="user-oid", name=expected)
+        assert saved_entry_owner_from_request(Request({"type": "http"})) is None
+
     def test_create_target_passes_admin_flag_from_request(self, client: TestClient) -> None:
         """The route resolves administrator access and forwards it to the service."""
         with (
@@ -1434,6 +1551,47 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["target_registry_name"] == "target-1"
+
+    def test_list_and_get_pass_the_signed_in_users_object_id(self, client: TestClient) -> None:
+        app.dependency_overrides[current_user_oid] = lambda: "user-oid"
+        try:
+            with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+                service = mock_get_service.return_value
+                service.list_targets_async = AsyncMock(
+                    return_value=TargetListResponse(
+                        items=[],
+                        pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                    )
+                )
+                service.get_target_async = AsyncMock(
+                    return_value=TargetInstance(
+                        target_registry_name="target-1",
+                        identifier=TargetIdentifier(class_name="TextTarget"),
+                        capabilities=TargetCapabilities(),
+                    )
+                )
+
+                assert client.get("/api/targets").status_code == status.HTTP_200_OK
+                assert client.get("/api/targets/target-1").status_code == status.HTTP_200_OK
+        finally:
+            app.dependency_overrides.pop(current_user_oid, None)
+
+        assert service.list_targets_async.call_args.kwargs["current_user_oid"] == "user-oid"
+        assert service.get_target_async.call_args.kwargs["current_user_oid"] == "user-oid"
+
+    def test_list_targets_passes_no_object_id_when_sign_in_is_off(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            service = mock_get_service.return_value
+            service.list_targets_async = AsyncMock(
+                return_value=TargetListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+
+            assert client.get("/api/targets").status_code == status.HTTP_200_OK
+
+        assert service.list_targets_async.call_args.kwargs["current_user_oid"] is None
 
     def test_get_target_not_found(self, client: TestClient) -> None:
         """Test getting a non-existent target."""
@@ -1696,6 +1854,118 @@ class TestConverterRoutes:
             response = client.delete("/api/converters/missing")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_delete_converter_refuses_a_saved_converter(self, client: TestClient) -> None:
+        refusal = SavedEntryRemovalError(
+            "Saved converter 'base64_converter' can't be removed yet, since it comes back from its saved file at "
+            "every start."
+        )
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.delete_converter_async = AsyncMock(side_effect=refusal)
+
+            response = client.delete("/api/converters/base64_converter")
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json()["detail"] == str(refusal)
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (SavedEntryConflictError("A saved converter named 'shift' already exists."), status.HTTP_409_CONFLICT),
+            (
+                SavedEntryStorageError("Saved converters can't be written right now."),
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            ),
+        ],
+    )
+    def test_create_converter_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=error)
+
+            response = client.post(
+                "/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status_code
+        assert response.json()["detail"] == str(error)
+
+    def test_create_converter_marks_a_save_refusal_so_it_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = NotSaveableError(
+            "Saved converters can't keep uploaded files yet, so leave out 'font_name'. "
+            "It can still be created without saving it."
+        )
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/converters",
+                json={"name": "banner", "type": "AddTextImageConverter", "params": {}, "persist": True},
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": str(refusal),
+            "instance": "/api/converters",
+        }
+
+    def test_create_converter_passes_the_signed_in_user_and_the_saved_entries_source(self, client: TestClient) -> None:
+        owner = SavedEntryOwner(oid="user-oid", name="Ada")
+        with (
+            patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service,
+            patch("pyrit.backend.routes.converters.saved_entry_owner_from_request", return_value=owner),
+            patch.object(client.app.state, "registry_recipes_source", "/srv/registry-recipes", create=True),
+        ):
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post(
+                "/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}, "persist": True}
+            )
+
+        kwargs = mock_get_service.return_value.create_converter_async.call_args.kwargs
+        assert (kwargs["owner"], kwargs["recipes_source"], kwargs["request"].persist) == (
+            owner,
+            "/srv/registry-recipes",
+            True,
+        )
+
+    def test_create_converter_records_no_owner_when_not_saving(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service,
+            patch("pyrit.backend.routes.converters.saved_entry_owner_from_request") as saved_entry_owner,
+        ):
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}})
+
+        assert mock_get_service.return_value.create_converter_async.call_args.kwargs["owner"] is None
+        saved_entry_owner.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({}, "name is required when register=true"),
+            ({"name": "Shift-Two"}, "Invalid registry name"),
+            ({"name": "shift", "register": False}, "persist requires register=true"),
+            (
+                {"name": "shift", "source": {"source_name": "caesar", "source_hash": "a" * 64, "params": {}}},
+                "persist can't be used with source",
+            ),
+        ],
+    )
+    def test_create_converter_checks_what_persist_needs(
+        self, client: TestClient, fields: dict[str, object], message: str
+    ) -> None:
+        body: dict[str, object] = {"type": "CaesarConverter", "persist": True, **fields}
+
+        response = client.post("/api/converters", json=body)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in json.dumps(response.json())
 
     def test_preview_conversion_success(self, client: TestClient) -> None:
         """Test previewing a conversion."""

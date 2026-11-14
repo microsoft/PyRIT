@@ -13,7 +13,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
-from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware, require_admin
+from pyrit.backend.middleware.auth import (
+    AuthenticatedUser,
+    AuthenticationError,
+    EntraAuthMiddleware,
+    current_user_oid,
+    require_admin,
+)
 
 
 def _make_middleware() -> EntraAuthMiddleware:
@@ -76,6 +82,14 @@ def test_require_admin_allows_explicit_local_development_override() -> None:
     request.state.user = None
 
     require_admin(request)
+
+
+def test_current_user_oid_is_the_signed_in_users_object_id() -> None:
+    request = Request({"type": "http"})
+    request.state.user = AuthenticatedUser(oid="user-1", name="Ada", email="ada@example.com", groups=[])
+
+    assert current_user_oid(request) == "user-1"
+    assert current_user_oid(Request({"type": "http"})) is None
 
 
 async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None:

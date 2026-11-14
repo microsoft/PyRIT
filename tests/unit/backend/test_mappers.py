@@ -44,6 +44,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
 from pyrit.prompt_target import (
     CapabilityName,
     PromptTarget,
@@ -1590,6 +1591,37 @@ def test_target_instance_reports_effective_history_replay(mode: str) -> None:
         assert not result.capabilities.supports_editable_history
 
 
+class TestTargetInstanceOrigin:
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_carries_the_origin_onto_the_instance(self) -> None:
+        result = target_object_to_instance("t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED)
+
+        assert result.origin is RegistryEntryOrigin.SAVED
+        assert target_object_to_instance("t-1", MockPromptTarget()).origin is None
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize(
+        ("owner", "current_user_oid", "saved_by"),
+        [
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
+            (SavedEntryOwner(oid="ada-oid", name=""), "ada-oid", (None, True)),
+            (None, "ada-oid", (None, False)),
+            (None, None, (None, False)),
+        ],
+    )
+    def test_says_who_saved_the_target_and_whether_it_was_the_caller(
+        self, owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
+    ) -> None:
+        result = target_object_to_instance(
+            "t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED, owner=owner, current_user_oid=current_user_oid
+        )
+
+        assert (result.saved_by, result.saved_by_me) == saved_by
+        assert "ada-oid" not in result.model_dump_json()
+
+
 class TestTargetObjectToInstance:
     """Tests for target_object_to_instance function."""
 
@@ -2010,6 +2042,35 @@ class TestTargetObjectToInstanceRoundRobin:
         assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
         assert result.generation_ranges == {}
         assert all(inner.generation_ranges == {} for inner in result.inner_targets)
+
+    def test_inner_targets_name_nobody_as_their_saver(
+        self, *, target_mock_factory: Callable[[type[PromptTarget]], MagicMock]
+    ) -> None:
+        from pyrit.prompt_target import RoundRobinTarget
+
+        inner = target_mock_factory(PromptTarget)
+        inner.capabilities = TargetCapabilities()
+        inner.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={}
+        )
+        rr = target_mock_factory(RoundRobinTarget)
+        rr.capabilities = TargetCapabilities(supports_multi_turn=True)
+        rr.inner_targets = [inner]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget", class_module="pyrit.prompt_target.round_robin_target", params={}
+        )
+
+        result = target_object_to_instance(
+            "rr-1",
+            rr,
+            origin=RegistryEntryOrigin.SAVED,
+            owner=SavedEntryOwner(oid="ada-oid", name="Ada"),
+            current_user_oid="ada-oid",
+        )
+
+        assert (result.saved_by, result.saved_by_me) == ("Ada", True)
+        assert result.inner_targets is not None
+        assert [(member.saved_by, member.saved_by_me) for member in result.inner_targets] == [(None, False)]
 
     def test_round_robin_identifier_carries_no_model_name(
         self, *, target_mock_factory: Callable[[type[PromptTarget]], MagicMock]

@@ -22,13 +22,14 @@ from pyrit.models.catalog import (
     RegistryRestoreReport,
     RestoreFailure,
     RestoreFailureReason,
+    SavedEntryOwner,
     SavedEntryRef,
     StoredRecipe,
     TechniqueRecipe,
 )
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, saved_entry_owner
 from pyrit.registry.registry_recipe_restore import RecipeBuilder, RecipeRejectedError, RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RecipeListing, RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
@@ -236,6 +237,51 @@ class TestRestoreOrderAndRebuild:
             "refusal": "scorers",
             "formal_red_team": "techniques",
             "startup_encoder": None,
+        }
+
+    async def test_keeps_who_saved_each_restored_entry(self, tmp_path: Path) -> None:
+        ada = {"oid": "00000000-0000-0000-0000-00000000000a", "name": "Ada"}
+        _save(
+            tmp_path,
+            RegistryRecipeKind.SCORERS,
+            "refusal",
+            {
+                "class_module": "pyrit.score.true_false.self_ask_refusal_scorer",
+                "class_name": "SelfAskRefusalScorer",
+                "params": {"chat_target": "contoso_gpt4o"},
+                "owner": ada,
+            },
+        )
+        _save(
+            tmp_path,
+            RegistryRecipeKind.CONVERTERS,
+            "tone_formal",
+            {
+                "class_module": "pyrit.converter.tone_converter",
+                "class_name": "ToneConverter",
+                "params": {"converter_target": "contoso_gpt4o", "tone": "formal"},
+                "owner": ada,
+            },
+        )
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", {**_IDENTITY_TARGET, "owner": ada})
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "saved_without_sign_in", _IDENTITY_TARGET)
+
+        report = await _restore(tmp_path)
+
+        assert report.failures == []
+        targets = TargetRegistry.get_registry_singleton().instances
+        entries = {
+            "contoso_gpt4o": targets.get_entry("contoso_gpt4o"),
+            "saved_without_sign_in": targets.get_entry("saved_without_sign_in"),
+            "tone_formal": ConverterRegistry.get_registry_singleton().instances.get_entry("tone_formal"),
+            "refusal": ScorerRegistry.get_registry_singleton().instances.get_entry("refusal"),
+        }
+        owner = SavedEntryOwner(**ada)
+        assert {name: saved_entry_owner(entry.metadata) for name, entry in entries.items() if entry} == {
+            "contoso_gpt4o": owner,
+            "saved_without_sign_in": None,
+            "tone_formal": owner,
+            "refusal": owner,
         }
 
     async def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
@@ -514,6 +560,82 @@ class TestRestoreFailures:
         (failure,) = report.failures
         assert (failure.name, failure.reason) == ("copilot", RestoreFailureReason.UNSUPPORTED_CLASS)
         assert "Copilot account" in failure.message
+
+    @pytest.mark.parametrize(
+        ("class_module", "class_name"),
+        [
+            ("pyrit.converter.azure_speech_text_to_audio_converter", "AzureSpeechTextToAudioConverter"),
+            ("pyrit.converter.azure_speech_audio_to_text_converter", "AzureSpeechAudioToTextConverter"),
+        ],
+    )
+    async def test_refuses_a_speech_converter_that_would_use_this_servers_key(
+        self, tmp_path: Path, class_module: str, class_name: str
+    ) -> None:
+        recipe = {"class_module": class_module, "class_name": class_name, "params": {"azure_speech_region": "eastus"}}
+        _save(tmp_path, RegistryRecipeKind.CONVERTERS, "speech", recipe)
+
+        with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "server-speech-key"}):
+            report = await _restore(tmp_path)
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("speech", RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert (
+            failure.message
+            == f"'azure_speech_key' is empty, so '{class_name}' can use this server's credential instead."
+        )
+        assert "speech" not in ConverterRegistry.get_registry_singleton().instances.get_names()
+
+    async def test_refuses_a_content_filter_scorer_that_would_use_this_servers_key(self, tmp_path: Path) -> None:
+        recipe = {
+            "class_module": "pyrit.score.float_scale.azure_content_filter_scorer",
+            "class_name": "AzureContentFilterScorer",
+            "params": {"endpoint": "https://contoso.cognitiveservices.azure.com/"},
+        }
+        _save(tmp_path, RegistryRecipeKind.SCORERS, "content_safety", recipe)
+
+        with patch.dict(os.environ, {"AZURE_CONTENT_SAFETY_API_KEY": "server-safety-key"}):
+            report = await _restore(tmp_path)
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("content_safety", RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert failure.message == (
+            "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead."
+        )
+        assert "content_safety" not in ScorerRegistry.get_registry_singleton().instances.get_names()
+
+    async def test_refuses_an_audio_scorer_that_transcribes_with_this_servers_speech_settings(
+        self, tmp_path: Path
+    ) -> None:
+        _save(
+            tmp_path,
+            RegistryRecipeKind.SCORERS,
+            "leak_substring",
+            {
+                "class_module": "pyrit.score.true_false.substring_scorer",
+                "class_name": "SubStringScorer",
+                "params": {"substring": "secret", "categories": ["leak"]},
+            },
+        )
+        _save(
+            tmp_path,
+            RegistryRecipeKind.SCORERS,
+            "audio_leak",
+            {
+                "class_module": "pyrit.score.true_false.audio_true_false_scorer",
+                "class_name": "AudioTrueFalseScorer",
+                "params": {"text_capable_scorer": "leak_substring"},
+            },
+        )
+
+        report = await _restore(tmp_path)
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("audio_leak", RestoreFailureReason.UNSUPPORTED_CLASS)
+        assert failure.message == (
+            "'AudioTrueFalseScorer' can't be saved. It transcribes audio with the Azure Speech key or Azure identity "
+            "this server is set up with."
+        )
+        assert [ref.name for ref in report.restored] == ["leak_substring"]
 
     async def test_restores_a_class_whose_optional_credentials_are_left_empty(self, tmp_path: Path) -> None:
         TargetRegistry.get_registry_singleton().register_class(_OptionalKeyTarget)
