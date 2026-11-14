@@ -35,10 +35,13 @@ import {
   EyeRegular,
 } from '@fluentui/react-icons'
 
+import DeleteSavedEntryButton from '@/components/Registry/DeleteSavedEntryButton'
+import OriginBadge from '@/components/Registry/OriginBadge'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import type { TargetInstance } from '@/types'
+import { savedByText } from '@/utils/registryOrigin'
 import {
   sameTarget,
   targetEndpoint,
@@ -65,6 +68,8 @@ interface TargetTableProps {
   targets: TargetInstance[]
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  /** Called after a saved target's file is deleted, so the list can be loaded again. */
+  onTargetDeleted?: () => void
   detection: TargetCapabilityDetection
 }
 
@@ -86,7 +91,10 @@ function formatParams(params?: Record<string, unknown> | null): string {
 }
 
 const COLUMN_TOOLTIPS = {
-  registryName: 'Unique name used to identify this configured target',
+  registryName:
+    'Unique name used to identify this target. Saved targets come back after the backend restarts or is '
+    + 'reinitialized, targets from configuration come back because the server registers them again, and '
+    + 'Temporary targets are gone.',
   type: 'Target class implementation',
   model: 'Configured model name. A dotted underline indicates the deployment alias differs from the underlying model — hover the value to see it.',
   endpoint: 'API endpoint URL the target sends requests to',
@@ -252,6 +260,7 @@ export default function TargetTable({
   targets,
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
+  onTargetDeleted,
   detection,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
@@ -261,6 +270,7 @@ export default function TargetTable({
     [preferences.hiddenTargetRegistryNames],
   )
   const [showHiddenTargets, setShowHiddenTargets] = useState(false)
+  const [onlySavedByMe, setOnlySavedByMe] = useState(false)
   const [previousHiddenTargetCount, setPreviousHiddenTargetCount] = useState<number | null>(null)
   const [filters, setFilters] = useState<TargetFilters>(DEFAULT_TARGET_FILTERS)
   const [selecting, setSelecting] = useState(false)
@@ -321,10 +331,16 @@ export default function TargetTable({
     [hiddenTargetRegistryNames, showHiddenTargets, targets],
   )
 
+  const savedByMeCount = useMemo(() => targets.filter((target) => target.saved_by_me === true).length, [targets])
+  // The checkbox only shows while the user has a saved target, so it turns off when the last one goes.
+  if (onlySavedByMe && savedByMeCount === 0) setOnlySavedByMe(false)
+
   const filterOptions = useMemo(() => getTargetFilterOptions(targets, filters), [targets, filters])
   const filteredTargets = useMemo(
-    () => displayedTargets.filter((target: TargetInstance) => targetMatchesFilters(target, filters)),
-    [displayedTargets, filters],
+    () => displayedTargets.filter((target: TargetInstance) => (
+      (!onlySavedByMe || target.saved_by_me === true) && targetMatchesFilters(target, filters)
+    )),
+    [displayedTargets, filters, onlySavedByMe],
   )
   const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
   const isSelected = (target: TargetInstance): boolean => detecting
@@ -395,6 +411,14 @@ export default function TargetTable({
         >
           Show hidden targets ({hiddenTargetCount})
         </Button>
+        {savedByMeCount > 0 && (
+          <Checkbox
+            checked={onlySavedByMe}
+            label={`Only targets I saved (${savedByMeCount})`}
+            onChange={(_, data) => setOnlySavedByMe(data.checked === true)}
+            data-testid="only-targets-i-saved"
+          />
+        )}
         <div className={styles.detectionControls}>
           <Button
             className={styles.rowAction}
@@ -492,6 +516,7 @@ export default function TargetTable({
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
             const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
+            const savedBy = savedByText(target)
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
@@ -534,19 +559,31 @@ export default function TargetTable({
                       >
                         {hidden ? 'Show' : 'Hide'}
                       </Button>
+                      {target.origin === 'saved' && onTargetDeleted && (
+                        <DeleteSavedEntryButton
+                          kind="targets"
+                          name={target.target_registry_name}
+                          className={styles.rowAction}
+                          onDeleted={onTargetDeleted}
+                        />
+                      )}
                     </TableCell>
                   </>
                 }
                 nameCellClassName={styles.registryNameCell}
                 nameContent={
-                  isDefaultAdversarial(target) && (
-                    <div className={styles.defaultIndicators}>
-                      {isDefaultAdversarial(target) && (
-                        <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
-                          Adversarial
-                        </Badge>
-                      )}
-                    </div>
+                  (target.origin || isDefaultAdversarial(target)) && (
+                    <>
+                      <div className={styles.defaultIndicators}>
+                        {target.origin && <OriginBadge origin={target.origin} />}
+                        {isDefaultAdversarial(target) && (
+                          <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
+                            Adversarial
+                          </Badge>
+                        )}
+                      </div>
+                      {savedBy && <Text size={200} className={styles.savedBy}>{savedBy}</Text>}
+                    </>
                   )
                 }
                 rowClassName={mergeClasses(

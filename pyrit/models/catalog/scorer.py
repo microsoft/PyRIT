@@ -5,6 +5,7 @@
 
 from pydantic import BaseModel, Field
 
+from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 
@@ -25,3 +26,18 @@ class ScorerInstance(BaseModel):
     chat_scoring_disabled_reason: str | None = Field(
         None, description="Why this instance cannot be selected as a chat objective scorer"
     )
+    origin: RegistryEntryOrigin | None = Field(
+        None,
+        description=(
+            "Where the scorer comes from: 'saved' (restored at every start), 'configuration' (the server's "
+            "startup scripts), or 'temporary' (gone after a restart or reinitialization)"
+        ),
+    )
+    saved_by: str | None = Field(
+        None,
+        description=(
+            "Name of the user who saved the scorer, for display only; None when it isn't saved or was saved "
+            "with sign-in off"
+        ),
+    )
+    saved_by_me: bool = Field(False, description="Whether the signed-in user asking is the one who saved the scorer")

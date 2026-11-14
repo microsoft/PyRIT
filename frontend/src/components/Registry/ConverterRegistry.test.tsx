@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
-import { convertersApi } from '@/services/api'
+import { convertersApi, savedEntriesApi } from '@/services/api'
 
 import ConverterRegistry from './ConverterRegistry'
 import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
@@ -13,6 +13,10 @@ jest.mock('@/services/api', () => ({
   convertersApi: {
     listConverters: jest.fn(),
     deleteConverter: jest.fn(),
+  },
+  savedEntriesApi: {
+    get: jest.fn(),
+    delete: jest.fn(),
   },
 }))
 
@@ -131,6 +135,90 @@ describe('ConverterRegistry', () => {
     const details = screen.getByRole('region', { name: 'Identity for base64-default' })
     expect(JSON.parse(details.textContent ?? '')).toEqual(converter.identifier)
     expect(screen.queryByRole('button', { name: /set active/i })).not.toBeInTheDocument()
+  })
+
+  it('labels each converter with where it comes from', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'saved_base64', origin: 'saved' },
+        { ...converter, converter_id: 'startup_base64', origin: 'configuration' },
+        { ...converter, converter_id: 'launch_base64', origin: 'temporary' },
+        { ...converter, converter_id: 'unlabeled_base64' },
+      ],
+    })
+    renderRegistry()
+
+    const table = await screen.findByRole('table', { name: 'Converter instances' })
+    const row = (name: string) => within(table).getByRole('row', { name: new RegExp(name) })
+    expect(within(row('saved_base64')).getByText('Saved')).toBeInTheDocument()
+    expect(within(row('startup_base64')).getByText('From configuration')).toBeInTheDocument()
+    expect(within(row('launch_base64')).getByText('Temporary')).toBeInTheDocument()
+    expect(within(row('unlabeled_base64')).queryByText(/Saved|From configuration|Temporary/)).not.toBeInTheDocument()
+  })
+
+  it('says who saved each converter and lists only yours on request', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'mine_base64', origin: 'saved', saved_by: 'Ada', saved_by_me: true },
+        { ...converter, converter_id: 'bobs_base64', origin: 'saved', saved_by: 'Bob' },
+        { ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null },
+        { ...converter, converter_id: 'startup_base64', origin: 'configuration' },
+      ],
+    })
+    renderRegistry()
+
+    const table = await screen.findByRole('table', { name: 'Converter instances' })
+    const caption = (name: string): string | null => (
+      within(within(table).getByRole('row', { name: new RegExp(name) })).queryByText(/^Saved by /)?.textContent ?? null
+    )
+    expect(['mine_base64', 'bobs_base64', 'local_base64', 'startup_base64'].map(caption)).toEqual([
+      'Saved by you', 'Saved by Bob', null, null,
+    ])
+    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
+    expect(within(table).queryByRole('row', { name: /bobs_base64/ })).not.toBeInTheDocument()
+    expect(within(table).getByRole('row', { name: /mine_base64/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
+    expect(within(table).getByRole('row', { name: /bobs_base64/ })).toBeInTheDocument()
+  })
+
+  it('offers no list of your own converters when none are yours, such as with sign-in off', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [{ ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null }],
+    })
+    renderRegistry()
+
+    await screen.findByRole('table', { name: 'Converter instances' })
+    expect(screen.queryByRole('checkbox', { name: /Only converters I saved/ })).not.toBeInTheDocument()
+  })
+
+  it('deletes a saved converter through its saved file and loads the list again', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'saved_base64', origin: 'saved' },
+        { ...converter, converter_id: 'launch_base64', origin: 'temporary' },
+      ],
+    })
+    jest.mocked(savedEntriesApi.get).mockResolvedValue({
+      kind: 'converters', name: 'saved_base64', version: 'v1', problem: null,
+      saved_by: 'Ada', saved_by_me: true, can_change: true,
+    })
+    jest.mocked(savedEntriesApi.delete).mockResolvedValue()
+    renderRegistry()
+
+    expect(await screen.findByRole('button', { name: 'Remove launch_base64' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove saved_base64' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Delete saved converter saved_base64' }))
+    const dialog = await screen.findByRole('dialog', { name: "Delete saved converter 'saved_base64'?" })
+    await within(dialog).findByText('You saved it.')
+    const calls = mockedConvertersApi.listConverters.mock.calls.length
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(savedEntriesApi.delete).toHaveBeenCalledWith('converters', 'saved_base64', 'v1')
+    expect(mockedConvertersApi.deleteConverter).not.toHaveBeenCalled()
+    await waitFor(() => expect(mockedConvertersApi.listConverters.mock.calls.length).toBeGreaterThan(calls))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New Converter' })).toHaveFocus())
   })
 
   it('filters by name, type, and output without changing the registered instances', async () => {

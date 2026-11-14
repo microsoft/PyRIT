@@ -198,6 +198,17 @@ members; defaults, visibility, and the target's configuration columns remain
 available. Converter inputs and outputs stay visible in the table. Use the small
 red X to remove a converter from the live registry; confirmation is required.
 
+**Delete** on a saved target, converter, scorer, or technique deletes its saved
+file and removes it from the registry, so it doesn't come back after a restart.
+The person who saved it, or an administrator, can delete it; anyone can when
+sign-in is off. The dialog says who saved it. An entry that another saved entry
+uses, or that a registered entry holds, isn't deleted until that one is deleted
+or changed, and an entry isn't deleted while a run, send, or request could be
+using it. If the file changed since the dialog read it, **Look again** shows the
+current one. A saved entry that couldn't be restored keeps PyRIT from becoming
+ready; an administrator can delete it from the list on the **Configuration**
+page, then select **Reinitialize PyRIT** or restart the backend.
+
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
@@ -209,8 +220,46 @@ Editing a preset preserves unchanged parameter values exactly, including commas
 and whitespace inside list entries, empty lists, duplicates, and their order.
 Editing a list field uses the comma-separated format shown in the editor.
 
-Targets, converters, and techniques added only to the live registry must be
-recreated after a backend restart or reinitialization. Use
+**New Target** saves the target, so it comes back after the backend restarts or
+is reinitialized. Give it a registry name of lowercase letters, digits, and
+underscores that starts with a letter; the dialog suggests one from the target
+type and model. Saved targets are kept in `registry_recipes_source`
+(`~/.pyrit/registry_recipes` unless set in your `.pyrit_conf`). To remove a saved
+target, select **Delete** on its row in the Targets table. If a startup initializer later
+registers a target under a saved target's name, the saved one isn't restored and
+the backend isn't ready until that file is renamed or removed and the backend
+restarted.
+
+Saved targets can't hold credentials yet, so choose Identity-based or No key
+authentication when the target supports it. A target that needs an API key or
+another credential value, a type that can't be saved, or a round robin that uses
+a Temporary target is created as **Temporary** instead, and the dialog says why.
+A Temporary target is gone after the backend restarts or is reinitialized.
+
+The Targets table labels each target **Saved**, **From configuration**
+(registered by an initializer at startup), or **Temporary**. A target saved while
+signed in also says who saved it (**Saved by you** for your own). Once you have
+saved one, check **Only targets I saved** to list just yours. Anyone can still
+use every target.
+
+New converters are saved the same way, wherever you add one: **New Converter** in
+the Converters tab, the converter panel in chat, or **New converter** in the
+technique editor. The dialog suggests a name such as `base64_converter`. A
+converter type that can't be saved yet (the Azure Speech converters, and types
+that need an uploaded file), a converter with an uploaded file, or one that uses a
+Temporary target is created as **Temporary** instead, and the dialog says why.
+**Save to registry** on a converter's changed settings, in chat or in a technique
+edit, makes a Temporary copy. The Converters and Scorers tables use the same three
+labels and say who saved each entry, with **Only converters I saved** and **Only
+scorers I saved** to list just yours; scorers can be saved through the API.
+
+**New technique** saves the technique the same way. Give it a registry name of
+lowercase letters, digits, and underscores that starts with a letter. A technique
+that uses a Temporary converter or a Temporary adversarial target is created as
+**Temporary** instead, and the dialog says why. Settings changed for a single run
+in Scanner stay with that run. The Techniques table uses the same three labels and
+**Only techniques I saved**. To
+remove a saved technique, select **Delete** next to its name. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
 Use **Auto-detect capabilities** to select targets and run live checks. Results
