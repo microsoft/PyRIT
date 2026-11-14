@@ -7608,7 +7608,9 @@ class MemoryInterface(abc.ABC):
         seen: dict[str, AttackResultEntry] = {}
         for entry in entries:
             prev = seen.get(entry.conversation_id)
-            if prev is None or entry.timestamp > prev.timestamp:
+            # Timestamp ties break by the greater id, the same rule the
+            # paginated SQL anti-join applies, so both paths keep one row.
+            if prev is None or (entry.timestamp, str(entry.id)) > (prev.timestamp, str(prev.id)):
                 seen[entry.conversation_id] = entry
         return [entry.get_attack_result() for entry in seen.values()]
 
