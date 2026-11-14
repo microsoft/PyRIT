@@ -73,7 +73,7 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
-from pyrit.backend.services.target_service import get_target_service
+from pyrit.backend.services.target_service import StaleTargetCursorError, get_target_service
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import (
@@ -1310,7 +1310,7 @@ class AttackService:
             while True:
                 try:
                     page = await service.list_targets_async(cursor=cursor)
-                except ValueError:
+                except StaleTargetCursorError:
                     if cursor is None:
                         raise
                     # The cursor's target was removed during the scan, so scan the registry again from the start.

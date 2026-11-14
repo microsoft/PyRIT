@@ -14,6 +14,7 @@ import pytest
 
 from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
+from pyrit.backend.services.target_service import StaleTargetCursorError
 from pyrit.models import ComponentIdentifier
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
@@ -163,7 +164,7 @@ class TestListTargets:
 
         service._registry.instances.unregister(cursor)
 
-        with pytest.raises(ValueError, match="cursor is not valid for the target registry"):
+        with pytest.raises(StaleTargetCursorError, match="cursor is not valid for the target registry"):
             await service.list_targets_async(limit=2, cursor=cursor)
 
 

@@ -65,6 +65,10 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 _AUTH_MODE_PARAM = "auth_mode"
 
 
+class StaleTargetCursorError(ValueError):
+    """The pagination cursor no longer names a registered target."""
+
+
 class TargetService:
     """
     Service for managing target instances.
@@ -263,7 +267,7 @@ class TargetService:
             else:
                 # A cursor naming an entry that no longer exists must not silently
                 # restart at the first page, which would serve duplicate rows.
-                raise ValueError("The cursor is not valid for the target registry")
+                raise StaleTargetCursorError("The cursor is not valid for the target registry")
 
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
