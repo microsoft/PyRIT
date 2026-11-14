@@ -280,12 +280,29 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     Args:
         accuracy (float): The accuracy of the model scores when using the majority vote of
             human scores as the gold label.
+        accuracy_standard_error (float): The standard error of the accuracy estimate.
         f1_score (float): The F1 score of the model scores, an indicator of performance of the
             LLM scorer in its alignment with human scores.
         precision (float): The precision of the model scores, an indicator of the model's accuracy
             in its positive predictions.
         recall (float): The recall of the model scores, an indicator of the model's ability to correctly
             identify positive labels.
+        specificity (float | None, optional): The true negative rate ``TN / (TN + FP)`` over
+            evaluated responses that reached a verdict. ``None`` when there are no gold-negative
+            responses (whereas ``precision`` and ``recall`` retain their existing ``0.0``
+            convention when undefined) or for metrics recorded before this field existed.
+        true_positive (int | None, optional): Number of gold-positive responses scored positive
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        false_positive (int | None, optional): Number of gold-negative responses scored positive
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        true_negative (int | None, optional): Number of gold-negative responses scored negative
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
+        false_negative (int | None, optional): Number of gold-positive responses scored negative
+            among evaluated responses that reached a verdict (``num_responses``). ``None`` for
+            metrics recorded before this field existed.
         trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
         baseline_accuracy (float, Optional): The accuracy of a scorer that ignores the response and always
@@ -305,6 +322,11 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     f1_score: float
     precision: float
     recall: float
+    specificity: float | None = field(default=None, kw_only=True)
+    true_positive: int | None = field(default=None, kw_only=True)
+    false_positive: int | None = field(default=None, kw_only=True)
+    true_negative: int | None = field(default=None, kw_only=True)
+    false_negative: int | None = field(default=None, kw_only=True)
     baseline_accuracy: float | None = field(default=None, kw_only=True)
     baseline_f1_score: float | None = field(default=None, kw_only=True)
 
