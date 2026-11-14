@@ -2367,12 +2367,14 @@ describe("MessageList", () => {
 
       await user.click(downloadButton);
       expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(downloadButton).toHaveTextContent("Retry download");
       expect(failedBlob).not.toHaveBeenCalled();
       expect(global.URL.createObjectURL).not.toHaveBeenCalled();
       expect(clickSpy).not.toHaveBeenCalled();
 
       await user.click(downloadButton);
       await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+      expect(downloadButton).not.toHaveTextContent("Retry download");
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(global.URL.revokeObjectURL).toHaveBeenCalledWith(mockObjectUrl);
 

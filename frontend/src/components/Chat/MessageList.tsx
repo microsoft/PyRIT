@@ -742,7 +742,9 @@ export default function MessageList({
                             onClick={() => handleDownload(att, downloadKey)}
                             data-testid={`download-btn-${index}-${ai}`}
                             className={styles.messageActionButton}
-                          />
+                          >
+                            {downloadErrors[downloadKey] && 'Retry download'}
+                          </Button>
                         </Tooltip>
                         {downloadErrors[downloadKey] && <div role="alert">{downloadErrors[downloadKey]}</div>}
                       </div>
