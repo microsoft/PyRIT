@@ -1011,9 +1011,9 @@ class ContentWordSelectionStrategy(WordSelectionStrategy):
 
         Returns:
             bool: True if the character is in ``string.punctuation`` or in a
-                Unicode punctuation category.
+                Unicode punctuation category or symbol category.
         """
-        return char in string.punctuation or unicodedata.category(char).startswith("P")
+        return char in string.punctuation or unicodedata.category(char).startswith(("P", "S"))
 
     def _is_content_word(self, word: str) -> bool:
         """
