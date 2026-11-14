@@ -53,6 +53,15 @@ def test_trace_content_keeps_the_complete_value() -> None:
     assert (withheld.text, withheld.length, withheld.sha256) == (None, len(value), content.sha256)
 
 
+def test_trace_content_describes_text_with_a_lone_surrogate() -> None:
+    value = "a\ud800b"
+    content = _content(value)
+    assert (content.text, content.length) == (value, 3)
+    assert content.sha256 == hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
+    assert _content(value, retain=False).sha256 == content.sha256
+    assert TraceContent.model_validate(content.model_dump()) == content
+
+
 @pytest.mark.parametrize("text", ["abc", "abcdeg"])
 def test_trace_content_rejects_text_that_is_not_the_described_value(text: str) -> None:
     described = _content("abcdef")

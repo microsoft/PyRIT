@@ -208,7 +208,8 @@ class InMemoryTraceClient:
             victim = next(iter(self._complete), None) or next((t for t in self._trace_keys if t != keep), None)
             if victim is None:
                 return False
-            for key in self._trace_keys.pop(victim):
+            # A trace declared complete before any span arrived has no keys to release.
+            for key in self._trace_keys.pop(victim, ()):
                 del self._spans[key]
             self._complete.pop(victim, None)
             self._late.discard(victim)

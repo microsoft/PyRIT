@@ -33,8 +33,9 @@ class InMemoryTraceExporter(SpanExporter):
     Copy ended SDK spans into a local trace client without global state.
 
     The provider must disable span attribute string truncation with
-    ``SpanLimits(max_span_attribute_length=SpanLimits.UNSET)``. Spans with finite
-    or unknown length limits are omitted and make capture incomplete.
+    ``SpanLimits(max_span_attribute_length=SpanLimits.UNSET)``, and must not limit event
+    attribute length through ``max_attribute_length``. Spans with finite or unknown
+    length limits are omitted and make capture incomplete.
     """
 
     def __init__(self, *, trace_client: InMemoryTraceClient) -> None:
@@ -57,12 +58,16 @@ class InMemoryTraceExporter(SpanExporter):
             context = span.get_span_context()
             trace_id = f"{context.trace_id:032x}" if context is not None and context.is_valid else None
             # ReadableSpan's public mapping hides the SDK's string-length limit.
-            attributes = getattr(span, "_attributes", None)
-            if not isinstance(attributes, BoundedAttributes) or getattr(attributes, "max_value_len", -1) is not None:
+            # Event attributes use the SDK's separate, global length limit.
+            bounded = [getattr(span, "_attributes", None), *(event.attributes for event in span.events)]
+            if any(
+                not isinstance(attributes, BoundedAttributes) or getattr(attributes, "max_value_len", -1) is not None
+                for attributes in bounded
+            ):
                 self._client.record_capture_failure(trace_id=trace_id)
                 logger.warning(
-                    "SDK span attribute length is limited or unknown; span omitted. "
-                    "Use SpanLimits(max_span_attribute_length=SpanLimits.UNSET)."
+                    "SDK span or event attribute length is limited or unknown; span omitted. "
+                    "Set max_span_attribute_length and max_attribute_length to SpanLimits.UNSET."
                 )
                 result = SpanExportResult.FAILURE
                 continue

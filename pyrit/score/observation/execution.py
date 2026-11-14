@@ -117,7 +117,12 @@ class _ScoringCollector:
         if shared is None:
             shared = asyncio.ensure_future(acquire())
             self._acquisitions[key] = shared
-        return await shared
+        try:
+            # Shield, so cancelling this scorer does not cancel the acquisition other scorers await.
+            return await asyncio.shield(shared)
+        finally:
+            if shared.cancelled() and self._acquisitions.get(key) is shared:
+                del self._acquisitions[key]
 
     def add_scores(self, scores: Sequence[Score]) -> None:
         """

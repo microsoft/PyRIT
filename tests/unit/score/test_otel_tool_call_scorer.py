@@ -464,6 +464,18 @@ async def test_limits_duplicates_and_late_spans_keep_coverage_honest_async() -> 
     assert "capture_capacity_exceeded" in (await client.get_spans_async(query=query)).coverage.reasons
 
 
+async def test_completing_an_unknown_trace_does_not_break_eviction_async() -> None:
+    client = InMemoryTraceClient(max_spans=2)
+    client.mark_complete(trace_ids=("a" * 32,))
+    client.add_span(_span(trace_id="b" * 32, span_id="1" * 16))
+    client.add_span(_span(trace_id="c" * 32, span_id="2" * 16))
+    client.add_span(_span(trace_id="d" * 32, span_id="3" * 16))
+
+    result = await client.get_spans_async(query=TraceQuery(scope=TraceScorable(trace_ids=("d" * 32,))))
+    assert len(result.spans) == 1
+    client.close()
+
+
 async def test_sdk_dropped_execution_marker_prevents_false_negative_async(sqlite_instance: SQLiteMemory) -> None:
     client = InMemoryTraceClient()
     provider = TracerProvider(
@@ -495,6 +507,26 @@ async def test_sdk_dropped_execution_marker_prevents_false_negative_async(sqlite
         assert replay.is_undetermined
     finally:
         await asyncio.to_thread(provider.shutdown)
+
+
+async def test_sdk_event_attribute_length_limit_keeps_coverage_honest_async() -> None:
+    client = InMemoryTraceClient()
+    provider = TracerProvider(
+        sampler=ALWAYS_ON,
+        span_limits=SpanLimits(max_attribute_length=8, max_span_attribute_length=SpanLimits.UNSET),
+    )
+    provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+    try:
+        with provider.get_tracer(__name__).start_as_current_span("tool") as span:
+            span.add_event("result", {"output": "x" * 100})
+            scope = TraceScorable(trace_ids=(f"{span.get_span_context().trace_id:032x}",))
+        assert await asyncio.to_thread(provider.force_flush)
+        result = await client.get_spans_async(query=TraceQuery(scope=scope))
+        assert not result.coverage.complete
+        assert "capture_failed" in result.coverage.reasons
+    finally:
+        await asyncio.to_thread(provider.shutdown)
+        client.close()
 
 
 @pytest.mark.parametrize(

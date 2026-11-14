@@ -190,9 +190,19 @@ class TraceContent(BaseModel):
         return cls(
             text=value if retain else None,
             length=len(value),
-            sha256=hashlib.sha256(value.encode("utf-8")).hexdigest(),
+            sha256=cls._digest(value),
             redacted=redacted,
         )
+
+    @staticmethod
+    def _digest(value: str) -> str:
+        """
+        Hash a value's UTF-8 bytes, encoding a lone surrogate as is so it cannot fail acquisition.
+
+        Returns:
+            str: The hex SHA-256 digest.
+        """
+        return hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
 
     @model_validator(mode="after")
     def _validate_complete_value(self) -> TraceContent:
@@ -205,9 +215,7 @@ class TraceContent(BaseModel):
         Raises:
             ValueError: If retained text differs from the described value.
         """
-        if self.text is not None and (
-            len(self.text) != self.length or hashlib.sha256(self.text.encode("utf-8")).hexdigest() != self.sha256
-        ):
+        if self.text is not None and (len(self.text) != self.length or self._digest(self.text) != self.sha256):
             raise ValueError("Retained trace content must be the complete value its length and digest describe.")
         return self
 

@@ -3,6 +3,7 @@
 
 """Judging conversations with the execution traces their target recorded."""
 
+import asyncio
 import json
 import uuid
 from collections.abc import Iterator
@@ -43,6 +44,7 @@ from pyrit.score import (
     build_assert_policy_scorer,
     create_conversation_scorer,
 )
+from pyrit.score.observation.execution import _ScoringCollector
 from pyrit.score.observation.message_trace_resolver import resolve_conversation_trace_links_async
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -327,6 +329,123 @@ async def test_judge_previews_long_content_while_the_saved_evidence_stays_comple
     (trace,) = [o.payload for o in observations if isinstance(o.payload, ExecutionTraceObservationPayload)]
     (tool,) = [step for step in trace.steps if step.tool_name]
     assert tool.output_content.text == record
+
+
+async def test_content_exactly_at_the_preview_limit_is_not_truncated_async(
+    sqlite_instance: MemoryInterface, capture: LocalTraceCapture
+) -> None:
+    judge = MockPromptTarget()
+    record = "r" * ConversationScorer.MAX_RENDERED_CONTENT_CHARS
+    conversation_id = await _converse_async(_AgentTarget(capture=capture, tool_result=record), "Book Seattle")
+
+    score, transport = await _score_async(
+        _judge(judge=judge, capture=capture), judge=judge, conversation_id=conversation_id
+    )
+
+    transcript = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert record in transcript
+    assert "(first " not in transcript
+    assert "trace_rendering_truncated" not in score.score_metadata
+
+
+async def test_content_the_source_did_not_retain_is_described_not_shown_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    capture = LocalTraceCapture()
+    judge = MockPromptTarget()
+    try:
+        conversation_id = await _converse_async(_AgentTarget(capture=capture, tool_result="secret-result"), "Book")
+        evidence = AssertTraceEvidence(source=capture.source(retain_content=False))
+        scorer = build_assert_policy_scorer(target=judge, taxonomy=make_assert_taxonomy(), trace_evidence=evidence)
+        score, transport = await _score_async(scorer, judge=judge, conversation_id=conversation_id)
+    finally:
+        capture.close()
+
+    transcript = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert "secret-result" not in transcript
+    assert f"output: ({len('secret-result')} chars not retained; sha256=" in transcript
+    assert "omitted for length" not in transcript
+    assert "trace_rendering_truncated" not in score.score_metadata
+
+
+class _LongNameAgentTarget(_AgentTarget):
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        with self._tracer.start_as_current_span("n" * 500, attributes={"openinference.span.kind": "TOOL"}):
+            pass
+        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+
+async def test_a_cut_label_marks_the_rendering_truncated_async(
+    sqlite_instance: MemoryInterface, capture: LocalTraceCapture
+) -> None:
+    judge = MockPromptTarget()
+    conversation_id = await _converse_async(_LongNameAgentTarget(capture=capture), "Book Seattle")
+
+    score, transport = await _score_async(
+        _judge(judge=judge, capture=capture), judge=judge, conversation_id=conversation_id
+    )
+
+    transcript = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert "n" * 500 not in transcript
+    assert score.score_metadata["trace_rendering_truncated"] == "true"
+
+
+async def test_an_enormous_citation_is_flagged_not_a_crash_async(
+    sqlite_instance: MemoryInterface, capture: LocalTraceCapture
+) -> None:
+    judge = MockPromptTarget()
+    conversation_id = await _converse_async(_AgentTarget(capture=capture), "Book Seattle")
+
+    score, _ = await _score_async(
+        _judge(judge=judge, capture=capture),
+        judge=judge,
+        conversation_id=conversation_id,
+        response=_verdict(rationale="Over budget [T1] and [T" + "9" * 5000 + "]."),
+    )
+
+    assert json.loads(score.score_metadata["trace_cited_steps"])[0] == 1
+    assert len(json.loads(score.score_metadata["trace_citation_warnings"])) == 1
+
+
+async def test_cancelling_one_scorer_does_not_cancel_the_shared_acquisition_async() -> None:
+    collector = _ScoringCollector()
+    release = asyncio.Event()
+    calls = 0
+
+    async def acquire() -> Any:
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return "observation"
+
+    first = asyncio.ensure_future(collector.acquire_once_async(key="k", acquire=acquire))
+    second = asyncio.ensure_future(collector.acquire_once_async(key="k", acquire=acquire))
+    await asyncio.sleep(0)
+    first.cancel()
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await second == "observation"
+    assert first.cancelled()
+    assert await collector.acquire_once_async(key="k", acquire=acquire) == "observation"
+    assert calls == 1
+
+
+async def test_a_cancelled_acquisition_is_not_cached_async() -> None:
+    collector = _ScoringCollector()
+    attempts = 0
+
+    async def acquire() -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise asyncio.CancelledError
+        return "observation"
+
+    with pytest.raises(asyncio.CancelledError):
+        await collector.acquire_once_async(key="k", acquire=acquire)
+
+    assert await collector.acquire_once_async(key="k", acquire=acquire) == "observation"
 
 
 def test_judge_sees_bounded_one_line_labels() -> None:

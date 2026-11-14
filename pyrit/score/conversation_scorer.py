@@ -147,6 +147,8 @@ class ConversationScorer(MessageScorer, ABC):
     #: trace requirement was not met. Its value is the reason.
     EVIDENCE_REQUIREMENT_UNMET_KEY: ClassVar[str] = "evidence_requirement_unmet"
     _TRACE_CITATION: ClassVar[re.Pattern[str]] = re.compile(r"\[T(\d+)\]")
+    #: A citation with more digits than this cannot be a step; it is read as this index, which is never shown.
+    _MAX_CITED_INDEX: ClassVar[int] = 10**9
     _NO_SPANS_LINE: ClassVar[str] = "  (no spans recorded)\n"
 
     def get_chat_target(self) -> "PromptTarget | None":
@@ -583,7 +585,13 @@ class ConversationScorer(MessageScorer, ABC):
         Returns:
             dict[str, str]: Citation metadata, empty when nothing was cited.
         """
-        cited = sorted({int(index) for index in self._TRACE_CITATION.findall(score.score_rationale or "")})
+        limit = self._MAX_CITED_INDEX
+        cited = sorted(
+            {
+                int(digits) if len(digits) < len(str(limit)) else limit
+                for digits in self._TRACE_CITATION.findall(score.score_rationale or "")
+            }
+        )
         if not cited:
             return {}
         shown = rendering.rendered_step_indexes if rendering else frozenset()
@@ -665,7 +673,10 @@ class ConversationScorer(MessageScorer, ABC):
         for position, (step, depth) in enumerate(ordered):
             text = self._render_step(step=step, depth=depth, include_content=True)
             contents = (step.error_content, step.input_content, step.output_content)
+            labels = (step.name, step.model, step.node_name)
             if any(c and c.text and len(c.text) > self.MAX_RENDERED_CONTENT_CHARS for c in contents):
+                truncated[0] = True
+            if any(value and len(" ".join(value.split())) > self.MAX_RENDERED_LABEL_CHARS for value in labels):
                 truncated[0] = True
             if len(text) > budget[0]:
                 truncated[0] = True
