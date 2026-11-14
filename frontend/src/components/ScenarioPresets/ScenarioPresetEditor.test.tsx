@@ -3,11 +3,12 @@ import type { ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { Link, MemoryRouter, Route, Routes, useNavigate } from 'react-router'
+import { createMemoryRouter, RouterProvider, Link, useLocation, useNavigate } from 'react-router'
 
 import * as scenarioConfigForm from '@/components/Scenarios/scenarioConfigForm'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
 import type {
   Parameter,
@@ -74,9 +75,6 @@ function apiError(status: number, detail: string): unknown {
   }
 }
 
-function TestWrapper({ children }: { children: ReactNode }) {
-  return <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
-}
 
 async function selectScenario(user: ReturnType<typeof userEvent.setup>, scenarioName: string): Promise<void> {
   await user.click(screen.getByRole('combobox', { name: 'Scenario' }))
@@ -99,33 +97,76 @@ async function editLimit(user: ReturnType<typeof userEvent.setup>, label: string
   await user.type(input, value)
 }
 
-function renderCreate() {
-  return render(
-    <MemoryRouter initialEntries={['/registry/scenario-presets/new']}>
-      <Routes>
-        <Route path="/registry/scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
-        <Route path="/registry/scenario-presets" element={<h1>Preset library</h1>} />
-      </Routes>
-    </MemoryRouter>,
-    { wrapper: TestWrapper },
+function RouterProbe(): ReactNode {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return (
+    <>
+      <output aria-label="Current URL">{location.pathname}</output>
+      <button type="button" onClick={() => void navigate('/other')}>Leave editor</button>
+    </>
   )
+}
+
+function buildPresetRouter(initialPath: string) {
+  return createMemoryRouter([
+    {
+      path: '/registry/scenario-presets/new',
+      element: (
+        <>
+          <ScenarioPresetEditor mode="create" />
+          <RouterProbe />
+        </>
+      ),
+    },
+    {
+      path: '/registry/scenario-presets/:presetName/edit',
+      element: (
+        <>
+          <ScenarioPresetEditor mode="edit" />
+          <RouterProbe />
+        </>
+      ),
+    },
+    {
+      path: '/registry/scenario-presets',
+      element: <><h1>Preset library</h1><RouterProbe /></>,
+    },
+    {
+      path: '/other',
+      element: <><h1>Other page</h1><RouterProbe /></>,
+    },
+  ], { initialEntries: [initialPath] })
+}
+
+function renderCreate() {
+  const router = buildPresetRouter('/registry/scenario-presets/new')
+  return {
+    router,
+    ...render(
+      <FluentProvider theme={webLightTheme}>
+        <RouterProvider router={router} />
+      </FluentProvider>,
+    ),
+  }
 }
 
 function renderEdit(name = 'nightly_probe') {
-  return render(
-    <MemoryRouter initialEntries={[`/registry/scenario-presets/${name}/edit`]}>
-      <Routes>
-        <Route
-          path="/registry/scenario-presets/:presetName/edit"
-          element={<ScenarioPresetEditor mode="edit" />}
-        />
-      </Routes>
-    </MemoryRouter>,
-    { wrapper: TestWrapper },
-  )
+  const router = buildPresetRouter(`/registry/scenario-presets/${name}/edit`)
+  return {
+    router,
+    ...render(
+      <FluentProvider theme={webLightTheme}>
+        <RouterProvider router={router} />
+      </FluentProvider>,
+    ),
+  }
 }
 
+let restoreRouterRequest: (() => void) | null = null
+
 beforeEach(() => {
+  restoreRouterRequest = installRouterTestRequest()
   jest.clearAllMocks()
   for (const mock of [mockGet, mockCreate, mockUpdate, mockListCatalog, mockGetScenario, mockEstimateRun]) {
     mock.mockReset()
@@ -140,6 +181,10 @@ beforeEach(() => {
   mockGet.mockResolvedValue({ preset: STORED_PRESET, version: 'v1', issues: [] })
   mockCreate.mockResolvedValue({ preset: STORED_PRESET, version: 'v1', issues: [] })
   mockUpdate.mockResolvedValue({ preset: STORED_PRESET, version: 'v2', issues: [] })
+})
+
+afterEach(() => {
+  restoreRouterRequest?.()
 })
 
 describe('ScenarioPresetEditor create mode', () => {
@@ -542,6 +587,75 @@ describe('ScenarioPresetEditor scenario selection ownership', () => {
     expect(screen.queryByText('Loading scenario...')).not.toBeInTheDocument()
     expect(mockCreate).not.toHaveBeenCalled()
     expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it('blocks in-app navigation until unsaved preset edits are discarded', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    renderEdit()
+    await user.type(await screen.findByTestId('preset-description-input'), ' Updated.')
+
+    // A dialog teardown in an earlier test can leave the page aria-hidden in
+    // jsdom, so the probe button is queried with hidden elements included.
+    await user.click(screen.getByRole('button', { name: 'Leave editor', hidden: true }))
+    expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(
+      '/registry/scenario-presets/nightly_probe/edit',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByRole('dialog', { name: /discard/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Leave editor', hidden: true }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByLabelText('Current URL')).toHaveTextContent('/other')
+  })
+
+  it('navigates to the library without a prompt after saving unsaved edits', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    renderCreate()
+    const nameInput = await screen.findByRole('textbox', { name: 'Name', exact: true })
+    await user.type(nameInput, 'fresh_preset')
+    const scenarioCombo = screen.getByRole('combobox', { name: 'Scenario', exact: true })
+    await user.click(scenarioCombo)
+    await user.click(await screen.findByRole('option', { name: SCENARIO.scenario_name, exact: true }))
+
+    await user.click(await screen.findByRole('button', { name: 'Save preset' }))
+
+    expect(await screen.findByLabelText('Current URL')).toHaveTextContent('/registry/scenario-presets')
+    expect(screen.queryByRole('dialog', { name: /discard/i })).not.toBeInTheDocument()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it('requests browser confirmation before unloading unsaved preset edits', async () => {
+    const user = userEvent.setup()
+    renderEdit()
+    await user.type(await screen.findByTestId('preset-description-input'), ' Updated.')
+
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('leaves a clean preset editor without a discard prompt', async () => {
+    const user = userEvent.setup()
+    mockUseNavigate.mockImplementation(
+      jest.requireActual<typeof import('react-router')>('react-router').useNavigate,
+    )
+    renderEdit()
+    await screen.findByTestId('preset-description-input')
+
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Leave editor' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
   })
 
   it('does not apply replacement metadata after unmount', async () => {
@@ -1279,24 +1393,33 @@ describe('ScenarioPresetEditor dynamic parameters', () => {
       version: 'v1',
       issues: [],
     }))
+    const router = createMemoryRouter([
+      {
+        path: '/registry/scenario-presets/:presetName/edit',
+        element: (
+          <>
+            <ScenarioPresetEditor mode="edit" />
+            <Link to="/registry/scenario-presets/second/edit">Open second preset</Link>
+          </>
+        ),
+      },
+    ], { initialEntries: ['/registry/scenario-presets/first/edit'] })
     render(
       <FluentProvider theme={webLightTheme}>
-        <MemoryRouter initialEntries={['/registry/scenario-presets/first/edit']}>
-          <Link to="/registry/scenario-presets/second/edit">Open second preset</Link>
-          <Routes>
-            <Route
-              path="/registry/scenario-presets/:presetName/edit"
-              element={<ScenarioPresetEditor mode="edit" />}
-            />
-          </Routes>
-        </MemoryRouter>
+        <RouterProvider router={router} />
       </FluentProvider>,
     )
 
     await user.type(await screen.findByRole('textbox', { name: 'goals' }), ' discarded edit')
     await user.click(screen.getByRole('link', { name: 'Open second preset' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'goals' })).toHaveValue(' Next, goal '))
-    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+    expect(await screen.findByRole('dialog', { name: /discard/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+    // The dialog teardown leaves the background aria-hidden in jsdom, so the
+    // reloaded editor is queried with hidden elements included.
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'goals', hidden: true })).toHaveValue(' Next, goal ')
+    )
+    await user.click(screen.getByRole('button', { name: 'Save preset', hidden: true }))
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
       'second',
