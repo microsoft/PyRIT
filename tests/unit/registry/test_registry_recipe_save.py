@@ -384,8 +384,8 @@ async def test_prepare_saved_copy_params_async_refuses_a_credential_even_one_its
     registry = MagicMock()
     registry.get_registered_class_metadata.return_value = SimpleNamespace(
         parameters=[
-            Parameter(name="token", description="token", sensitive=True),
-            Parameter(name="tone", description="tone"),
+            Parameter(name="token", description="token", param_type=str, sensitive=True),
+            Parameter(name="tone", description="tone", param_type=str),
         ]
     )
 
