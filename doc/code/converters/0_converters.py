@@ -62,6 +62,9 @@ print(df)
 # - **[File Converters](5_file_converters.ipynb)**: Text-to-File (PDF, URL)
 # - **[Selectively Converting](6_selectively_converting.ipynb)**: Advanced techniques for converting portions of prompts
 #
+# For LLM-based logical rewriting, see the `LogicJailbreakConverter` example in
+# [Text-to-Text Converters](1_text_to_text_converters.ipynb).
+#
 # For a reversible text-to-image-to-text pipeline, see the
 # [LSB steganography example](3_image_converters.ipynb#lsb-image-steganography)
 # using `LSBImageStegoConverter` and `LSBImageStegoDecodeConverter`.

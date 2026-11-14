@@ -26,7 +26,7 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import SQLiteMemory
 from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 
 
@@ -46,57 +46,57 @@ def mock_target() -> MagicMock:
     return target
 
 
-async def test_noise_converter_sets_system_prompt_default(mock_target) -> None:
+async def test_noise_converter_sends_instructions_in_user_turn_default(mock_target) -> None:
     converter = NoiseConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "Grammar error, Delete random letter" in system_arg
 
 
-async def test_noise_converter_sets_system_prompt(mock_target) -> None:
+async def test_noise_converter_sends_instructions_in_user_turn(mock_target) -> None:
     converter = NoiseConverter(converter_target=mock_target, noise="extra random periods")
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "extra random periods" in system_arg
 
 
-async def test_tone_converter_sets_system_prompt(mock_target) -> None:
+async def test_tone_converter_sends_instructions_in_user_turn(mock_target) -> None:
     converter = ToneConverter(tone="formal", converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "formal" in system_arg
 
 
-async def test_tense_converter_sets_system_prompt(mock_target) -> None:
+async def test_tense_converter_sends_instructions_in_user_turn(mock_target) -> None:
     converter = TenseConverter(tense="past", converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "past" in system_arg
 
 
-async def test_malicious_question_converter_sets_system_prompt(mock_target) -> None:
+async def test_malicious_question_converter_sends_instructions_in_user_turn(mock_target) -> None:
     converter = MaliciousQuestionGeneratorConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "Please act as an expert in this domain: being awesome" in system_arg
 
@@ -595,3 +595,46 @@ async def test_per_call_prompt_does_not_change_converter_identifier(mock_target,
     assert read_after.get_identifier().hash == identifier_before_conversion.hash
     assert {identifier.hash for identifier in sent_identifiers} == {identifier_before_conversion.hash}
     assert identifier_before_conversion.params.get("template_parameters_hash") is None
+
+
+class _RecordingTarget(MockPromptTarget):
+    """A local chat target that records the conversation each call receives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.conversations: list[list[Message]] = []
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        self.conversations.append(list(normalized_conversation))
+        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+
+def _rewrite_converter(target: PromptTarget) -> LLMGenericTextConverter:
+    return LLMGenericTextConverter(
+        converter_target=target,
+        system_prompt_template=SeedPrompt(value="Rewrite the text.", data_type="text"),
+        user_prompt_template_with_objective=SeedPrompt(
+            value="Text: {{ objective }}", data_type="text", parameters=["objective"]
+        ),
+    )
+
+
+async def test_convert_async_sends_the_system_prompt_template_in_the_user_turn(sqlite_instance: SQLiteMemory) -> None:
+    target = _RecordingTarget()
+
+    result = await _rewrite_converter(target).convert_async(prompt="hello")
+
+    assert result.output_text == "default"
+    [conversation] = target.conversations
+    assert [message.api_role for message in conversation] == ["user"]
+    piece = conversation[0].get_piece()
+    assert piece.original_value == "hello"
+    assert piece.converted_value == "Rewrite the text.\n\nText: hello"
+
+
+async def test_convert_async_writes_nothing_to_memory(sqlite_instance: SQLiteMemory) -> None:
+    # Converter exchanges are not persisted, so no conversation should be left holding only a
+    # system message (issue #3718).
+    await _rewrite_converter(_RecordingTarget()).convert_async(prompt="hello")
+
+    assert list(await sqlite_instance.get_message_pieces_async()) == []

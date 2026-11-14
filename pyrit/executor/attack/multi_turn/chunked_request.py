@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import logging
 import textwrap
 from dataclasses import dataclass, field
 from string import Formatter
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
@@ -33,9 +33,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 from pyrit.score import Scorer
 
 if TYPE_CHECKING:
@@ -421,16 +419,14 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             attack_strategy_name=self.__class__.__name__,
             objective=objective,
         ):
-            results = await asyncio.gather(
-                *(
-                    Scorer._score_with_context_async(
-                        scorable=ContentScorable(value=combined_value),
-                        scorer=scorer,
-                        expectation=selected,
-                        component_role=role,
-                    )
-                    for scorer, selected, role in calls
+            results = await gather_with_cleanup_async(
+                Scorer._score_with_context_async(
+                    scorable=ContentScorable(value=combined_value),
+                    scorer=scorer,
+                    expectation=selected,
+                    component_role=role,
                 )
+                for scorer, selected, role in calls
             )
         objective_scores = results[0] if self._objective_scorer is not None else []
         return objective_scores[0] if objective_scores else None

@@ -3,8 +3,9 @@ import type {
   ConverterInputPiece, MessageAttachment, PieceConversion, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from './clientId'
-import { dataTypeToAttachmentType, fileToBase64, mimeTypeToDataType } from './messageMapper'
+import { dataTypeToAttachmentType, mimeTypeToDataType, uploadedFileValue } from './messageMapper'
 import { buildMediaUrl, isPathDataType } from './media'
+import { withoutGenerationInfo } from './requestGeneration'
 
 export const DRAFT_ROLES: ConversationDraftRole[] = ['system', 'user', 'simulated_assistant', 'simulated_tool', 'developer']
 export const NEW_MESSAGE_ROLES: ConversationDraftRole[] = ['system', 'developer', 'user', 'simulated_assistant']
@@ -140,7 +141,7 @@ export function toConversationDraft(messages: BackendMessage[]): ConversationDra
         converted_value: piece.converted_value,
         converted_value_data_type: piece.converted_value_data_type,
         mime_type: piece.original_value_mime_type ?? undefined,
-        prompt_metadata: piece.prompt_metadata ? { ...piece.prompt_metadata } : undefined,
+        prompt_metadata: withoutGenerationInfo(piece.prompt_metadata),
         previewUrl: piece.original_value_url ?? undefined,
         filename: piece.original_filename ?? undefined,
       })),
@@ -227,9 +228,12 @@ export function draftMessageToComposer(
   const applied: ChatConverterSnapshot['applied'] = {}
   for (const piece of message.pieces) {
     const id = piece === textPieces[0] ? 'text' : piece.draftId
-    if (snapshot.workingInputs[piece.draftId] !== undefined) workingInputs[id] = snapshot.workingInputs[piece.draftId]
-    if (snapshot.stageResults[piece.draftId]) stageResults[id] = snapshot.stageResults[piece.draftId]
-    if (snapshot.errors[piece.draftId]) errors[id] = snapshot.errors[piece.draftId]
+    const workingInput = snapshot.workingInputs[piece.draftId]
+    if (workingInput !== undefined) workingInputs[id] = workingInput
+    const stageResult = snapshot.stageResults[piece.draftId]
+    if (stageResult !== undefined) stageResults[id] = stageResult
+    const err = snapshot.errors[piece.draftId]
+    if (err !== undefined) errors[id] = err
     const previous = snapshot.applied[piece.draftId]
     const convertedType = piece.converted_value_data_type ?? piece.data_type
     if (piece.converted_value !== undefined && (piece.converted_value !== piece.original_value
@@ -283,14 +287,14 @@ export async function serializeDraft(messages: ConversationDraftMessage[]): Prom
     role: message.role,
     pieces: await Promise.all(message.pieces.map(async (piece: ConversationDraftPiece) => ({
       data_type: piece.data_type,
-      original_value: piece.file ? await fileToBase64(piece.file) : piece.original_value,
+      original_value: piece.file ? await uploadedFileValue(piece.file) : piece.original_value,
       converted_value: piece.converted_value,
       converted_value_data_type: piece.converted_value_data_type,
       applied_converter_ids: piece.converted_value === undefined ? undefined : piece.applied_converter_ids,
       applied_converter_provenance: piece.converted_value === undefined ? undefined : piece.applied_converter_provenance,
       source_piece_id: piece.source_piece_id,
       mime_type: piece.mime_type,
-      prompt_metadata: piece.prompt_metadata,
+      prompt_metadata: withoutGenerationInfo(piece.prompt_metadata),
     }))),
   })))
 }

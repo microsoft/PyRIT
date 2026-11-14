@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import functools
 import inspect
 import re
@@ -13,8 +12,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 
 from pyrit import converter
 from pyrit.common.random_context import get_random_generator, random_execution
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
     import random
@@ -64,6 +64,10 @@ class Converter(Identifiable):
     #: Constructor parameters whose controls must preserve line breaks.
     MULTILINE_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
 
+    #: Constructor parameters that choose where requests go or how they authenticate. A private
+    #: copy built from API input keeps its source's values for these.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     #: Capability requirements placed on the converter's target (if any).
     #: Subclasses that use a target should override this and pass the target to
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
@@ -86,7 +90,7 @@ class Converter(Identifiable):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Converter")
         if "__init__" in cls.__dict__:
@@ -200,6 +204,35 @@ class Converter(Identifiable):
         """
         return output_type in self.SUPPORTED_OUTPUT_TYPES
 
+    @staticmethod
+    def _prepend_instructions(*, instructions: str | None, prompt: str) -> str:
+        """
+        Build the single user turn an LLM-backed converter sends to its converter target.
+
+        Converters put their instructions in the user turn instead of calling
+        ``set_system_prompt_async``. A target reads conversation history from memory, so a
+        system prompt only reaches the model if it is written to memory first. Converters do
+        not persist their request or response, so a system prompt left a conversation in
+        memory that held only the system message (see issue #3718). Sending one user turn
+        means a converter call writes nothing to memory.
+
+        This is a stopgap. The converter pipeline is due to be redesigned, and that redesign
+        will decide how converter exchanges are persisted and whether instructions go back
+        into a system prompt. Targets that do not support system prompts already receive
+        them merged into the user turn, so this is a format targets already handle.
+
+        Args:
+            instructions (str | None): The converter's instructions, or None if it has none.
+            prompt (str): The text to convert, already formatted for the converter.
+
+        Returns:
+            str: The instructions followed by the prompt, or the prompt unchanged when there
+                are no instructions.
+        """
+        if not instructions:
+            return prompt
+        return f"{instructions}\n\n{prompt}"
+
     def _get_random_generator(self, *, stream: str) -> random.Random:
         """
         Return this conversion's generator for a named child stream.
@@ -254,6 +287,8 @@ class Converter(Identifiable):
         start and end delimiters form flat pairs. Without delimiters, the entire prompt
         is converted, including non-text inputs. Selected regions require text input
         and text output. All delimiters are validated before any conversion is invoked.
+        If a region fails, the regions still running are cancelled and awaited before its
+        error is raised.
 
         Args:
             prompt (str): The input prompt containing text to be converted.
@@ -311,7 +346,7 @@ class Converter(Identifiable):
 
         convert_region_async = convert_text_async or self._replace_text_match_async
         tasks = [convert_region_async(prompt[start + len(start_token) : end - len(end_token)]) for start, end in spans]
-        converted_parts = await asyncio.gather(*tasks)
+        converted_parts = await gather_with_cleanup_async(tasks)
 
         parts: list[str] = []
         previous_end = 0

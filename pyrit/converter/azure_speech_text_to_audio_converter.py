@@ -3,12 +3,12 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk  # noqa: F401
 
-from pyrit.auth.azure_auth import get_speech_config_async
+from pyrit.auth.azure_auth import get_speech_config_async, validate_speech_region_shape
 from pyrit.common import default_values
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
@@ -41,6 +41,10 @@ class AzureSpeechTextToAudioConverter(Converter):
     AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_KEY"
     #: The resource ID for accessing the service when using Entra ID auth.
     AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_RESOURCE_ID"
+
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"azure_speech_region", "azure_speech_key", "azure_speech_resource_id"}
+    )
 
     #: Supported audio formats for output.
     AzureSpeechAudioFormat = Literal["wav", "mp3"]
@@ -75,11 +79,14 @@ class AzureSpeechTextToAudioConverter(Converter):
             output_format (str): Either wav or mp3. Must match the file prefix.
 
         Raises:
-            ValueError: If the required environment variables or parameters are not set.
+            ValueError: If the required environment variables or parameters are not set, or the region isn't
+                an Azure region name.
         """
-        self._azure_speech_region: str = default_values.get_required_value(
-            env_var_name=self.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE,
-            passed_value=azure_speech_region,
+        self._azure_speech_region: str = validate_speech_region_shape(
+            default_values.get_required_value(
+                env_var_name=self.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE,
+                passed_value=azure_speech_region,
+            )
         )
 
         self._token_provider: Callable[[], str | Awaitable[str]] | None = None

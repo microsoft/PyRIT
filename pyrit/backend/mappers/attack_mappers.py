@@ -25,7 +25,7 @@ from azure.storage.blob import ContainerSasPermissions, generate_container_sas
 from azure.storage.blob.aio import BlobServiceClient
 
 from pyrit.backend.mappers._preview import format_last_message_preview
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AttackSummary,
     MessagePieceRequest,
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.memory import MemoryInterface
-    from pyrit.models.conversation_stats import ConversationStats
+    from pyrit.models import ConversationStats
     from pyrit.models.results.attack_result import AttackScoringInputs
 
 # ============================================================================
@@ -199,8 +199,8 @@ def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     """
     if not value or data_type not in MEDIA_PATH_DATA_TYPES:
         return None
-    # Already a URL or data URI — pass through
-    if value.startswith(("http://", "https://", "data:")):
+    # Already a URL or data URI — pass through (schemes are case-insensitive)
+    if value.lower().startswith(("http://", "https://", "data:")):
         return value
     # Local file path — construct a media endpoint URL
     if Path(value).is_file():
@@ -215,6 +215,8 @@ def _normalize_summary_objective(ar: AttackResult) -> str:
     Returns:
         The summary objective, with legacy manual placeholders converted to an empty string.
     """
+    if ar.metadata.get("objective_is_placeholder") is False:
+        return ar.objective
     identifier = ar.get_attack_strategy_identifier()
     is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
     has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True
@@ -230,6 +232,7 @@ async def attack_result_to_summary_async(
     operation_name: str | None = None,
     scoring_inputs: AttackScoringInputs | None = None,
     execution_read_only: bool = False,
+    in_progress: bool = False,
 ) -> AttackSummary:
     """
     Build an AttackSummary view from an AttackResult.
@@ -246,6 +249,7 @@ async def attack_result_to_summary_async(
             Legacy attacks without an Operation ID show their historical name instead.
         scoring_inputs: Effective inputs resolved against the current registry by the service.
         execution_read_only: Whether execution changes require a manual continuation.
+        in_progress: Whether ``ar`` projects an attack still running in a scan.
 
     Returns:
         AttackSummary view ready for the API response.
@@ -262,6 +266,8 @@ async def attack_result_to_summary_async(
         chat_scorer=scoring_inputs.scorer if scoring_inputs else None,
         chat_scorer_inherited=scoring_inputs.inherited if scoring_inputs else False,
         execution_read_only=execution_read_only,
+        in_progress=in_progress,
+        scenario_result_id=ar.attribution_parent_id,
         last_response=await _summary_last_response_async(ar.last_response),
         automated_score=(
             ScoreView.from_domain(ar.automated_score, is_objective_score=True) if ar.automated_score else None

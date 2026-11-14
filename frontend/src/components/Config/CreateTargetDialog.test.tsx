@@ -28,7 +28,7 @@ const OPENAI_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The target URL for the OpenAI service.",
   },
@@ -52,7 +52,7 @@ const AZURE_ML_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The endpoint URL for the deployed Azure ML model.",
   },
@@ -274,6 +274,12 @@ const TARGET_TYPES: TargetTypeListResponse = {
       description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
     },
     {
+      target_type: "TextTarget",
+      parameters: [],
+      supported_auth_modes: [],
+      description: "Writes prompts to a local text stream.",
+    },
+    {
       target_type: "HTTPTarget",
       parameters: [
         {
@@ -290,6 +296,13 @@ const TARGET_TYPES: TargetTypeListResponse = {
           required: false,
           default: "True",
           description: "Whether to use TLS.",
+        },
+        {
+          name: "max_requests_per_minute",
+          type_name: "int",
+          required: false,
+          default: null,
+          description: "Maximum requests per minute.",
         },
       ],
       supported_auth_modes: ["api_key"],
@@ -346,6 +359,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   OpenAIVideoTarget: "OpenAI video",
   RoundRobinTarget: "Weighted round robin",
   HTTPTarget: "HTTPTarget",
+  TextTarget: "TextTarget",
   AzureBlobStorageTarget: "AzureBlobStorageTarget",
 };
 
@@ -412,7 +426,7 @@ async function selectTargetType(value: string): Promise<void> {
   await waitFor(() => {
     restoreDialogAccessibility();
     expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
-      TARGET_DISPLAY_NAMES[value]
+      TARGET_DISPLAY_NAMES[value] ?? value
     );
   });
 }
@@ -543,7 +557,7 @@ describe("CreateTargetDialog", () => {
 
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(11);
-    for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
+    for (const entry of TARGET_TYPES.items.filter((item) => !["PlaywrightTarget", "TextTarget"].includes(item.target_type))) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
@@ -581,6 +595,49 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("RoundRobinTarget");
     expect(selectedDetails).toHaveTextContent("weighted round-robin selection");
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
+  });
+
+  it("should not offer the SDK-only TextTarget", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await openTargetTypePicker();
+
+    expect(screen.queryByRole("option", { name: /Implementation: TextTarget/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Writes prompts to a local text stream.")).not.toBeInTheDocument();
+  });
+
+  it("should still describe other credential-free target types", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [...TARGET_TYPES.items, {
+        target_type: "CredentialFreeTarget",
+        parameters: [],
+        supported_auth_modes: [],
+        description: "A credential-free endpoint.",
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await openTargetTypePicker();
+    const option = screen.getByRole("option", { name: /Implementation: CredentialFreeTarget/ });
+    expect(option).toHaveTextContent("No authentication required");
+    expect(option).not.toHaveTextContent("API key");
+  });
+
+  it("should not offer SDK-only inner targets in a round-robin target", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} existingTargets={[
+          makeTarget({ target_registry_name: "demo", target_type: "TextTarget" }),
+          makeTarget({ target_registry_name: "endpoint", target_type: "OpenAIChatTarget" }),
+        ]} />
+      </TestWrapper>
+    );
+    await selectTargetType("RoundRobinTarget");
+    expect(screen.queryByRole("option", { name: /demo/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /endpoint/ })).toBeInTheDocument();
   });
 
   it("should keep the selected target displayed after focus moves to another field", async () => {
@@ -886,6 +943,179 @@ describe("CreateTargetDialog", () => {
     });
   });
 
+  it("announces an invalid HTTP request and associates the error with its field", async () => {
+    const user = userEvent.setup();
+    const createTargetError = Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    );
+    let rejectCreateTarget: (error: unknown) => void = () => undefined;
+    mockedTargetsApi.createTarget.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectCreateTarget = reject;
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    const requestField = screen.getByTestId('target-param-http_request') as HTMLTextAreaElement;
+    fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
+
+    const createButton = screen.getByRole("button", { name: "Create Target" });
+    await act(async () => createButton.focus());
+    await user.keyboard(" ");
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Target Type" })).toBeDisabled();
+      expect(requestField).toBeDisabled();
+    });
+    await act(async () => rejectCreateTarget(createTargetError));
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(requestField).toHaveFocus();
+      expect(requestField).toHaveAttribute("aria-invalid", "true");
+      expect(error).toHaveTextContent("Invalid HTTP request line");
+      expect(requestField.getAttribute("aria-describedby")?.split(/\s+/)).toContain(error.id);
+    });
+
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+      type: "HTTPTarget",
+      params: { http_request: "not an HTTP request" },
+    });
+
+    fireEvent.change(requestField, {
+      target: { value: "POST /chat HTTP/1.1\nHost: example.com" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
+      new Error("Target service unavailable"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 500,
+          data: { detail: "Target service unavailable" },
+        },
+      },
+    ));
+    await user.click(createButton);
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(error).toHaveTextContent("Target service unavailable");
+      expect(error).toHaveFocus();
+      expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    });
+  });
+
+  it("should preserve the HTTP error destination when Escape is pressed during submission", async () => {
+    const user = userEvent.setup();
+    let rejectCreateTarget: (error: unknown) => void = () => undefined;
+    mockedTargetsApi.createTarget.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectCreateTarget = reject;
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+    const requestField = screen.getByRole("textbox", { name: /http request/i });
+    await user.type(requestField, "not an HTTP request");
+    await user.click(screen.getByRole("button", { name: "Create Target" }));
+    await waitFor(() => expect(requestField).toBeDisabled());
+
+    await user.click(screen.getByText("Advanced settings", { exact: true }));
+    await user.keyboard("{Escape}");
+
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+    expect(requestField).toHaveValue("not an HTTP request");
+    expect(screen.getByRole("combobox", { name: "Target Type" })).toHaveTextContent("HTTPTarget");
+
+    await act(async () => rejectCreateTarget(Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    )));
+
+    await waitFor(() => {
+      expect(requestField).toHaveFocus();
+      expect(requestField).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent("Invalid HTTP request line");
+    });
+
+    await user.keyboard("{Escape}");
+    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("announces metadata validation errors after a prior HTTP request error", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    ));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    const requestField = screen.getByTestId('target-param-http_request') as HTMLTextAreaElement;
+    fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
+    const createButton = screen.getByRole("button", { name: "Create Target" });
+    await user.click(createButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Invalid HTTP request line");
+      expect(requestField).toHaveFocus();
+    });
+
+    const maxRequestsPerMinute = screen.getByRole('spinbutton', { name: 'Max Requests Per Minute' });
+    fireEvent.change(maxRequestsPerMinute, { target: { value: "1.5" } });
+    await user.click(createButton);
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(error).toHaveTextContent("max_requests_per_minute must be an integer.");
+      expect(error).toHaveFocus();
+      expect(requestField).not.toHaveFocus();
+    });
+
+    expect(requestField).toHaveValue("not an HTTP request");
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+  });
+
   it("should include API key in params when provided", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
@@ -983,6 +1213,53 @@ describe("CreateTargetDialog", () => {
     await waitFor(() => {
       expect(screen.getByText("Please provide an endpoint URL")).toBeInTheDocument();
     });
+  });
+
+  it.each([false, true])("should honor endpoint required metadata (%s)", async (required: boolean) => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{
+        target_type: "LiteLLMChatTarget",
+        parameters: [
+          { name: "endpoint", type_name: "str | None", required, default: null },
+          { name: "model_name", type_name: "str", required: true, default: null },
+        ],
+        supported_auth_modes: ["api_key"],
+      }],
+    });
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "litellm", target_type: "LiteLLMChatTarget",
+    }));
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("LiteLLMChatTarget");
+    await user.type(screen.getByRole("textbox", { name: "Model / Deployment Name", exact: true }), "provider/model");
+    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    const endpoint = screen.getByRole("textbox", { name: "Endpoint URL", exact: true });
+    if (required) {
+      expect(endpoint).toBeRequired();
+      expect(create).toBeDisabled();
+      fireEvent.submit(screen.getByTestId("create-target-form"));
+      expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
+      expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+    } else {
+      expect(endpoint).not.toBeRequired();
+      expect(create).toBeEnabled();
+      await user.click(create);
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "LiteLLMChatTarget", params: { model_name: "provider/model" },
+      });
+    }
+  });
+
+  it("should still require an endpoint when target metadata is unavailable", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await screen.findByText(/Target details could not be loaded/);
+    await selectTargetType("OpenAIChatTarget");
+    expect(screen.getByRole("button", { name: "Create Target", exact: true })).toBeDisabled();
+    fireEvent.submit(screen.getByTestId("create-target-form"));
+    expect(await screen.findByText("Please provide an endpoint URL")).toBeVisible();
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
 
   it("should surface string throws verbatim via toApiError", async () => {

@@ -51,19 +51,19 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get
 
 from pydantic import JsonValue, ValidationError
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
+from pyrit.common import REQUIRED_VALUE
+from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.common.brick_contract import get_constructor_owners
-from pyrit.models import StructuredParameterValue
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models import ComponentType, Parameter, RegistryReference, StructuredParameterValue
 
 # Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
 # the single implementation now lives in ``pyrit.models.parameter``.
-from pyrit.models.parameter import display_choices as display_choices
+from pyrit.models import display_choices as display_choices
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
 
 # Constructor parameters that never describe a settable build input.
 _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})
@@ -179,7 +179,7 @@ def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
         result = str
     elif origin in (list, Collection, Sequence) and len(get_args(unwrapped)) == 1:
         element_type = get_args(unwrapped)[0]
-        result = list[element_type]
+        result = types.GenericAlias(list, element_type)
     else:
         return annotation
 
@@ -265,6 +265,7 @@ def _parameters_from_signature(
     sensitive_parameter_names: frozenset[str],
     multiline_parameter_names: frozenset[str],
     identity_conflicting_parameter_names: frozenset[str],
+    copy_locked_parameter_names: frozenset[str],
 ) -> list[Parameter]:
     """
     Build parameters declared by one constructor signature.
@@ -280,6 +281,8 @@ def _parameters_from_signature(
             names whose values require multiline controls.
         identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
             names that must be omitted for identity-based authentication.
+        copy_locked_parameter_names (frozenset[str]): Component-declared names whose
+            values a private copy keeps from its source.
 
     Returns:
         list[Parameter]: Parameters declared by the constructor.
@@ -315,6 +318,7 @@ def _parameters_from_signature(
             sensitive=name in sensitive_parameter_names,
             multiline=name in multiline_parameter_names,
             identity_conflicting=name in identity_conflicting_parameter_names,
+            copy_locked=name in copy_locked_parameter_names,
         )
         if parameter.is_seed_prompt:
             parameter = parameter.model_copy(update={"multiline": True})
@@ -341,6 +345,10 @@ def derive_parameters(
     A component can declare ``MULTILINE_PARAMETER_NAMES`` as a ``frozenset[str]``
     of constructor parameters whose controls must preserve line breaks. These
     names supplement the identifier's shared multiline names for that component only.
+
+    A component can also declare ``COPY_LOCKED_PARAMETER_NAMES``: the constructor
+    parameters that choose where its requests go or how they authenticate. A private
+    copy built from external input keeps the source's values for these.
 
     A non-required reference parameter declared by ``seam_base_type`` is a
     construction seam, not a build input of every subclass: the base accepts it so
@@ -377,6 +385,7 @@ def derive_parameters(
     identity_conflicting_parameter_names = (
         identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
     )
+    copy_locked_parameter_names = getattr(cls, "COPY_LOCKED_PARAMETER_NAMES", frozenset[str]())
     parameters: list[Parameter] = []
     seen: set[str] = set()
     for owner, signature in _constructor_sources(cls):
@@ -387,6 +396,7 @@ def derive_parameters(
             sensitive_parameter_names=sensitive_parameter_names,
             multiline_parameter_names=multiline_parameter_names,
             identity_conflicting_parameter_names=identity_conflicting_parameter_names,
+            copy_locked_parameter_names=copy_locked_parameter_names,
         ):
             if parameter.name in seen:
                 continue
@@ -428,7 +438,7 @@ def _registry_getter_for_component_type(
     the identifier's self-reported ``component_type``: given that family, return the
     ``.instances`` container that resolves its references by name.
 
-    The three component registries share a uniform surface — each is a ``Registry``
+    The four component registries share a uniform surface — each is a ``Registry``
     whose pre-configured instances live under ``.instances`` — so the mapping is a
     flat ``ComponentType -> Registry class`` lookup.
 
@@ -439,6 +449,7 @@ def _registry_getter_for_component_type(
     from pyrit.registry.components import (
         ConverterRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     )
 
@@ -446,6 +457,7 @@ def _registry_getter_for_component_type(
         ComponentType.TARGET: TargetRegistry,
         ComponentType.CONVERTER: ConverterRegistry,
         ComponentType.SCORER: ScorerRegistry,
+        ComponentType.SOURCE: SourceRegistry,
     }
     registry_class = registry_classes.get(component_type)
     if registry_class is None:

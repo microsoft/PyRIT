@@ -4,26 +4,44 @@
 """Bounded, read-only saved conversation views shared by attack and scenario APIs."""
 
 import uuid
+from typing import Protocol
 
-from pyrit.backend.mappers._preview import format_last_message_preview
-from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
-from pyrit.backend.models.attacks import (
+from pyrit.backend.mappers import format_last_message_preview, pyrit_messages_to_dto_async
+from pyrit.backend.models import (
     AttackConversationsResponse,
     ConversationMessagesResponse,
+    PaginationInfo,
 )
-from pyrit.backend.models.common import PaginationInfo
 from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
 from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_interface import MessagePieceKeysetCursor
+from pyrit.memory.memory_interface import AttackConversationPage, MessagePieceKeysetCursor
 from pyrit.models import ConversationStats, ConversationSummary
+
+
+class ConversationReferenceReader(Protocol):
+    """Reads one page of an attack's main and pruned conversation references."""
+
+    async def __call__(
+        self, *, attack_result_id: str, offset: int = 0, limit: int = 50, conversation_id: str | None = None
+    ) -> AttackConversationPage | None:
+        """Return the page, or None for an absent attack."""
+        ...
 
 
 class SavedConversationReadService:
     """Read canonical saved references/messages without constructing an executable attack."""
 
-    def __init__(self, *, memory: MemoryInterface) -> None:
-        """Bind all saved reads to the caller's memory instance."""
+    def __init__(self, *, memory: MemoryInterface, read_references: ConversationReferenceReader | None = None) -> None:
+        """
+        Bind all saved reads to the caller's memory instance.
+
+        Args:
+            memory (MemoryInterface): Memory that holds the saved messages.
+            read_references (ConversationReferenceReader | None): Where attack conversation references come from.
+                Defaults to the saved references in memory.
+        """
         self._memory = memory
+        self._read_references = read_references or self._read_saved_references_async
 
     async def list_conversations_async(
         self, *, attack_result_id: str, limit: int = 50, cursor: str | None = None
@@ -37,7 +55,7 @@ class SavedConversationReadService:
         Raises:
             ValueError: If the cursor belongs to another attack or an obsolete reference ordering.
         """
-        page = await self._memory.get_attack_conversation_page_async(attack_result_id=attack_result_id, limit=limit)
+        page = await self._read_references(attack_result_id=attack_result_id, limit=limit)
         if page is None:
             return None
         fingerprint = fingerprint_filters(
@@ -60,9 +78,7 @@ class SavedConversationReadService:
         offset = anchor.position if anchor is not None and anchor.position is not None else 0
         if offset:
             revision = page.reference_revision
-            page = await self._memory.get_attack_conversation_page_async(
-                attack_result_id=attack_result_id, offset=offset, limit=limit
-            )
+            page = await self._read_references(attack_result_id=attack_result_id, offset=offset, limit=limit)
             if page is None:
                 return None
             if page.reference_revision != revision:
@@ -120,7 +136,7 @@ class SavedConversationReadService:
         Raises:
             ValueError: If the conversation is unrelated or the continuation cursor is invalid.
         """
-        references = await self._memory.get_attack_conversation_page_async(
+        references = await self._read_references(
             attack_result_id=attack_result_id, conversation_id=conversation_id, limit=1
         )
         if references is None:
@@ -164,4 +180,11 @@ class SavedConversationReadService:
             ),
             pagination=PaginationInfo(limit=limit, has_more=next_cursor is not None, next_cursor=next_cursor),
             partial_message_sequences=list(page.partial_message_sequences),
+        )
+
+    async def _read_saved_references_async(
+        self, *, attack_result_id: str, offset: int = 0, limit: int = 50, conversation_id: str | None = None
+    ) -> AttackConversationPage | None:
+        return await self._memory.get_attack_conversation_page_async(
+            attack_result_id=attack_result_id, offset=offset, limit=limit, conversation_id=conversation_id
         )

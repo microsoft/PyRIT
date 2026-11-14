@@ -28,11 +28,15 @@ from pyrit.models import (
 )
 from pyrit.score import (
     ContentScorable,
+    ConversationScorer,
     FloatScaleThresholdScorer,
+    MessageFloatScaleScorer,
     MessageScorable,
     MessageScorer,
+    MessageTrueFalseScorer,
     OutputMatchesScorer,
     Scorer,
+    ScorerPromptValidator,
     SelfAskGeneralFloatScaleScorer,
     SubStringScorer,
     TrueFalseCompositeScorer,
@@ -42,10 +46,6 @@ from pyrit.score import (
     TrueFalseScorer,
     create_conversation_scorer,
 )
-from pyrit.score.conversation_scorer import ConversationScorer
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 LINE_BREAKS = ("\n", "\r", "\r\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
 
@@ -1647,6 +1647,53 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     assert synthetic_piece.original_value_data_type == "text"
     assert synthetic_piece.response_error == "none"
     assert harmful_text in synthetic_piece.converted_value
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("strict", [False, True])
+def test_render_excludes_configured_data_types_before_validation(strict: bool) -> None:
+    validator = ScorerPromptValidator(supported_data_types=["text"], enforce_all_pieces_valid=strict)
+    scorer = create_conversation_scorer(
+        scorer=SubStringScorer(substring="answer"),
+        validator=validator,
+        excluded_data_types=["reasoning"],
+    )
+    assert isinstance(scorer, ConversationScorer)
+    reasoning = MessagePiece(role="assistant", original_value="internal", original_value_data_type="reasoning")
+    pieces = (
+        reasoning,
+        MessagePiece(role="user", original_value="request"),
+        reasoning.model_copy(update={"id": uuid.uuid4()}),
+        MessagePiece(role="assistant", original_value="answer"),
+    )
+    assert scorer._render_conversation(pieces) == (
+        "[BEGIN USER TURN 0]\n  request\n[END USER TURN 0]\n"
+        "[BEGIN ASSISTANT TURN 1]\n  answer\n[END ASSISTANT TURN 1]\n"
+    )
+
+    unfiltered = create_conversation_scorer(scorer=SubStringScorer(substring="answer"), validator=validator)
+    assert isinstance(unfiltered, ConversationScorer)
+    if strict:
+        with pytest.raises(ValueError, match="data type reasoning is not supported"):
+            unfiltered._render_conversation(pieces)
+    else:
+        assert "internal" in unfiltered._render_conversation(pieces)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_excluded_conversation_data_types_change_identity_without_changing_default_identity() -> None:
+    leaf = SubStringScorer(substring="answer")
+    default = create_conversation_scorer(scorer=leaf)
+    empty = create_conversation_scorer(scorer=leaf, excluded_data_types=[])
+    excluded = create_conversation_scorer(scorer=leaf, excluded_data_types=["reasoning", "tool_call"])
+    equivalent = create_conversation_scorer(scorer=leaf, excluded_data_types=["tool_call", "reasoning", "reasoning"])
+    reasoning_only = create_conversation_scorer(scorer=leaf, excluded_data_types=["reasoning"])
+    assert default.get_identifier() == empty.get_identifier()
+    assert "excluded_data_types" not in default.get_identifier().params
+    assert excluded.get_identifier().params["excluded_data_types"] == ["reasoning", "tool_call"]
+    assert excluded.get_identifier() == equivalent.get_identifier()
+    assert excluded.get_identifier().eval_hash != default.get_identifier().eval_hash
+    assert excluded.get_identifier().eval_hash != reasoning_only.get_identifier().eval_hash
 
 
 @pytest.mark.usefixtures("patch_central_database")

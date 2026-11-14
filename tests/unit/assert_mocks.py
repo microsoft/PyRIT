@@ -126,11 +126,15 @@ def make_assert_systematization() -> AssertSystematization:
 
 
 def make_assert_result(
-    *, config: AssertGenerationConfig | None = None, duplicate_text: bool = False, system_prompt: str = ""
+    *,
+    config: AssertGenerationConfig | None = None,
+    duplicate_text: bool = False,
+    system_prompt: str = "",
+    taxonomy: AssertTaxonomy | None = None,
 ) -> AssertGeneratorResult:
     """Build native seed groups, assignments, and coverage without model calls."""
     config = config or make_assert_config()
-    taxonomy = make_assert_taxonomy()
+    taxonomy = taxonomy or make_assert_taxonomy()
     dimensions = tuple(
         dimension
         if dimension.levels
@@ -161,6 +165,11 @@ def make_assert_result(
         batch_id = f"group_batch_{index // 5}"
         if batch_id not in conversation_ids:
             conversation_ids.append(batch_id)
+        instructions = (
+            f"You are a customer returning item {index}. Ask about the return period, then clarify."
+            if config.include_adversarial_prompt
+            else None
+        )
         metadata = AssertGroupMetadata(
             group_id=f"group_{index}",
             config=config,
@@ -168,6 +177,7 @@ def make_assert_result(
             dimensions=dimensions,
             behavior_category=assignment["behavior"],
             dimension_values={key: value for key, value in assignment.items() if key != "behavior"},
+            tester_instructions=instructions,
             provenance=AssertGenerationProvenance(
                 systematization_conversation_id=shared_ids[0],
                 taxonomy_conversation_id=shared_ids[1],
@@ -195,7 +205,6 @@ def make_assert_result(
             seeds.append(SeedPrompt(value=value, role="user", sequence=1, **common))
         prompts = None
         if config.include_adversarial_prompt:
-            instructions = f"You are a customer returning item {index}. Ask about the return period, then clarify."
             prompt = SeedPrompt(
                 value="Objective: {{ objective }}\nUser instructions: {{ tester_instructions }}",
                 parameters=["objective", "tester_instructions"],

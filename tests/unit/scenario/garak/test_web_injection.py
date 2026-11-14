@@ -20,19 +20,20 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError, DatasetSource
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucinationTechnique,
     WebInjectionTechnique,
 )
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection
+from pyrit.scenario.scenarios.garak import WebInjection
 from pyrit.score import (
     MarkdownInjectionScorer,
     TrueFalseCompositeScorer,
     TrueFalseScorer,
+    XSSOutputScorer,
 )
-from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 
 
 def _mock_id(name: str) -> ComponentIdentifier:

@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING, Any, cast, overload
 
 from treelib.tree import Tree
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults, combine_dict
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.common.utils import combine_dict
 from pyrit.exceptions import (
     ComponentRole,
     InvalidJsonException,
@@ -25,11 +24,9 @@ from pyrit.exceptions import (
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
-    get_prepended_turn_count,
-)
-from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
-from pyrit.executor.attack.component.conversation_manager import (
+    _AdversarialConversationManager,
     build_conversation_context_string_async,
+    get_prepended_turn_count,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.component.prepended_history_send_context import (
@@ -60,27 +57,26 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     NumericRubric,
     Scorer,
+    ScorerPromptValidator,
     SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
+    TrueFalseInverterScorer,
     TrueFalseQuestion,
     TrueFalseScorer,
 )
 from pyrit.score.score_utils import normalize_score_to_float, score_is_true
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-    from pyrit.models.literals import PromptDataType
+    from pyrit.models import PromptDataType
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +263,9 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_objective_score: Score | None = None
     best_adversarial_conversation_id: str | None = None
     best_auxiliary_scores: dict[str, Score] = field(default_factory=dict)
+
+    # Errors from branches that failed to execute, in the order they happened
+    node_errors: list[str] = field(default_factory=list)
 
     # Visualization parent for first-level nodes in this execution
     visualization_root_id: str = "root"
@@ -1581,6 +1580,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     DEFAULT_ADVERSARIAL_SEED_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
     )
+    ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
         system_prompt_parameters=("desired_prefix",),
@@ -1676,7 +1676,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # (The class-level ``TARGET_REQUIREMENTS`` inherited from ``AttackStrategy``
         # only covers ``objective_target``; this is a separate target.)
         try:
-            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+            type(self).ADVERSARIAL_TARGET_REQUIREMENTS.validate(target=self._adversarial_chat)
         except ValueError as exc:
             raise ValueError(f"TreeOfAttacksWithPruningAttack {exc}") from exc
 
@@ -2190,6 +2190,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 context.tree_visualization[node._vis_node_id].tag += result_string
                 self._logger.debug(f"Node {node_index}/{len(context.nodes)} completed: {result_string}")
 
+                if node.error_message:
+                    context.node_errors.append(node.error_message)
+
                 # Track off-topic or incomplete nodes as pruned conversations
                 if node.off_topic or not node.completed:
                     context.related_conversations.add(
@@ -2484,21 +2487,43 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     async def _create_failure_result_async(self, context: TAPAttackContext) -> TAPAttackResult:
         """
-        Create a failure result for the attack.
+        Create the result for an attack that did not achieve its objective.
 
-        Constructs a `TAPAttackResult` indicating the attack failed to achieve its objective
-        within the configured tree depth. The outcome reason includes the best score
-        achieved for diagnostic purposes. Delegates to `_create_attack_result` for common
-        result construction logic.
+        Returns an `ERROR` result when no response was ever scored and at least one branch
+        failed to execute, an `UNDETERMINED` result when the best score carries no verdict,
+        and a `FAILURE` result otherwise. The outcome reason includes the best score
+        achieved for diagnostic purposes. Delegates to `_create_attack_result_async` for
+        common result construction logic.
 
         Args:
             context (TAPAttackContext): The attack context containing the final state
                 after execution, including best conversation ID and score.
 
         Returns:
-            TAPAttackResult: The failure result indicating the attack did not achieve its objective.
+            TAPAttackResult: The failure result indicating the attack did not achieve its objective,
+                or an error result when no response was scored and at least one branch failed to execute.
         """
         best_score = context.best_objective_score
+        if best_score is None and context.node_errors:
+            # Nothing was ever scored and branches crashed, so the target was not shown to hold.
+            error_count = len(context.node_errors)
+            last_error = context.node_errors[-1]
+            result = await self._create_attack_result_async(
+                context=context,
+                outcome=AttackOutcome.ERROR,
+                outcome_reason=(
+                    f"No branch produced a scored response and {error_count} "
+                    f"{'branch' if error_count == 1 else 'branches'} failed to execute. "
+                    f"Last error: {last_error}"
+                ),
+            )
+            result.error_message = last_error
+            # Branches store errors as "<kind>: <detail>" strings, so the original exception
+            # class is not recoverable here; surface the stored kind as the error type.
+            error_kind, separator, _ = last_error.partition(":")
+            result.error_type = error_kind if separator else None
+            return result
+
         if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
             return await self._create_attack_result_async(
                 context=context,
@@ -2532,7 +2557,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Args:
             context (TAPAttackContext): The attack context containing the final state
                 after execution, including best conversation ID, score, and tree visualization.
-            outcome (AttackOutcome): The attack outcome (`SUCCESS` or `FAILURE`).
+            outcome (AttackOutcome): The attack outcome.
             outcome_reason (str): Human-readable explanation of the outcome.
 
         Returns:

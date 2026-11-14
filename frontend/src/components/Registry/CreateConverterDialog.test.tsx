@@ -166,6 +166,7 @@ describe('CreateConverterDialog', () => {
     renderDialog({ editing: { converter }, onTemporary })
     const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
     expect(offset).toHaveValue('1')
+    expect(screen.getByText('Only changed fields apply to this stage, not the registered converter.')).toBeInTheDocument()
     expect(screen.queryByLabelText(/registry name/i)).not.toBeInTheDocument()
     await user.clear(offset)
     await user.type(offset, '3')
@@ -177,6 +178,163 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
     expect(converter.identifier.caesar_offset).toBe(1)
     expect(onTemporary.mock.calls[0][1].hash).toBe('private-hash')
+  })
+
+  it('keeps a copy on its source connection settings', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, copy_locked: true },
+      { name: 'synthesis_voice_name', type_name: 'str', required: false, default: 'en-US-AvaNeural' },
+    ], 'AzureSpeechTextToAudioConverter')
+    const converter = {
+      converter_id: 'speech',
+      identifier: {
+        class_name: 'AzureSpeechTextToAudioConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash',
+      },
+    }
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: { ...converter.identifier, hash: 'copy-hash' } })
+    renderDialog({ editing: { converter }, onTemporary })
+
+    const voice = await screen.findByRole('textbox', { name: /synthesis_voice_name/i })
+    expect(screen.queryByRole('textbox', { name: /azure_speech_region/i })).not.toBeInTheDocument()
+    expect(screen.getByText(
+      'Only changed fields apply to this stage, not the registered converter. '
+      + 'Connection settings stay with the source converter.',
+    )).toBeInTheDocument()
+    await user.clear(voice)
+    await user.type(voice, 'en-US-JennyNeural')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('AzureSpeechTextToAudioConverter', {
+      source_name: 'speech', source_hash: 'source-hash', params: { synthesis_voice_name: 'en-US-JennyNeural' },
+    })
+  })
+
+  it('drops a connection setting carried over from earlier temporary settings', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, copy_locked: true },
+      { name: 'synthesis_voice_name', type_name: 'str', required: false, default: 'en-US-AvaNeural' },
+      { name: 'output_format', type_name: 'str', required: false, default: 'wav' },
+    ], 'AzureSpeechTextToAudioConverter')
+    const converter = {
+      converter_id: 'speech',
+      identifier: {
+        class_name: 'AzureSpeechTextToAudioConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash',
+      },
+    }
+    const spec = {
+      source_name: 'speech', source_hash: 'source-hash',
+      params: { azure_speech_region: 'westus2', output_format: 'mp3' },
+    }
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: { ...converter.identifier, hash: 'copy-hash' } })
+    renderDialog({ editing: { converter, spec }, onTemporary })
+
+    const voice = await screen.findByRole('textbox', { name: /synthesis_voice_name/i })
+    await user.clear(voice)
+    await user.type(voice, 'en-US-JennyNeural')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('AzureSpeechTextToAudioConverter', {
+      source_name: 'speech',
+      source_hash: 'source-hash',
+      params: { output_format: 'mp3', synthesis_voice_name: 'en-US-JennyNeural' },
+    })
+  })
+
+  it('offers connection settings when creating a converter', async () => {
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, copy_locked: true },
+    ], 'AzureSpeechTextToAudioConverter')
+    renderDialog()
+    await selectConverterType('AzureSpeechTextToAudioConverter')
+
+    expect(await screen.findByRole('textbox', { name: /azure_speech_region/i })).toBeInTheDocument()
+    expect(screen.queryByText(/connection settings stay with the source converter/i)).not.toBeInTheDocument()
+  })
+
+  it('locks scalar inputs while Apply Settings is building so a newer edit cannot be lost', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    let finishBuild: (value: { identifier: typeof converter.identifier }) => void = () => {}
+    mockedConvertersApi.buildConverter.mockReturnValue(
+      new Promise((resolve) => { finishBuild = resolve }),
+    )
+    renderDialog({ editing: { converter }, onTemporary })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    await user.clear(offset)
+    await user.type(offset, '3')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveAttribute('readonly'))
+
+    finishBuild({ identifier: { ...converter.identifier, hash: 'private-hash', caesar_offset: 3 } })
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Escape working after Enter submits Apply Settings and locks the input read-only', async () => {
+    const user = userEvent.setup()
+    const onClose = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    mockedConvertersApi.buildConverter.mockReturnValue(new Promise(() => {}))
+    renderDialog({ editing: { converter }, onTemporary: jest.fn(), onClose })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    await user.clear(offset)
+    await user.type(offset, '3{Enter}')
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveAttribute('readonly'))
+    expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('locks registry name and converter type while Add Converter is pending', async () => {
+    const user = userEvent.setup()
+    let finishCreate: (value: Awaited<ReturnType<typeof convertersApi.createConverter>>) => void = () => {}
+    mockedConvertersApi.createConverter.mockReturnValue(
+      new Promise((resolve) => { finishCreate = resolve }),
+    )
+    const onCreated = jest.fn()
+    renderDialog({ onCreated })
+    await selectConverterType('CaesarConverter')
+    const nameInput = screen.getByRole('textbox', { name: /registry name/i })
+    await user.clear(nameInput)
+    await user.type(nameInput, 'first')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /registry name/i })).toHaveAttribute('readonly'))
+    expect(screen.getByRole('combobox', { name: /converter type/i })).toBeDisabled()
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledTimes(1)
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'first', type: 'CaesarConverter', params: { caesar_offset: 5 },
+    })
+
+    finishCreate({
+      converter_id: 'first',
+      identifier: { class_name: 'CaesarConverter', class_module: 'pyrit.converter', hash: 'h', pyrit_version: '0' },
+    })
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('first', true))
   })
 
   it('loads converter classes from registry type metadata', async () => {
@@ -427,7 +585,7 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
   })
 
-  it('offers upload or server path input for every Path parameter', async () => {
+  it.each(['Path', 'Path | None'])('offers uploads for %s parameters', async (typeName: string) => {
     mockedConvertersApi.listConverterTypes.mockResolvedValue({
       items: [{
         converter_type: 'PathConverter',
@@ -435,7 +593,7 @@ describe('CreateConverterDialog', () => {
         supported_output_types: ['text'],
         parameters: [{
           name: 'source',
-          type_name: 'Path',
+          type_name: typeName,
           required: true,
           default: null,
           choices: null,
@@ -454,6 +612,22 @@ describe('CreateConverterDialog', () => {
       'Upload a file or enter a server path',
     )
     expect(screen.getByRole('button', { name: 'Upload' })).toBeInTheDocument()
+  })
+
+  it('keeps nullable numeric and boolean parameters editable and typed', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'offset', type_name: 'int | None', required: true },
+      { name: 'enabled', type_name: 'bool | None', required: false, default: 'False' },
+    ], 'NullableConverter')
+    renderDialog()
+    await selectConverterType('NullableConverter')
+    await user.type(screen.getByRole('textbox', { name: 'offset *' }), '7')
+    await user.click(screen.getByRole('switch', { name: 'enabled False' }))
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'NullableConverter', params: { offset: 7, enabled: true } }),
+    ))
   })
 
   it.each(['picker', 'drop'])('should preview an image from %s without changing its stored value and restore paths on Remove', async (method: string) => {
@@ -1026,6 +1200,23 @@ describe('CreateConverterDialog', () => {
       targets: { adversarial: defaultTarget },
     })
   }
+
+  it('should exclude SDK-only converter targets while loading all registry pages', async () => {
+    mockTargetConverter()
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'sdk-demo', target_type: 'TextTarget' })],
+        pagination: { limit: 200, has_more: true, next_cursor: 'next' },
+      })
+      .mockResolvedValueOnce({
+        items: [rewriteTarget], pagination: { limit: 200, has_more: false },
+      })
+    renderDialog()
+    await selectConverterType('PersuasionConverter')
+    expect(screen.queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /^rewrite-target / })).toBeInTheDocument()
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledWith(200, 'next')
+  })
 
   it.each([
     ['environment', null, 'adversarial_chat'],
@@ -1600,6 +1791,7 @@ describe('CreateConverterDialog', () => {
     ['indices', '0, 1.5', 'indices must be an integer.'],
     ['indices', '0, Infinity', 'indices must be a number.'],
     ['random', '1.5', 'seed must be an integer.'],
+    ['random', '9007199254740993', 'seed must be a safe integer.'],
   ])('should reject invalid %s input %s without submitting', async (strategy, value, message) => {
     const user = userEvent.setup()
     mockConverterParameters([wordSelectionParameter])
