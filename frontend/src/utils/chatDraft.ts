@@ -1,5 +1,6 @@
 import type {
-  ChatDraftContent, ChatDraftContextState, ConverterPipelineStage, MessageAttachment, PendingImportPayload,
+  BackendMessage, BackendMessagePiece, ChatDraftContent, ChatDraftContextState, ConverterPipelineStage,
+  MessageAttachment, PendingImportPayload,
 } from '@/types'
 
 export type { ChatDraftContent, ChatDraftContextState, ChatDraftHandoffContextValue, PendingImportPayload } from '@/types'
@@ -44,6 +45,38 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
     || Object.values(draft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
     || Boolean(draft.conversation)
   ))
+}
+
+/** True when the confirmed send turn is present in history and agrees with the captured position. */
+export function historyContainsAcceptedDraft(
+  draft: Pick<ChatDraftContent, 'acceptedSendId' | 'acceptedSendHistory'>,
+  messages?: readonly BackendMessage[] | null,
+  requestTurnNumber?: number | null,
+): boolean {
+  const position = draft.acceptedSendHistory
+  if (!draft.acceptedSendId || !position || !messages || requestTurnNumber == null) return false
+  if (position.requestTurnNumber != null && position.requestTurnNumber !== requestTurnNumber) return false
+  return messages.some((message: BackendMessage) => (
+    message.role === 'user' && message.turn_number === requestTurnNumber
+  ))
+}
+
+/**
+ * A position match is only a reason to check the exact send status; it is not proof that this send was saved.
+ */
+export function historyMayContainAcceptedDraft(
+  draft: Pick<ChatDraftContent, 'acceptedSendId' | 'acceptedSendHistory'>,
+  messages?: readonly BackendMessage[] | null,
+): boolean {
+  const position = draft.acceptedSendHistory
+  if (!draft.acceptedSendId || !position || !messages) return false
+  const userMessages = messages.filter((message: BackendMessage) => message.role === 'user')
+  if (position.requestTurnNumber !== undefined) {
+    return userMessages.some((message: BackendMessage) => message.turn_number === position.requestTurnNumber)
+  }
+  const prior = new Set(position.priorUserPieceIds)
+  return userMessages.some((message: BackendMessage) => message.message_pieces
+    .some((piece: BackendMessagePiece) => !prior.has(piece.id)))
 }
 
 /**
