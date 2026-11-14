@@ -107,6 +107,22 @@ def current_user_name(request: Request) -> str | None:
     return user.name or user.email or None
 
 
+def current_user_oid(request: Request) -> str | None:
+    """
+    Return the signed-in user's Microsoft Entra object ID, or None when nobody is identified.
+
+    Args:
+        request (Request): The request whose authenticated user to read.
+
+    Returns:
+        str | None: The user's object ID, or None.
+    """
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, AuthenticatedUser):
+        return None
+    return user.oid
+
+
 class EntraAuthMiddleware(BaseHTTPMiddleware):
     """Authenticate API requests through Microsoft Graph."""
 

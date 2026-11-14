@@ -9,7 +9,11 @@ import pytest
 
 from pyrit.models.catalog import RestoreFailureReason
 from pyrit.registry import ConverterRegistry, TargetRegistry
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import (
+    SavedEntryRefusedError,
+    check_saveable_class,
+    check_saved_entry_params,
+)
 
 _ENDPOINT = "https://contoso.openai.azure.com/openai/v1"
 _OPENAI_CLASSES = (
@@ -333,3 +337,132 @@ def test_check_saved_entry_params_ignores_sdk_headers_for_other_targets(monkeypa
 
     _check("A2ATarget", {"endpoint": "https://agent.example.test"})
     _check("TextTarget", {})
+
+
+@pytest.mark.parametrize(
+    ("class_name", "auth_modes"),
+    [
+        *((class_name, ("identity", "none")) for class_name in _OPENAI_CLASSES),
+        ("AzureMLChatTarget", ("identity",)),
+        ("PromptShieldTarget", ("identity",)),
+        ("AzureBlobStorageTarget", ("identity",)),
+        ("A2ATarget", ("api_key",)),
+        ("TextTarget", ("api_key",)),
+        ("RoundRobinTarget", ("api_key",)),
+    ],
+)
+def test_check_saveable_class_lists_the_auth_modes_a_saved_target_can_use(
+    class_name: str, auth_modes: tuple[str, ...]
+) -> None:
+    cls = TargetRegistry.get_registry_singleton().get_class(class_name)
+
+    assert check_saveable_class(cls) == auth_modes
+
+
+@pytest.mark.parametrize(
+    ("class_name", "reason", "message"),
+    [
+        (
+            "GitHubCopilotTarget",
+            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            (
+                "'GitHubCopilotTarget' needs a credential in 'github_token', which saved entries can't hold or take "
+                "from this server yet."
+            ),
+        ),
+        (
+            "HackAPromptTarget",
+            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            (
+                "'HackAPromptTarget' needs a credential in 'session_id', which saved entries can't hold or take from "
+                "this server yet."
+            ),
+        ),
+        (
+            "LiteLLMChatTarget",
+            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            (
+                "'LiteLLMChatTarget' needs a credential in 'api_key', which saved entries can't hold or take from this "
+                "server yet."
+            ),
+        ),
+        (
+            "LiteLLMDecisionTarget",
+            RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            (
+                "'LiteLLMDecisionTarget' needs a credential in 'api_key', which saved entries can't hold or take from "
+                "this server yet."
+            ),
+        ),
+        (
+            "HTTPTarget",
+            RestoreFailureReason.UNSUPPORTED_CLASS,
+            "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials.",
+        ),
+        (
+            "HTTPXAPITarget",
+            RestoreFailureReason.UNSUPPORTED_CLASS,
+            "'HTTPXAPITarget' uploads files from a folder the server chooses, which a saved entry can't use yet.",
+        ),
+        (
+            "HuggingFaceChatTarget",
+            RestoreFailureReason.UNSUPPORTED_CLASS,
+            (
+                "'HuggingFaceChatTarget' can't be saved. It needs a Hugging Face token or model files on this server, "
+                "and saved targets can hold neither yet."
+            ),
+        ),
+        (
+            "WebSocketCopilotTarget",
+            RestoreFailureReason.UNSUPPORTED_CLASS,
+            "'WebSocketCopilotTarget' can't be saved. It signs in with the Copilot account this server is set up with.",
+        ),
+    ],
+)
+def test_check_saveable_class_refuses_a_class_that_can_never_be_saved(
+    class_name: str, reason: RestoreFailureReason, message: str
+) -> None:
+    cls = TargetRegistry.get_registry_singleton().get_class(class_name)
+
+    with pytest.raises(SavedEntryRefusedError) as refusal:
+        check_saveable_class(cls)
+
+    assert refusal.value.reason is reason
+    assert str(refusal.value) == message
+
+
+def test_check_saveable_class_agrees_with_the_check_a_save_runs() -> None:
+    registry = TargetRegistry.get_registry_singleton()
+    for metadata in registry.get_all_registered_class_metadata():
+        cls = registry.get_class(metadata.class_name)
+        params: dict[str, Any] = {
+            name: value for name, value in cls.server_fallback_parameters.items() if value is not None
+        }
+        params |= {name: _ENDPOINT for name, server_setting in cls.destination_parameters.items() if server_setting}
+        try:
+            saveable_auth_modes = check_saveable_class(cls)
+        except SavedEntryRefusedError:
+            saveable_auth_modes = ()
+
+        for auth_mode in cls.supported_auth_modes:
+            if auth_mode in saveable_auth_modes:
+                check_saved_entry_params(cls=cls, parameters=metadata.parameters, params=params, auth_mode=auth_mode)
+            else:
+                with pytest.raises(SavedEntryRefusedError):
+                    check_saved_entry_params(
+                        cls=cls, parameters=metadata.parameters, params=params, auth_mode=auth_mode
+                    )
+
+
+@pytest.mark.parametrize("class_name", _OPENAI_CLASSES)
+def test_check_saveable_class_refuses_an_openai_class_while_the_server_sets_sdk_headers(
+    class_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Ocp-Apim-Subscription-Key: server-secret")
+    cls = TargetRegistry.get_registry_singleton().get_class(class_name)
+
+    with pytest.raises(SavedEntryRefusedError, match="OPENAI_CUSTOM_HEADERS") as refusal:
+        check_saveable_class(cls)
+
+    assert refusal.value.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert "server-secret" not in str(refusal.value)

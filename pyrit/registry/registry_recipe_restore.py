@@ -502,7 +502,8 @@ class RegistryRecipeRestorer:
         from pyrit.registry.components.attack_technique_registry import TechniqueAdmissionError
 
         try:
-            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name):
+            owner = stored.recipe.owner if isinstance(stored.recipe, ComponentRecipe) else None
+            with saved_entry_registration(kind=stored.ref.kind.value, name=stored.ref.name, owner=owner):
                 await build_async(stored)
         except (RecipeRejectedError, SavedEntryRefusedError) as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))

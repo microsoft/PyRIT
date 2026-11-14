@@ -14,6 +14,9 @@ export interface FlatTarget {
   capabilities?: unknown;
   target_specific_params?: unknown;
   inner_targets?: FlatTarget[] | null;
+  origin?: "saved" | "configuration" | "temporary" | null;
+  saved_by?: string | null;
+  saved_by_me?: boolean;
 }
 
 interface TargetInstanceMock {
@@ -27,6 +30,9 @@ interface TargetInstanceMock {
   capabilities: unknown;
   target_specific_params: unknown;
   inner_targets: TargetInstanceMock[] | null;
+  origin?: "saved" | "configuration" | "temporary" | null;
+  saved_by?: string | null;
+  saved_by_me?: boolean;
 }
 
 export function makeTarget(flat: FlatTarget): TargetInstanceMock {
@@ -41,5 +47,8 @@ export function makeTarget(flat: FlatTarget): TargetInstanceMock {
     capabilities: flat.capabilities ?? null,
     target_specific_params: flat.target_specific_params ?? null,
     inner_targets: flat.inner_targets ? flat.inner_targets.map(makeTarget) : null,
+    ...(flat.origin !== undefined ? { origin: flat.origin } : {}),
+    ...(flat.saved_by !== undefined ? { saved_by: flat.saved_by } : {}),
+    ...(flat.saved_by_me !== undefined ? { saved_by_me: flat.saved_by_me } : {}),
   };
 }
