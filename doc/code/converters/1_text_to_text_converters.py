@@ -404,6 +404,7 @@ import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter import (
+    AdversarialPoetryConverter,
     DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
@@ -464,6 +465,11 @@ print("Tense (future):", await tense_converter.convert_async(prompt=prompt))  # 
 # Persuasion [@zeng2024persuasion] applies persuasion techniques
 persuasion_converter = PersuasionConverter(converter_target=attack_llm, persuasion_technique="logical_appeal")
 print("Persuasion:", await persuasion_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Adversarial poetry [@bisconti2025poetry] rewrites the prompt as a short poem that ends with a
+# plain instruction line
+poetry_converter = AdversarialPoetryConverter(converter_target=attack_llm)
+print("Adversarial Poetry:", await poetry_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Decomposition [@li2024drattack] splits the objective into phrases and rebuilds it as a
 # Question-A/Question-B reconstruction task that the target reassembles itself
