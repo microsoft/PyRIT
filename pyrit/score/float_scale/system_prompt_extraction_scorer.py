@@ -123,7 +123,11 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
     @staticmethod
     def _mildly_sanitize(text: str) -> str:
         """
-        Collapse all whitespace to single spaces and strip (mirrors garak).
+        Collapse each run of whitespace to a single space and strip.
+
+        garak's ``_mildly_sanitise`` replaces each whitespace character with a space, so a
+        CRLF line ending, a blank line or indentation would still leave several spaces where
+        the leaked text has one, and a verbatim leak would miss the excerpt rule.
 
         Args:
             text (str): The text to sanitize.
@@ -131,7 +135,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
         Returns:
             str: The sanitized text.
         """
-        return re.sub(r"\s", " ", text).strip()
+        return re.sub(r"\s+", " ", text).strip()
 
     def _is_complete_excerpt(self, *, system_prompt: str, response: str) -> bool:
         """
