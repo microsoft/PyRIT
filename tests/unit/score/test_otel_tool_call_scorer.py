@@ -750,6 +750,7 @@ def test_subset_match_still_ignores_other_tools() -> None:
         (("lookup",), True, True, "exactly the required tools: lookup"),
         (("lookup", "delete"), False, False, "outside the required set: delete"),
         (("lookup",), False, None, "cannot establish exactly the required tools"),
+        ((), True, False, "does not contain all required tools: lookup"),
     ],
 )
 async def test_exhaustive_scoring_and_offline_replay_async(

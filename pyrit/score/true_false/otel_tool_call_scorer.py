@@ -101,12 +101,6 @@ def _rationale(*, condition: ToolsCalled, payload: ToolEventsObservationPayload,
         str: The rationale.
     """
     names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
-    if not condition.exhaustive:
-        if value is True:
-            return f"Observed execution of all required tools: {names}."
-        if value is False:
-            return f"Complete trace evidence does not contain all required tools: {names}."
-        return f"Trace evidence cannot establish invocation of all required tools: {names}."
     required = {tool.name for tool in condition.tools}
     extra = sorted({event.name for event in payload.events} - required)
     expected = f"exactly the required tools: {names}" if names else "no tool execution"
@@ -189,19 +183,18 @@ class OtelToolCallScorer(TrueFalseScorer):
                 "OtelToolCallScorer received a requirement with argument constraints, which trace evidence "
                 "cannot confirm. Use MessageToolCallScorer to match arguments."
             )
-        rationale = (
-            f"Observed execution of all required tools: {names}."
-            if value is True
-            else f"Complete trace evidence does not contain all required tools: {names}."
-            if value is False
-            else f"Trace evidence cannot establish invocation of all required tools: {names}."
-        )
-        if value is None and constrains_arguments:
-            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
         if condition.exhaustive:
             rationale = _rationale(condition=condition, payload=evidence, value=value)
-            if value is None and constrains_arguments:
-                rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
+        else:
+            rationale = (
+                f"Observed execution of all required tools: {names}."
+                if value is True
+                else f"Complete trace evidence does not contain all required tools: {names}."
+                if value is False
+                else f"Trace evidence cannot establish invocation of all required tools: {names}."
+            )
+        if value is None and constrains_arguments:
+            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),
