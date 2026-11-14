@@ -779,6 +779,31 @@ class HarmScorerEvaluator(ScorerEvaluator):
                 reliability_data=all_model_scores, level_of_measurement="ordinal"
             )
 
+        # Human-vs-scorer agreement on the same pair that MAE compares: the gold
+        # label and the per-response median model score. Unlike the combined
+        # alpha, this has exactly two rows, so repeating the scorer trials does
+        # not turn agreement with itself into extra raters.
+        krippendorff_alpha_gold_model = None
+        if num_responses > 0:
+            # Ordinal categories are shared across items and both rows. Merge
+            # adjacent floating-point values (e.g. 0.3 and the median of 0.2 and
+            # 0.4), rather than reconstructing model scores from rounded diffs.
+            # Limit each group to one ULP from its first value: decimal rounding
+            # would discard fine score levels, and chaining could merge more.
+            gold_model_scores = np.vstack((gold_scores, median_model_scores))
+            categories, inverse = np.unique(gold_model_scores, return_inverse=True)
+            normalized_categories = categories.copy()
+            representative = categories[0]
+            for index, category in enumerate(categories[1:], start=1):
+                if category <= np.nextafter(representative, np.inf):
+                    normalized_categories[index] = representative
+                else:
+                    representative = category
+            krippendorff_alpha_gold_model = krippendorff_alpha(
+                reliability_data=normalized_categories[inverse].reshape(gold_model_scores.shape),
+                level_of_measurement="ordinal",
+            )
+
         # A scorer that ignored the response would do best by always returning the median gold score.
         baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
 
@@ -795,6 +820,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             ),
             krippendorff_alpha_humans=krippendorff_alpha_humans,
             krippendorff_alpha_model=krippendorff_alpha_model,
+            krippendorff_alpha_gold_model=krippendorff_alpha_gold_model,
             contested_threshold=contested_threshold,
             num_unanimous_responses=num_unanimous_responses,
             num_contested_responses=num_contested_responses,
@@ -881,26 +907,45 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         gold_scores = np.round(np.median(all_human_scores, axis=0))
         majority_model_scores = np.round(np.median(all_model_scores, axis=0))
 
-        true_positive = np.sum((gold_scores == 1) & (majority_model_scores == 1))
-        false_positive = np.sum((gold_scores == 0) & (majority_model_scores == 1))
-        true_negative = np.sum((gold_scores == 0) & (majority_model_scores == 0))
-        false_negative = np.sum((gold_scores == 1) & (majority_model_scores == 0))
+        true_positive = int(np.sum((gold_scores == 1) & (majority_model_scores == 1)))
+        false_positive = int(np.sum((gold_scores == 0) & (majority_model_scores == 1)))
+        true_negative = int(np.sum((gold_scores == 0) & (majority_model_scores == 0)))
+        false_negative = int(np.sum((gold_scores == 1) & (majority_model_scores == 0)))
         accuracy = (true_positive + true_negative) / gold_scores.size
         precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) > 0 else 0.0
         recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) > 0 else 0.0
+        specificity = (
+            float(true_negative / (true_negative + false_positive)) if (true_negative + false_positive) > 0 else None
+        )
         f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
         num_responses = all_human_scores.shape[1]
         num_human_raters = all_human_scores.shape[0]
 
+        # A scorer that ignored the response would do best on accuracy by always returning the more
+        # common gold label, and best on F1 by always answering true (always-false has an F1 of 0).
+        baseline_accuracy: float | None = None
+        baseline_f1_score: float | None = None
+        if gold_scores.size:
+            num_gold_true = int(np.sum(gold_scores == 1))
+            baseline_accuracy = max(num_gold_true, gold_scores.size - num_gold_true) / gold_scores.size
+            baseline_f1_score = 2 * num_gold_true / (gold_scores.size + num_gold_true)
+
         return ObjectiveScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
             accuracy=accuracy,
+            baseline_accuracy=baseline_accuracy,
+            baseline_f1_score=baseline_f1_score,
             accuracy_standard_error=np.sqrt(accuracy * (1 - accuracy) / gold_scores.size),
             precision=precision,
             recall=recall,
+            specificity=specificity,
             f1_score=f1_score,
+            true_positive=true_positive,
+            false_positive=false_positive,
+            true_negative=true_negative,
+            false_negative=false_negative,
             num_scorer_trials=num_scorer_trials,
             dataset_name=dataset_name,
             dataset_version=dataset_version,

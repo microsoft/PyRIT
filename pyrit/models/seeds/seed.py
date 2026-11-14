@@ -22,7 +22,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 from typing_extensions import TypeVar
 
-from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.literals import PromptDataType  # runtime-required by Pydantic field annotations
 from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:

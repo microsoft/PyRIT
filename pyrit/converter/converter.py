@@ -64,6 +64,10 @@ class Converter(Identifiable):
     #: Constructor parameters whose controls must preserve line breaks.
     MULTILINE_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
 
+    #: Constructor parameters that choose where requests go or how they authenticate. A private
+    #: copy built from API input keeps its source's values for these.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     #: Capability requirements placed on the converter's target (if any).
     #: Subclasses that use a target should override this and pass the target to
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
@@ -199,6 +203,35 @@ class Converter(Identifiable):
             bool: True if the output type is supported, False otherwise.
         """
         return output_type in self.SUPPORTED_OUTPUT_TYPES
+
+    @staticmethod
+    def _prepend_instructions(*, instructions: str | None, prompt: str) -> str:
+        """
+        Build the single user turn an LLM-backed converter sends to its converter target.
+
+        Converters put their instructions in the user turn instead of calling
+        ``set_system_prompt_async``. A target reads conversation history from memory, so a
+        system prompt only reaches the model if it is written to memory first. Converters do
+        not persist their request or response, so a system prompt left a conversation in
+        memory that held only the system message (see issue #3718). Sending one user turn
+        means a converter call writes nothing to memory.
+
+        This is a stopgap. The converter pipeline is due to be redesigned, and that redesign
+        will decide how converter exchanges are persisted and whether instructions go back
+        into a system prompt. Targets that do not support system prompts already receive
+        them merged into the user turn, so this is a format targets already handle.
+
+        Args:
+            instructions (str | None): The converter's instructions, or None if it has none.
+            prompt (str): The text to convert, already formatted for the converter.
+
+        Returns:
+            str: The instructions followed by the prompt, or the prompt unchanged when there
+                are no instructions.
+        """
+        if not instructions:
+            return prompt
+        return f"{instructions}\n\n{prompt}"
 
     def _get_random_generator(self, *, stream: str) -> random.Random:
         """

@@ -20,6 +20,7 @@ from pyrit.score import SubStringScorer
     [
         ("airt.psychosocial", 2),
         ("garak.latent_injection", 23),
+        ("garak.leak_replay", 8),
         ("garak.prompt_inject", 3),
         ("garak.web_injection", 6),
         ("garak.encoding", 1),

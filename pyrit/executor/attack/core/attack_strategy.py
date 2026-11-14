@@ -170,7 +170,7 @@ class _ObjectiveTargetConversationLifecycle:
             except asyncio.CancelledError as cancellation:
                 # Attempt every reset, then honor the first cancellation after the loop.
                 pending_cancellation = pending_cancellation or cancellation
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to reset objective-target conversation %s: %s",
                     conversation_id,
@@ -735,6 +735,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    ADVERSARIAL_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
     #: A fixed execution-input contract for attacks that do not expose ``params_type``.
     FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 
@@ -744,6 +745,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
+
+    #: Whether this strategy executes child attacks, independent of result attribution.
+    IS_COMPOUND: ClassVar[bool] = False
 
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
@@ -1219,7 +1223,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             stopped.add(id(observer))
             try:
                 observer.stop_observing(attempt_id=attempt_id)
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to stop %s observing attempt %s: %s",
                     type(observer).__name__,

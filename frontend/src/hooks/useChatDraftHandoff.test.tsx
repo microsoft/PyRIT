@@ -116,6 +116,9 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       { target: null },
       { target: { registryName: 'selected-target', identifierHash: 'selected-hash' } },
       { converters: converterSetup },
+      { generationDraft: {} },
+      { generationDraft: { temperature: '0' } },
+      { generationDraft: { temperature: '' } },
     ]) {
       expect(hasChatDraftState({ text: '', attachments: [], ...setup })).toBe(true)
       expect(isChatDraftDirty({ text: '', attachments: [], ...setup })).toBe(false)
@@ -311,6 +314,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const draftContent: ChatDraftContent = {
         text: 'Hello from draft',
         systemPrompt: 'Adversarial system prompt',
+        generationDraft: { temperature: '0' },
         attachments: [
           { name: 'sample.png', type: 'image', mimeType: 'image/png', url: 'blob:http://localhost/img1', size: 500 },
         ],
@@ -331,6 +335,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.preservedDraft?.draft.systemPrompt).toBe('Adversarial system prompt')
       expect(result.current.preservedDraft?.draft.attachments).toHaveLength(1)
       expect(result.current.preservedDraft?.draft.converters).toEqual(CONVERTERS)
+      expect(result.current.preservedDraft?.draft.generationDraft).toEqual({ temperature: '0' })
 
       // Consume preserved draft once
       let consumed: ChatDraftContent | null = null
@@ -339,6 +344,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       })
       expect(consumed).not.toBeNull()
       expect(consumed?.text).toBe('Hello from draft')
+      expect(consumed?.generationDraft).toEqual({ temperature: '0' })
       expect(consumed?.converters?.applied.text.convertedValue).toBe('Uryyb sebz qensg')
 
       // Second consumption returns null (single-use guarantee prevents duplicate restores)

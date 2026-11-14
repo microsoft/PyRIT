@@ -129,14 +129,24 @@ reconstruction:
 }
 ```
 
-Use `source.params` for overrides; do not also supply `params`. The backend
+Use `source.params` to override constructor defaults; do not also supply `params`. The backend
 keeps the source's other constructor inputs, including authentication, on the
-server. It does not change the source. Missing, changed, or ambiguous sources
+server. It does not change the source. A copy also keeps the settings that
+choose where requests go and how they sign in, such as `endpoint`, `auth_mode`,
+`api_key` and `headers` for OpenAI targets, and the region, key and resource ID
+for the Azure Speech converters; overriding one of these is an error. Such
+parameters report `copy_locked: true`, and components declare them in
+`COPY_LOCKED_PARAMETER_NAMES`. Missing, changed, or ambiguous sources
 produce an error. If a source was renamed, a unique matching hash can resolve it.
 An optional `effective_hash` checks the reconstructed object's identity.
-Registered descriptors report `reconstructable` and, for targets,
-`supports_temperature_override`. Unsupported inputs can also report
-`reconstruction_error`.
+Converter descriptors expose `reconstructable` and `reconstruction_error`;
+target REST descriptors expose runtime support in `capabilities` and inclusive
+bounds in the `generation_ranges` map, such as `{"temperature": [0, 2]}`, independent
+of reconstruction. Missing entries mean unknown bounds, not lack of support.
+Reconstruction preserves explicitly configured ranges and leaves omitted entries
+to model inference. Use
+[runtime generation configuration](../targets/0_prompt_targets.md#runtime-generation-configuration)
+for per-request overrides instead of rebuilding a target.
 Constructor inputs that are not in the registry's build contract are not
 discarded silently: reconstruction is rejected. Such sources can still be used
 as registered objects.
