@@ -201,8 +201,9 @@ objectives = [
 target_registry = TargetRegistry.get_registry_singleton()
 objective_target = target_registry.instances.get("openai_chat")
 
-# Pull a task-achieved objective scorer from the ScorerRegistry by tag. TASK_ACHIEVED marks
-# scorers that judge whether the objective was accomplished; we take the first match.
+# Pull a task-achieved objective scorer by tag. TASK_ACHIEVED now selects
+# task_achieved_refined_gpt4o_temp9 instead of task_achieved_gpt4o_temp9.
+# The original rubric remains available through SelfAskTrueFalseScorer.from_question().
 scorer_registry = ScorerRegistry.get_registry_singleton()
 objective_scorer = scorer_registry.instances.get_by_tag(tag=ScorerInitializerTags.TASK_ACHIEVED)[0].instance
 

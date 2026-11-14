@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_o
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
-from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.code_execution import (  # runtime-required by Pydantic
     _ProgramInvocation,
     _RuntimeProfileName,
 )
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
-from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
