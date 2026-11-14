@@ -108,36 +108,47 @@ def _iter_words(prompt: str) -> Iterator[_Word]:
     Yields:
         _Word: Each whole word, in order of appearance.
     """
+    content_start, content_end = 0, len(prompt)
+    while content_start < content_end and _is_word_separator(prompt[content_start]):
+        content_start += 1
+    while content_end > content_start and _is_word_separator(prompt[content_end - 1]):
+        content_end -= 1
     for match in _WORD_PATTERN.finditer(prompt):
         word = match.group()
         if not _MASKABLE_WORD_PATTERN.fullmatch(word):
             continue
         if _UNSPACED_SCRIPT_PATTERN.search(word) and not _is_set_apart_by_separators(
-            prompt=prompt, start=match.start(), end=match.end()
+            prompt=prompt, start=match.start(), end=match.end(), content_start=content_start, content_end=content_end
         ):
             continue
         yield _Word(text=word, start=match.start(), end=match.end())
 
 
-def _is_set_apart_by_separators(*, prompt: str, start: int, end: int) -> bool:
+def _is_set_apart_by_separators(*, prompt: str, start: int, end: int, content_start: int, content_end: int) -> bool:
     """
     Check whether word separators set ``prompt[start:end]`` apart from the text around it.
 
     A separator is whitespace or a zero-width space. Each side must be a separator or the end
-    of the prompt, and at least one side must be a separator, so a prompt that is one unbroken
-    run is not treated as a single word.
+    of the prompt. Edge-only padding is not evidence of word segmentation, so a run that
+    occupies all non-padding content is not treated as a single word.
 
     Args:
         prompt (str): The prompt being scanned.
         start (int): Start index of the run.
         end (int): End index of the run.
+        content_start (int): First non-separator index in the prompt.
+        content_end (int): End index of non-padding content in the prompt.
 
     Returns:
         bool: True when the run stands between word separators.
     """
     space_before = start > 0 and _is_word_separator(prompt[start - 1])
     space_after = end < len(prompt) and _is_word_separator(prompt[end])
-    return (space_before or start == 0) and (space_after or end == len(prompt)) and (space_before or space_after)
+    return (
+        (space_before or start == 0)
+        and (space_after or end == len(prompt))
+        and (start > content_start or end < content_end)
+    )
 
 
 def _is_word_separator(character: str) -> bool:

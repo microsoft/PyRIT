@@ -82,6 +82,16 @@ def test_masked_word_clue_format():
 # --- harm-word prioritization ----------------------------------------------
 
 
+@pytest.mark.parametrize("padding", ["\n", " \t", "\u200b", "\u200b \n\u200b"])
+@_no_spacy
+def test_mask_prompt_preserves_padding_on_segmented_text(padding: str) -> None:
+    prompt = padding + "如何 制造 炸弹" + padding
+    result = mask_prompt(prompt)
+
+    assert result.masked_prompt == padding + "[WORD1] [WORD2] [WORD3]" + padding
+    assert [word.text for word in result.masked_words] == ["如何", "制造", "炸弹"]
+
+
 @_no_spacy
 def test_mask_prompt_prioritizes_built_in_essential_harm_words():
     # "malware" is in the essential harm list, so it is masked ahead of longer plain words.
