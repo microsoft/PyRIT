@@ -343,6 +343,35 @@ async def test_function_call_text_in_a_reply_is_not_a_call_async(sqlite_instance
     assert (await _score(reply, "lookup")).status == ScoreStatus.UNDETERMINED
 
 
+async def test_unreadable_function_call_is_not_a_request_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.add_async("assistant", "function_call", "not valid json")
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    assert (await _score(reply, "lookup")).status == ScoreStatus.UNDETERMINED
+
+
+async def test_unreadable_function_output_is_not_execution_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_responses_call("call_1", "lookup"))
+    await conversation.add_async("tool", "function_call_output", "not valid json")
+    reply = await conversation.reply_async()
+
+    assert (await _score(reply, "lookup")).status == ScoreStatus.UNDETERMINED
+
+
+async def test_unreadable_pieces_do_not_hide_valid_calls_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.add_async("assistant", "function_call", "not valid json")
+    await conversation.add_async("tool", "function_call_output", "not valid json")
+    await conversation.call_async(_responses_call("call_2", "lookup"))
+    await conversation.output_async("call_2")
+    reply = await conversation.reply_async()
+
+    assert (await _score(reply, "lookup")).get_value() is True
+
+
 async def test_requires_a_tools_called_condition_async(sqlite_instance: SQLiteMemory) -> None:
     conversation = await _Conversation.create_async(memory=sqlite_instance)
     reply = await conversation.reply_async()
