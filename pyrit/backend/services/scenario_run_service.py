@@ -1594,6 +1594,9 @@ class ScenarioRunService:
                         scenario_run_state=active.cancellation_state,
                         error_message=active.cancellation_reason,
                         error_type=active.cancellation_error_type,
+                        expected_metadata_fields=(
+                            active.execution_token.to_metadata() if active.execution_token is not None else None
+                        ),
                     )
                     if not active.retain_error_on_terminalization:
                         active.error = None
@@ -1899,6 +1902,9 @@ class ScenarioRunService:
             active.cancellation_reason = error_message
             active.cancellation_error_type = type(e).__name__
             active.retain_error_on_terminalization = True
+            expected_metadata_fields = (
+                active.execution_token.to_metadata() if active.execution_token is not None else None
+            )
             try:
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
@@ -1906,6 +1912,7 @@ class ScenarioRunService:
                     scenario_run_state=ScenarioRunState.FAILED,
                     error_message=error_message,
                     error_type=type(e).__name__,
+                    expected_metadata_fields=expected_metadata_fields,
                 )
             except Exception:
                 handoff_ready = False

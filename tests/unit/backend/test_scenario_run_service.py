@@ -4417,13 +4417,135 @@ class TestScenarioRunServiceExecution:
         assert active.error == expected
         assert active.cancellation_reason == expected
         assert active.cancellation_error_type == "ExceptionGroup"
+        assert active.execution_token is not None
         mock_all_registries["memory"].try_update_scenario_run_state_async.assert_awaited_with(
             scenario_result_id=response.scenario_result_id,
             expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
             scenario_run_state=ScenarioRunState.FAILED,
             error_message=expected,
             error_type="ExceptionGroup",
+            expected_metadata_fields=active.execution_token.to_metadata(),
         )
+
+    async def test_failure_cas_preserves_a_resumed_execution_async(self, mock_all_registries: dict[str, Any]) -> None:
+        mock_memory = mock_all_registries["memory"]
+        run_id = "failure-resume-race"
+        original_token = ScenarioRunExecutionToken(token="c" * 32)
+        resumed_token = ScenarioRunExecutionToken(token="d" * 32)
+        record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.IN_PROGRESS)
+        record.metadata = original_token.to_metadata()
+
+        async def _run_async() -> None:
+            record.scenario_run_state = ScenarioRunState.IN_PROGRESS
+            record.metadata = resumed_token.to_metadata()
+            record.error_message = "resumed execution error"
+            record.error_type = "ResumedExecutionError"
+            raise RuntimeError("stale execution failed")
+
+        async def _try_update_state(
+            *,
+            expected_states: set[ScenarioRunState],
+            scenario_run_state: ScenarioRunState,
+            expected_metadata_fields: dict[str, str] | None = None,
+            error_message: str | None = None,
+            error_type: str | None = None,
+            **_: Any,
+        ) -> bool:
+            if record.scenario_run_state not in expected_states:
+                return False
+            if any(record.metadata.get(key) != value for key, value in (expected_metadata_fields or {}).items()):
+                return False
+            record.scenario_run_state = scenario_run_state
+            record.error_message = error_message
+            record.error_type = error_type
+            return True
+
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_try_update_state)
+        scenario = MagicMock(spec=Scenario)
+        scenario.run_async = AsyncMock(side_effect=_run_async)
+        service = ScenarioRunService()
+        active = _svc_mod._ActiveTask(
+            scenario_result_id=run_id,
+            scenario=scenario,
+            execution_token=original_token,
+        )
+        service._active_scenario_result_id = run_id
+        service._active_tasks[run_id] = active
+
+        await service._execute_run_async(scenario_result_id=run_id)
+
+        assert record.scenario_run_state == ScenarioRunState.IN_PROGRESS
+        assert record.metadata == resumed_token.to_metadata()
+        assert record.error_message == "resumed execution error"
+        assert record.error_type == "ResumedExecutionError"
+        mock_memory.try_update_scenario_run_state_async.assert_awaited_once_with(
+            scenario_result_id=run_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message="stale execution failed",
+            error_type="RuntimeError",
+            expected_metadata_fields=original_token.to_metadata(),
+        )
+
+    async def test_terminalization_retry_cas_preserves_a_resumed_execution_async(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
+        mock_memory = mock_all_registries["memory"]
+        run_id = "terminalization-retry-resume-race"
+        original_token = ScenarioRunExecutionToken(token="e" * 32)
+        resumed_token = ScenarioRunExecutionToken(token="f" * 32)
+        record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.IN_PROGRESS)
+        record.metadata = original_token.to_metadata()
+
+        async def _try_update_state(
+            *,
+            expected_states: set[ScenarioRunState],
+            scenario_run_state: ScenarioRunState,
+            expected_metadata_fields: dict[str, str] | None = None,
+            error_message: str | None = None,
+            error_type: str | None = None,
+            **_: Any,
+        ) -> bool:
+            record.scenario_run_state = ScenarioRunState.IN_PROGRESS
+            record.metadata = resumed_token.to_metadata()
+            record.error_message = "resumed execution error"
+            record.error_type = "ResumedExecutionError"
+            if record.scenario_run_state not in expected_states:
+                return False
+            if any(record.metadata.get(key) != value for key, value in (expected_metadata_fields or {}).items()):
+                return False
+            record.scenario_run_state = scenario_run_state
+            record.error_message = error_message
+            record.error_type = error_type
+            return True
+
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_try_update_state)
+        service = ScenarioRunService()
+        service._active_scenario_result_id = run_id
+        service._handoff_scheduler_async = AsyncMock()
+        active = _svc_mod._ActiveTask(
+            scenario_result_id=run_id,
+            execution_token=original_token,
+            cancellation_state=ScenarioRunState.FAILED,
+            cancellation_reason="stale cancellation",
+            cancellation_error_type="CancelledError",
+        )
+
+        await service._retry_terminalization_async(active=active)
+
+        assert record.scenario_run_state == ScenarioRunState.IN_PROGRESS
+        assert record.metadata == resumed_token.to_metadata()
+        assert record.error_message == "resumed execution error"
+        assert record.error_type == "ResumedExecutionError"
+        mock_memory.try_update_scenario_run_state_async.assert_awaited_once_with(
+            scenario_result_id=run_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message="stale cancellation",
+            error_type="CancelledError",
+            expected_metadata_fields=original_token.to_metadata(),
+        )
+        service._handoff_scheduler_async.assert_awaited_once_with(scenario_result_id=run_id)
 
     async def test_execute_run_retains_richer_terminal_error_from_scenario(self, mock_all_registries) -> None:
         service = ScenarioRunService()
@@ -4484,12 +4606,14 @@ class TestScenarioRunServiceExecution:
         assert fetched.error == "The target rejected the request body."
         assert fetched.error_type == "BadRequestError"
         mock_memory.update_scenario_run_state_async.assert_not_called()
+        assert active.execution_token is not None
         mock_memory.try_update_scenario_run_state_async.assert_called_once_with(
             scenario_result_id=response.scenario_result_id,
             expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
             scenario_run_state=ScenarioRunState.FAILED,
             error_message="One or more attacks failed.",
             error_type="RuntimeError",
+            expected_metadata_fields=active.execution_token.to_metadata(),
         )
 
 
