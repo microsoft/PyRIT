@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
@@ -19,12 +20,24 @@ from pyrit.models import (
 )
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
 from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope_async
+from pyrit.score.tool_argument_matching import describe_tool_requirement, match_tool_requirement
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from pydantic import JsonValue
+
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
+
+logger = logging.getLogger(__name__)
+
+_NO_TRACE_ARGUMENTS_REASON = (
+    "Trace evidence does not retain tool arguments, so it cannot confirm an argument requirement; "
+    "use MessageToolCallScorer to match arguments."
+)
 
 _UNLINKED_REQUESTS_REASON = (
     "One or more requests in this conversation carry no trace link, so tool calls outside the "
@@ -36,17 +49,25 @@ def match_tools_called(
     *, condition: ToolsCalled, payload: ToolEventsObservationPayload, acquisition: Acquisition
 ) -> bool | None:
     """
-    Match execution names without I/O, preserving unknown absence.
+    Match executions without I/O, preserving unknown absence.
+
+    A requirement with argument constraints needs an execution whose retained arguments match.
+    Its absence can still be refuted from complete evidence, because no call means no matching call.
 
     Returns:
         bool | None: True for observed calls, false for complete absence, otherwise None.
     """
     if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
         return None
-    observed = {event.name for event in payload.events}
-    if all(tool.name in observed for tool in condition.tools):
+    calls: dict[str, list[Mapping[str, JsonValue] | None]] = {}
+    for event in payload.events:
+        # Trace events do not retain arguments, so they cannot confirm an argument requirement.
+        calls.setdefault(event.name, []).append(None)
+    verdicts = [match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) for tool in condition.tools]
+    if all(verdict is True for verdict in verdicts):
         return True
-    return False if acquisition is Acquisition.COMPLETE and payload.coverage.complete else None
+    complete = acquisition is Acquisition.COMPLETE and payload.coverage.complete
+    return False if complete and any(verdict is False for verdict in verdicts) else None
 
 
 class OtelToolCallScorer(TrueFalseScorer):
@@ -108,7 +129,13 @@ class OtelToolCallScorer(TrueFalseScorer):
             raise NonReplayableObservationError("Tool-call scoring requires a stored tool-event observation.")
         condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
-        names = ", ".join(tool.name for tool in condition.tools)
+        names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        constrains_arguments = any(tool.arguments for tool in condition.tools)
+        if constrains_arguments:
+            logger.warning(
+                "OtelToolCallScorer received a requirement with argument constraints, which trace evidence "
+                "cannot confirm. Use MessageToolCallScorer to match arguments."
+            )
         rationale = (
             f"Observed execution of all required tools: {names}."
             if value is True
@@ -116,6 +143,8 @@ class OtelToolCallScorer(TrueFalseScorer):
             if value is False
             else f"Trace evidence cannot establish invocation of all required tools: {names}."
         )
+        if value is None and constrains_arguments:
+            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),
