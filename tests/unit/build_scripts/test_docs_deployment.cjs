@@ -281,7 +281,8 @@ for (const log of [
 }
 
 test("binary job logs and CRLF retain the actual non-SHA deployment ID", async () => {
-  const f = fixture({ attempt: 2, log: Buffer.from(deploymentLog.replace("\n", "\r\n")) });
+  const log = `2026-11-13T10:00:00.0000000Z Starting deployment\n${deploymentLog}`;
+  const f = fixture({ attempt: 2, log: Buffer.from(log.replaceAll("\n", "\r\n")) });
   await check(f.options);
   assert.equal(f.calls.at(-1).options.pages_deployment_id, deploymentId);
 });
