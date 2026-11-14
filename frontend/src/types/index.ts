@@ -538,6 +538,21 @@ export interface CreateTargetRequest {
   persist?: boolean
 }
 
+/** A target to check before saving it, as a create request would give it. */
+export interface TargetSaveabilityRequest {
+  type: string
+  params: Record<string, unknown>
+  auth_mode?: TargetAuthMode
+  /** A server credential from the type's list to use as the key, with `auth_mode` 'api_key'. */
+  server_credential?: string
+}
+
+/** Whether an entry could be saved as asked, decided by the checks saving it runs. */
+export interface SaveabilityResponse {
+  /** Why it can't be saved, though it can be created without saving it; null if it can. */
+  not_saveable_reason: string | null
+}
+
 // --- Initializers ---
 
 export interface RegisteredInitializer {

@@ -27,8 +27,10 @@ from pyrit.backend.models import (
     PaginationInfo,
     TargetListResponse,
 )
+from pyrit.backend.models.common import SaveabilityResponse
 from pyrit.backend.models.targets import (
     ServerCredentialChoice,
+    TargetSaveabilityRequest,
     TargetTypeEntry,
     TargetTypeResponse,
     UnregisteredTarget,
@@ -57,6 +59,7 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.registry import (
+    NotSaveableError,
     SavedEntryConflictError,
     TargetRegistry,
     launch_script_class_reason,
@@ -71,15 +74,6 @@ from pyrit.registry.registry_recipe_rules import (
 )
 
 logger = logging.getLogger(__name__)
-
-_ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
-    "OpenAITarget": frozenset({"endpoint", "model_name"}),
-    "AzureBlobStorageTarget": frozenset({"container_url"}),
-    "AzureMLChatTarget": frozenset({"endpoint"}),
-    "HackAPromptTarget": frozenset({"cookie", "session_id"}),
-    "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
-    "PromptShieldTarget": frozenset({"endpoint"}),
-}
 
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
@@ -183,8 +177,10 @@ class TargetService:
                     if isinstance(target, RoundRobinTarget)
                     else results[0]
                 )
+                entry = self._registry.instances.get_entry(target_registry_name)
                 if (
-                    self.get_target_object(target_registry_name=target_registry_name) is not target
+                    entry is None
+                    or entry.instance is not target
                     or any(source.configuration is not configuration for source, configuration in snapshots)
                     or target.get_identifier().hash != expected_hash
                     or (isinstance(target, RoundRobinTarget) and target.inner_targets != sources)
@@ -194,7 +190,11 @@ class TargetService:
                     )
                 self._legacy_binding_capabilities.setdefault(target, target.capabilities)
                 target.apply_capabilities(capabilities=capabilities)
-                return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target)
+                return self._build_instance_from_object(
+                    target_registry_name=target_registry_name,
+                    target_obj=target,
+                    origin=registry_entry_origin(entry.metadata),
+                )
         finally:
             self._detecting.discard(target_registry_name)
             self._detecting_sources.difference_update(source_ids)
@@ -381,11 +381,10 @@ class TargetService:
             list[Parameter]: Parameters projected for dynamic form generation.
         """
         target_cls = self._registry.get_class(target_type)
-        required_names = frozenset().union(
-            *(_ENV_BACKED_REQUIRED_PARAMETERS.get(base.__name__, frozenset()) for base in target_cls.__mro__)
-        )
         return [
-            parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
+            parameter.model_copy(update={"default": REQUIRED_VALUE})
+            if parameter.name in target_cls.environment_backed_parameters
+            else parameter
             for parameter in parameters
             if parameter.name != target_cls.upload_directory_parameter
             and parameter.is_allowed_external_input(allowed_path_params=target_cls.caller_path_parameters)
@@ -629,6 +628,183 @@ class TargetService:
             SavedEntryConflictError: If a target to save has the name of a registered or saved target.
             SavedEntryStorageError: If a target to save can't be written to storage.
         """
+        target_cls, params = await self._requested_params_async(
+            request=request, upload_directory=upload_directory, is_admin=is_admin
+        )
+        listed = self._listed_credential(
+            request=request, target_cls=target_cls, params=params, server_credentials=server_credentials
+        )
+        if request.persist:
+            params = await prepare_saved_params_async(
+                registry=self._registry,
+                type_name=request.type,
+                cls=target_cls,
+                params=params,
+                auth_mode=request.auth_mode,
+                listed_credential_parameter=listed[0] if listed is not None else None,
+            )
+        # The key reaches only the target being built; a saved recipe names the credential instead.
+        build_params = {**params, listed[0]: listed[1]} if listed is not None else params
+
+        # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
+        # Remove it when the name becomes required for registered targets.
+        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
+        if request.register:
+            try:
+                self._registry.instances.validate_name_available(target_registry_name)
+            except RegistryNameTakenError as error:
+                if request.persist:
+                    raise SavedEntryConflictError(str(error)) from error
+                raise
+        if (
+            request.source
+            and type(
+                self._registry.resolve_source(
+                    name=request.source.source_name, identifier_hash=request.source.source_hash
+                )
+            )
+            is not target_cls
+        ):
+            raise ValueError("The source target type does not match the requested type")
+        target_obj = (
+            await self.build_from_source_async(request.source)
+            if request.source
+            else await self._registry.create_instance_async(
+                name=request.type,
+                params=build_params,
+                external_input=True,
+                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
+            )
+        )
+        if not request.register:
+            try:
+                return UnregisteredTarget(
+                    identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
+                    capabilities=target_obj.capabilities,
+                    generation_ranges=target_obj.generation_ranges,
+                )
+            finally:
+                await release_component_async(target_obj)
+        try:
+            if request.persist:
+                return await self._save_and_register_async(
+                    name=target_registry_name,
+                    type_name=request.type,
+                    target_cls=target_cls,
+                    target_obj=target_obj,
+                    auth_mode=request.auth_mode,
+                    params=params,
+                    server_credential=request.server_credential,
+                    owner=owner,
+                    recipes_source=recipes_source,
+                )
+            target = self._build_instance_from_object(
+                target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
+            )
+            self._registry.instances.register(target_obj, name=target_registry_name)
+            return target
+        except Exception:
+            await release_component_async(target_obj)
+            raise
+
+    async def check_saveability_async(
+        self,
+        *,
+        request: TargetSaveabilityRequest,
+        upload_directory: str | None = None,
+        is_admin: bool = False,
+        server_credentials: Sequence[ServerCredential] = (),
+    ) -> SaveabilityResponse:
+        """
+        Say whether a target could be saved as asked, without building or saving it.
+
+        The request is checked as creating it would be, then by the library's save checks, so the answer is the one
+        saving it would give.
+
+        Args:
+            request: The target to check.
+            upload_directory: Folder the server lets API-created targets upload files from,
+                or None when the server configures none.
+            is_admin: Whether the caller may create a target that runs model repository code or
+                authenticates with this server's stored credentials.
+            server_credentials: The server credentials an administrator lets users pick.
+
+        Returns:
+            SaveabilityResponse: Why the target can't be saved, or no reason when it can.
+
+        Raises:
+            ValueError: If creating the target would be refused as invalid.
+            PermissionError: If creating the target needs administrator access the caller doesn't have.
+        """
+        create_request = CreateTargetRequest(
+            type=request.type,
+            params=request.params,
+            auth_mode=request.auth_mode,
+            server_credential=request.server_credential,
+            register=False,
+        )
+        target_cls, params = await self._requested_params_async(
+            request=create_request, upload_directory=upload_directory, is_admin=is_admin
+        )
+        listed = self._listed_credential(
+            request=create_request, target_cls=target_cls, params=params, server_credentials=server_credentials
+        )
+        try:
+            await prepare_saved_params_async(
+                registry=self._registry,
+                type_name=request.type,
+                cls=target_cls,
+                params=params,
+                auth_mode=request.auth_mode,
+                listed_credential_parameter=listed[0] if listed is not None else None,
+            )
+        except NotSaveableError as error:
+            return SaveabilityResponse(not_saveable_reason=str(error))
+        return SaveabilityResponse()
+
+    @staticmethod
+    def _listed_credential(
+        *,
+        request: CreateTargetRequest,
+        target_cls: type[PromptTarget],
+        params: dict[str, Any],
+        server_credentials: Sequence[ServerCredential],
+    ) -> tuple[str, str] | None:
+        """
+        Find the server credential a request picked, as the parameter that takes it and its key.
+
+        Returns:
+            tuple[str, str] | None: The parameter and the key, or None when the request picked none.
+
+        Raises:
+            ValueError: If the credential isn't listed or set, or the endpoint isn't the credential's.
+        """
+        if request.server_credential is None:
+            return None
+        try:
+            return resolve_listed_credential(
+                cls=target_cls,
+                params=params,
+                name=request.server_credential,
+                server_credentials=server_credentials,
+            )
+        except SavedEntryRefusedError as error:
+            raise ValueError(str(error)) from error
+
+    async def _requested_params_async(
+        self, *, request: CreateTargetRequest, upload_directory: str | None, is_admin: bool
+    ) -> tuple[type[PromptTarget], dict[str, Any]]:
+        """
+        Check a create request as creating it does before the target is built, and return what to build it with.
+
+        Returns:
+            tuple[type[PromptTarget], dict[str, Any]]: The target class and its constructor parameters.
+
+        Raises:
+            ValueError: If the type isn't registered, the auth mode conflicts or isn't supported, the upload folder
+                is given or missing, a GitHub token or an explicit connection field is missing.
+            PermissionError: If the target needs administrator access the caller doesn't have.
+        """
         if request.type not in self._registry:
             raise ValueError(
                 f"Target type '{request.type}' not found. Available types: {self._registry.get_class_names()}"
@@ -710,89 +886,7 @@ class TargetService:
         self._enforce_server_credential_permission(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
-        listed: tuple[str, str] | None = None
-        if request.server_credential is not None:
-            try:
-                listed = resolve_listed_credential(
-                    cls=target_cls,
-                    params=params,
-                    name=request.server_credential,
-                    server_credentials=server_credentials,
-                )
-            except SavedEntryRefusedError as error:
-                raise ValueError(str(error)) from error
-        if request.persist:
-            params = await prepare_saved_params_async(
-                registry=self._registry,
-                type_name=request.type,
-                cls=target_cls,
-                params=params,
-                auth_mode=request.auth_mode,
-                listed_credential_parameter=listed[0] if listed is not None else None,
-            )
-        # The key reaches only the target being built; a saved recipe names the credential instead.
-        build_params = {**params, listed[0]: listed[1]} if listed is not None else params
-
-        # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
-        # Remove it when the name becomes required for registered targets.
-        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        if request.register:
-            try:
-                self._registry.instances.validate_name_available(target_registry_name)
-            except RegistryNameTakenError as error:
-                if request.persist:
-                    raise SavedEntryConflictError(str(error)) from error
-                raise
-        if (
-            request.source
-            and type(
-                self._registry.resolve_source(
-                    name=request.source.source_name, identifier_hash=request.source.source_hash
-                )
-            )
-            is not target_cls
-        ):
-            raise ValueError("The source target type does not match the requested type")
-        target_obj = (
-            await self.build_from_source_async(request.source)
-            if request.source
-            else await self._registry.create_instance_async(
-                name=request.type,
-                params=build_params,
-                external_input=True,
-                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
-            )
-        )
-        if not request.register:
-            try:
-                return UnregisteredTarget(
-                    identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
-                    capabilities=target_obj.capabilities,
-                    generation_ranges=target_obj.generation_ranges,
-                )
-            finally:
-                await release_component_async(target_obj)
-        try:
-            if request.persist:
-                return await self._save_and_register_async(
-                    name=target_registry_name,
-                    type_name=request.type,
-                    target_cls=target_cls,
-                    target_obj=target_obj,
-                    auth_mode=request.auth_mode,
-                    params=params,
-                    server_credential=request.server_credential,
-                    owner=owner,
-                    recipes_source=recipes_source,
-                )
-            target = self._build_instance_from_object(
-                target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
-            )
-            self._registry.instances.register(target_obj, name=target_registry_name)
-            return target
-        except Exception:
-            await release_component_async(target_obj)
-            raise
+        return target_cls, params
 
     async def _save_and_register_async(
         self,

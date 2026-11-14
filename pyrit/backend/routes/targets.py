@@ -17,9 +17,10 @@ from pyrit.backend.models import (
     ProblemDetail,
     TargetListResponse,
 )
-from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
 from pyrit.backend.models.targets import (
     DetectTargetCapabilitiesRequest,
+    TargetSaveabilityRequest,
     TargetTypeResponse,
     UnregisteredTarget,
 )
@@ -144,6 +145,41 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         upload_directory=_target_upload_directory(request),
         server_credentials=getattr(request.app.state, "server_credentials", ()),
     )
+
+
+@router.post(
+    "/saveability",
+    response_model=SaveabilityResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid target type or parameters"},
+        403: {
+            "model": ProblemDetail,
+            "description": "Administrator access is required to create this target",
+        },
+    },
+)
+async def check_target_saveability(  # pyrit-async-suffix-exempt
+    *,
+    body: TargetSaveabilityRequest,
+    request: Request,
+) -> SaveabilityResponse:
+    """
+    Say whether a target could be saved as asked, using the checks saving it runs, without building or saving it.
+
+    Returns:
+        SaveabilityResponse: Why the target can't be saved, or no reason when it can.
+    """
+    try:
+        return await get_target_service().check_saveability_async(
+            request=body,
+            upload_directory=_target_upload_directory(request),
+            is_admin=has_admin_access(request),
+            server_credentials=getattr(request.app.state, "server_credentials", ()),
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
 @router.post(

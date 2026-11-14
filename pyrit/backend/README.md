@@ -59,6 +59,10 @@ its database collation.
   at all (`not_saveable_reason`), and the server credentials a target of each type can use
   (`server_credentials`: each one's name and endpoint)
 - `POST /api/targets` - Create a target
+- `POST /api/targets/saveability` - Say whether a target could be saved, without building or saving it. Send the
+  create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, null when it can
+  be saved. It runs the checks a create with `persist` runs, so a request creating would refuse gets the same 400 or
+  403
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -112,8 +116,9 @@ same way; the API adds the signed-in user, the configured source, and the respon
 
 A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
 other **400**s need the address or the server credential fixed. `GET /api/targets/types` gives the same class-level
-answer before a request is sent. When storage can't be written, the server log names the target and its folder, since
-the target comes back at the next start if the write reached storage anyway.
+answer before a request is sent, and `POST /api/targets/saveability` the answer for the request's values. When
+storage can't be written, the server log names the target and its folder, since the target comes back at the next
+start if the write reached storage anyway.
 
 Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
 (gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's

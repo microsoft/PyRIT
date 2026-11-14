@@ -173,6 +173,21 @@ class CreateTargetRequest(BaseModel):
         return self
 
 
+class TargetSaveabilityRequest(BaseModel):
+    """A target to check, as a create request would give it, without building or saving it."""
+
+    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
+    )
+    auth_mode: AuthMode = Field("api_key", description="Authentication mode, as in a create request")
+    server_credential: str | None = Field(
+        None,
+        pattern=r"^[a-z][a-z0-9_]{0,63}$",
+        description="A server credential from this server's list to use as the target's key, as in a create request",
+    )
+
+
 class UnregisteredTarget(BaseModel):
     """A constructed target descriptor with no registry key or object handle."""
 

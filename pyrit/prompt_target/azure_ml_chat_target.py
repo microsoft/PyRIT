@@ -54,6 +54,7 @@ class AzureMLChatTarget(PromptTarget):
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"endpoint"})
 
     # Entra ID token scope for Azure Machine Learning managed online endpoints.
     _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"
