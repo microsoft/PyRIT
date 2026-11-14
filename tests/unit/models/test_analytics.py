@@ -4,6 +4,7 @@
 import json
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from decimal import ROUND_CEILING, FloatOperation, Inexact, Rounded, Subnormal, localcontext
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -128,6 +129,10 @@ def test_scenario_counts_reject_contradictory_outcomes(changes: dict[str, int], 
         {"outcome_shares": {AttackOutcome.SUCCESS: 1.0}},
         {"success_rate": float("nan")},
         {"success_rate_all": float("inf")},
+        {"success_rate_ci_lower": None},
+        {"success_rate_ci_upper": None},
+        {"success_rate_ci_lower": 0.4, "success_rate_ci_upper": 0.6},
+        {"success_rate_ci_lower": 0.8, "success_rate_ci_upper": 0.2},
     ],
 )
 def test_shared_statistics_reject_inconsistent_counts_and_rates(changes: dict[str, object]) -> None:
@@ -136,6 +141,58 @@ def test_shared_statistics_reject_inconsistent_counts_and_rates(changes: dict[st
         replace(statistics, **changes)
     with pytest.raises(ValidationError):
         TypeAdapter(OutcomeStatistics).validate_python({**asdict(statistics), **changes})
+
+
+def test_shared_statistics_accept_legacy_payload_without_confidence_interval_and_reject_empty_decided_ci() -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1, "error": 2})
+    legacy_payload = asdict(statistics)
+    legacy_payload.pop("success_rate_ci_lower")
+    legacy_payload.pop("success_rate_ci_upper")
+    restored = TypeAdapter(OutcomeStatistics).validate_python(legacy_payload)
+    assert restored.success_rate_ci_lower is None
+    assert restored.success_rate_ci_upper is None
+
+    empty_decided = compute_outcome_statistics({"error": 2})
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python(
+            {**asdict(empty_decided), "success_rate_ci_lower": 0.0, "success_rate_ci_upper": 1.0}
+        )
+
+    small_rate = compute_outcome_statistics({"success": 1, "failure": 10**14 - 1})
+    with pytest.raises(ValueError, match="confidence interval"):
+        replace(small_rate, success_rate_ci_lower=0.0, success_rate_ci_upper=0.0)
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python(
+            {**asdict(small_rate), "success_rate_ci_lower": 0.0, "success_rate_ci_upper": 0.0}
+        )
+
+    subnormal_rate = compute_outcome_statistics({"success": 100, "failure": 10**324 - 100})
+    with pytest.raises(ValueError, match="confidence interval"):
+        replace(subnormal_rate, success_rate_ci_lower=1e-322, success_rate_ci_upper=1e-322)
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python(
+            {**asdict(subnormal_rate), "success_rate_ci_lower": 1e-322, "success_rate_ci_upper": 1e-322}
+        )
+
+    payload = asdict(statistics)
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_CEILING
+        ctx.traps[Inexact] = True
+        ctx.traps[Rounded] = True
+        ctx.traps[Subnormal] = True
+        ctx.traps[FloatOperation] = True
+        assert TypeAdapter(OutcomeStatistics).validate_python(payload) == statistics
+
+
+@pytest.mark.parametrize("total", [10**325, 10**400])
+def test_shared_statistics_reject_collapsed_ci_below_float_range(total: int) -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": total - 1})
+    payload = asdict(statistics)
+    assert TypeAdapter(OutcomeStatistics).validate_python(payload) == statistics
+    with pytest.raises(ValueError, match="confidence interval"):
+        replace(statistics, success_rate_ci_upper=0.0)
+    with pytest.raises(ValidationError, match="confidence interval"):
+        TypeAdapter(OutcomeStatistics).validate_python({**payload, "success_rate_ci_upper": 0.0})
 
 
 def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:
