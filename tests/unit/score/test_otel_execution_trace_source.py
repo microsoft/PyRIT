@@ -192,16 +192,18 @@ async def test_errors_and_labels_follow_the_content_policy_async(client: InMemor
     )
 
     step = payload.steps[0]
-    assert step.name == "[R] name"
-    assert step.node_name == "plan [END X]"
-    assert step.error_content.text == ""
+    assert step.name == "[R]\nname"
+    assert step.node_name == "plan\n[END X]"
+    assert step.error_content.text is None
     assert step.error_content.redacted
-    assert step.error_content.original_length == len(forged + " [R]")
+    assert step.error_content.length == len(forged + " [R]")
 
 
-async def test_labels_are_bounded_async(client: InMemoryTraceClient) -> None:
-    payload = await _acquire_async(client, _span(1, {}, name="n" * 500))
-    assert payload.steps[0].name == "n" * OtelExecutionTraceSource.MAX_LABEL_CHARS
+async def test_labels_are_saved_exactly_async(client: InMemoryTraceClient) -> None:
+    name = "lookup\n" + "n" * 500
+    payload = await _acquire_async(client, _span(1, {"langgraph.node.name": "  \n "}, name=name))
+    assert payload.steps[0].name == name
+    assert payload.steps[0].node_name is None
 
 
 async def test_open_inference_message_contents_are_read_async(client: InMemoryTraceClient) -> None:
@@ -226,20 +228,16 @@ async def test_open_inference_message_contents_are_read_async(client: InMemoryTr
     assert payload.steps[0].output_content.text == "fallback output"
 
 
-async def test_content_is_truncated_with_full_length_and_digest_async(client: InMemoryTraceClient) -> None:
-    value = "x" * 50
+async def test_long_content_is_saved_complete_with_length_and_digest_async(client: InMemoryTraceClient) -> None:
+    value = "booking record " + "x" * 50_000 + " charged_usd=900"
     payload = await _acquire_async(
-        client,
-        _span(1, {"openinference.span.kind": "TOOL", "tool.name": "t", "output.value": value}),
-        max_content_chars=10,
+        client, _span(1, {"openinference.span.kind": "TOOL", "tool.name": "t", "output.value": value})
     )
 
     content = payload.steps[0].output_content
-    assert content.text == "x" * 10
-    assert content.truncated
-    assert content.original_length == 50
+    assert content.text == value
+    assert content.length == len(value)
     assert content.sha256 == hashlib.sha256(value.encode()).hexdigest()
-    assert payload.max_content_chars == 10
 
 
 async def test_redactor_runs_before_measuring_and_hashing_async(client: InMemoryTraceClient) -> None:
@@ -263,8 +261,8 @@ async def test_content_can_be_reduced_to_digests_async(client: InMemoryTraceClie
     )
 
     assert not payload.content_retained
-    assert payload.steps[0].input_content.text == ""
-    assert payload.steps[0].input_content.original_length == len("private")
+    assert payload.steps[0].input_content.text is None
+    assert payload.steps[0].input_content.length == len("private")
 
 
 async def test_missing_or_conflicting_tool_names_make_coverage_partial_async(client: InMemoryTraceClient) -> None:
@@ -310,13 +308,13 @@ def test_identifier_records_content_policy_without_the_client(client: InMemoryTr
     def scrub(text: str) -> str:
         return text
 
-    params = OtelExecutionTraceSource(trace_client=client, max_content_chars=5, redactor=scrub).get_identifier().params
-    assert params["max_content_chars"] == 5
+    params = OtelExecutionTraceSource(trace_client=client, redactor=scrub).get_identifier().params
+    assert params["normalization_version"] == OtelExecutionTraceSource.NORMALIZATION_VERSION
     assert params["retain_content"] is True
     assert params["redactor"].endswith("scrub")
 
 
-@pytest.mark.parametrize("options", [{"max_spans": 0}, {"max_content_chars": 0}, {"timeout_seconds": 0}])
+@pytest.mark.parametrize("options", [{"max_spans": 0}, {"timeout_seconds": 0}])
 def test_rejects_invalid_limits(client: InMemoryTraceClient, options: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         OtelExecutionTraceSource(trace_client=client, **options)

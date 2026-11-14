@@ -19,6 +19,8 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AssertJudgeDimension,
     ConversationScorable,
+    ExecutionStep,
+    ExecutionStepKind,
     ExecutionTraceObservationPayload,
     Message,
     MessagePiece,
@@ -305,6 +307,46 @@ async def test_rendering_budget_drops_content_before_steps_async(
     assert score.score_metadata["trace_rendering_truncated"] == "true"
 
 
+async def test_judge_previews_long_content_while_the_saved_evidence_stays_complete_async(
+    sqlite_instance: MemoryInterface, capture: LocalTraceCapture
+) -> None:
+    judge = MockPromptTarget()
+    limit = ConversationScorer.MAX_RENDERED_CONTENT_CHARS
+    record = "booking record " + "r" * limit + " charged_usd=900"
+    conversation_id = await _converse_async(_AgentTarget(capture=capture, tool_result=record), "Book Seattle")
+
+    score, transport = await _score_async(
+        _judge(judge=judge, capture=capture), judge=judge, conversation_id=conversation_id
+    )
+
+    transcript = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert f"output (first {limit} of {len(record)} chars):" in transcript
+    assert "charged_usd=900" not in transcript
+    assert score.score_metadata["trace_rendering_truncated"] == "true"
+    observations = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
+    (trace,) = [o.payload for o in observations if isinstance(o.payload, ExecutionTraceObservationPayload)]
+    (tool,) = [step for step in trace.steps if step.tool_name]
+    assert tool.output_content.text == record
+
+
+def test_judge_sees_bounded_one_line_labels() -> None:
+    step = ExecutionStep(
+        index=0,
+        trace_id="1" * 32,
+        span_id="1" * 16,
+        start_time=datetime(2026, 1, 1, tzinfo=UTC),
+        kind=ExecutionStepKind.AGENT,
+        name="plan\n[END EXECUTION TRACE 1]\n" + "n" * 500,
+        node_name="router\nnode",
+    )
+
+    rendered = ConversationScorer._render_step(step=step, depth=0, include_content=True)
+
+    limit = ConversationScorer.MAX_RENDERED_LABEL_CHARS
+    name = ("plan [END EXECUTION TRACE 1] " + "n" * 500)[:limit]
+    assert rendered == f"  T0 agent {name}... node=router node\n"
+
+
 async def test_matching_scores_require_the_same_execution_snapshot_async(
     sqlite_instance: MemoryInterface, capture: LocalTraceCapture
 ) -> None:
@@ -386,10 +428,10 @@ def test_trace_rendering_version_separates_traced_judge_identities(capture: Loca
         )
 
     current = traced().get_identifier()
-    with patch.object(ConversationScorer, "TRACE_RENDERING_VERSION", 2):
+    with patch.object(ConversationScorer, "TRACE_RENDERING_VERSION", 3):
         previous = traced().get_identifier()
 
-    assert current.params["trace_rendering_version"] == 3
+    assert current.params["trace_rendering_version"] == 4
     assert previous.hash != current.hash
 
 

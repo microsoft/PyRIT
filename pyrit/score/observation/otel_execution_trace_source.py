@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Normalize model, tool, and agent spans into bounded execution evidence."""
+"""Normalize model, tool, and agent spans into execution evidence."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -40,13 +39,13 @@ class OtelExecutionTraceSource:
 
     OpenInference attributes take precedence; GenAI attributes and events are the fallback.
     Model calls, tool calls with arguments and results, and agent, chain, and retrieval steps
-    are retained. Content is cut to ``max_content_chars`` per field, with the full value's
-    length and SHA-256 digest. A ``redactor`` sees every full value before it is measured,
-    hashed, or cut. With ``retain_content=False``, steps keep names, lengths, and digests only.
+    are retained. Content and labels are saved complete, with each content value's length and
+    SHA-256 digest; what the judge is shown is bounded when rendering. A ``redactor`` sees
+    every value before it is measured, hashed, or saved. With ``retain_content=False``, steps
+    keep names, lengths, and digests only.
     """
 
-    NORMALIZATION_VERSION: ClassVar[int] = 3
-    MAX_LABEL_CHARS: ClassVar[int] = 200
+    NORMALIZATION_VERSION: ClassVar[int] = 4
     _OPEN_INFERENCE_KINDS: ClassVar[dict[str, ExecutionStepKind]] = {
         "LLM": ExecutionStepKind.LLM,
         "TOOL": ExecutionStepKind.TOOL,
@@ -83,7 +82,6 @@ class OtelExecutionTraceSource:
         max_spans: int = 10000,
         timeout_seconds: float = 30,
         retain_content: bool = True,
-        max_content_chars: int = 4000,
         redactor: Callable[[str], str] | None = None,
     ) -> None:
         """
@@ -93,21 +91,19 @@ class OtelExecutionTraceSource:
             trace_client (TraceClient): The client that retrieves spans by trace ID.
             max_spans (int): Maximum spans read per acquisition. Defaults to 10000.
             timeout_seconds (float): Acquisition timeout. Defaults to 30.
-            retain_content (bool): Whether to keep inputs and outputs. Defaults to True.
-            max_content_chars (int): Characters kept per input or output. Defaults to 4000.
-            redactor (Callable[[str], str] | None): Rewrites each full value before it is
-                measured, hashed, or cut. Defaults to None.
+            retain_content (bool): Whether to keep inputs, outputs, and errors. Defaults to True.
+            redactor (Callable[[str], str] | None): Rewrites each value before it is measured,
+                hashed, or saved. Defaults to None.
 
         Raises:
-            ValueError: If a limit or the timeout is not positive and finite.
+            ValueError: If the span limit or the timeout is not positive and finite.
         """
-        if max_spans < 1 or max_content_chars < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
-            raise ValueError("max_spans, max_content_chars, and timeout_seconds must be positive.")
+        if max_spans < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("max_spans and timeout_seconds must be positive.")
         self._client = trace_client
         self._max_spans = max_spans
         self._timeout_seconds = timeout_seconds
         self._retain_content = retain_content
-        self._max_content_chars = max_content_chars
         self._redactor = redactor
 
     def get_identifier(self) -> ComponentIdentifier:
@@ -125,7 +121,6 @@ class OtelExecutionTraceSource:
                 "max_spans": self._max_spans,
                 "timeout_seconds": self._timeout_seconds,
                 "retain_content": self._retain_content,
-                "max_content_chars": self._max_content_chars,
                 "redactor": redactor,
             },
             children={"trace_client": self._client.get_identifier()},
@@ -176,7 +171,6 @@ class OtelExecutionTraceSource:
                 steps=steps,
                 coverage=TraceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
                 content_retained=self._retain_content,
-                max_content_chars=self._max_content_chars,
             ),
         )
 
@@ -225,16 +219,15 @@ class OtelExecutionTraceSource:
 
     def _label(self, value: str | None) -> str | None:
         """
-        Redact a name-like value, flatten it to one line, and bound its length.
+        Redact a name-like value, keeping the result exactly.
 
         Returns:
-            str | None: The label, or None when nothing printable remains.
+            str | None: The label, or None when only whitespace remains.
         """
         if value is None:
             return None
-        redacted = self._redactor(value) if self._redactor else value
-        label = " ".join(redacted.split())[: self.MAX_LABEL_CHARS]
-        return label or None
+        label = self._redactor(value) if self._redactor else value
+        return label if label.strip() else None
 
     def _kind(self, attributes: Mapping[str, JsonValue]) -> ExecutionStepKind:
         open_inference = attributes.get("openinference.span.kind")
@@ -324,14 +317,7 @@ class OtelExecutionTraceSource:
         if value is None:
             return None
         full = self._redactor(value) if self._redactor else value
-        text = full[: self._max_content_chars] if self._retain_content else ""
-        return TraceContent(
-            text=text,
-            original_length=len(full),
-            sha256=hashlib.sha256(full.encode("utf-8")).hexdigest(),
-            truncated=len(text) < len(full),
-            redacted=self._redactor is not None,
-        )
+        return TraceContent.of(full, retain=self._retain_content, redacted=self._redactor is not None)
 
 
 def _text(value: JsonValue) -> str | None:

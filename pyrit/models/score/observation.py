@@ -375,8 +375,9 @@ class ExecutionTraceObservationPayload(BaseModel):
     """
     An immutable normalized execution snapshot: model calls, tool calls, agent steps, and their content.
 
-    Content is a bounded prefix with the full value's length and digest. When
+    Content is the complete value after any redaction, with its length and digest. When
     ``content_retained`` is false, steps keep structure, names, lengths, and digests only.
+    Budgets for what a judge is shown apply when rendering, not here.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -387,7 +388,6 @@ class ExecutionTraceObservationPayload(BaseModel):
     steps: tuple[ExecutionStep, ...] = ()
     coverage: TraceCoverage = Field(default_factory=TraceCoverage)
     content_retained: bool = Field(default=True, strict=True)
-    max_content_chars: int = Field(default=4000, gt=0, strict=True)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -431,9 +431,8 @@ class ExecutionTraceObservationPayload(BaseModel):
             for content in (step.input_content, step.output_content, step.error_content)
             if content
         )
-        for content in contents:
-            if len(content.text) > self.max_content_chars or (content.text and not self.content_retained):
-                raise ValueError("Execution step content exceeds the payload's retention policy.")
+        if any((content.text is not None) != self.content_retained for content in contents):
+            raise ValueError("Execution step content must follow the payload's retention policy.")
         return self
 
 

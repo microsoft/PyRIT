@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from enum import Enum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -165,36 +166,49 @@ class ExecutionStepKind(str, Enum):
 
 class TraceContent(BaseModel):
     """
-    Retained span content: a bounded prefix with the length and digest of the full value.
+    Span content after any redaction: the complete value, or only its length and digest.
 
-    ``original_length`` and ``sha256`` describe the complete value after any redaction, so
-    truncated evidence still identifies what was observed. ``text`` is empty when content
-    is not retained.
+    ``text`` is the complete value, never a prefix. It is None only when the source was
+    configured to withhold content; ``length`` and ``sha256`` still identify the value.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    text: str = ""
-    original_length: int = Field(ge=0, strict=True)
+    text: str | None = None
+    length: int = Field(ge=0, strict=True)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    truncated: bool = Field(default=False, strict=True)
     redacted: bool = Field(default=False, strict=True)
 
-    @model_validator(mode="after")
-    def _validate_prefix(self) -> TraceContent:
+    @classmethod
+    def of(cls, value: str, *, retain: bool = True, redacted: bool = False) -> TraceContent:
         """
-        Keep the retained prefix consistent with the described full value.
+        Describe a complete value, keeping its text only when ``retain`` is true.
+
+        Returns:
+            TraceContent: The content.
+        """
+        return cls(
+            text=value if retain else None,
+            length=len(value),
+            sha256=hashlib.sha256(value.encode("utf-8")).hexdigest(),
+            redacted=redacted,
+        )
+
+    @model_validator(mode="after")
+    def _validate_complete_value(self) -> TraceContent:
+        """
+        Require retained text to be the complete value its length and digest describe.
 
         Returns:
             TraceContent: The validated content.
 
         Raises:
-            ValueError: If the prefix is longer than the value or truncation is misreported.
+            ValueError: If retained text differs from the described value.
         """
-        if len(self.text) > self.original_length:
-            raise ValueError("Retained trace content cannot be longer than the original value.")
-        if self.truncated != (len(self.text) < self.original_length):
-            raise ValueError("Trace content must be marked truncated exactly when text is a strict prefix.")
+        if self.text is not None and (
+            len(self.text) != self.length or hashlib.sha256(self.text.encode("utf-8")).hexdigest() != self.sha256
+        ):
+            raise ValueError("Retained trace content must be the complete value its length and digest describe.")
         return self
 
 
@@ -202,7 +216,8 @@ class ExecutionStep(_TraceInterval):
     """
     One normalized execution span: a model call, tool call, agent step, or other operation.
 
-    ``index`` is the step's stable position within its observation, used to cite it.
+    ``index`` is the step's stable position within its observation, used to cite it. Names
+    and labels are kept exactly as observed, after any redaction.
     """
 
     index: int = Field(ge=0, strict=True)

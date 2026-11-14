@@ -147,10 +147,10 @@ def test_trace_config_enables_tracing_with_the_capture_tracer(capture: LocalTrac
 
 
 def test_source_options_are_forwarded(capture: LocalTraceCapture) -> None:
-    source = capture.source(retain_content=False, max_content_chars=7)
+    source = capture.source(retain_content=False, timeout_seconds=7)
     assert isinstance(source, OtelExecutionTraceSource)
     params = source.get_identifier().params
-    assert (params["retain_content"], params["max_content_chars"]) == (False, 7)
+    assert (params["retain_content"], params["timeout_seconds"]) == (False, 7)
 
 
 def test_register_makes_the_source_nameable(capture: LocalTraceCapture) -> None:

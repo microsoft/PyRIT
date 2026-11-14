@@ -136,8 +136,13 @@ class ConversationScorer(MessageScorer, ABC):
     _trace_requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE
     _max_rendered_trace_chars: int = 60000
 
-    #: 2 fenced and indented trace content; 3 renders steps unreachable through parent links.
-    TRACE_RENDERING_VERSION: ClassVar[int] = 3
+    #: 2 fenced and indented trace content; 3 renders steps unreachable through parent links;
+    #: 4 bounds content and label previews here, since saved evidence is complete.
+    TRACE_RENDERING_VERSION: ClassVar[int] = 4
+    #: The judge sees at most this many characters of each saved input, output, or error value.
+    MAX_RENDERED_CONTENT_CHARS: ClassVar[int] = 4000
+    #: The judge sees at most this many characters of each step name, model, or node label.
+    MAX_RENDERED_LABEL_CHARS: ClassVar[int] = 200
     #: Metadata key on an undetermined result whose judge was not called because the configured
     #: trace requirement was not met. Its value is the reason.
     EVIDENCE_REQUIREMENT_UNMET_KEY: ClassVar[str] = "evidence_requirement_unmet"
@@ -633,8 +638,9 @@ class ConversationScorer(MessageScorer, ABC):
         Render steps depth-first by parent, spending a shared character budget.
 
         Steps unreachable from a root, because their parent links form a cycle, are rendered as
-        roots so no step is hidden. Content is dropped first when the budget runs low; then
-        remaining steps are omitted.
+        roots so no step is hidden. Each content value is previewed up to
+        ``MAX_RENDERED_CONTENT_CHARS``. Content is dropped first when the budget runs low; then
+        remaining steps are omitted. Any preview cut or omission marks the rendering truncated.
 
         Returns:
             str: The indented step lines.
@@ -658,6 +664,9 @@ class ConversationScorer(MessageScorer, ABC):
         lines = []
         for position, (step, depth) in enumerate(ordered):
             text = self._render_step(step=step, depth=depth, include_content=True)
+            contents = (step.error_content, step.input_content, step.output_content)
+            if any(c and c.text and len(c.text) > self.MAX_RENDERED_CONTENT_CHARS for c in contents):
+                truncated[0] = True
             if len(text) > budget[0]:
                 truncated[0] = True
                 text = self._render_step(step=step, depth=depth, include_content=False)
@@ -669,18 +678,30 @@ class ConversationScorer(MessageScorer, ABC):
             lines.append(text)
         return "".join(lines)
 
+    @classmethod
+    def _render_label(cls, value: str) -> str:
+        """
+        Flatten a saved label to one line and bound its preview.
+
+        Returns:
+            str: The one-line label preview.
+        """
+        label = " ".join(value.split())
+        limit = cls.MAX_RENDERED_LABEL_CHARS
+        return label if len(label) <= limit else f"{label[:limit]}..."
+
     @staticmethod
     def _render_step(*, step: ExecutionStep, depth: int, include_content: bool) -> str:
         indent = "  " * (depth + 1)
         details = [f"status={step.status.value}"] if step.status is not TraceSpanStatus.UNSET else []
         details += [
-            f"{label}={' '.join(value.split())}"
+            f"{label}={ConversationScorer._render_label(value)}"
             for label, value in (("model", step.model), ("node", step.node_name))
             if value
         ]
         if step.input_tokens is not None or step.output_tokens is not None:
             details.append(f"tokens={step.input_tokens or 0}/{step.output_tokens or 0}")
-        name = " ".join(step.name.split())
+        name = ConversationScorer._render_label(step.name)
         lines = [f"{indent}T{step.index} {step.kind.value} {name}" + "".join(f" {d}" for d in details) + "\n"]
         for label, content in (
             ("error", step.error_content),
@@ -697,11 +718,13 @@ class ConversationScorer(MessageScorer, ABC):
 
     @staticmethod
     def _render_content(*, label: str, content: TraceContent, indent: str, full: bool) -> str:
-        if not full or not content.text:
+        if not full or content.text is None:
             reason = "not retained" if full else "omitted for length"
-            return f"{indent}  {label}: ({content.original_length} chars {reason}; sha256={content.sha256[:16]})\n"
-        note = f" (first {len(content.text)} of {content.original_length} chars)" if content.truncated else ""
-        body = "".join(f"{indent}    {line}" for line in content.text.splitlines(keepends=True))
+            return f"{indent}  {label}: ({content.length} chars {reason}; sha256={content.sha256[:16]})\n"
+        limit = ConversationScorer.MAX_RENDERED_CONTENT_CHARS
+        text = content.text[:limit]
+        note = f" (first {limit} of {content.length} chars)" if len(content.text) > limit else ""
+        body = "".join(f"{indent}    {line}" for line in text.splitlines(keepends=True))
         return f"{indent}  {label}{note}:\n{body}\n"
 
     def _render_conversation(
@@ -843,8 +866,10 @@ def create_conversation_scorer(
         trace_requirement (TraceEvidenceRequirement): Evidence required before the judge is
             called. An unmet requirement returns an undetermined score marked with
             ``ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY``, without a judge call. Defaults to NONE.
-        max_rendered_trace_chars (int): Character budget for rendered execution steps.
-            Content is dropped first, then steps. Defaults to 60000.
+        max_rendered_trace_chars (int): Character budget for rendered execution steps. Each
+            content value is previewed up to ``ConversationScorer.MAX_RENDERED_CONTENT_CHARS``;
+            past the budget, content is dropped first, then steps. The saved evidence stays
+            complete. Defaults to 60000.
 
     Returns:
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.

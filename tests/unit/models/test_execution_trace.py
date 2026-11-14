@@ -25,14 +25,8 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 SCOPE = TraceScorable(trace_ids=(TRACE,))
 
 
-def _content(text: str, *, original: str | None = None) -> TraceContent:
-    full = text if original is None else original
-    return TraceContent(
-        text=text,
-        original_length=len(full),
-        sha256=hashlib.sha256(full.encode()).hexdigest(),
-        truncated=len(text) < len(full),
-    )
+def _content(value: str, *, retain: bool = True) -> TraceContent:
+    return TraceContent.of(value, retain=retain)
 
 
 def _step(
@@ -50,12 +44,20 @@ def _step(
     )
 
 
-def test_trace_content_requires_truncation_flag_to_match_prefix() -> None:
-    assert _content("abc", original="abcdef").truncated
-    with pytest.raises(ValidationError, match="truncated exactly"):
-        TraceContent(text="abc", original_length=6, sha256="0" * 64, truncated=False)
-    with pytest.raises(ValidationError, match="longer than the original"):
-        TraceContent(text="abcdef", original_length=3, sha256="0" * 64)
+def test_trace_content_keeps_the_complete_value() -> None:
+    value = "x" * 50_000 + " charged_usd=900"
+    content = _content(value)
+    assert (content.text, content.length) == (value, len(value))
+    assert content.sha256 == hashlib.sha256(value.encode()).hexdigest()
+    withheld = _content(value, retain=False)
+    assert (withheld.text, withheld.length, withheld.sha256) == (None, len(value), content.sha256)
+
+
+@pytest.mark.parametrize("text", ["abc", "abcdeg"])
+def test_trace_content_rejects_text_that_is_not_the_described_value(text: str) -> None:
+    described = _content("abcdef")
+    with pytest.raises(ValidationError, match="complete value"):
+        TraceContent(text=text, length=described.length, sha256=described.sha256)
 
 
 def test_payload_rejects_index_gaps_duplicates_and_out_of_scope_steps() -> None:
@@ -75,14 +77,13 @@ def test_payload_rejects_unfinished_steps_under_complete_coverage() -> None:
 
 
 def test_payload_enforces_content_policy() -> None:
-    long_text = _content("x" * 10)
-    with pytest.raises(ValidationError, match="retention policy"):
-        ExecutionTraceObservationPayload(scope=SCOPE, steps=(_step(0, input_content=long_text),), max_content_chars=5)
     with pytest.raises(ValidationError, match="retention policy"):
         ExecutionTraceObservationPayload(
             scope=SCOPE, steps=(_step(0, output_content=_content("secret")),), content_retained=False
         )
-    digest_only = _content("", original="secret")
+    digest_only = _content("secret", retain=False)
+    with pytest.raises(ValidationError, match="retention policy"):
+        ExecutionTraceObservationPayload(scope=SCOPE, steps=(_step(0, input_content=digest_only),))
     payload = ExecutionTraceObservationPayload(
         scope=SCOPE, steps=(_step(0, output_content=digest_only),), content_retained=False
     )

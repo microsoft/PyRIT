@@ -169,10 +169,10 @@ print(f"Policy violation from the transcript alone: {transcript_score.get_value(
 # ## The saved evidence
 #
 # The execution snapshot is stored with the score. Each step keeps its kind, name, status, model,
-# token counts, and its input and output. Content is kept up to 4,000 characters per field,
-# with the full value's length and SHA-256 digest. Pass a `redactor` to `capture.source()` to
-# rewrite values before they are measured, hashed, or kept, or `retain_content=False` to keep
-# only digests.
+# token counts, and its complete input and output, with each value's length and SHA-256 digest.
+# The judge sees a preview of up to 4,000 characters per value; the saved evidence keeps all of
+# it. Pass a `redactor` to `capture.source()` to rewrite values before they are measured, hashed,
+# or saved, or `retain_content=False` to keep only lengths and digests.
 
 # %%
 from pyrit.memory import CentralMemory

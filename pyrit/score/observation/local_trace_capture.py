@@ -209,7 +209,6 @@ class LocalTraceCapture:
         self,
         *,
         retain_content: bool = True,
-        max_content_chars: int = 4000,
         redactor: Callable[[str], str] | None = None,
         timeout_seconds: float = 30,
     ) -> OtelExecutionTraceSource:
@@ -217,9 +216,8 @@ class LocalTraceCapture:
         Build an execution source that reads this capture.
 
         Args:
-            retain_content (bool): Whether to keep inputs and outputs. Defaults to True.
-            max_content_chars (int): Characters kept per input or output. Defaults to 4000.
-            redactor (Callable[[str], str] | None): Rewrites each full value first. Defaults to None.
+            retain_content (bool): Whether to keep inputs, outputs, and errors. Defaults to True.
+            redactor (Callable[[str], str] | None): Rewrites each value first. Defaults to None.
             timeout_seconds (float): Acquisition timeout. Defaults to 30.
 
         Returns:
@@ -228,7 +226,6 @@ class LocalTraceCapture:
         return OtelExecutionTraceSource(
             trace_client=self._client,
             retain_content=retain_content,
-            max_content_chars=max_content_chars,
             redactor=redactor,
             timeout_seconds=timeout_seconds,
         )
