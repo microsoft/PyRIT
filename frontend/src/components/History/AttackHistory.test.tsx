@@ -8,6 +8,17 @@ import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoR
 import { DEFAULT_HISTORY_FILTERS, filtersFromSearchParams } from './historyFilters'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 
+let runtimeGeneration = ''
+let runtimeReady = true
+
+jest.mock('@/hooks/useRuntime', () => ({
+  useRuntime: () => ({
+    ready: runtimeReady,
+    state: runtimeReady ? 'ready' : 'connecting',
+    generation: runtimeGeneration,
+  }),
+}))
+
 installAutoRefreshTimers()
 jest.mock('../../services/api', () => ({
   attacksApi: {
@@ -77,6 +88,8 @@ describe('AttackHistory', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    runtimeGeneration = ''
+    runtimeReady = true
     mockedLabelsApi.getLabels.mockImplementation(() => new Promise(() => {}))
     mockedOperationsApi.list.mockImplementation(() => new Promise(() => {}))
   })
@@ -1232,6 +1245,298 @@ describe('AttackHistory', () => {
       history.rerender(historyWithFilters(FILTERS_A))
       await expectFirstPageOfA()
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4)
+    })
+  })
+
+  describe('runtime changes', () => {
+    beforeEach(() => {
+      mockedAttacksApi.listAttacks.mockReset()
+      mockedLabelsApi.getLabels.mockReset().mockImplementation(() => new Promise(() => {}))
+      mockedOperationsApi.list.mockReset().mockImplementation(() => new Promise(() => {}))
+    })
+
+    const renderHistory = (filters: typeof defaultProps.filters = defaultProps.filters) => (
+      <TestWrapper><AttackHistory {...defaultProps} filters={filters} /></TestWrapper>
+    )
+
+    it('should wait for readiness before loading history and filter options', async () => {
+      runtimeReady = false
+      const filters = { ...DEFAULT_HISTORY_FILTERS, operator: ['alice'] }
+      mockedAttacksApi.listAttacks.mockResolvedValue({
+        items: sampleAttacks, pagination: { limit: 25, has_more: false },
+      })
+      const history = render(renderHistory(filters))
+      await advanceAutoRefresh()
+
+      expect(mockedAttacksApi.listAttacks).not.toHaveBeenCalled()
+      expect(mockedLabelsApi.getLabels).not.toHaveBeenCalled()
+      expect(mockedOperationsApi.list).not.toHaveBeenCalled()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+
+      runtimeReady = true
+      runtimeGeneration = 'gen-1'
+      history.rerender(renderHistory(filters))
+
+      expect(await screen.findByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+      expect(mockedLabelsApi.getLabels).toHaveBeenCalledTimes(2)
+      expect(mockedLabelsApi.getLabels).toHaveBeenCalledWith('attacks', {
+        operator: ['alice'], label: undefined,
+      })
+      expect(mockedOperationsApi.list).toHaveBeenCalledTimes(1)
+      expect(mockedAttacksApi.getAttackOptions).not.toHaveBeenCalled()
+      expect(mockedAttacksApi.getConverterOptions).not.toHaveBeenCalled()
+    })
+
+    it.each(['success', 'failure'] as const)('should hide a list error from the previous runtime generation until replacement %s', async (outcome: 'success' | 'failure') => {
+      runtimeGeneration = 'gen-1'
+      const nextPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      mockedAttacksApi.listAttacks
+        .mockRejectedValueOnce(new Error('Old runtime history error'))
+        .mockReturnValueOnce(nextPage.promise)
+
+      const history = render(renderHistory())
+      expect(await screen.findByText('Old runtime history error')).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument())
+
+      runtimeReady = false
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+
+      expect(screen.queryByText('Old runtime history error')).not.toBeInTheDocument()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+      await advanceAutoRefresh()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+
+      runtimeReady = true
+      history.rerender(renderHistory())
+
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+      expect(screen.queryByText('Old runtime history error')).not.toBeInTheDocument()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+      expect(screen.queryByText('No attacks found')).not.toBeInTheDocument()
+
+      await act(async () => {
+        if (outcome === 'success') {
+          nextPage.resolve({ items: [], pagination: { limit: 25, has_more: false } })
+        } else {
+          nextPage.reject(new Error('New runtime history error'))
+        }
+      })
+
+      expect(screen.queryByText('Old runtime history error')).not.toBeInTheDocument()
+      expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument()
+      if (outcome === 'success') {
+        expect(screen.getByText('No attacks found')).toBeInTheDocument()
+      } else {
+        expect(screen.getByText('New runtime history error')).toBeInTheDocument()
+        expect(screen.queryByText('No attacks found')).not.toBeInTheDocument()
+      }
+    })
+
+    it('should ignore a list response from the previous runtime generation', async () => {
+      runtimeGeneration = 'gen-1'
+      const previousPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      mockedAttacksApi.listAttacks
+        .mockReturnValueOnce(previousPage.promise)
+        .mockResolvedValueOnce({
+          items: [sampleAttacks[1]], pagination: { limit: 25, has_more: false },
+        })
+      const history = render(renderHistory())
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+
+      expect(await screen.findByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
+      await act(async () => {
+        previousPage.resolve({
+          items: [sampleAttacks[0]],
+          pagination: { limit: 25, has_more: true, next_cursor: 'stale-cursor' },
+        })
+      })
+
+      expect(screen.getByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
+      expect(screen.queryByTestId('attack-row-ar-conv-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('next-page-btn')).toBeDisabled()
+    })
+
+    it('should ignore a late list rejection from the previous runtime generation', async () => {
+      runtimeGeneration = 'gen-1'
+      const previousPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      const nextPage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+      mockedAttacksApi.listAttacks
+        .mockReturnValueOnce(previousPage.promise)
+        .mockReturnValueOnce(nextPage.promise)
+      const history = render(renderHistory())
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+
+      await act(async () => { previousPage.reject(new Error('Late old runtime history error')) })
+      expect(screen.queryByText('Late old runtime history error')).not.toBeInTheDocument()
+      expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+
+      await act(async () => {
+        nextPage.resolve({ items: [sampleAttacks[0]], pagination: { limit: 25, has_more: false } })
+      })
+      expect(screen.getByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+      expect(screen.queryByText('Late old runtime history error')).not.toBeInTheDocument()
+      expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument()
+    })
+
+    it('should return to page one with fresh options and ignore old runtime options', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      runtimeGeneration = 'gen-1'
+      const previousOptions = deferred<Awaited<ReturnType<typeof labelsApi.getLabels>>>()
+      mockedLabelsApi.getLabels
+        .mockReturnValueOnce(previousOptions.promise)
+        .mockResolvedValueOnce({ labels: {}, operators: ['NewOperator'] })
+      mockedAttacksApi.listAttacks
+        .mockResolvedValueOnce({
+          items: sampleAttacks,
+          pagination: { limit: 25, has_more: true, next_cursor: 'cursor-page2' },
+        })
+        .mockResolvedValueOnce({
+          items: [sampleAttacks[1]], pagination: { limit: 25, has_more: false },
+        })
+        .mockResolvedValueOnce({
+          items: [sampleAttacks[0]], pagination: { limit: 25, has_more: false },
+        })
+      const history = render(renderHistory())
+      await waitFor(() => expect(screen.getByTestId('next-page-btn')).toBeEnabled())
+      await user.click(screen.getByTestId('next-page-btn'))
+      expect(await screen.findByText('Page 2')).toBeInTheDocument()
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+
+      expect(await screen.findByText('Page 1')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3)
+      expect(mockedAttacksApi.listAttacks.mock.calls[2][0]).not.toHaveProperty('cursor')
+      expect(screen.getByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+      expect(mockedLabelsApi.getLabels).toHaveBeenCalledTimes(2)
+      await act(async () => { previousOptions.resolve({ labels: {}, operators: ['OldOperator'] }) })
+      await user.click(screen.getByTestId('operator-filter'))
+      await user.keyboard('{ArrowDown}')
+
+      expect(await screen.findByRole('menuitemcheckbox', { name: 'NewOperator' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitemcheckbox', { name: 'OldOperator' })).not.toBeInTheDocument()
+    })
+
+    it('should clear old operator options while the new runtime options load', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      runtimeGeneration = 'gen-1'
+      const nextOptions = deferred<Awaited<ReturnType<typeof labelsApi.getLabels>>>()
+      mockedLabelsApi.getLabels
+        .mockResolvedValueOnce({ labels: {}, operators: ['OldOperator'] })
+        .mockReturnValueOnce(nextOptions.promise)
+      mockedAttacksApi.listAttacks.mockResolvedValue({
+        items: sampleAttacks, pagination: { limit: 25, has_more: false },
+      })
+      const history = render(renderHistory())
+      await screen.findByTestId('attacks-table')
+      await user.click(screen.getByTestId('operator-filter'))
+      await user.keyboard('{ArrowDown}')
+      expect(await screen.findByRole('menuitemcheckbox', { name: 'OldOperator' })).toBeInTheDocument()
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+      expect(screen.queryByRole('menuitemcheckbox', { name: 'OldOperator' })).not.toBeInTheDocument()
+      expect(mockedLabelsApi.getLabels).toHaveBeenCalledTimes(2)
+
+      await act(async () => { nextOptions.resolve({ labels: {}, operators: ['NewOperator'] }) })
+      expect(await screen.findByRole('menuitemcheckbox', { name: 'NewOperator' })).toBeInTheDocument()
+    })
+
+    it('should auto-refresh without a cursor after reconnecting from page two', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      runtimeGeneration = 'gen-1'
+      mockedAttacksApi.listAttacks
+        .mockResolvedValueOnce({
+          items: sampleAttacks,
+          pagination: { limit: 25, has_more: true, next_cursor: 'old-cursor' },
+        })
+        .mockResolvedValueOnce({
+          items: [sampleAttacks[1]], pagination: { limit: 25, has_more: false },
+        })
+        .mockResolvedValue({
+          items: [sampleAttacks[0]], pagination: { limit: 25, has_more: false },
+        })
+      const history = render(renderHistory())
+      await waitFor(() => expect(screen.getByTestId('next-page-btn')).toBeEnabled())
+      await user.click(screen.getByTestId('next-page-btn'))
+      expect(await screen.findByText('Page 2')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks.mock.calls[1][0]).toHaveProperty('cursor', 'old-cursor')
+
+      runtimeReady = false
+      history.rerender(renderHistory())
+      await advanceAutoRefresh()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+
+      runtimeReady = true
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory())
+      expect(await screen.findByText('Page 1')).toBeInTheDocument()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3)
+      expect(mockedAttacksApi.listAttacks.mock.calls[2][0]).not.toHaveProperty('cursor')
+
+      await advanceAutoRefresh()
+      expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4)
+      expect(mockedAttacksApi.listAttacks.mock.calls[3][0]).not.toHaveProperty('cursor')
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
+    })
+
+    it('should reload narrowed labels and ignore the previous runtime response', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      runtimeGeneration = 'gen-1'
+      const filters = { ...DEFAULT_HISTORY_FILTERS, operator: ['alice'] }
+      const oldLabels = deferred<Awaited<ReturnType<typeof labelsApi.getLabels>>>()
+      mockedLabelsApi.getLabels
+        .mockResolvedValueOnce({ labels: {} })
+        .mockReturnValueOnce(oldLabels.promise)
+        .mockResolvedValueOnce({ labels: {} })
+        .mockResolvedValueOnce({ labels: { category: ['new-runtime'] } })
+      mockedAttacksApi.listAttacks.mockResolvedValue({
+        items: sampleAttacks, pagination: { limit: 25, has_more: false },
+      })
+      const history = render(renderHistory(filters))
+      await screen.findByTestId('attacks-table')
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory(filters))
+      await screen.findByTestId('attacks-table')
+      await act(async () => { oldLabels.resolve({ labels: { category: ['old-runtime'] } }) })
+      await user.click(screen.getByTestId('label-filter'))
+      await user.keyboard('{ArrowDown}')
+
+      expect(await screen.findByRole('menuitemcheckbox', { name: 'category:new-runtime' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitemcheckbox', { name: 'category:old-runtime' })).not.toBeInTheDocument()
+    })
+
+    it('should clear option errors on reconnect before new option requests settle', async () => {
+      runtimeGeneration = 'gen-1'
+      const filters = { ...DEFAULT_HISTORY_FILTERS, operator: ['alice'] }
+      mockedLabelsApi.getLabels
+        .mockRejectedValueOnce(new Error('Old options error'))
+        .mockRejectedValueOnce(new Error('Old narrowed options error'))
+      mockedAttacksApi.listAttacks.mockResolvedValue({
+        items: sampleAttacks, pagination: { limit: 25, has_more: false },
+      })
+      const history = render(renderHistory(filters))
+      expect(await screen.findByText('Old narrowed options error')).toBeInTheDocument()
+
+      runtimeGeneration = 'gen-2'
+      history.rerender(renderHistory(filters))
+      expect(screen.queryByText('Old narrowed options error')).not.toBeInTheDocument()
+      expect(screen.queryByText('Old options error')).not.toBeInTheDocument()
+
+      // Without a narrowed-label filter, a retained general error would become visible.
+      history.rerender(renderHistory())
+      expect(screen.queryByText('Old options error')).not.toBeInTheDocument()
+      await screen.findByTestId('attacks-table')
     })
   })
 })
