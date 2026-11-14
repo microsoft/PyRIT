@@ -451,6 +451,8 @@ export interface ScorerInstance {
   evaluation_identifier?: ComponentIdentifier | null
   metrics?: ScorerEvaluationMetrics | null
   chat_scoring_disabled_reason?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
@@ -500,8 +502,17 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
+/** Where a registered target, converter, or scorer comes from, and so whether it is still there after a restart. */
+export type RegistryEntryOrigin = 'saved' | 'configuration' | 'temporary'
+
 export interface TargetInstance {
   target_registry_name: string
+  /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
+  origin?: RegistryEntryOrigin | null
+  /** Name of the user who saved the target; null when it isn't saved or was saved with sign-in off. */
+  saved_by?: string | null
+  /** Whether the signed-in user is the one who saved the target. */
+  saved_by_me?: boolean
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -522,9 +533,13 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
+  /** Registry name; required with `persist`. */
+  name?: string
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
+  /** Save the target so it comes back after a restart. */
+  persist?: boolean
 }
 
 // --- Initializers ---
@@ -591,6 +606,8 @@ export interface ConverterInstance {
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
+  /** Saved, from the server's configuration, or Temporary. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export interface ConverterListResponse {
@@ -603,9 +620,13 @@ export type CreateConverterRequest = {
 } & ({
   params?: Record<string, unknown>
   source?: never
+  /** Save the converter so it comes back after a restart. */
+  persist?: boolean
 } | {
   source: SourceInstanceSpec
   params?: never
+  /** Save the copy as its changes, rebuilt from the converter it copies after a restart. */
+  persist?: boolean
 })
 
 export interface SourceInstanceSpec {
@@ -769,6 +790,8 @@ export interface ConverterTypeEntry {
   parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
+  /** Why a converter of this type can't be saved, or null when it can be. */
+  not_saveable_reason?: string | null
 }
 
 export interface ConverterTypeListResponse {
@@ -810,6 +833,10 @@ export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: TargetAuthMode[]
+  /** Auth modes a saved target of this type can use; empty when it can't be saved. */
+  saveable_auth_modes?: TargetAuthMode[]
+  /** Why a target of this type can't be saved. */
+  not_saveable_reason?: string | null
   description?: string | null
 }
 

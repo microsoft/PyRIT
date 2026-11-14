@@ -16,6 +16,7 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.models.catalog import RegistryRecipeKind, RestoreFailureReason, TechniqueRecipe
+from pyrit.registry import ConverterRegistry
 from pyrit.registry.registry_recipe_restore import RecipeRejectedError
 
 if TYPE_CHECKING:
@@ -26,8 +27,8 @@ async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str
     """
     Build one saved entry with the create the API uses for its kind, and register it under its name.
 
-    The entry passes the same checks a create request does. Restore runs as the server, and a saved file
-    doesn't record who saved it, so a target is built as an administrator would build it. A target that
+    The entry passes the same checks a create request does. Restore runs as the server and can't tell who
+    wrote a saved file, so a target is built as an administrator would build it. A target that
     uploads files gets this server's upload folder, as it does through the API.
 
     Args:
@@ -75,6 +76,8 @@ def _create_request(
                 fields["auth_mode"] = recipe.auth_mode
             return CreateTargetRequest.model_validate(fields)
         if stored.ref.kind is RegistryRecipeKind.CONVERTERS:
+            if recipe.source is not None:
+                fields |= {"params": {}, "source": _copy_source(name=recipe.source, params=recipe.params)}
             return CreateConverterRequest.model_validate(fields)
         return CreateScorerRequest.model_validate(fields)
     except ValidationError as error:
@@ -84,3 +87,21 @@ def _create_request(
         raise RecipeRejectedError(
             reason=RestoreFailureReason.INVALID_RECIPE, message=f"Not a valid create request: {problems}"
         ) from error
+
+
+def _copy_source(*, name: str, params: dict[str, Any]) -> dict[str, Any]:
+    """
+    Name the converter a saved copy is rebuilt from by the identity it has now, as a copy request does.
+
+    Returns:
+        dict[str, Any]: The request's ``source``, with the copy's saved changes as its overrides.
+
+    Raises:
+        RecipeRejectedError: If the copied converter isn't registered.
+    """
+    source = ConverterRegistry.get_registry_singleton().instances.get(name)
+    if source is None:
+        raise RecipeRejectedError(
+            reason=RestoreFailureReason.MISSING_DEPENDENCY, message=f"Copies converter '{name}', which doesn't exist."
+        )
+    return {"source_name": name, "source_hash": source.get_identifier().hash, "params": params}

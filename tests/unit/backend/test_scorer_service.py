@@ -4,17 +4,22 @@
 """Tests for the scorer backend service."""
 
 import asyncio
+import json
 import threading
 from collections.abc import Callable, Iterator
+from functools import partial
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.backend.models import CreateScorerRequest
 from pyrit.backend.services.chat_scoring_service import ChatScoringService
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
+from pyrit.common import REQUIRED_VALUE, apply_defaults, reset_default_values, set_default_value
 from pyrit.models import (
     ComponentIdentifier,
     Scorable,
@@ -24,9 +29,30 @@ from pyrit.models import (
     ScoringExpectation,
     TargetIdentifier,
 )
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RegistryRestoreReport,
+    SavedEntryOwner,
+)
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import TextTarget
-from pyrit.registry import DefaultInstanceRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    DefaultInstanceRegistry,
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryStorageError,
+    ScorerRegistry,
+    TargetRegistry,
+)
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    registration_origin,
+)
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.score import (
     ManualScorer,
     MessageToolCallScorer,
@@ -35,7 +61,10 @@ from pyrit.score import (
     OtelToolCallScorer,
     Scorer,
     SubStringScorer,
+    TrueFalseCompositeScorer,
     TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
 )
 
 
@@ -487,3 +516,290 @@ async def test_decision_scorer_unknown_parameter_does_not_list_its_question_path
 
     assert "'chat_target'" in str(error.value)
     assert "decision_question_path" not in str(error.value)
+
+
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved scorers through the API's create, as startup does."""
+    get_scorer_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
+def _persist_scorer(name: str, scorer_type: str, params: dict[str, Any]) -> CreateScorerRequest:
+    return CreateScorerRequest(name=name, type=scorer_type, params=params, persist=True)
+
+
+def _saved_scorer(source: Path, name: str) -> dict[str, Any]:
+    return json.loads((source / "scorers" / f"{name}.json").read_text())
+
+
+_LEAK = {"substring": "secret", "categories": ["leak"]}
+
+
+async def test_saves_a_scorer_that_restore_rebuilds(tmp_path: Path) -> None:
+    service = ScorerService()
+    owner = SavedEntryOwner(oid="00000000-0000-0000-0000-000000000001", name="Ada")
+
+    scorer = await service.create_scorer_async(
+        request=_persist_scorer("leak_substring", "SubStringScorer", _LEAK), owner=owner, recipes_source=str(tmp_path)
+    )
+
+    assert scorer.origin is RegistryEntryOrigin.SAVED
+    assert _saved_scorer(tmp_path, "leak_substring") == {
+        "schema_version": 1,
+        "class_module": "pyrit.score.true_false.substring_scorer",
+        "class_name": "SubStringScorer",
+        "params": {"substring": "secret", "categories": ["leak"]},
+        "owner": {"oid": owner.oid, "name": "Ada"},
+    }
+    entry = ScorerRegistry.get_registry_singleton().instances.get_entry("leak_substring")
+    assert entry is not None
+    assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "scorers", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    saved_hash = entry.instance.get_identifier().hash
+    ScorerRegistry.reset_registry_singleton()
+    assert (await _restore(tmp_path)).failures == []
+    restored = ScorerRegistry.get_registry_singleton().instances.get("leak_substring")
+    assert restored is not None
+    assert restored.get_identifier().hash == saved_hash
+
+
+async def test_saves_a_scorer_only_over_a_target_that_comes_back_after_a_restart(
+    chat_target: str, tmp_path: Path
+) -> None:
+    service = ScorerService()
+    request = _persist_scorer("decision", "DecisionScorer", {"chat_target": chat_target})
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
+    # The startup scripts register the same target again.
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        TargetRegistry.get_registry_singleton().instances.register(TextTarget(), name=chat_target, replace=True)
+    saved = await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
+
+    assert str(refusal.value) == (
+        "Uses temporary target 'chat', which won't exist after a restart. It can still be created without saving it."
+    )
+    assert saved.origin is RegistryEntryOrigin.SAVED
+    assert _saved_scorer(tmp_path, "decision")["params"] == {"chat_target": "chat"}
+
+
+async def test_refuses_a_scorer_that_would_use_this_servers_key(tmp_path: Path) -> None:
+    service = ScorerService()
+    request = _persist_scorer(
+        "content_safety", "AzureContentFilterScorer", {"endpoint": "https://contoso.cognitiveservices.azure.com/"}
+    )
+
+    with (
+        patch.dict("os.environ", {"AZURE_CONTENT_SAFETY_API_KEY": "server-safety-key"}),
+        pytest.raises(NotSaveableError) as refusal,
+    ):
+        await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
+
+    assert str(refusal.value) == (
+        "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead. "
+        "It can still be created without saving it."
+    )
+    assert ScorerRegistry.get_registry_singleton().instances.get("content_safety") is None
+    assert not (tmp_path / "scorers").exists()
+
+
+async def test_a_taken_scorer_name_is_a_conflict_only_when_saving(tmp_path: Path) -> None:
+    service = ScorerService()
+    await service.create_scorer_async(request=CreateScorerRequest(name="leak", type="SubStringScorer", params=_LEAK))
+
+    with pytest.raises(SavedEntryConflictError, match="already"):
+        await service.create_scorer_async(
+            request=_persist_scorer("leak", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+        )
+
+    assert not (tmp_path / "scorers").exists()
+
+
+async def test_a_saved_scorer_file_with_the_name_is_a_conflict_that_leaves_the_file(tmp_path: Path) -> None:
+    storage = RegistryRecipeStorage(kind=RegistryRecipeKind.SCORERS, source=str(tmp_path))
+    storage.create_recipe(name="leak", recipe=ComponentRecipe(class_module="m", class_name="X"))
+    before = (tmp_path / "scorers" / "leak.json").read_bytes()
+
+    with pytest.raises(SavedEntryConflictError, match="A saved scorer named 'leak' already exists."):
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("leak", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+        )
+
+    assert ScorerRegistry.get_registry_singleton().instances.get("leak") is None
+    assert (tmp_path / "scorers" / "leak.json").read_bytes() == before
+
+
+async def test_reports_scorer_storage_failures_as_unavailable(tmp_path: Path) -> None:
+    with (
+        patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=OSError("disk full")),
+        pytest.raises(SavedEntryStorageError, match="Saved scorers can't be written right now."),
+    ):
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("leak", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+        )
+
+    assert ScorerRegistry.get_registry_singleton().instances.get("leak") is None
+
+
+async def test_deletes_the_saved_file_when_the_scorer_cant_be_registered(tmp_path: Path) -> None:
+    registry = ScorerRegistry.get_registry_singleton()
+
+    with (
+        patch.object(registry.instances, "register", side_effect=RuntimeError("x")),
+        pytest.raises(RuntimeError, match="x"),
+    ):
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("leak", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+        )
+
+    assert not (tmp_path / "scorers" / "leak.json").exists()
+
+
+async def test_list_get_and_create_tell_where_each_scorer_comes_from(tmp_path: Path) -> None:
+    service = ScorerService()
+    instances = ScorerRegistry.get_registry_singleton().instances
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        instances.register(SubStringScorer(substring="startup"), name="a_startup")
+    saved = await service.create_scorer_async(
+        request=_persist_scorer("b_saved", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+    )
+    temporary = await service.create_scorer_async(
+        request=CreateScorerRequest(name="c_temporary", type="SubStringScorer", params=_LEAK)
+    )
+
+    first_page = await service.list_scorers_async(limit=2)
+    second_page = await service.list_scorers_async(limit=2, cursor=first_page.pagination.next_cursor)
+    fetched = [
+        await service.get_scorer_async(scorer_registry_name=name) for name in ("a_startup", "b_saved", "c_temporary")
+    ]
+
+    expected = {
+        "a_startup": RegistryEntryOrigin.CONFIGURATION,
+        "b_saved": RegistryEntryOrigin.SAVED,
+        "c_temporary": RegistryEntryOrigin.TEMPORARY,
+    }
+    listed = [*first_page.items, *second_page.items]
+    assert {item.scorer_registry_name: item.origin for item in listed} == expected
+    assert {item.scorer_registry_name: item.origin for item in fetched if item is not None} == expected
+    assert (saved.origin, temporary.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.TEMPORARY)
+
+
+async def test_a_reserved_scorer_name_is_refused_as_invalid_not_as_taken(tmp_path: Path) -> None:
+    service = ScorerService()
+
+    with pytest.raises(ValueError, match="reserved") as saved:
+        await service.create_scorer_async(
+            request=_persist_scorer("types", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+        )
+    with pytest.raises(ValueError, match="reserved"):
+        await service.create_scorer_async(
+            request=CreateScorerRequest(name="types", type="SubStringScorer", params=_LEAK)
+        )
+
+    assert not isinstance(saved.value, (SavedEntryConflictError, NotSaveableError))
+    assert not (tmp_path / "scorers").exists()
+
+
+async def test_saving_an_unknown_scorer_type_is_an_invalid_request(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Scorer type 'NoSuchScorer' not found") as refusal:
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("missing", "NoSuchScorer", {}), recipes_source=str(tmp_path)
+        )
+
+    assert not isinstance(refusal.value, NotSaveableError)
+
+
+async def test_a_scorer_save_finds_and_builds_the_scorer_off_the_event_loop(tmp_path: Path) -> None:
+    registry = ScorerRegistry.get_registry_singleton()
+    loop_thread = threading.current_thread()
+    threads: list[str] = []
+    contains, find, build = (
+        ScorerRegistry.__contains__,
+        registry.get_class,
+        registry.create_instance_from_external_input,
+    )
+
+    def contains_noting_thread(self: ScorerRegistry, name: str) -> bool:
+        threads.append("loop" if threading.current_thread() is loop_thread else "worker")
+        return contains(self, name)
+
+    def find_noting_thread(*args: Any, **kwargs: Any) -> Any:
+        threads.append("loop" if threading.current_thread() is loop_thread else "worker")
+        return find(*args, **kwargs)
+
+    def build_noting_thread(*args: Any, **kwargs: Any) -> Any:
+        threads.append("loop" if threading.current_thread() is loop_thread else "worker")
+        return build(*args, **kwargs)
+
+    with (
+        patch.object(ScorerRegistry, "__contains__", contains_noting_thread),
+        patch.object(registry, "get_class", side_effect=find_noting_thread),
+        patch.object(registry, "create_instance_from_external_input", side_effect=build_noting_thread),
+    ):
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("leak", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
+        )
+
+    assert len(threads) >= 3
+    assert set(threads) == {"worker"}
+
+
+def _register_default_composite_scorer(default: list[Any] | tuple[Any, ...]) -> None:
+    """Register a composite scorer class whose scorers come from a configured default."""
+
+    class DefaultCompositeScorer(TrueFalseCompositeScorer):
+        @apply_defaults
+        def __init__(self, *, scorers: list[TrueFalseScorer] = REQUIRED_VALUE) -> None:
+            super().__init__(aggregator=TrueFalseScoreAggregator.AND, scorers=scorers)
+
+    ScorerRegistry.get_registry_singleton().register_class(DefaultCompositeScorer)
+    set_default_value(class_type=DefaultCompositeScorer, parameter_name="scorers", value=default)
+
+
+@pytest.fixture
+def startup_and_launch_scorers() -> Iterator[tuple[SubStringScorer, SubStringScorer, SubStringScorer]]:
+    scorers = ScorerRegistry.get_registry_singleton().instances
+    startup, other_startup = SubStringScorer(substring="startup"), SubStringScorer(substring="other")
+    launch = SubStringScorer(substring="launch")
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        scorers.register(startup, name="startup_substring")
+        scorers.register(other_startup, name="other_startup_substring")
+    scorers.register(launch, name="launch_substring")
+    yield startup, other_startup, launch
+    reset_default_values()
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+async def test_a_saved_scorer_names_each_scorer_in_a_default_list(
+    tmp_path: Path,
+    startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer, SubStringScorer],
+    container: Callable[[list[Any]], list[Any] | tuple[Any, ...]],
+) -> None:
+    startup, other_startup, _ = startup_and_launch_scorers
+    _register_default_composite_scorer(default=container([startup, other_startup, startup]))
+
+    await ScorerService().create_scorer_async(
+        request=_persist_scorer("composite", "DefaultCompositeScorer", {}), recipes_source=str(tmp_path)
+    )
+
+    assert _saved_scorer(tmp_path, "composite")["params"] == {
+        "scorers": ["startup_substring", "other_startup_substring", "startup_substring"]
+    }
+
+
+async def test_a_default_list_with_a_temporary_scorer_is_not_saved(
+    tmp_path: Path, startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer, SubStringScorer]
+) -> None:
+    startup, _, launch = startup_and_launch_scorers
+    _register_default_composite_scorer(default=[startup, launch])
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("composite", "DefaultCompositeScorer", {}), recipes_source=str(tmp_path)
+        )
+
+    assert str(refusal.value) == (
+        "Uses temporary scorer 'launch_substring', which won't exist after a restart. "
+        "It can still be created without saving it."
+    )
+    assert not (tmp_path / "scorers").exists()

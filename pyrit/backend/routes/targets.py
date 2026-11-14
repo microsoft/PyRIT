@@ -8,9 +8,12 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from typing import Annotated
 
-from pyrit.backend.middleware.auth import has_admin_access
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
+
+from pyrit.backend.middleware.auth import current_user_oid, has_admin_access
 from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
@@ -22,9 +25,15 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
+from pyrit.backend.routes.common import (
+    NOT_SAVEABLE_PROBLEM_TYPE,
+    not_saveable_response,
+    saved_entry_owner_from_request,
+)
 from pyrit.backend.services import get_target_service
 from pyrit.models.catalog import TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -89,6 +98,7 @@ def _target_upload_directory(request: Request) -> str | None:
     },
 )
 async def list_targets(  # pyrit-async-suffix-exempt
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
@@ -101,7 +111,7 @@ async def list_targets(  # pyrit-async-suffix-exempt
         TargetListResponse: Paginated list of target instances.
     """
     service = get_target_service()
-    return await service.list_targets_async(limit=limit, cursor=cursor)
+    return await service.list_targets_async(limit=limit, cursor=cursor, current_user_oid=user_oid)
 
 
 @router.get(
@@ -129,20 +139,28 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
     responses={
         400: {
             "model": ProblemDetail,
-            "description": "Invalid target type or parameters",
+            "description": (
+                f"Invalid target type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a target that can't be "
+                "saved as asked but can be created without saving it"
+            ),
         },
         403: {
             "model": ProblemDetail,
             "description": "Administrator access is required to run model repository code or to use the "
             "server's stored credentials",
         },
+        409: {
+            "model": ProblemDetail,
+            "description": "A target to save has the name of a registered or saved target",
+        },
+        503: {"model": ProblemDetail, "description": "Saved targets can't be written right now"},
     },
 )
 async def create_target(
     *,
     body: CreateTargetRequest,
     request: Request,
-) -> TargetInstance | UnregisteredTarget:  # pyrit-async-suffix-exempt
+) -> TargetInstance | UnregisteredTarget | JSONResponse:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
 
@@ -152,7 +170,8 @@ async def create_target(
     Note: Sensitive parameters (API keys, tokens) are filtered from the response.
 
     Returns:
-        TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
+        TargetInstance | UnregisteredTarget | JSONResponse: A named instance or an unregistered descriptor,
+            or the problem response for a target that can't be saved as asked.
     """
     service = get_target_service()
 
@@ -161,7 +180,15 @@ async def create_target(
             request=body,
             upload_directory=_target_upload_directory(request),
             is_admin=has_admin_access(request),
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
+            recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
+    except NotSaveableError as e:
+        return not_saveable_response(detail=str(e), request=request)
+    except SavedEntryConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except SavedEntryStorageError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -187,7 +214,9 @@ async def create_target(
     },
 )
 async def get_target(
+    *,
     target_registry_name: IdentifierStr,
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.
@@ -197,7 +226,7 @@ async def get_target(
     """
     service = get_target_service()
 
-    target = await service.get_target_async(target_registry_name=target_registry_name)
+    target = await service.get_target_async(target_registry_name=target_registry_name, current_user_oid=user_oid)
     if not target:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
