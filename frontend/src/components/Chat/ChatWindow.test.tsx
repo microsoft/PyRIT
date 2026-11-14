@@ -1086,7 +1086,7 @@ describe("ChatWindow Integration", () => {
       error: null,
       failure_stage: null,
     };
-    const complete: MessageSendStatus = { ...queued, state: "completed" };
+    const complete: MessageSendStatus = { ...queued, state: "completed", target_invoked: true };
     const empty = { conversation_id: props.conversationId, messages: [], target_response_status: null };
     const reply = { ...makeTextResponse("Async reply").messages, conversation_id: props.conversationId };
     const readError = {
@@ -1291,6 +1291,374 @@ describe("ChatWindow Integration", () => {
       await act(async () => { finish(complete); });
       expect(readUserPreferences("local").lastUsedTargets?.objective?.registryName).toBe(mockTarget.target_registry_name);
       expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    function completedHistoryFor(prompt: string): ConversationMessagesResponse {
+      return {
+        conversation_id: props.conversationId,
+        target_response_status: {
+          response_error: "none",
+          request_turn_number: 0,
+          response_turn_number: 1,
+        },
+        messages: [
+          {
+            turn_number: 0,
+            role: "user",
+            message_pieces: [{
+              id: "p-req",
+              original_value_data_type: "text",
+              converted_value_data_type: "text",
+              original_value: prompt,
+              converted_value: prompt,
+              scores: [],
+              response_error: "none",
+            }],
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            turn_number: 1,
+            role: "assistant",
+            message_pieces: [{
+              id: "p-resp",
+              original_value_data_type: "text",
+              converted_value_data_type: "text",
+              original_value: "Synthetic reply",
+              converted_value: "Synthetic reply",
+              scores: [],
+              response_error: "none",
+            }],
+            created_at: "2026-01-01T00:00:01Z",
+          },
+        ],
+      };
+    }
+
+    function ChatOrDatasets({ showChat, chatProps = props }: { showChat: boolean; chatProps?: typeof props }) {
+      return (
+        <FluentProvider theme={webLightTheme}>
+          <UserPreferencesProvider accountKey="local">
+            <ChatDraftProvider>
+              <MemoryRouter>
+                {showChat ? <ChatWindow {...chatProps} /> : <h1>Datasets</h1>}
+              </MemoryRouter>
+            </ChatDraftProvider>
+          </UserPreferencesProvider>
+        </FluentProvider>
+      );
+    }
+
+    async function sendPrompt(user: ReturnType<typeof userEvent.setup>, prompt: string): Promise<void> {
+      await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      await user.click(screen.getByRole("textbox"));
+      await user.paste(prompt);
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+      await user.click(screen.getByRole("button", { name: /send message/i }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
+    }
+
+    async function settleDraftRestore(): Promise<void> {
+      // The preserved draft is claimed by an effect after the saved history renders.
+      for (let tick = 0; tick < 5; tick += 1) {
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      }
+    }
+
+    it("does not restore a completed send as an unsent draft after navigating to Datasets", async () => {
+      const user = userEvent.setup();
+      const prompt = "ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE";
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await sendPrompt(user, prompt);
+      expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      expect(screen.getByRole("heading", { name: "Datasets" })).toBeInTheDocument();
+
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      expect(within(screen.getByTestId("message-list")).getByText(prompt)).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("keeps the accepted draft when another client reuses its failed request turn", async () => {
+      const user = userEvent.setup();
+      const prompt = "Unsent request from client A";
+      const acceptedSendId = "backend-send-a";
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, send_id: acceptedSendId });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await sendPrompt(user, prompt);
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor("Request from client B"));
+      mockedAttacksApi.getMessageSend.mockResolvedValue({
+        ...queued,
+        send_id: acceptedSendId,
+        state: "failed",
+        failure_stage: "preparation",
+        target_invoked: false,
+      });
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      expect(mockedAttacksApi.getMessageSend).toHaveBeenLastCalledWith(props.attackResultId, acceptedSendId);
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an attachment added after a failed status read when the send later completes", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt whose status read failed";
+      const target = makeTarget({
+        ...mockTarget,
+        capabilities: {
+          ...mockTarget.capabilities,
+          supports_multi_message_pieces: true,
+          supported_input_modalities: ["text", "image_path"],
+        },
+      });
+      const attachmentProps = { ...props, activeTarget: target, availableTargets: [target] };
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockRejectedValue(readError);
+
+      const rendered = render(<ChatOrDatasets showChat chatProps={attachmentProps} />);
+      await sendPrompt(user, prompt);
+      expect(await screen.findByRole("group", { name: "Message send status" })).toHaveTextContent(/Send status is unavailable/);
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      await user.upload(screen.getByTestId("file-input"), new File(["image"], "newer-edit.png", { type: "image/png" }));
+      expect(screen.getByText(/newer-edit.png/)).toBeInTheDocument();
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      rendered.rerender(<ChatOrDatasets showChat={false} chatProps={attachmentProps} />);
+      rendered.rerender(<ChatOrDatasets showChat chatProps={attachmentProps} />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      expect(screen.getByText(/newer-edit.png/)).toBeInTheDocument();
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves a converter pipeline change made while checking an accepted send", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt retained while converter settings change";
+      const acceptedSendId = "backend-send-a";
+      let finishStatus: ((status: MessageSendStatus) => void) | undefined;
+      mockedConvertersApi.listConverters.mockResolvedValue({
+        items: [makeConverterInstance("first", "Base64Converter")],
+      });
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, send_id: acceptedSendId });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await sendPrompt(user, prompt);
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor("Request from client B"));
+      mockedAttacksApi.getMessageSend.mockImplementation((_attackId, sendId) => (
+        sendId === acceptedSendId
+          ? new Promise((resolve) => { finishStatus = resolve; })
+          : new Promise(() => {})
+      ));
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await waitFor(() => expect(finishStatus).toBeDefined());
+
+      await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+      await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+      await user.click(await screen.findByRole("option", { name: /^first/ }));
+      expect(screen.getByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
+
+      await act(async () => {
+        finishStatus?.({
+          ...queued,
+          send_id: acceptedSendId,
+          state: "failed",
+          failure_stage: "preparation",
+          target_invoked: false,
+        });
+      });
+      await settleDraftRestore();
+
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue(prompt);
+      expect(screen.getByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves generation settings changed while checking an accepted send", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt retained while generation settings change";
+      const acceptedSendId = "backend-send-a";
+      const target = makeTarget({
+        ...mockTarget,
+        capabilities: buildCapabilities({
+          ...mockTarget.capabilities,
+          supports_temperature: true,
+        }),
+      });
+      const chatProps = { ...props, activeTarget: target, availableTargets: [target] };
+      let finishStatus: ((status: MessageSendStatus) => void) | undefined;
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, send_id: acceptedSendId });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat chatProps={chatProps} />);
+      await sendPrompt(user, prompt);
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor("Request from client B"));
+      mockedAttacksApi.getMessageSend.mockImplementation((_attackId, sendId) => (
+        sendId === acceptedSendId
+          ? new Promise((resolve) => { finishStatus = resolve; })
+          : new Promise(() => {})
+      ));
+      rendered.rerender(<ChatOrDatasets showChat={false} chatProps={chatProps} />);
+      rendered.rerender(<ChatOrDatasets showChat chatProps={chatProps} />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await waitFor(() => expect(finishStatus).toBeDefined());
+
+      await chooseTemperature(user, "1.25");
+      expect(screen.getByRole("button", { name: "Adjust temperature: 1.25" })).toBeInTheDocument();
+
+      await act(async () => {
+        finishStatus?.({
+          ...queued,
+          send_id: acceptedSendId,
+          state: "failed",
+          failure_stage: "preparation",
+          target_invoked: false,
+        });
+      });
+      await settleDraftRestore();
+
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      expect(screen.getByRole("button", { name: "Adjust temperature: 1.25" })).toBeInTheDocument();
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the converter pipeline when a send completes while Chat is unmounted", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt sent through a converter";
+      mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("first", "Base64Converter")] });
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      await user.click(screen.getByRole("textbox"));
+      await user.paste(prompt);
+      await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+      await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+      await user.click(await screen.findByRole("option", { name: /^first/ }));
+      expect(screen.getByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Close converters" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+      await user.click(screen.getByRole("button", { name: /send message/i }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+      expect(await screen.findByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
+    });
+
+    it("does not restore a completed send after returning to Chat twice while it was in flight", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt that completes after two visits";
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await sendPrompt(user, prompt);
+
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(prompt));
+      await settleDraftRestore();
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("restores a repeated prompt whose send left history unchanged while Chat was unmounted", async () => {
+      const user = userEvent.setup();
+      const prompt = "Prompt repeated from an earlier turn";
+      // The earlier identical prompt is already saved; the repeat fails in preparation, which leaves history unchanged.
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, request_turn_number: 2 });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await sendPrompt(user, prompt);
+
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+    });
+
+    it("does not restore a completed attachment-only send after navigating to Datasets", async () => {
+      const user = userEvent.setup();
+      const target = makeTarget({
+        ...mockTarget,
+        capabilities: {
+          ...mockTarget.capabilities,
+          supports_multi_message_pieces: true,
+          supported_input_modalities: ["text", "image_path"],
+        },
+      });
+      const attachmentProps = { ...props, activeTarget: target, availableTargets: [target] };
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat chatProps={attachmentProps} />);
+      await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      await user.upload(screen.getByTestId("file-input"), new File(["image"], "only-attachment.png", { type: "image/png" }));
+      expect(screen.getByText(/only-attachment.png/)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+      await user.click(screen.getByRole("button", { name: /send message/i }));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
+
+      const history = completedHistoryFor("");
+      history.messages[0].message_pieces[0] = {
+        ...history.messages[0].message_pieces[0],
+        original_value_data_type: "image_path",
+        converted_value_data_type: "image_path",
+        original_value: "/media/only-attachment.png",
+        converted_value: "/media/only-attachment.png",
+      };
+      mockedAttacksApi.getMessages.mockResolvedValue(history);
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
+      rendered.rerender(<ChatOrDatasets showChat={false} chatProps={attachmentProps} />);
+      rendered.rerender(<ChatOrDatasets showChat chatProps={attachmentProps} />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+      expect(screen.queryByText(/only-attachment.png/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
     });
 
