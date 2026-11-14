@@ -15,9 +15,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import traceback
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import resolve_constructor_defaults
+from pyrit.common.azure_storage import redact_urls
 from pyrit.models import ComponentType
 from pyrit.models.catalog import (
     ComponentRecipe,
@@ -35,6 +37,7 @@ from pyrit.registry.instance_registry import (
 )
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
+from pyrit.registry.resolution import reject_non_external_params
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -96,9 +99,10 @@ async def prepare_saved_params_async(
         dict[str, Any]: The parameters to build and save the entry with.
 
     Raises:
-        NotSaveableError: If the entry would hold or use a credential, its class was added by a scan's launch
-            script, or it names a Temporary entry.
-        ValueError: If an address the entry would use isn't a full http(s) or ws(s) address.
+        NotSaveableError: If the entry would hold or use a credential, leaves a setting to this server's environment,
+            its class was added by a scan's launch script, or it names a Temporary entry.
+        ValueError: If an address the entry would use isn't a full http(s) or ws(s) address, or a parameter is one
+            the API can't set, which restore can't pass either.
     """
     if registry.is_temporary_class(type_name):
         raise NotSaveableError(f"{launch_script_class_reason(type_name)} It can still be created without saving it.")
@@ -120,8 +124,45 @@ async def prepare_saved_params_async(
             raise ValueError(str(error)) from error
         raise NotSaveableError(f"{error} It can still be created without saving it.") from error
     _name_default_references(cls=cls, parameters=parameters, params=saved_params)
+    _refuse_values_restore_cant_pass(cls=cls, parameters=parameters, params=saved_params)
+    _refuse_environment_values(cls=cls, params=saved_params)
     refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
+
+
+def _refuse_values_restore_cant_pass(*, cls: type, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+    """
+    Refuse a parameter restore can't pass, since it builds a saved entry from its recipe as the API builds one.
+
+    Raises:
+        ValueError: If a parameter isn't declared, takes a Python object, names a server file or folder, or names an
+            entry by anything but its name.
+    """
+    try:
+        reject_non_external_params(
+            params=params,
+            declared=parameters,
+            owner=cls.__name__,
+            allowed_path_params=getattr(cls, "caller_path_parameters", frozenset()),
+        )
+    except ValueError as error:
+        raise ValueError(f"Saved entries are rebuilt from what the API accepts. {error}") from error
+
+
+def _refuse_environment_values(*, cls: type, params: Mapping[str, Any]) -> None:
+    """
+    Refuse an entry to save that leaves a required setting to this server's environment.
+
+    Raises:
+        NotSaveableError: If a setting the class reads from the environment when it's empty is empty.
+    """
+    for name in sorted(getattr(cls, "environment_backed_parameters", frozenset())):
+        value = params.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise NotSaveableError(
+                f"'{name}' is empty, so '{cls.__name__}' would read it from this server's environment. A saved "
+                "entry sets it. It can still be created without saving it."
+            )
 
 
 def _name_default_references(*, cls: type, parameters: Sequence[Parameter], params: dict[str, Any]) -> None:
@@ -286,7 +327,8 @@ async def save_then_register_async(
     Save an entry's recipe, then register the entry as saved.
 
     The recipe is written only if no saved entry of the kind has the name, so of two saves under one name only one
-    succeeds. If registering then fails, the recipe is deleted again.
+    succeeds. If registering then fails, the recipe this save wrote is deleted again. A save that's cancelled
+    finishes, or is undone, before the cancellation is passed on, so the saved recipes and the registry agree.
 
     Args:
         kind (RegistryRecipeKind): The kind of entry.
@@ -300,51 +342,99 @@ async def save_then_register_async(
         SavedEntryConflictError: If a saved or registered entry of the kind already has the name.
         SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
     """
+    await _settle_async(
+        asyncio.create_task(
+            _save_then_register_async(kind=kind, name=name, recipe=recipe, register=register, source=source)
+        )
+    )
+
+
+async def _settle_async(transaction: asyncio.Task[None]) -> None:
+    """
+    Wait for a save to finish, even if the caller is cancelled meanwhile, then pass the cancellation on.
+
+    A cancelled wait doesn't stop a worker thread that's writing, so the save runs on, undoing itself if it
+    fails, and the caller sees its cancellation only once the save is settled. ``asyncio.wait`` never cancels
+    what it waits for, which shields the save.
+
+    Raises:
+        asyncio.CancelledError: If the caller was cancelled while the save ran, raised from the save's own error if
+            it failed.
+    """
+    cancellation: asyncio.CancelledError | None = None
+    while not transaction.done():
+        try:
+            await asyncio.wait([transaction])
+        except asyncio.CancelledError as error:
+            cancellation = error
+    if cancellation is None:
+        transaction.result()
+        return
+    raise cancellation from (None if transaction.cancelled() else transaction.exception())
+
+
+async def _save_then_register_async(
+    *,
+    kind: RegistryRecipeKind,
+    name: str,
+    recipe: ComponentRecipe,
+    register: Callable[[dict[str, Any]], object],
+    source: str | None,
+) -> None:
+    """
+    Write a recipe under a free name, then register its entry, deleting the recipe again if registering fails.
+
+    Raises:
+        SavedEntryConflictError: If a saved or registered entry of the kind already has the name.
+        SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+    """
     singular = kind.value.removesuffix("s")
     storage = RegistryRecipeStorage(kind=kind, source=source)
     try:
-        await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
+        version = await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
     except DocumentConflictError as error:
         raise SavedEntryConflictError(f"A saved {singular} named '{name}' already exists.") from error
     except DocumentStorageUnavailableError as error:
-        logger.error(
-            "Saved %s '%s' couldn't be written to %s (%s). If the write reached storage anyway, the %s is restored "
-            "at the next start.",
-            singular,
-            name,
-            storage.display_source,
-            error.reason,
-            singular,
+        _log_failure(
+            summary=f"Saved {singular} '{name}' couldn't be written to {storage.display_source} ({error.reason}). "
+            f"If the write reached storage anyway, the {singular} is restored at the next start.",
+            cause=error,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
     try:
         register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
     except Exception as error:
-        if not await _delete_recipe_async(storage=storage, singular=singular, name=name):
+        if not await _delete_recipe_async(storage=storage, singular=singular, name=name, version=version):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
         if isinstance(error, RegistryNameTakenError):
             raise SavedEntryConflictError(str(error)) from error
         raise
 
 
-async def _delete_recipe_async(*, storage: RegistryRecipeStorage, singular: str, name: str) -> bool:
+async def _delete_recipe_async(*, storage: RegistryRecipeStorage, singular: str, name: str, version: str) -> bool:
     """
-    Delete a recipe whose entry couldn't be registered.
+    Delete a recipe whose entry couldn't be registered, unless another writer has replaced it since.
 
     Returns:
         bool: False if the recipe couldn't be deleted, which is logged for an operator to fix.
     """
     try:
-        await asyncio.to_thread(storage.delete_recipe, name)
+        await asyncio.to_thread(storage.delete_recipe, name, expected_version=version)
+    except DocumentConflictError:
+        # The file holds what another writer saved since, so it isn't this save's recipe to delete.
+        return True
     except Exception as error:
-        logger.error(
-            "Saved %s '%s' couldn't be registered, and its saved recipe in %s couldn't be deleted (%s). "
-            "Delete it there, or the %s is restored at the next start.",
-            singular,
-            name,
-            storage.display_source,
-            error.reason if isinstance(error, DocumentStorageUnavailableError) else type(error).__name__,
-            singular,
+        reason = error.reason if isinstance(error, DocumentStorageUnavailableError) else type(error).__name__
+        _log_failure(
+            summary=f"Saved {singular} '{name}' couldn't be registered, and its saved recipe in "
+            f"{storage.display_source} couldn't be deleted ({reason}). Delete it there, or the {singular} is "
+            "restored at the next start.",
+            cause=error,
         )
         return False
     return True
+
+
+def _log_failure(*, summary: str, cause: BaseException) -> None:
+    """Log a save failure as an error with the error behind it, URL credentials removed, as restore does."""
+    logger.error(redact_urls(f"{summary}\n{''.join(traceback.format_exception(cause)).rstrip()}"))
