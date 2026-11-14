@@ -114,8 +114,9 @@ configured source, and the responses below.
 
 A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
 other **400** needs the address fixed. `GET /api/targets/types` gives the same class-level answer before a request is
-sent, and `POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the server log names the target and its folder, since the target comes back at
-the next start if the write reached storage anyway.
+sent, and `POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
+server log names the target and its folder, since the target comes back at the next start if the write reached storage
+anyway.
 
 Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
 (gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
