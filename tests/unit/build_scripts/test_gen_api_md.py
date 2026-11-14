@@ -22,6 +22,7 @@ from build_scripts.gen_api_md import (
     render_class,
     render_function,
     render_module,
+    render_params,
 )
 
 
@@ -738,6 +739,63 @@ def test_build_example_index_reads_standalone_notebook_code_cells(tmp_path: Path
     assert result[_class_anchor("pyrit.targets", "NotebookTarget")] == [
         ExampleReference(title="Notebook guide", path="guide/notebook.ipynb")
     ]
+
+
+def test_render_params_keeps_union_types_in_one_cell() -> None:
+    """Regression test for #4073: a raw `|` in a union annotation was parsed
+    as a table column separator (even inside the backtick code span), so
+    `Sequence[Path | str]` split across the Type and Description columns and
+    the backticks rendered literally. Escaped pipes keep the whole type in
+    the Type cell."""
+    params = [
+        {"name": "innocuous_images", "type": "Sequence[Path | str]", "desc": "Bank of image paths."},
+        {"name": "payload_position", "type": "int | None", "desc": "Row-major index.", "default": "None"},
+        {"name": "font_size", "type": "int | tuple[int, int]", "desc": "Font size.", "default": "(8, 20)"},
+    ]
+    out = render_params(params)
+    rows = out.splitlines()[2:]
+    assert len(rows) == 3
+    for row in rows:
+        # Exactly 3 cells: 4 unescaped pipes (leading, two separators,
+        # trailing). Escaped `\|` inside the type must not count as one.
+        assert row.count("|") - row.count("\\|") == 4
+    assert "`Sequence[Path \\| str]`" in out
+    assert "`int \\| None`" in out
+    assert "`int \\| tuple[int, int]`" in out
+
+
+def test_render_params_escapes_pipes_in_descriptions() -> None:
+    params = [{"name": "mode", "type": "str", "desc": "Either A | B."}]
+    out = render_params(params)
+    assert "Either A \\| B." in out
+
+
+def test_render_params_does_not_repeat_documented_default() -> None:
+    """Regression test for #4073: descriptions that already state the default
+    ("Defaults to (2, 2)." / "When None (default), ...") got the default
+    appended a second time. The suffix is only added when the description
+    does not already document the default."""
+    params = [
+        {
+            "name": "grid_size",
+            "type": "tuple[int, int]",
+            "desc": "Grid layout as (rows, cols). Defaults to (2, 2).",
+            "default": "(2, 2)",
+        },
+        {
+            "name": "payload_position",
+            "type": "int | None",
+            "desc": "When None (default), a cell is chosen deterministically.",
+            "default": "None",
+        },
+        {"name": "random_seed", "type": "int", "desc": "Seed for selection.", "default": "42"},
+    ]
+    out = render_params(params)
+    assert "Defaults to (2, 2). Defaults to" not in out
+    assert "Defaults to `None`." not in out
+    # The undocumented default is still appended exactly once.
+    assert out.count("Defaults to") == 2  # grid_size prose + random_seed suffix
+    assert "Defaults to `42`." in out
 
 
 def test_render_module_adds_examples_to_functions_and_classes() -> None:
