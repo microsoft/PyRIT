@@ -1929,6 +1929,56 @@ async def test_get_attack_results_converter_classes_none_returns_all(sqlite_inst
     assert len(results) == 3
 
 
+async def test_legacy_identifier_layout_answers_class_and_converter_filters(
+    sqlite_instance: MemoryInterface,
+):
+    """Rows written before the nested identifier layout stay filterable.
+
+    get_attack_strategy_identifier falls back to children["attack"] for these
+    rows and analytics resolves the same fallback, so the History filters and
+    the options endpoints have to agree with the type they display.
+    """
+    legacy_identifier = {
+        "class_name": "AtomicAttack",
+        "children": {
+            "attack": {
+                "class_name": "LegacyAttack",
+                "children": {"request_converters": [{"class_name": "LegacyRequest"}]},
+            }
+        },
+    }
+    async with sqlite_instance._get_async_engine().begin() as connection:
+        await connection.execute(
+            AttackResultEntry.__table__.insert().values(
+                id=uuid.UUID(int=1),
+                conversation_id="legacy_layout",
+                objective="legacy objective",
+                outcome="success",
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                atomic_attack_identifier=legacy_identifier,
+                atomic_attack_identifier_hash=None,
+            )
+        )
+
+    stored = await sqlite_instance.get_attack_results_async()
+    assert stored[0].get_attack_strategy_identifier().class_name == "LegacyAttack"
+
+    by_class = await sqlite_instance.get_attack_results_async(attack_classes=["LegacyAttack"])
+    assert [row.conversation_id for row in by_class] == ["legacy_layout"]
+
+    by_converter = await sqlite_instance.get_attack_results_async(converter_classes=["LegacyRequest"])
+    assert [row.conversation_id for row in by_converter] == ["legacy_layout"]
+
+    with_converters = await sqlite_instance.get_attack_results_async(has_converters=True)
+    assert [row.conversation_id for row in with_converters] == ["legacy_layout"]
+
+    without_converters = await sqlite_instance.get_attack_results_async(has_converters=False)
+    assert without_converters == []
+
+    assert await sqlite_instance.get_unique_attack_class_names_async() == ["LegacyAttack"]
+    assert await sqlite_instance.get_unique_converter_class_names_async() == ["LegacyRequest"]
+
+
 async def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite_instance: MemoryInterface):
     """Test that converter_classes=[] returns only attacks with no converters (back-compat)."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
