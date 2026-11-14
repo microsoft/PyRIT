@@ -19,9 +19,10 @@ from pyrit.backend.models import (
     ProblemDetail,
     TargetListResponse,
 )
-from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
 from pyrit.backend.models.targets import (
     DetectTargetCapabilitiesRequest,
+    TargetSaveabilityRequest,
     TargetTypeResponse,
     UnregisteredTarget,
 )
@@ -48,7 +49,9 @@ NOT_SAVEABLE_PROBLEM_TYPE = "/errors/not-saveable"
     },
 )
 async def detect_capabilities_async(
-    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest
+    target_registry_name: IdentifierStr,
+    body: DetectTargetCapabilitiesRequest,
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
 ) -> TargetInstance:
     """
     Run live checks and automatically update a registered target.
@@ -58,7 +61,7 @@ async def detect_capabilities_async(
     """
     try:
         return await get_target_service().detect_capabilities_async(
-            target_registry_name=target_registry_name, expected_hash=body.expected_hash
+            target_registry_name=target_registry_name, expected_hash=body.expected_hash, current_user_oid=user_oid
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -144,6 +147,40 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
     """
     service = get_target_service()
     return await service.list_target_types_async(upload_directory=_target_upload_directory(request))
+
+
+@router.post(
+    "/saveability",
+    response_model=SaveabilityResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid target type or parameters"},
+        403: {
+            "model": ProblemDetail,
+            "description": "Administrator access is required to create this target",
+        },
+    },
+)
+async def check_target_saveability(  # pyrit-async-suffix-exempt
+    *,
+    body: TargetSaveabilityRequest,
+    request: Request,
+) -> SaveabilityResponse:
+    """
+    Say whether a target could be saved as asked, using the checks saving it runs, without building or saving it.
+
+    Returns:
+        SaveabilityResponse: Why the target can't be saved, or no reason when it can.
+    """
+    try:
+        return await get_target_service().check_saveability_async(
+            request=body,
+            upload_directory=_target_upload_directory(request),
+            is_admin=has_admin_access(request),
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
 @router.post(

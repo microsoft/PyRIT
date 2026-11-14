@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.models.targets import TargetSaveabilityRequest
 from pyrit.backend.services import TargetService, get_target_service
 from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models import ComponentIdentifier
@@ -903,12 +904,15 @@ class TestCreateTargetServerCredential:
     """Admin gate for targets that would authenticate with the server's own stored credentials."""
 
     @staticmethod
-    def _request(params: dict[str, object] | None = None, *, auth_mode: str = "api_key") -> CreateTargetRequest:
+    def _request(
+        params: dict[str, object] | None = None, *, auth_mode: str = "api_key", persist: bool = False
+    ) -> CreateTargetRequest:
         return CreateTargetRequest(
             name="blob",
             type="AzureBlobStorageTarget",
             params={"container_url": "https://test.blob.core.windows.net/test", **(params or {})},
             auth_mode=auth_mode,  # type: ignore[arg-type]
+            persist=persist,
         )
 
     @pytest.mark.parametrize("value", ["sas-token", "   leading-space"])
@@ -943,17 +947,25 @@ class TestCreateTargetServerCredential:
             target_type="OpenAIChatTarget", params={"endpoint": "https://example.test"}, is_admin=False
         )
 
-    async def test_create_target_identity_mode_requires_admin_before_construction(self) -> None:
+    @pytest.mark.parametrize("persist", [False, True])
+    async def test_create_target_identity_mode_requires_admin_before_construction(
+        self, persist: bool, tmp_path: Path
+    ) -> None:
         service = TargetService()
 
         with (
             patch.object(service._registry, "create_instance_async") as create_instance,
             pytest.raises(PermissionError, match="requires administrator access"),
         ):
-            await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=False)
+            await service.create_target_async(
+                request=self._request(auth_mode="identity", persist=persist),
+                is_admin=False,
+                recipes_source=str(tmp_path),
+            )
 
         create_instance.assert_not_called()
         assert service.get_target_object(target_registry_name="blob") is None
+        assert not (tmp_path / "targets").exists()
 
     async def test_create_target_identity_mode_with_caller_sas_requires_admin(self) -> None:
         """Identity mode drops the caller SAS, so it still authenticates with the server's credentials."""
@@ -2103,3 +2115,44 @@ class TestSaveTarget:
             "local_llm": (None, False),
             "temporary_one": (None, False),
         }
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+class TestCheckSaveability:
+    async def test_answers_as_saving_would_without_building_anything(self) -> None:
+        service = TargetService()
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            await service.create_target_async(request=_save_request(name="startup_one", persist=False))
+        await service.create_target_async(request=_save_request(name="launch_member", persist=False))
+        keyed = {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "api_key": "sk-typed-secret"}
+
+        with patch.object(service._registry, "create_instance_async") as create_instance:
+            pool = await service.check_saveability_async(
+                request=TargetSaveabilityRequest(
+                    type="RoundRobinTarget", params={"targets": ["startup_one", "launch_member"]}
+                )
+            )
+            with_key = await service.check_saveability_async(
+                request=TargetSaveabilityRequest(type="OpenAIChatTarget", params=keyed)
+            )
+            with_identity = await service.check_saveability_async(
+                request=TargetSaveabilityRequest(type="OpenAIChatTarget", params=keyed, auth_mode="identity")
+            )
+
+        create_instance.assert_not_called()
+        assert pool.not_saveable_reason == (
+            "Uses temporary target 'launch_member', which won't exist after a restart. "
+            "It can still be created without saving it."
+        )
+        assert with_key.not_saveable_reason == (
+            "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
+        )
+        assert with_identity.not_saveable_reason is None
+
+    async def test_refuses_a_request_that_creating_would_refuse(self) -> None:
+        with pytest.raises(ValueError, match="explicit connection fields: model_name"):
+            await TargetService().check_saveability_async(
+                request=TargetSaveabilityRequest(
+                    type="OpenAIChatTarget", params={"endpoint": _AZURE_ENDPOINT}, auth_mode="identity"
+                )
+            )
