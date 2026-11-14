@@ -737,7 +737,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                             p2.converted_value_data_type AS last_data_type
                         FROM "PromptMemoryEntries" p2
                         WHERE p2.conversation_id = aggregate_rows.conversation_id
-                        ORDER BY p2.sequence DESC, p2.id DESC
+                        ORDER BY
+                            p2.sequence DESC,
+                            p2.timestamp DESC,
+                            LOWER(CAST(p2.id AS VARCHAR(36))) COLLATE Latin1_General_100_BIN2 DESC
                     ) AS latest
                     """
                 ).columns(created_at=UTCDateTime())
