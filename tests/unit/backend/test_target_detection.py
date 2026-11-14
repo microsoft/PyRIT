@@ -43,10 +43,12 @@ from pyrit.models import (
     Message,
     TargetCapabilities,
 )
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget, RoundRobinTarget, TargetConfiguration
 from pyrit.prompt_target.common.discover_target_capabilities import DEFAULT_TEST_ASSETS, CapabilityDiscoveryError
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.backend.mocks import _settle_send_async
 from unit.mocks import MockPromptTarget
@@ -398,6 +400,31 @@ async def test_detection_applies_private_result_and_releases_probe(
     rebuilt = service._registry.recreate_instance(source=target, params={})
     assert rebuilt.capabilities == detected
     await rebuilt.cleanup_target_async()
+
+
+async def test_detection_returns_the_origin_of_the_registered_target(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, first = detection_service
+    ada = SavedEntryOwner(oid="00000000-0000-0000-0000-00000000000a", name="Ada")
+    pool = RoundRobinTarget(targets=[first, _DetectableTarget()])
+    service._registry.instances.register(
+        pool,
+        name="saved_pool",
+        metadata={SAVED_ENTRY_METADATA_KEY: "targets", SAVED_ENTRY_OWNER_METADATA_KEY: ada},
+    )
+
+    with patch(
+        "pyrit.backend.services.target_service.discover_target_capabilities_async",
+        AsyncMock(return_value=first.capabilities),
+    ):
+        result = await service.detect_capabilities_async(
+            target_registry_name="saved_pool", expected_hash=pool.get_identifier().hash, current_user_oid=ada.oid
+        )
+
+    assert result.origin is RegistryEntryOrigin.SAVED
+    assert (result.saved_by, result.saved_by_me) == ("Ada", True)
+    assert [inner.origin for inner in result.inner_targets or []] == [None, None]
 
 
 async def test_detection_preserves_declarations_without_verified_adapter_probes(

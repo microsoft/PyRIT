@@ -2654,10 +2654,9 @@ class TestPersistConverter:
             )
 
         assert upload_service._registry.instances.get("base64_converter") is None
-        message = log.error.call_args.args[0] % log.error.call_args.args[1:]
-        assert message == (
+        assert log.error.call_args.args[0].startswith(
             f"Saved converter 'base64_converter' couldn't be written to {tmp_path / 'converters'} "
-            f"({reason}). If the write reached storage anyway, the converter is restored at the next start."
+            f"({reason}). If the write reached storage anyway, the converter is restored at the next start.\n"
         )
 
     @pytest.mark.parametrize(
