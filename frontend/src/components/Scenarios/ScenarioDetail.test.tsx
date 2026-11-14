@@ -317,6 +317,56 @@ describe('ScenarioDetail', () => {
     expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
   })
 
+  it('uses default ASSERT scoring without a scorer picker or judge settings', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'foundry.assert_policy',
+      supports_objective_scorer: true,
+      supported_parameters: [
+        { name: 'max_turns', description: 'Turns.', type_name: 'int', choices: null, default: 6, required: false },
+        { name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: 1, required: false },
+      ],
+    }))
+    renderDetail('/scanner/launch/foundry.assert_policy', { scorers: [{
+      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
+    }] })
+    expect(await screen.findByRole('spinbutton', { name: /max_turns/i })).toBeInTheDocument()
+    expect(screen.queryByRole('spinbutton', { name: /judge_samples/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+    const dialog = await openRunPreview(user)
+    expect(within(dialog).queryByText('Objective scorer')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('objective_scorer')
+    expect(mockStartRun.mock.calls[0][0].scenario_params).not.toHaveProperty('judge_samples')
+  })
+
+  it.each(['preset', 'saved run'] as const)(
+    'rejects a %s whose ASSERT scoring target is not the default instead of launching it',
+    async (seed) => {
+      const user = userEvent.setup()
+      const scenarioParams = { scoring_target: 'registered-judge' }
+      mockGetScenario.mockResolvedValue(makeScenario({ scenario_name: 'foundry.assert_policy' }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        scenario_name: 'foundry.assert_policy', scenario_params: scenarioParams,
+      }))
+      renderDetail(
+        '/scanner/launch/foundry.assert_policy' + (seed === 'preset' ? '?preset=spanish_probe' : ''),
+        seed === 'saved run' ? {
+          initialRun: { scenario_name: 'foundry.assert_policy', target_name: 'target-a', scenario_params: scenarioParams },
+        } : {},
+      )
+      await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('has custom judge settings. Use the SDK to preserve them')
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      expect(mockEstimateRun).not.toHaveBeenCalledWith(
+        'foundry.assert_policy', expect.objectContaining({ scenario_params: scenarioParams }), expect.anything(),
+      )
+    },
+  )
+
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
@@ -1221,11 +1271,12 @@ describe('ScenarioDetail', () => {
     await user.click(launch)
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
+    const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(cancel).toHaveFocus())
     await user.tab()
-    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => expect(confirmLaunch).toHaveFocus())
     await user.tab({ shift: true })
-    expect(cancel).toHaveFocus()
+    await waitFor(() => expect(cancel).toHaveFocus())
     await user.keyboard(' ')
     expect(await screen.findByRole('checkbox', { name: 'default_technique', exact: true })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
@@ -1234,7 +1285,9 @@ describe('ScenarioDetail', () => {
     const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
     await user.tab()
-    expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => {
+      expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    })
     await user.keyboard(' ')
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
       techniques: ['default_technique'], include_baseline: false,
@@ -1921,6 +1974,23 @@ describe('ScenarioDetail', () => {
       .toHaveTextContent('Baseline identity is available after launch.')
     expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).toBeChecked()
     expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('reveals a recorded technique identity with the shared identity JSON', async () => {
+    const user = userEvent.setup()
+    const identifier = { class_name: 'CrescendoAttack', class_module: 'pyrit.executor.attack', hash: 'crescendo-hash' }
+    mockGetScenario.mockResolvedValue(makeScenario({ technique_summaries: [
+      { name: 'default_technique', description: null, tags: ['default'] },
+      { name: 'crescendo', description: null, tags: ['multi_turn'], identifier },
+    ] }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for crescendo' }))
+
+    const region = screen.getByRole('region', { name: 'Identity for crescendo' })
+    expect(JSON.parse(region.textContent ?? '')).toEqual(identifier)
+    expect(region.scrollIntoView).toHaveBeenCalled()
   })
 
   it('includes the baseline when a shared tag selects or clears its members', async () => {
