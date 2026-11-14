@@ -6,7 +6,7 @@ import { DismissRegular } from '@fluentui/react-icons'
 import EditorWorkspace from '@/components/EditorWorkspace'
 import { useConfigurationStyles } from '@/components/Configuration/Configuration.styles'
 
-function Fixture() {
+export default function Fixture() {
   const styles = useConfigurationStyles()
   const [selected, setSelected] = useState('first')
   return (
