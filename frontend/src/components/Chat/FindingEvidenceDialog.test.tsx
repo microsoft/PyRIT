@@ -311,7 +311,7 @@ it('shows caller-owned attack validation errors and permits retry without an evi
   await openCreation(user)
   await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Retain assessment')
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
-  expect(await screen.findByText('attack_result_id: Attack is unavailable')).toBeInTheDocument()
+  expect(await screen.findByText('body.attack_result_id: Attack is unavailable')).toBeInTheDocument()
   expect(screen.queryByRole('textbox', { name: 'Evidence attack ID' })).not.toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Retain assessment')
   expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()

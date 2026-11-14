@@ -22,6 +22,26 @@ available to assistive technology while the help is closed. Required markers,
 validation errors, input-format guidance, and unavailable-estimate reasons
 stay visible.
 
+## API validation errors
+
+The backend returns RFC 7807 problem details for 422 responses, including an
+`errors[]` array with a field path, a message and an optional code.
+`toApiError` in `src/services/errors.ts` preserves those entries as
+`fieldErrors` instead of reducing the response to its generic `detail`.
+`apiFieldLeaf` strips transport prefixes and array indices so
+`body.attack_result_id` maps to `attack_result_id` and
+`body.pieces[0].data_type` maps to `data_type`; `groupApiFieldErrors` then
+matches them against the fields a form currently renders.
+
+Forms such as `FindingDialog` show mapped messages as Fluent `Field` validation
+feedback, mark the control invalid, move focus to the first invalid control,
+and guard resubmission until the submitted value changes. Whitespace-only edits
+to Evidence attack ID and searching or reselecting the same harm category do not
+clear validation feedback or re-enable Save. Errors for hidden or unknown
+fields appear in the error summary with their original field path, so no server
+explanation is lost or used to block Save behind an invisible message.
+Non-validation failures keep the existing generic message and remain retryable.
+
 ## GUI targets
 
 `TextTarget` is an SDK demonstration and manual-workflow target that writes to

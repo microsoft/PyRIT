@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button, Combobox, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
@@ -6,11 +6,12 @@ import {
 } from '@fluentui/react-components'
 
 import { operationsApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { toApiError, type FieldError } from '@/services/errors'
 import type { FindingCreate, FindingSeverity } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { FINDING_SEVERITY_LABELS } from '@/utils/findingSeverity'
 
+import { FINDING_FIELD_LABELS, findingFieldErrors, type FindingFormField } from './findingValidation'
 import { useFindingDialogStyles } from './FindingDialog.styles'
 
 const EMPTY_DRAFT: FindingCreate = {
@@ -42,8 +43,11 @@ export default function FindingDialog({
   const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
-  const [attackResultIdError, setAttackResultIdError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FindingFormField, string>>>({})
+  const [unmatchedErrors, setUnmatchedErrors] = useState<FieldError[]>([])
   const [saving, setSaving] = useState(false)
+  const form = useRef<HTMLFormElement>(null)
+  const focusInvalidOnNextRender = useRef(false)
   const submitting = useRef(false)
   const attempt = useRef<{ signature: string; id: string } | null>(null)
   const [harmTypes, setHarmTypes] = useState<string[] | null>(null)
@@ -51,10 +55,37 @@ export default function FindingDialog({
   const [optionsRevision, setOptionsRevision] = useState(0)
   const [harmOpen, setHarmOpen] = useState(false)
   const [harmSearch, setHarmSearch] = useState('')
+  // Only fields that are actually rendered can carry inline validation feedback.
+  const visibleFields = useMemo<FindingFormField[]>(() => {
+    const fields: FindingFormField[] = ['title', 'description', 'severity', 'harm_type']
+    if (draft.severity === 'other') fields.push('severity_other')
+    if (draft.harm_type === 'Other') fields.push('harm_type_other')
+    if (evidenceField) fields.push('attack_result_id')
+    return fields
+  }, [draft.severity, draft.harm_type, evidenceField])
+  // A conditional field can disappear after the server flagged it (e.g. the
+  // user switches away from a custom severity). Derive the errors that map to
+  // currently rendered controls so a hidden error never blocks Save invisibly.
+  const activeFieldErrors = useMemo<Partial<Record<FindingFormField, string>>>(() => {
+    const visible = new Set<string>(visibleFields)
+    return Object.fromEntries(Object.entries(fieldErrors).filter(([field]) => visible.has(field)))
+  }, [fieldErrors, visibleFields])
+  const invalidFields = (Object.keys(activeFieldErrors) as FindingFormField[])
+    .map(field => FINDING_FIELD_LABELS[field])
   const classificationsValid = (draft.severity !== 'other' || Boolean(draft.severity_other?.trim()))
     && (draft.harm_type !== 'Other' || Boolean(draft.harm_type_other?.trim()))
-  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
-    && !optionsError
+  const canSave = !saveDisabled && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
+    && !optionsError && invalidFields.length === 0
+
+  /** Editing a field clears only its own error, so other invalid fields stay flagged. */
+  const clearFieldError = (field: FindingFormField): void => {
+    setFieldErrors(current => {
+      if (!current[field]) return current
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
 
   useEffect(() => {
     let ignore = false
@@ -77,12 +108,25 @@ export default function FindingDialog({
     return () => { window.removeEventListener('beforeunload', protectDraft) }
   }, [draft, initialDraft, attackResultId])
 
+  useEffect(() => {
+    // Disabling Save after a failed submit would otherwise drop focus on BODY.
+    // Move focus once for that failure only; re-running on every edit would
+    // steal focus from a user who is correcting another field.
+    if (!focusInvalidOnNextRender.current) return
+    focusInvalidOnNextRender.current = false
+    const firstInvalid = (Object.keys(activeFieldErrors) as FindingFormField[])[0]
+    if (!firstInvalid) return
+    form.current?.querySelector<HTMLElement>(`[name="${firstInvalid}"]`)?.focus()
+  }, [activeFieldErrors])
+
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return
     submitting.current = true
     setSaving(true)
     setError('')
-    setAttackResultIdError('')
+    setFieldErrors({})
+    setUnmatchedErrors([])
+    focusInvalidOnNextRender.current = false
     const trimmedAttackResultId = attackResultId.trim()
     const signature = JSON.stringify([draft, trimmedAttackResultId])
     if (attempt.current?.signature !== signature) attempt.current = { signature, id: generateClientId() }
@@ -90,14 +134,11 @@ export default function FindingDialog({
       await onSave(draft, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
       const apiError = toApiError(cause)
-      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
-        .map(item => item.message)
-      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
-        .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
-      setAttackResultIdError(evidenceMessages.join(' '))
-      if (evidenceMessages.length === 0 || otherMessages.length > 0) {
-        setError([otherMessages.length > 0 ? '' : apiError.detail, ...otherMessages].filter(Boolean).join(' '))
-      }
+      const grouped = findingFieldErrors(apiError, visibleFields)
+      setFieldErrors(grouped.fields)
+      setUnmatchedErrors(grouped.unmatched)
+      setError(apiError.detail)
+      focusInvalidOnNextRender.current = Object.keys(grouped.fields).length > 0
     } finally {
       submitting.current = false
       setSaving(false)
@@ -109,26 +150,44 @@ export default function FindingDialog({
       <DialogSurface><DialogBody>
         <DialogTitle>{editing ? 'Edit finding' : 'New finding'}</DialogTitle>
         <DialogContent>
-          <form className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
+          <form ref={form} className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
             {context ?? <Text>Record a human assessment. No attack is required.</Text>}
-            {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
-            <Field label="Title" required>
+            {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>
+              {error}
+              {invalidFields.length > 0 && ` Check ${invalidFields.join(', ')}.`}
+              {unmatchedErrors.length > 0 && <ul className={styles.fieldErrorList}>
+                {unmatchedErrors.map(item => <li key={`${item.field}:${item.message}`}>
+                  {item.field}: {item.message}
+                </li>)}
+              </ul>}
+            </MessageBarBody></MessageBar>}
+            <Field label="Title" required validationState={activeFieldErrors.title ? 'error' : 'none'}
+              validationMessage={activeFieldErrors.title}>
               <Input value={draft.title} disabled={saving} name="title" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, title: data.value })) }} />
+                aria-invalid={Boolean(activeFieldErrors.title)}
+                onChange={(_, data) => { clearFieldError('title'); setDraft(value => ({ ...value, title: data.value })) }} />
             </Field>
-            <Field label="Severity" required>
-              <Select value={draft.severity} disabled={saving} name="severity" onChange={event => {
-                const severity = event.target.value
-                if (severity in FINDING_SEVERITY_LABELS) setDraft(value => ({
-                  ...value, severity: severity as FindingSeverity, severity_other: severity === 'other' ? '' : null,
-                }))
-              }}>
+            <Field label="Severity" required validationState={activeFieldErrors.severity ? 'error' : 'none'}
+              validationMessage={activeFieldErrors.severity}>
+              <Select value={draft.severity} disabled={saving} name="severity" aria-invalid={Boolean(activeFieldErrors.severity)}
+                onChange={event => {
+                  clearFieldError('severity')
+                  const severity = event.target.value
+                  if (severity in FINDING_SEVERITY_LABELS) setDraft(value => ({
+                    ...value, severity: severity as FindingSeverity, severity_other: severity === 'other' ? '' : null,
+                  }))
+                }}>
                 {Object.entries(FINDING_SEVERITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </Select>
             </Field>
-            {draft.severity === 'other' && <Field label="Other severity" required>
+            {draft.severity === 'other' && <Field label="Other severity" required
+              validationState={activeFieldErrors.severity_other ? 'error' : 'none'} validationMessage={activeFieldErrors.severity_other}>
               <Input value={draft.severity_other ?? ''} disabled={saving} name="severity_other" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, severity_other: data.value })) }} />
+                aria-invalid={Boolean(activeFieldErrors.severity_other)}
+                onChange={(_, data) => {
+                  clearFieldError('severity_other')
+                  setDraft(value => ({ ...value, severity_other: data.value }))
+                }} />
             </Field>}
             {optionsError && <MessageBar intent="error" aria-live="polite"><MessageBarBody>
               Could not load harm categories: {optionsError}{' '}
@@ -139,9 +198,11 @@ export default function FindingDialog({
               }}>Retry</Button>
             </MessageBarBody></MessageBar>}
             <Field label="Harm-type" hint={harmTypes === null && !optionsError
-              ? 'Loading harm categories…' : 'Optional. Select a category, or choose Other for custom text.'}>
-              <Combobox className={styles.harmPicker} inlinePopup open={harmOpen}
+              ? 'Loading harm categories…' : 'Optional. Select a category, or choose Other for custom text.'}
+              validationState={activeFieldErrors.harm_type ? 'error' : 'none'} validationMessage={activeFieldErrors.harm_type}>
+              <Combobox className={styles.harmPicker} inlinePopup open={harmOpen} name="harm_type"
                 disabled={saving || harmTypes === null || Boolean(optionsError)}
+                aria-invalid={Boolean(activeFieldErrors.harm_type)}
                 placeholder="Not set" value={harmOpen ? harmSearch : draft.harm_type ?? ''}
                 selectedOptions={[draft.harm_type ?? '']}
                 onOpenChange={(_, data) => { setHarmOpen(data.open); setHarmSearch('') }}
@@ -149,6 +210,7 @@ export default function FindingDialog({
                 onOptionSelect={(_, data) => {
                   const harmType = data.optionValue
                   if (harmType !== '' && !harmTypes?.includes(harmType ?? '')) return
+                  if ((harmType || null) !== draft.harm_type) clearFieldError('harm_type')
                   setDraft(value => ({
                     ...value, harm_type: harmType || null,
                     harm_type_other: harmType === 'Other' ? (value.harm_type === 'Other' ? value.harm_type_other : '') : null,
@@ -165,19 +227,35 @@ export default function FindingDialog({
                   && <Option disabled>No matching categories. Choose Other to enter custom text.</Option>}
               </Combobox>
             </Field>
-            {draft.harm_type === 'Other' && <Field label="Other harm-type" required>
+            {draft.harm_type === 'Other' && <Field label="Other harm-type" required
+              validationState={activeFieldErrors.harm_type_other ? 'error' : 'none'}
+              validationMessage={activeFieldErrors.harm_type_other}>
               <Input value={draft.harm_type_other ?? ''} disabled={saving} name="harm_type_other" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, harm_type_other: data.value })) }} />
+                aria-invalid={Boolean(activeFieldErrors.harm_type_other)}
+                onChange={(_, data) => {
+                  clearFieldError('harm_type_other')
+                  setDraft(value => ({ ...value, harm_type_other: data.value }))
+                }} />
             </Field>}
-            <Field label="Description" hint="Optional">
+            <Field label="Description" hint="Optional" validationState={activeFieldErrors.description ? 'error' : 'none'}
+              validationMessage={activeFieldErrors.description}>
               <Textarea value={draft.description} disabled={saving} resize="vertical" name="description" autoComplete="off"
-                onChange={(_, data) => { setDraft(value => ({ ...value, description: data.value })) }} />
+                aria-invalid={Boolean(activeFieldErrors.description)}
+                onChange={(_, data) => {
+                  clearFieldError('description')
+                  setDraft(value => ({ ...value, description: data.value }))
+                }} />
             </Field>
             {evidenceField && <Field label="Evidence attack ID"
-              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
-              hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
+              hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address."
+              validationState={activeFieldErrors.attack_result_id ? 'error' : 'none'}
+              validationMessage={activeFieldErrors.attack_result_id}>
               <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
-                onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />
+                aria-invalid={Boolean(activeFieldErrors.attack_result_id)}
+                onChange={(_, data) => {
+                  if (data.value.trim() !== attackResultId.trim()) clearFieldError('attack_result_id')
+                  setAttackResultId(data.value)
+                }} />
             </Field>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>

@@ -9,6 +9,32 @@ jest.mock('@/services/api', () => ({ operationsApi: { getFindingOptions: jest.fn
 
 const ATTEMPT = { id: expect.any(String), attackResultId: '' }
 
+const UUID_MESSAGE = 'Input should be a valid UUID, unable to parse string as an UUID'
+
+/** Mirrors the backend's RFC 7807 422 response (see error_handlers.py). */
+function validationError(errors: Array<{ field: string; message: string; code?: string }>): unknown {
+  return {
+    isAxiosError: true,
+    message: 'Request failed with status code 422',
+    response: {
+      status: 422,
+      data: {
+        type: '/errors/validation-error', title: 'Validation Error', status: 422,
+        detail: 'Request validation failed', errors,
+      },
+      headers: {}, config: {},
+    },
+  }
+}
+
+function axiosFailure(status: number, detail: string): unknown {
+  return {
+    isAxiosError: true,
+    message: `Request failed with status code ${status}`,
+    response: { status, data: { detail }, headers: {}, config: {} },
+  }
+}
+
 function requestPageUnload(): Event {
   const event = new Event('beforeunload', { cancelable: true })
   fireEvent(window, event)
@@ -326,14 +352,229 @@ describe('FindingDialog', () => {
     const save = screen.getByRole('button', { name: 'Save finding' })
     await waitFor(() => expect(save).toBeEnabled())
     await user.click(save)
-    const feedback = await screen.findByText(/title: Title is invalid/)
+    expect(await screen.findByText('Title is invalid')).toBeInTheDocument()
+    const title = screen.getByRole('textbox', { name: 'Title' })
+    expect(title).toHaveAttribute('aria-invalid', 'true')
+    expect(save).toBeDisabled()
     if (evidenceField) {
-      expect(feedback).not.toHaveTextContent('attack_result_id')
+      expect(screen.getByText('Attack is unavailable')).toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
-      expect(save).toBeDisabled()
     } else {
-      expect(feedback).toHaveTextContent('attack_result_id: Attack is unavailable')
-      expect(save).toBeEnabled()
+      expect(screen.getByText('body.attack_result_id: Attack is unavailable')).toBeInTheDocument()
     }
+
+    await user.type(title, ' corrected')
+    expect(screen.queryByText('Title is invalid')).not.toBeInTheDocument()
+    if (evidenceField) {
+      expect(save).toBeDisabled()
+      await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'corrected-id')
+    }
+    expect(save).toBeEnabled()
+  })
+})
+
+describe('FindingDialog server field validation', () => {
+  it('keeps harm errors while searching, dismissing, or reselecting the rejected category', async () => {
+    const user = userEvent.setup()
+    const message = 'Category is not allowed'
+    const onSave = jest.fn().mockRejectedValueOnce(validationError([
+      { field: 'body.harm_type', message },
+    ])).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog
+      initialValues={{ title: 'Existing', severity: 'low', harm_type: 'Malware' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const picker = screen.getByRole('combobox', { name: 'Harm-type' })
+    const saveButton = screen.getByRole('button', { name: 'Save finding' })
+    await waitFor(() => expect(saveButton).toBeEnabled())
+    await user.click(saveButton)
+    expect(await screen.findByText(message)).toBeInTheDocument()
+
+    await user.type(picker, 'mal')
+    expect(picker).toHaveAttribute('aria-invalid', 'true')
+    expect(saveButton).toBeDisabled()
+    await user.keyboard('{Escape}')
+    expect(picker).toHaveValue('Malware')
+    fireEvent.submit(saveButton.closest('form')!)
+    expect(onSave).toHaveBeenCalledTimes(1)
+
+    await user.click(picker)
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Malware', exact: true }))
+    expect(screen.getByText(message)).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+    fireEvent.submit(saveButton.closest('form')!)
+    expect(onSave).toHaveBeenCalledTimes(1)
+
+    await user.click(picker)
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Hate Speech', exact: true }))
+    expect(screen.queryByText(message)).not.toBeInTheDocument()
+    expect(saveButton).toBeEnabled()
+    await user.click(saveButton)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ harm_type: 'Hate Speech' }), ATTEMPT)
+  })
+
+  it('keeps evidence errors for whitespace-only edits and allows a changed trimmed ID', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValueOnce(validationError([
+      { field: 'body.attack_result_id', message: UUID_MESSAGE },
+    ])).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField
+      initialValues={{ title: 'Existing', severity: 'low' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const evidence = screen.getByRole('textbox', { name: 'Evidence attack ID' })
+    const saveButton = screen.getByRole('button', { name: 'Save finding' })
+    await user.type(evidence, 'not-a-uuid')
+    await user.click(saveButton)
+    expect(await screen.findByText(UUID_MESSAGE)).toBeInTheDocument()
+
+    for (const value of ['not-a-uuid ', '  not-a-uuid ', 'not-a-uuid']) {
+      fireEvent.change(evidence, { target: { value } })
+      expect(evidence).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(UUID_MESSAGE)).toBeInTheDocument()
+      expect(saveButton).toBeDisabled()
+      fireEvent.submit(saveButton.closest('form')!)
+      expect(onSave).toHaveBeenCalledTimes(1)
+    }
+
+    const corrected = '123e4567-e89b-12d3-a456-426614174000'
+    fireEvent.change(evidence, { target: { value: `  ${corrected}  ` } })
+    expect(screen.queryByText(UUID_MESSAGE)).not.toBeInTheDocument()
+    expect(saveButton).toBeEnabled()
+    await user.click(saveButton)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave).toHaveBeenLastCalledWith(expect.any(Object), { id: expect.any(String), attackResultId: corrected })
+  })
+
+  it('shows the server explanation on the invalid control and guards resubmission until corrected', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn()
+      .mockRejectedValueOnce(validationError([
+        { field: 'body.attack_result_id', message: UUID_MESSAGE, code: 'uuid_parsing' },
+      ]))
+      .mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Human assessment')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'not-a-uuid')
+
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    const evidence = screen.getByRole('textbox', { name: 'Evidence attack ID' })
+    expect(await screen.findByText(UUID_MESSAGE)).toBeInTheDocument()
+    expect(evidence).toHaveAttribute('aria-invalid', 'true')
+    expect(evidence).toHaveFocus()
+    expect(screen.getByText(/Check Evidence attack ID/)).toBeInTheDocument()
+    const saveButton = screen.getByRole('button', { name: 'Save finding' })
+    expect(saveButton).toBeDisabled()
+    fireEvent.submit(saveButton.closest('form')!)
+    expect(onSave).toHaveBeenCalledTimes(1)
+
+    await user.clear(evidence)
+    await user.type(evidence, '123e4567-e89b-12d3-a456-426614174000')
+    expect(screen.queryByText(UUID_MESSAGE)).not.toBeInTheDocument()
+    expect(evidence).not.toHaveAttribute('aria-invalid', 'true')
+    expect(saveButton).toBeEnabled()
+    await user.click(saveButton)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+  })
+
+  it('flags several fields and clears each error only when its own value changes', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(validationError([
+      { field: 'body.title', message: 'Title is already used' },
+      { field: 'body.description', message: 'Description is not allowed' },
+    ]))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'low', description: 'Details' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText('Title is already used')).toBeInTheDocument()
+    expect(screen.getByText('Description is not allowed')).toBeInTheDocument()
+    expect(screen.getByText(/Check Title, Description/)).toBeInTheDocument()
+    const title = screen.getByRole('textbox', { name: 'Title' })
+    const description = screen.getByRole('textbox', { name: 'Description' })
+    expect(title).toHaveAttribute('aria-invalid', 'true')
+    expect(description).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.type(title, ' revised')
+    expect(title).not.toHaveAttribute('aria-invalid', 'true')
+    expect(description).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.type(description, ' revised')
+    expect(description).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()
+  })
+
+  it('lists errors for fields the form does not render with their API paths', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(validationError([
+      { field: 'body.attack_result_id', message: UUID_MESSAGE },
+      { field: 'body.severity_other', message: 'Required for custom severity' },
+    ]))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Human assessment')
+
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(`body.attack_result_id: ${UUID_MESSAGE}`)).toBeInTheDocument()
+    expect(screen.getByText('body.severity_other: Required for custom severity')).toBeInTheDocument()
+    expect(screen.queryByText(/Check /)).not.toBeInTheDocument()
+    // Nothing editable was flagged, so the user can retry rather than being trapped.
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()
+  })
+
+  it('drops a flagged conditional field error when that field stops rendering', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(validationError([
+      { field: 'body.severity_other', message: 'Custom severity is not allowed' },
+    ]))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'other', severity_other: 'Team severity' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(await screen.findByText('Custom severity is not allowed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'low')
+    expect(screen.queryByRole('textbox', { name: 'Other severity' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Custom severity is not allowed')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()
+  })
+
+  it('keeps the generic message and retry path for a 422 without field errors', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValueOnce(axiosFailure(422, 'Request validation failed'))
+      .mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Human assessment')
+
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(await screen.findByText('Request validation failed')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Title' })).not.toHaveAttribute('aria-invalid', 'true')
+    const saveButton = screen.getByRole('button', { name: 'Save finding' })
+    expect(saveButton).toBeEnabled()
+    await user.click(saveButton)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+  })
+
+  it('leaves non-validation failures retryable and unflagged', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValueOnce(axiosFailure(500, 'Storage offline'))
+      .mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Human assessment')
+
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(await screen.findByText('Storage offline')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Title' })).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()
   })
 })
