@@ -362,8 +362,8 @@ export default function ChatWindow({
   }, [noticeId])
   const [editorError, setEditorError] = useState<string | null>(null)
   const [acceptedSendCheck, setAcceptedSendCheck] = useState<
-    { key: string; converterPipelineSignature: string; status: MessageSendStatus }
-    | { key: string; converterPipelineSignature: string; error: unknown }
+    { key: string; converterPipelineSignature: string; generationDraftSignature: string; status: MessageSendStatus }
+    | { key: string; converterPipelineSignature: string; generationDraftSignature: string; error: unknown }
     | null
   >(null)
   const [importSystemConflict, setImportSystemConflict] = useState<string | null>(null)
@@ -841,9 +841,11 @@ export default function ChatWindow({
       const acceptedSendId = preserved.draft.acceptedSendId
       let acceptedSendStatus: MessageSendStatus | undefined
       let preserveCurrentConverters = false
+      let preserveCurrentGenerationDraft = false
       if (canContainAcceptedSend && acceptedSendId && draftAttackId && draftConversationId) {
         const checkKey = JSON.stringify([preserved.sequence, draftAttackId, draftConversationId, acceptedSendId])
         const converterPipelineSignature = stableMetadataString(converters.snapshot().pipelines)
+        const generationDraftSignature = stableMetadataString(generationDraft)
         const check = acceptedSendCheck?.key === checkKey ? acceptedSendCheck : undefined
         if (!check) {
           if (acceptedSendCheckRef.current !== checkKey) {
@@ -852,17 +854,18 @@ export default function ChatWindow({
               if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
                 || currentAttackIdRef.current !== draftAttackId
                 || currentConversationIdRef.current !== draftConversationId) return
-              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, status })
+              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, generationDraftSignature, status })
             }).catch((error: unknown) => {
               if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
                 || currentAttackIdRef.current !== draftAttackId
                 || currentConversationIdRef.current !== draftConversationId) return
-              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, error })
+              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, generationDraftSignature, error })
             })
           }
           return
         }
         preserveCurrentConverters = check.converterPipelineSignature !== converterPipelineSignature
+        preserveCurrentGenerationDraft = check.generationDraftSignature !== generationDraftSignature
         if ('error' in check) {
           setEditorNotice(`${toApiError(check.error).detail || 'Could not verify send status.'} The preserved draft was kept.`)
         } else {
@@ -904,11 +907,13 @@ export default function ChatWindow({
           converters: converterSnapshot && {
             ...converterSnapshot, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
           },
+          ...(preserveCurrentGenerationDraft ? { generationDraft } : {}),
           systemPrompt: consumed.systemPrompt ?? '',
         }
         : {
           ...consumed,
           ...(converterSnapshot ? { converters: converterSnapshot } : {}),
+          ...(preserveCurrentGenerationDraft ? { generationDraft } : {}),
           systemPrompt: consumed.systemPrompt ?? '',
         }
       if (consumed.conversation) {
@@ -1140,7 +1145,7 @@ export default function ChatWindow({
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
     activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets, importSystemChoice,
     getLoadedBackendMessages, rememberBackendMessages,
-    acceptedSendCheck,
+    acceptedSendCheck, generationDraft,
   ])
 
   // Handle conversation selection from the panel
