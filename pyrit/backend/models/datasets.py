@@ -20,6 +20,21 @@ from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
 
 
+class DatasetProviderInfo(BaseModel):
+    """Facts and coarse estimates for the built-in provider's default configuration."""
+
+    description: str | None = None
+    source_url: str | None = None
+    license_url: str | None = None
+    access_url: str | None = None
+    required_environment_variables: list[str] = Field(default_factory=list)
+    modalities: list[str] = Field(default_factory=list)
+    harm_categories: list[str] = Field(default_factory=list)
+    size: list[str] = Field(default_factory=list)
+    load_time: list[str] = Field(default_factory=list)
+    unavailable_reason: str | None = None
+
+
 class DatasetInfo(BaseModel):
     """Metadata about a single available dataset."""
 
@@ -33,6 +48,9 @@ class DatasetInfo(BaseModel):
     )
     loaded: bool = Field(..., description="Whether this dataset currently has seeds in memory")
     provider_available: bool = Field(..., description="Whether a registered provider can load this dataset")
+    provider: DatasetProviderInfo | None = Field(
+        None, description="Default provider metadata, independent of stored seeds"
+    )
     origins: list[str] = Field(default_factory=list, description="Distinct origins of stored seeds, not providers")
     logical_examples: int | None = Field(
         None, description="Number of logical examples represented by stored seed groups"

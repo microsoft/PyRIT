@@ -58,6 +58,8 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "walledai/HiXSTest"
+    required_environment_variables = ("HUGGINGFACE_TOKEN",)
+    access_url = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
 
     # Class-level dataset metadata for SeedDatasetMetadata discovery
     modalities: list[str] = ["text"]

@@ -107,6 +107,8 @@ class _HarmEvalDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "SoftMINER-Group/HarmEval"
+    required_environment_variables = ("HUGGINGFACE_TOKEN",)
+    access_url = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
 
     # HarmEval and CategoricalHarmfulQA are built against the same OpenAI/Meta
     # prohibited-use taxonomy, so this map mirrors _CategoricalHarmfulQADataset's

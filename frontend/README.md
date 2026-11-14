@@ -193,8 +193,19 @@ Starting a new attack clears retained drafts; refreshing the browser does not
 retain them. Switching conversations does not cancel an in-flight send or let
 its completion clear another conversation's input.
 
-The **Datasets** page shows summaries of datasets already loaded into the backend's
-memory. When memory is empty, **Learn how to load datasets into memory** opens the
+The **Datasets** page offers **In memory**, **Available**, and **All datasets** views.
+Available providers describe their default configuration, including known source and
+access links, declared modalities and harm categories, and approximate size and load time.
+These hints appear separately from exact stored counts and provenance. Missing facts
+appear as unknown, and invalid provider metadata does not prevent browsing stored datasets.
+Local provider source links come from the bundled dataset metadata. Provider links use HTTPS
+and omit credential-bearing URLs, including query strings and fragments.
+Access requirements show environment-variable names only; configuring
+credentials still requires permission from the source. Opening an unloaded provider shows
+its description on the same detail route. The view, search, filters and sort stay in the URL.
+Modality filters match both provider labels (such as `image`) and existing stored-type
+URL values (such as `image_path`). Clearing filters keeps the selected view.
+When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
 Use the same memory as the backend. The visible catalog checks for changes each minute.
 The catalog does not download providers or prefetch individual examples.

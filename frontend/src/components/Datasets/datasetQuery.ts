@@ -1,4 +1,5 @@
 import type { DatasetInfo } from '@/types'
+import { dataTypeToAttachmentKind } from '@/utils/media'
 
 const SEARCH_PARAM = 'q'
 const MODALITY_PARAM = 'modality'
@@ -25,6 +26,7 @@ export const DATASET_SORT_LABELS: Record<DatasetSort, string> = {
 }
 
 export interface DatasetCatalogQuery {
+  readonly view?: 'memory' | 'available' | 'all'
   readonly search: string
   readonly modalities: readonly string[]
   readonly harmCategories: readonly string[]
@@ -48,6 +50,8 @@ export function isDatasetSort(value: string): value is DatasetSort {
 export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCatalogQuery {
   const sortValue = params.get(SORT_PARAM)
   return {
+    ...(params.get('view') === 'available' ? { view: 'available' as const }
+      : params.get('view') === 'all' ? { view: 'all' as const } : {}),
     search: params.get(SEARCH_PARAM) ?? '',
     modalities: [...new Set(params.getAll(MODALITY_PARAM))],
     harmCategories: [...new Set(params.getAll(HARM_CATEGORY_PARAM))],
@@ -59,6 +63,7 @@ export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCa
 /** Encodes catalog search, facets, and sort, omitting filters that are already the default. */
 export function catalogQueryToSearchParams(query: DatasetCatalogQuery): URLSearchParams {
   const params = new URLSearchParams()
+  if (query.view && query.view !== 'memory') params.set('view', query.view)
   if (query.search) params.set(SEARCH_PARAM, query.search)
   for (const modality of new Set(query.modalities)) params.append(MODALITY_PARAM, modality)
   for (const category of new Set(query.harmCategories)) params.append(HARM_CATEGORY_PARAM, category)
@@ -69,10 +74,31 @@ export function catalogQueryToSearchParams(query: DatasetCatalogQuery): URLSearc
 
 export function catalogQueryIsDefault(query: DatasetCatalogQuery): boolean {
   return query.search === ''
+    && (query.view == null || query.view === 'memory')
     && query.modalities.length === 0
     && query.harmCategories.length === 0
     && !query.unlabeled
     && query.sort === DEFAULT_DATASET_SORT
+}
+
+export function datasetsForView(
+  datasets: readonly DatasetInfo[],
+  view: DatasetCatalogQuery['view'] = 'memory',
+): DatasetInfo[] {
+  return datasets.filter((dataset: DatasetInfo) =>
+    view === 'all' || (view === 'available' ? dataset.provider_available : dataset.loaded),
+  )
+}
+
+/** Storage-specific URL filters remain aliases of their declared content modality. */
+export function normalizeDatasetModality(modality: string): string {
+  const kind = dataTypeToAttachmentKind(modality)
+  return kind !== 'file' && modality === `${kind}_path` ? kind : modality
+}
+
+export function datasetModalities(dataset: DatasetInfo): string[] {
+  const values = dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []
+  return [...new Set(values.map(normalizeDatasetModality))]
 }
 
 function matchesSearch(name: string, search: string): boolean {
@@ -83,13 +109,15 @@ function matchesSearch(name: string, search: string): boolean {
 
 function matchesModalities(dataset: DatasetInfo, modalities: readonly string[]): boolean {
   if (modalities.length === 0) return true
-  return modalities.some((modality) => dataset.modalities.includes(modality))
+  const values = datasetModalities(dataset)
+  return modalities.some((modality: string) => values.includes(normalizeDatasetModality(modality)))
 }
 
 function matchesHarm(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
   const harmSelected = query.harmCategories.length > 0 || query.unlabeled
   if (!harmSelected) return true
-  const categoryMatch = query.harmCategories.some((category) => dataset.harm_categories.includes(category))
+  const categories = dataset.loaded ? dataset.harm_categories : dataset.provider?.harm_categories ?? []
+  const categoryMatch = query.harmCategories.some((category) => categories.includes(category))
   const unlabeledMatch = query.unlabeled && dataset.has_unlabeled_harm_categories
   return categoryMatch || unlabeledMatch
 }
@@ -125,7 +153,7 @@ export function filterDatasets(
   query: DatasetCatalogQuery,
 ): DatasetInfo[] {
   const matched: DatasetInfo[] = []
-  for (const dataset of datasets) {
+  for (const dataset of datasetsForView(datasets, query.view)) {
     if (!matchesSearch(dataset.name, query.search)) continue
     if (!matchesModalities(dataset, query.modalities)) continue
     if (!matchesHarm(dataset, query)) continue

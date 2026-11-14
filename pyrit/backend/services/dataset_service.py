@@ -27,6 +27,7 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.datasets import (
     DatasetDeletionResponse,
+    DatasetProviderInfo,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
     SeedExampleSummary,
@@ -128,7 +129,8 @@ class DatasetService:
         Returns:
             DatasetListResponse: Available datasets.
         """
-        provider_names = {name for name in await SeedDatasetProvider.get_all_dataset_names_async() if name}
+        descriptors = await SeedDatasetProvider.get_all_dataset_descriptors_async()
+        provider_names = set(descriptors)
         summaries = await self._memory.get_seed_dataset_summaries_async()
         named_summaries = {summary.dataset_name: summary for summary in summaries if summary.dataset_name}
 
@@ -137,12 +139,35 @@ class DatasetService:
         items: list[DatasetInfo] = []
         for dataset_name in sorted(dataset_names):
             summary = named_summaries.get(dataset_name)
+            descriptor = descriptors.get(dataset_name)
+            metadata = descriptor.metadata if descriptor else None
+            provider = (
+                DatasetProviderInfo(
+                    description=descriptor.description,
+                    source_url=descriptor.source_url,
+                    license_url=descriptor.license_url,
+                    access_url=descriptor.access_url,
+                    required_environment_variables=list(descriptor.required_environment_variables),
+                    modalities=sorted(metadata.modalities or []) if metadata else [],
+                    harm_categories=sorted(metadata.harm_categories or []) if metadata else [],
+                    size=sorted(metadata.size or []) if metadata else [],
+                    load_time=sorted(
+                        value.value for value in metadata.load_time or [] if value.value != "uninitialized"
+                    )
+                    if metadata
+                    else [],
+                    unavailable_reason=descriptor.unavailable_reason,
+                )
+                if descriptor
+                else None
+            )
             items.append(
                 DatasetInfo(
                     name=dataset_name,
                     selection_key=f"dataset:named:{dataset_name}",
                     loaded=summary is not None,
                     provider_available=dataset_name in provider_names,
+                    provider=provider,
                     origins=list(summary.origins) if summary else [],
                     logical_examples=summary.logical_examples if summary else None,
                     seed_pieces=summary.seed_pieces if summary else None,
