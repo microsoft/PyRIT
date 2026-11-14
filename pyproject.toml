@@ -162,7 +162,7 @@ litellm = [
 ]
 
 github-copilot = [
-    # Keep the last known working session API until the target is migrated (#3623).
+    # 1.0.26+ removed the old session API (#3623); needs the migrated target from PR #4145.
     "github-copilot-sdk>=1.0.11,<1.0.30",
 ]
 a2a = [

@@ -673,7 +673,7 @@ class HuggingFaceChatTarget(PromptTarget):
             use_cuda (bool): Whether the target asks for CUDA.
         """
         try:
-            import torch  # type: ignore[ty:unresolved-import]
+            import torch  # type: ignore[ty:import-not-found]
         except ModuleNotFoundError:
             return
         if use_cuda:
