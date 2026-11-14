@@ -205,8 +205,9 @@ class ProgramExecutionScorable(Scorable):
 
     This is an acquisition request, not a result: it holds no expected output, so the source
     that runs it cannot see which output passes. ``program`` names the code to run: a stored
-    message with one text piece, loose text, or stored loose text. It is used verbatim; code is never
-    extracted from surrounding prose.
+    message with one text piece, loose text, or stored loose text. It is used verbatim unless the
+    source is configured with a program selector, which either finds exactly one program in the
+    text or runs nothing; code is never guessed from surrounding prose.
 
     Each acquisition runs afresh. The resulting observation's ID identifies that run;
     replay uses the stored observation, not this input description.

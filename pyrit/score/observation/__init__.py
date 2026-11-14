@@ -17,10 +17,18 @@ if TYPE_CHECKING:
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+    from pyrit.score.observation.program_selector import (
+        FencedCodeBlockSelector,
+        ProgramSelectionError,
+        ProgramSelector,
+    )
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
 
 _LAZY_EXPORTS: dict[str, str] = {
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
+    "FencedCodeBlockSelector": "pyrit.score.observation.program_selector",
+    "ProgramSelectionError": "pyrit.score.observation.program_selector",
+    "ProgramSelector": "pyrit.score.observation.program_selector",
     "AttemptObserver": "pyrit.score.observation.lifecycle",
     "ConversationSource": "pyrit.score.observation.conversation_source",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
