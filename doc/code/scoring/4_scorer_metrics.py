@@ -94,10 +94,11 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # - **0.6-0.8**: Moderate agreement
 # - **< 0.6**: Weak agreement
 #
-# Three alpha values are reported:
+# Four alpha values are reported:
 # - **`krippendorff_alpha_humans`**: Agreement among human evaluators (baseline quality of labels)
 # - **`krippendorff_alpha_model`**: Agreement across multiple model scoring trials (model consistency)
-# - **`krippendorff_alpha_combined`**: Overall agreement between humans and model
+# - **`krippendorff_alpha_combined`**: Agreement among the human raters and every model scoring trial together. Each trial counts as an extra rater, so this rises with `num_scorer_trials` even when the model's answers don't change; don't read it as agreement with the humans
+# - **`krippendorff_alpha_gold_model`**: Agreement between the gold (median human) label and the model's median score per response, the same pair that `mean_absolute_error` compares. Unlike the combined alpha, it does not rise when more trials repeat the same scores; more trials change it only when they disagree, by moving the per-response median. `None` for results recorded before it existed
 #
 # ### Error Split by Rater Agreement
 #
