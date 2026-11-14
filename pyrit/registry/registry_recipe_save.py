@@ -377,7 +377,7 @@ async def _save_then_register_async(
     *,
     kind: RegistryRecipeKind,
     name: str,
-    recipe: ComponentRecipe,
+    recipe: ComponentRecipe | TechniqueRecipe,
     register: Callable[[dict[str, Any]], object],
     source: str | None,
 ) -> None:
