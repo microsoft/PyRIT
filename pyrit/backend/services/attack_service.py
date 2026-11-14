@@ -1308,7 +1308,14 @@ class AttackService:
         if not registry_name:
             cursor = None
             while True:
-                page = await service.list_targets_async(cursor=cursor)
+                try:
+                    page = await service.list_targets_async(cursor=cursor)
+                except ValueError:
+                    if cursor is None:
+                        raise
+                    # The cursor's target was removed during the scan, so scan the registry again from the start.
+                    cursor = None
+                    continue
                 target = next((item for item in page.items if item.identifier.hash == target_identifier.hash), None)
                 cursor = page.pagination.next_cursor
                 if target is not None or not cursor:

@@ -223,6 +223,9 @@ class TargetService:
 
         Returns:
             TargetListResponse containing paginated targets.
+
+        Raises:
+            ValueError: If the cursor does not name a registered target.
         """
         items = [
             self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
@@ -247,6 +250,9 @@ class TargetService:
 
         Returns:
             Tuple of (paginated items, has_more flag).
+
+        Raises:
+            ValueError: If the cursor does not name a registered target.
         """
         start_idx = 0
         if cursor:
@@ -254,6 +260,10 @@ class TargetService:
                 if item.target_registry_name == cursor:
                     start_idx = i + 1
                     break
+            else:
+                # A cursor naming an entry that no longer exists must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the target registry")
 
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
