@@ -854,11 +854,15 @@ export default function ChatWindow({
               if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
                 || currentAttackIdRef.current !== draftAttackId
                 || currentConversationIdRef.current !== draftConversationId) return
+              if (status.send_id !== acceptedSendId || status.attack_result_id !== draftAttackId) {
+                setEditorNotice('Send status did not match the preserved draft. The draft was kept.')
+              }
               setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, generationDraftSignature, status })
             }).catch((error: unknown) => {
               if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
                 || currentAttackIdRef.current !== draftAttackId
                 || currentConversationIdRef.current !== draftConversationId) return
+              setEditorNotice(`${toApiError(error).detail || 'Could not verify send status.'} The preserved draft was kept.`)
               setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, generationDraftSignature, error })
             })
           }
@@ -866,14 +870,7 @@ export default function ChatWindow({
         }
         preserveCurrentConverters = check.converterPipelineSignature !== converterPipelineSignature
         preserveCurrentGenerationDraft = check.generationDraftSignature !== generationDraftSignature
-        if ('error' in check) {
-          setEditorNotice(`${toApiError(check.error).detail || 'Could not verify send status.'} The preserved draft was kept.`)
-        } else {
-          acceptedSendStatus = check.status
-          if (acceptedSendStatus.send_id !== acceptedSendId || acceptedSendStatus.attack_result_id !== draftAttackId) {
-            setEditorNotice('Send status did not match the preserved draft. The draft was kept.')
-          }
-        }
+        if ('status' in check) acceptedSendStatus = check.status
       }
       const consumed = draftHandoff.consumePreservedDraft(draftAttackId, draftConversationId, preserved.sequence)
       if (!consumed) return
