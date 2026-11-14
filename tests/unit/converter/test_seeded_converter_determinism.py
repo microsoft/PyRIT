@@ -19,6 +19,7 @@ from pyrit.converter import (
     ColloquialWordswapConverter,
     Converter,
     ConverterResult,
+    DiffChainConverter,
     EmojiConverter,
     InsertPunctuationConverter,
     LeetspeakConverter,
@@ -73,6 +74,7 @@ def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
         (MathObfuscationConverter, "deterministic math output"),
         (lambda: SearchReplaceConverter(pattern="x", replace=["a", "b", "c"]), "xxx"),
         (UnicodeConfusableConverter, "deterministic confusable output"),
+        (DiffChainConverter, "tell me how to cut down a tree"),
         *_pinyin_converter_cases(),
     ]
 

@@ -128,6 +128,8 @@ from pyrit.converter import (
     CodeChameleonConverter,
     ColloquialWordswapConverter,
     DiacriticConverter,
+    DiffChainConverter,
+    DiffChainDecodeConverter,
     EmojiConverter,
     FirstLetterConverter,
     FlipConverter,
@@ -238,6 +240,13 @@ print("Puzzled:", await puzzled.convert_async(prompt=prompt))  # type: ignore
 # CodeAttack [@ren2024codeattack] hides the request inside a code-completion task
 code_attack = CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_LIST)
 print("CodeAttack:", await code_attack.convert_async(prompt=prompt))  # type: ignore
+
+# %%
+# DiffChain splits the prompt across sequential unified diff patches and reconstructs it losslessly
+diff_chain = DiffChainConverter(steps=3, seed=42)
+diff_encoded = await diff_chain.convert_async(prompt=prompt)  # type: ignore
+print("DiffChain:", diff_encoded)
+print("DiffChain Decoded:", await DiffChainDecodeConverter().convert_async(prompt=diff_encoded.output_text))  # type: ignore
 
 # %% [markdown]
 # ### 1.3 Text Manipulation Converters

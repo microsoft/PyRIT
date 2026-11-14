@@ -56,6 +56,10 @@ if TYPE_CHECKING:
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
     from pyrit.converter.diacritic_converter import DiacriticConverter
+    from pyrit.converter.diff_chain_converter import (
+        DiffChainConverter,
+        DiffChainDecodeConverter,
+    )
     from pyrit.converter.ecoji_converter import EcojiConverter
     from pyrit.converter.emoji_converter import EmojiConverter
     from pyrit.converter.first_letter_converter import FirstLetterConverter
@@ -187,6 +191,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DecompositionConverter": "pyrit.converter.decomposition_converter",
     "DenylistConverter": "pyrit.converter.denylist_converter",
     "DiacriticConverter": "pyrit.converter.diacritic_converter",
+    "DiffChainConverter": "pyrit.converter.diff_chain_converter",
+    "DiffChainDecodeConverter": "pyrit.converter.diff_chain_converter",
     "EcojiConverter": "pyrit.converter.ecoji_converter",
     "EmojiConverter": "pyrit.converter.emoji_converter",
     "FirstLetterConverter": "pyrit.converter.first_letter_converter",
