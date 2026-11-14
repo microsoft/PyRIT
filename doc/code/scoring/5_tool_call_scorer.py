@@ -310,7 +310,8 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # condition asks that no tool ran at all, which suits confirmation gates.
 #
 # The two halves need different evidence. One observed execution of an unnamed
-# tool disproves the match, even from partial evidence. Confirming it needs
+# tool disproves the match, even when acquisition reports `Acquisition.PARTIAL`
+# or `Acquisition.ERROR`, provided the event was retained. Confirming it needs
 # complete evidence, because only that rules out every other tool. So
 # `OtelToolCallScorer` returns true only for complete, fully correlated traces,
 # and `MessageToolCallScorer` returns false for a stored execution of an unnamed
