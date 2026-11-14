@@ -196,7 +196,7 @@ A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredentia
 
 ### `registry_recipes_source`
 
-Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. An Azure URI may include a blob-name prefix:
+Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. Targets created through `POST /api/targets` with `"persist": true` are saved here. An Azure URI may include a blob-name prefix:
 
 ```yaml
 registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes
@@ -206,18 +206,33 @@ A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredentia
 
 Each kind has its own folder under the source (`targets/`, `converters/`, `scorers/`, `techniques/`), with one JSON file per saved entry named after the entry. A file holds the create request the entry was made with, and restore builds the entry through the API's create for its kind.
 
-A saved file doesn't record who saved it, so the backend rebuilds every entry in this source as an administrator, at startup and after a live apply. A file here can, for example, make the backend run a model's repository code, or use the server's identity on a storage container that the file names. Write access to this source is administrator authority on the backend: grant it only to principals you already trust as backend administrators, and use a dedicated directory or blob prefix that less-trusted users and services cannot write to.
+Restore can't tell who wrote a saved file, even one that names the user who saved it, so the backend rebuilds every entry in this source as an administrator, at startup and after a live apply. A file here can, for example, make the backend run a model's repository code, or use the server's identity on a storage container that the file names. Write access to this source is administrator authority on the backend: grant it only to principals you already trust as backend administrators, and use a dedicated directory or blob prefix that less-trusted users and services cannot write to.
 
 The backend restores saved entries at startup and after a live apply, once the configured initializers have registered theirs. If any saved entry can't be restored, the backend doesn't become ready (state `failed`, outcome `restore-failed`), so a scan can't quietly run without an entry it expects. Until then, only the configuration and status routes answer; the rest return 503. Administrators see each failure with its reason in `GET /api/config/runtime` and on the GUI's Configuration page; everyone else sees that an administrator has to fix saved entries. Fix or delete the listed files, or, when a folder couldn't be listed, check that the backend can read this source. Then apply the configuration, if `enable_live_reinitialization` is on and the backend runs as one worker and one replica, which live apply requires; otherwise, restart the backend. Files whose names aren't valid entry names (up to 64 lowercase letters, digits, and underscores, starting with a letter) aren't failures and don't block startup; administrators can see them under `restore_ignored` in `GET /api/config/runtime`.
 
 #### Saved entry requirements
 
-A saved file never holds a credential: restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A saved target also can't use a key from this server: it signs in with Microsoft Entra ID (`"auth_mode": "identity"`), which uses this server's Azure identity for everyone using the app, or needs no key. Targets from the server's configuration that it uses, such as a round-robin's members, keep their own sign-in. Restore refuses a target file that breaks these rules:
+A saved file never holds a credential: restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A saved target also can't use a key from this server unless it is listed in `server_credentials` (below): otherwise it signs in with Microsoft Entra ID (`"auth_mode": "identity"`), which uses this server's Azure identity for everyone using the app, or needs no key. Targets from the server's configuration that it uses, such as a round-robin's members, keep their own sign-in. Restore refuses a target file that breaks these rules:
 
 - It can't read an empty key from an environment variable or leave an address to this server's settings. An address the server would otherwise fill in must be a full http(s) or ws(s) address.
 - The addresses each target type declares (such as `endpoint`, `container_url` for Blob storage, or an A2A agent card path) can't hold a user name, password, SAS token, fragment, path parameters (`;`, `&`, `=`), or a query other than `api-version`, and a path can't have a query at all.
 - In identity mode, an OpenAI target file sets `"headers": "{}"` in its `params` so that the server's `OPENAI_ADDITIONAL_REQUEST_HEADERS` aren't added. The OpenAI SDK adds the headers in `OPENAI_CUSTOM_HEADERS` to every request, so while the server sets it, OpenAI targets can't be saved and saved ones aren't restored. The SDK's `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID` still apply to every OpenAI target on this server.
 - GitHub Copilot, Hugging Face, HackAPrompt, LiteLLM, HTTP, and Copilot WebSocket targets can't be saved yet.
+
+### `server_credentials`
+
+Keys in this server's environment that users can pick by name for an OpenAI target instead of typing one. Each entry has a `name` users pick, the `env_var` that holds the key, and the only `endpoint` the key is sent to:
+
+```yaml
+server_credentials:
+  - name: contoso
+    env_var: CONTOSO_OPENAI_KEY
+    endpoint: https://contoso.openai.azure.com/openai/v1
+```
+
+`GET /api/targets/types` lists each entry's name and endpoint for the types that can use it, never the key or the variable. A target that names an entry (`"server_credential": "contoso"` with `"auth_mode": "api_key"` in `POST /api/targets`) gets the key only when its endpoint is the entry's endpoint, compared with the scheme and host lowercased and a default port and trailing slash removed. A saved target stores the entry's name, never the key, and reads the key again each time the backend starts, so rotating the variable's value takes effect at the next start. Restore refuses a saved target whose entry is no longer listed or whose variable isn't set.
+
+List a variable that holds only this key. A variable a target reads on its own, such as `OPENAI_CHAT_KEY`, can still reach any endpoint through a Temporary target created without a key, so listing it doesn't limit where that key goes. Names are up to 64 lowercase letters, digits, and underscores, starting with a letter, and each name can be listed once. The default is none.
 
 ### `initialization_scripts`
 

@@ -11,12 +11,13 @@ import unicodedata
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
-from pyrit.models.catalog import RestoreFailureReason
+from pyrit.models.catalog import RestoreFailureReason, normalized_endpoint
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from pyrit.models import Parameter
+    from pyrit.models.catalog import ServerCredential
 
 _URL_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 _URL_QUERY_KEYS = frozenset({"api-version"})
@@ -42,7 +43,12 @@ class SavedEntryRefusedError(ValueError):
 
 
 def check_saved_entry_params(
-    *, cls: type, parameters: Sequence[Parameter], params: Mapping[str, Any], auth_mode: str | None = None
+    *,
+    cls: type,
+    parameters: Sequence[Parameter],
+    params: Mapping[str, Any],
+    auth_mode: str | None = None,
+    listed_credential_parameter: str | None = None,
 ) -> None:
     """
     Refuse a recipe that a saved entry of ``cls`` can't hold.
@@ -51,13 +57,15 @@ def check_saved_entry_params(
     and can't leave the entry to use one from this server: an empty key the class would read from the
     server's settings or identity, extra headers the server adds, a destination the server's settings
     choose, or a credential inside a URL. A saved target authenticates with Microsoft Entra ID
-    (``auth_mode`` ``"identity"``) or needs no key.
+    (``auth_mode`` ``"identity"``), needs no key, or names a server credential from the administrator's list.
 
     Args:
         cls (type): The class the recipe builds.
         parameters (Sequence[Parameter]): The class's constructor parameters.
         params (Mapping[str, Any]): The recipe's parameter values.
         auth_mode (str | None): The target recipe's auth mode. None means the API's default, ``"api_key"``.
+        listed_credential_parameter (str | None): The parameter a listed server credential fills at every
+            start, which isn't left to this server's own settings. Defaults to None.
 
     Raises:
         SavedEntryRefusedError: If the class can't be saved, or the values hold or would use a credential.
@@ -65,8 +73,96 @@ def check_saved_entry_params(
     _check_class(cls)
     _check_server_headers(cls)
     _check_stored_credentials(parameters=parameters, params=params)
-    _check_server_fallbacks(cls=cls, params=params, auth_mode=auth_mode)
+    _check_server_fallbacks(cls=cls, params=params, auth_mode=auth_mode, provided=listed_credential_parameter)
     _check_destinations(cls=cls, params=params)
+
+
+def resolve_listed_credential(
+    *, cls: type, params: Mapping[str, Any], name: str, server_credentials: Sequence[ServerCredential]
+) -> tuple[str, str]:
+    """
+    Find the server credential an entry names in the administrator's list, and the key it holds.
+
+    Args:
+        cls (type): The class the entry is built from.
+        params (Mapping[str, Any]): The entry's parameter values.
+        name (str): The server credential's name.
+        server_credentials (Sequence[ServerCredential]): The administrator's list.
+
+    Returns:
+        tuple[str, str]: The parameter that takes the key, and the key.
+
+    Raises:
+        SavedEntryRefusedError: If the class can't use a server credential, the list has no such entry, the
+            entry's endpoint isn't the one the entry sends requests to, or the key isn't set on this server.
+    """
+    declared: tuple[str, str] | None = getattr(cls, "listed_credential_parameters", None)
+    if declared is None:
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=f"'{cls.__name__}' can't use a server credential.",
+        )
+    key_parameter, address_parameter = declared
+    credential = next((entry for entry in server_credentials if entry.name == name), None)
+    if credential is None:
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=f"This server has no server credential named '{name}'.",
+        )
+    address = params.get(address_parameter)
+    if not isinstance(address, str) or normalized_endpoint(address) != normalized_endpoint(credential.endpoint):
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=(
+                f"Server credential '{name}' is only sent to {credential.endpoint}, so '{address_parameter}' "
+                "must be that address."
+            ),
+        )
+    key = os.environ.get(credential.env_var)
+    if not key:
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=f"Server credential '{name}' isn't set on this server.",
+        )
+    return key_parameter, key
+
+
+def check_saveable_class(cls: type) -> tuple[str, ...]:
+    """
+    Return the auth modes a saved entry of ``cls`` can use, before any of its values are known.
+
+    Runs the class checks, then the server-fallback check once per auth mode the class supports, with each
+    fallback set to the value that turns it off and every credential left empty. That's the best a saved entry
+    of the class can do; the values it's given are checked when it's saved.
+
+    Returns:
+        tuple[str, ...]: The supported auth modes that let a saved entry avoid this server's credentials.
+
+    Raises:
+        SavedEntryRefusedError: If the class can't be saved, its client would send headers this server sets, or
+            every auth mode it supports would leave it reading a credential from this server.
+    """
+    _check_class(cls)
+    _check_server_headers(cls)
+    fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
+    turned_off = {name: value for name, value in fallbacks.items() if value is not None}
+    supported_auth_modes: tuple[str, ...] = tuple(getattr(cls, "supported_auth_modes", None) or ("api_key",))
+    saveable_modes: list[str] = []
+    for auth_mode in supported_auth_modes:
+        try:
+            _check_server_fallbacks(cls=cls, params=turned_off, auth_mode=auth_mode)
+        except SavedEntryRefusedError:
+            continue
+        saveable_modes.append(auth_mode)
+    if not saveable_modes:
+        # Only a fallback that no value turns off can refuse every mode, so one exists here.
+        needed = [name for name, value in fallbacks.items() if value is None][0]
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=f"'{cls.__name__}' needs a credential in '{needed}', which saved entries can't hold or take "
+            "from this server yet.",
+        )
+    return tuple(saveable_modes)
 
 
 def _check_class(cls: type) -> None:
@@ -121,7 +217,9 @@ def _check_stored_credentials(*, parameters: Sequence[Parameter], params: Mappin
         )
 
 
-def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any], auth_mode: str | None) -> None:
+def _check_server_fallbacks(
+    *, cls: type, params: Mapping[str, Any], auth_mode: str | None, provided: str | None = None
+) -> None:
     """
     Refuse values that would let the entry use a credential from this server.
 
@@ -146,7 +244,7 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any], auth_mode: 
     for name, turned_off in fallbacks.items():
         value = params.get(name)
         if value in (None, ""):
-            if auth_mode == "none" or (auth_mode == "identity" and turned_off is None):
+            if name == provided or auth_mode == "none" or (auth_mode == "identity" and turned_off is None):
                 continue
             message = f"'{name}' is empty, so '{cls.__name__}' can use this server's credential instead."
             if turned_off is not None:

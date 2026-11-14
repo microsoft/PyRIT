@@ -12,13 +12,21 @@ from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common import AuthMode
-from pyrit.models import GenerationRange, JSONValue, Parameter, TargetCapabilities, TargetIdentifier
+from pyrit.models import (
+    GenerationRange,
+    JSONValue,
+    Parameter,
+    TargetCapabilities,
+    TargetIdentifier,
+    validate_registry_name,
+)
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 
 __all__ = [
     "CreateTargetRequest",
     "DetectTargetCapabilitiesRequest",
+    "ServerCredentialChoice",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
@@ -35,6 +43,13 @@ def _default_auth_modes() -> list[AuthMode]:
     return ["api_key"]
 
 
+class ServerCredentialChoice(BaseModel):
+    """A server credential users can pick, without the key or the variable that holds it."""
+
+    name: str = Field(..., description="The name to send as server_credential")
+    endpoint: str = Field(..., description="The only endpoint the credential is sent to")
+
+
 class TargetTypeEntry(BaseModel):
     """A target type available from the backend registry."""
 
@@ -47,7 +62,21 @@ class TargetTypeEntry(BaseModel):
         default_factory=_default_auth_modes,
         description="Authentication modes this target type supports",
     )
+    saveable_auth_modes: list[AuthMode] = Field(
+        default_factory=list,
+        description=(
+            "The supported authentication modes a saved target of this type can use. Empty when the type can't "
+            "be saved; not_saveable_reason says why. The values a target is given are checked when it's saved"
+        ),
+    )
+    not_saveable_reason: str | None = Field(
+        None, description="Why a target of this type can't be saved, or None when it can be with a saveable mode"
+    )
     description: str | None = Field(None, description="Short description of the target from its docstring")
+    server_credentials: list[ServerCredentialChoice] = Field(
+        default_factory=list,
+        description="Server credentials an administrator lets users pick for a target of this type",
+    )
 
 
 class TargetTypeResponse(BaseModel):
@@ -66,16 +95,32 @@ class TargetListResponse(BaseModel):
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
-    # LEGACY COMPATIBILITY: The current target configuration UI does not send a
-    # name. Make this field required after that UI sends explicit registry names.
+    # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
+    # registered targets would break API callers that leave it out, so that is left to a separate breaking change.
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
-        description="Unique registry name; omitted only for legacy UI compatibility",
+        description="Unique registry name, required with persist; when omitted, the backend generates one",
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
+            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
+        ),
+    )
     source: SourceInstanceSpec | None = None
+    server_credential: str | None = Field(
+        None,
+        pattern=r"^[a-z][a-z0-9_]{0,63}$",
+        description=(
+            "A server credential from this server's list to use as the target's key, with auth_mode 'api_key'. "
+            "The target's endpoint must be the credential's; the key is never returned or saved"
+        ),
+    )
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
@@ -93,6 +138,18 @@ class CreateTargetRequest(BaseModel):
     )
 
     @model_validator(mode="after")
+    def _validate_server_credential(self) -> "CreateTargetRequest":
+        if self.server_credential is None:
+            return self
+        if self.auth_mode != "api_key":
+            raise ValueError("server_credential needs auth_mode 'api_key'")
+        if self.params.get("api_key") not in (None, ""):
+            raise ValueError("Send either an api_key or a server_credential, not both")
+        if self.source is not None:
+            raise ValueError("server_credential can't be used with source")
+        return self
+
+    @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
         if self.source is None:
             return self
@@ -102,6 +159,17 @@ class CreateTargetRequest(BaseModel):
             raise ValueError("a copy takes its overrides in source.params")
         if "auth_mode" in self.model_fields_set:
             raise ValueError("a copy uses its source's auth mode, so auth_mode can't be set")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> "CreateTargetRequest":
+        if not self.persist:
+            return self
+        if not self.register:
+            raise ValueError("persist requires register=true")
+        if self.name is None:
+            raise ValueError("persist requires a name")
+        validate_registry_name(self.name)
         return self
 
 

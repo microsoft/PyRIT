@@ -500,8 +500,13 @@ export interface TargetIdentifier {
   [key: string]: unknown
 }
 
+/** Where a registered target comes from, and so whether it is still there after a restart. */
+export type TargetOrigin = 'saved' | 'configuration' | 'temporary'
+
 export interface TargetInstance {
   target_registry_name: string
+  /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
+  origin?: TargetOrigin | null
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
@@ -522,9 +527,15 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
+  /** Registry name; required with `persist`. */
+  name?: string
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
+  /** A server credential from the type's list to use as the key, with `auth_mode` 'api_key'. */
+  server_credential?: string
+  /** Save the target so it comes back after a restart. */
+  persist?: boolean
 }
 
 // --- Initializers ---
@@ -806,10 +817,22 @@ export interface ConverterPreviewResponse {
 
 export type TargetAuthMode = 'api_key' | 'identity' | 'none'
 
+/** A key kept on the server that users can pick for a target, and the only address it is sent to. */
+export interface ServerCredentialChoice {
+  name: string
+  endpoint: string
+}
+
 export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: TargetAuthMode[]
+  /** Auth modes a saved target of this type can use; empty when it can't be saved. */
+  saveable_auth_modes?: TargetAuthMode[]
+  /** Why a target of this type can't be saved. */
+  not_saveable_reason?: string | null
+  /** Server credentials a target of this type can use instead of a typed key. */
+  server_credentials?: ServerCredentialChoice[]
   description?: string | null
 }
 

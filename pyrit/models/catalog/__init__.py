@@ -23,10 +23,12 @@ if TYPE_CHECKING:
     from pyrit.models.catalog.registry_recipe import (
         ComponentRecipe,
         IgnoredRecipeFile,
+        RegistryEntryOrigin,
         RegistryRecipeKind,
         RegistryRestoreReport,
         RestoreFailure,
         RestoreFailureReason,
+        SavedEntryOwner,
         SavedEntryRef,
         StoredRecipe,
         TechniqueRecipe,
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
         StoredScenarioSuite,
     )
     from pyrit.models.catalog.scorer import ScorerInstance
+    from pyrit.models.catalog.server_credential import ServerCredential, normalized_endpoint
     from pyrit.models.catalog.target import TargetInstance
 
 _LAZY_EXPORTS: dict[str, str] = {
@@ -77,11 +80,15 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PresetIssue": "pyrit.models.catalog.scenario_preset",
     "RegisteredInitializer": "pyrit.models.catalog.initializer",
     "RegistryRecipeKind": "pyrit.models.catalog.registry_recipe",
+    "RegistryEntryOrigin": "pyrit.models.catalog.registry_recipe",
     "RegistryRestoreReport": "pyrit.models.catalog.registry_recipe",
     "RestoreFailure": "pyrit.models.catalog.registry_recipe",
     "RestoreFailureReason": "pyrit.models.catalog.registry_recipe",
+    "SavedEntryOwner": "pyrit.models.catalog.registry_recipe",
     "SavedEntryRef": "pyrit.models.catalog.registry_recipe",
     "ScorerInstance": "pyrit.models.catalog.scorer",
+    "ServerCredential": "pyrit.models.catalog.server_credential",
+    "normalized_endpoint": "pyrit.models.catalog.server_credential",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
     "ScenarioLaunchConfiguration": "pyrit.models.catalog.scenario",

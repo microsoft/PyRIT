@@ -19,6 +19,14 @@ _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
 
 
+class RegistryEntryOrigin(str, Enum):
+    """Where a registered entry comes from, and so whether it is still there after a restart."""
+
+    SAVED = "saved"
+    CONFIGURATION = "configuration"
+    TEMPORARY = "temporary"
+
+
 class RegistryRecipeKind(str, Enum):
     """The registries whose entries can be saved, named after their storage folders."""
 
@@ -38,6 +46,15 @@ class _RegistryRecipe(BaseModel):
     schema_version: int = Field(1, ge=1, le=RECIPE_SCHEMA_VERSION, description="Shape of this document")
 
 
+class SavedEntryOwner(BaseModel):
+    """The signed-in user who saved an entry."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    oid: _Identifier = Field(..., min_length=1, description="The user's Microsoft Entra object ID")
+    name: _Identifier = Field(..., description="The user's display name, or email when no name is set")
+
+
 class ComponentRecipe(_RegistryRecipe):
     """How to rebuild one saved target, converter, or scorer."""
 
@@ -53,6 +70,11 @@ class ComponentRecipe(_RegistryRecipe):
         max_length=MAX_ITEMS,
         description="Constructor parameters as the API accepted them; other entries are named, never embedded",
     )
+    server_credential: _Identifier | None = Field(
+        None,
+        description="The server credential from this server's list that supplies the key; the key isn't stored",
+    )
+    owner: SavedEntryOwner | None = Field(None, description="Who saved the entry; None when sign-in is off")
 
 
 class TechniqueRecipe(_RegistryRecipe):

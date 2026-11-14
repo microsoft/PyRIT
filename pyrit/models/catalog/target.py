@@ -24,6 +24,7 @@ embedded ``TargetCapabilities``.
 
 from pydantic import BaseModel, Field
 
+from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
 from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 from pyrit.models.target.request_generation_config import GenerationRange
@@ -69,4 +70,13 @@ class TargetInstance(BaseModel):
     inner_targets: list["TargetInstance"] | None = Field(
         None,
         description="Inner targets for composite targets like RoundRobinTarget (full instances, not just identifiers)",
+    )
+    origin: RegistryEntryOrigin | None = Field(
+        None,
+        description=(
+            "Where the target comes from: 'saved' (restored at every start), 'configuration' (registered by "
+            "the server's startup scripts), or 'temporary' (created through the API without saving, or "
+            "registered by a scan's launch scripts; gone after a restart or a configuration apply). None for "
+            "an inner target"
+        ),
     )

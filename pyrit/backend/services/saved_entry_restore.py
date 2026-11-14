@@ -19,20 +19,27 @@ from pyrit.models.catalog import RegistryRecipeKind, RestoreFailureReason, Techn
 from pyrit.registry.registry_recipe_restore import RecipeRejectedError
 
 if TYPE_CHECKING:
-    from pyrit.models.catalog import StoredRecipe
+    from collections.abc import Sequence
+
+    from pyrit.models.catalog import ServerCredential, StoredRecipe
 
 
-async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str | None) -> None:
+async def build_saved_entry_async(
+    stored: StoredRecipe, *, upload_directory: str | None, server_credentials: Sequence[ServerCredential] = ()
+) -> None:
     """
     Build one saved entry with the create the API uses for its kind, and register it under its name.
 
-    The entry passes the same checks a create request does. Restore runs as the server, and a saved file
-    doesn't record who saved it, so a target is built as an administrator would build it. A target that
-    uploads files gets this server's upload folder, as it does through the API.
+    The entry passes the same checks a create request does. Restore runs as the server and can't tell who
+    wrote a saved file, so a target is built as an administrator would build it. A target that
+    uploads files gets this server's upload folder, as it does through the API, and a target that names a
+    server credential gets its key from this server's list, as it does through the API.
 
     Args:
         stored (StoredRecipe): The checked recipe to build.
         upload_directory (str | None): The folder this server lets targets upload files from, or None.
+        server_credentials (Sequence[ServerCredential]): The server credentials an administrator lets saved
+            targets use. Defaults to none.
 
     Raises:
         RecipeRejectedError: If the recipe doesn't make a valid create request.
@@ -42,7 +49,10 @@ async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str
         await get_technique_service().create_async(request)
     elif isinstance(request, CreateTargetRequest):
         await get_target_service().create_target_async(
-            request=request, upload_directory=upload_directory, is_admin=True
+            request=request,
+            upload_directory=upload_directory,
+            is_admin=True,
+            server_credentials=server_credentials,
         )
     elif isinstance(request, CreateConverterRequest):
         await get_converter_service().create_converter_async(request=request)
@@ -73,6 +83,8 @@ def _create_request(
         if stored.ref.kind is RegistryRecipeKind.TARGETS:
             if recipe.auth_mode is not None:
                 fields["auth_mode"] = recipe.auth_mode
+            if recipe.server_credential is not None:
+                fields["server_credential"] = recipe.server_credential
             return CreateTargetRequest.model_validate(fields)
         if stored.ref.kind is RegistryRecipeKind.CONVERTERS:
             return CreateConverterRequest.model_validate(fields)

@@ -143,6 +143,10 @@ class PromptTarget(Identifiable):
     # Why this target type can't be saved even without a credential, or None when it can.
     not_saveable_reason: ClassVar[str | None] = None
 
+    # The parameter a server credential from the administrator's list fills with its key, and the parameter
+    # whose address must be the credential's endpoint; None when the target can't use one.
+    listed_credential_parameters: ClassVar[tuple[str, str] | None] = None
+
     # Constructor parameters that choose where requests go or how they authenticate. A private
     # copy built from API input keeps its source's values for these, so a credential stays
     # with the endpoint it was configured for.

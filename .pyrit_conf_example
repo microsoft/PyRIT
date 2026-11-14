@@ -176,6 +176,22 @@ allow_custom_initializers: false
 # blob prefix.
 # registry_recipes_source: https://account.blob.core.windows.net/container/registry_recipes
 
+# Server Credentials Users Can Pick
+# ---------------------------------
+# Keys in this server's environment that users can pick by name for an OpenAI
+# target instead of typing one. Users see each entry's name and endpoint, never the
+# key or the variable. The key is only sent to the listed endpoint, and a saved
+# target stores the entry's name, not the key, and reads the key again each time
+# the backend starts. List a variable that holds only this key: a variable a
+# target reads on its own, such as OPENAI_CHAT_KEY, can still reach any endpoint
+# through a Temporary target created without a key.
+#
+# Default: none
+# server_credentials:
+#   - name: contoso
+#     env_var: CONTOSO_OPENAI_KEY
+#     endpoint: https://contoso.openai.azure.com/openai/v1
+
 # Upload Folder for API-Created Targets
 # -------------------------------------
 # Folder that targets created through the REST API may upload local files from
