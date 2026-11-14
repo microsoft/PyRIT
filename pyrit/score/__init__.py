@@ -102,6 +102,8 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
     from pyrit.score.true_false.garak_exploitation_scorer import GarakExploitationDetector, GarakExploitationScorer
+    from pyrit.score.true_false.harmbench_parser import parse_harmbench_response
+    from pyrit.score.true_false.harmbench_scorer import HarmBenchScorer, render_harmbench_prompt
     from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_3_CATEGORY_CODES, parse_llamaguard_response
     from pyrit.score.true_false.llamaguard_policy import LlamaGuardCategory, LlamaGuardPolicy
     from pyrit.score.true_false.llamaguard_scorer import (
@@ -226,6 +228,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GarakExploitationDetector": "pyrit.score.true_false.garak_exploitation_scorer",
     "GarakExploitationScorer": "pyrit.score.true_false.garak_exploitation_scorer",
+    "HarmBenchScorer": "pyrit.score.true_false.harmbench_scorer",
     "HarmHumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "HarmScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "HarmScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
@@ -275,6 +278,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "OpenRedirectOutputScorer": "pyrit.score.true_false.regex.open_redirect_output_scorer",
     "PackageEcosystem": "pyrit.score.true_false.regex.package_hallucination_scorer",
     "PackageHallucinationScorer": "pyrit.score.true_false.regex.package_hallucination_scorer",
+    "parse_harmbench_response": "pyrit.score.true_false.harmbench_parser",
     "parse_llamaguard_response": "pyrit.score.true_false.llamaguard_parser",
     "parse_shieldgemma_response": "pyrit.score.true_false.shieldgemma_parser",
     "parse_wildguard_response": "pyrit.score.true_false.wildguard_parser",
@@ -286,6 +290,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RegexScorer": "pyrit.score.true_false.regex.regex_scorer",
     "RegistryUpdateBehavior": "pyrit.score.scorer_evaluation.metrics_type",
     "render_category_system_prompt": "pyrit.score.true_false.self_ask_category_scorer",
+    "render_harmbench_prompt": "pyrit.score.true_false.harmbench_scorer",
     "render_insecure_code_system_prompt": "pyrit.score.float_scale.insecure_code_scorer",
     "render_llamaguard_prompt": "pyrit.score.true_false.llamaguard_scorer",
     "render_likert_system_prompt": "pyrit.score.float_scale.self_ask_likert_scorer",
