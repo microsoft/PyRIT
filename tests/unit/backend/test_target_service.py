@@ -5,19 +5,35 @@
 Tests for backend target service.
 """
 
+import asyncio
+import json
 import os
+from functools import partial
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models import ComponentIdentifier
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RegistryRestoreReport,
+    SavedEntryOwner,
+    TargetInstance,
+)
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
-from pyrit.registry import TargetRegistry
+from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
+from pyrit.registry import NotSaveableError, SavedEntryConflictError, TargetRegistry
+from pyrit.registry.instance_registry import registration_origin
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
 
 
@@ -1735,3 +1751,196 @@ class TestCreateTargetNoKeyAuth:
 
         with pytest.raises(ValueError, match="does not support no-key authentication"):
             await service.create_target_async(request=request)
+
+
+_AZURE_ENDPOINT = "https://contoso.openai.azure.com/openai/v1"
+
+
+def _save_request(
+    *,
+    name: str = "contoso_gpt4o",
+    params: dict[str, Any] | None = None,
+    auth_mode: str = "identity",
+    persist: bool = True,
+) -> CreateTargetRequest:
+    return CreateTargetRequest(
+        name=name,
+        type="OpenAIChatTarget",
+        params=params if params is not None else {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o"},
+        auth_mode=auth_mode,
+        persist=persist,
+    )
+
+
+def _saved_document(source: Path, name: str) -> dict[str, Any]:
+    return json.loads((source / "targets" / f"{name}.json").read_text())
+
+
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved targets through the API's create, as startup does."""
+    get_target_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+class TestSaveTarget:
+    async def test_saves_an_identity_target_that_restore_rebuilds(self, tmp_path: Path) -> None:
+        service = TargetService()
+        owner = SavedEntryOwner(oid="00000000-0000-0000-0000-000000000001", name="Ada")
+
+        target = await service.create_target_async(request=_save_request(), owner=owner, recipes_source=str(tmp_path))
+
+        assert target.origin is RegistryEntryOrigin.SAVED
+        assert _saved_document(tmp_path, "contoso_gpt4o") == {
+            "schema_version": 1,
+            "class_module": "pyrit.prompt_target.openai.openai_chat_target",
+            "class_name": "OpenAIChatTarget",
+            "auth_mode": "identity",
+            "params": {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "headers": "{}"},
+            "owner": {"oid": owner.oid, "name": "Ada"},
+        }
+        saved_hash = service.get_target_object(target_registry_name="contoso_gpt4o").get_identifier().hash
+        TargetRegistry.reset_registry_singleton()
+        report = await _restore(tmp_path)
+        assert report.failures == []
+        restored = TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o")
+        assert restored is not None
+        assert restored.get_identifier().hash == saved_hash
+
+    async def test_saves_a_no_key_target_without_an_owner_when_sign_in_is_off(self, tmp_path: Path) -> None:
+        request = _save_request(
+            name="local_llm", params={"endpoint": "http://localhost:11434/v1", "model_name": "llama3"}, auth_mode="none"
+        )
+
+        target = await TargetService().create_target_async(request=request, recipes_source=str(tmp_path))
+
+        assert target.origin is RegistryEntryOrigin.SAVED
+        document = _saved_document(tmp_path, "local_llm")
+        assert document["auth_mode"] == "none"
+        assert "auth_mode" not in document["params"]
+        assert "owner" not in document
+
+    async def test_a_target_that_cant_be_saved_is_neither_created_nor_saved(self, tmp_path: Path) -> None:
+        service = TargetService()
+        request = _save_request(
+            params={"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "api_key": "sk-typed-secret"},
+            auth_mode="api_key",
+        )
+
+        with pytest.raises(NotSaveableError, match="can't hold credentials"):
+            await service.create_target_async(request=request, recipes_source=str(tmp_path))
+
+        assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
+        assert not (tmp_path / "targets").exists()
+
+    async def test_a_taken_name_is_a_conflict_only_when_saving(self, tmp_path: Path) -> None:
+        service = TargetService()
+        await service.create_target_async(request=_save_request(persist=False))
+
+        with pytest.raises(SavedEntryConflictError, match="already exists"):
+            await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
+        with pytest.raises(ValueError, match="already exists") as temporary_clash:
+            await service.create_target_async(request=_save_request(persist=False))
+
+        assert not isinstance(temporary_clash.value, SavedEntryConflictError)
+        assert not (tmp_path / "targets").exists()
+
+    async def test_a_saved_file_with_the_name_is_a_conflict_that_leaves_the_file(self, tmp_path: Path) -> None:
+        service = TargetService()
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path))
+        storage.create_recipe(name="contoso_gpt4o", recipe=ComponentRecipe(class_module="m", class_name="TextTarget"))
+        before = (tmp_path / "targets" / "contoso_gpt4o.json").read_bytes()
+
+        with (
+            patch("pyrit.backend.services.target_service.release_component_async", new_callable=AsyncMock) as release,
+            pytest.raises(SavedEntryConflictError, match="A saved target named 'contoso_gpt4o' already exists."),
+        ):
+            await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
+
+        release.assert_awaited_once()
+        assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
+        assert (tmp_path / "targets" / "contoso_gpt4o.json").read_bytes() == before
+
+    async def test_two_saves_of_one_name_save_one_target(self, tmp_path: Path) -> None:
+        service = TargetService()
+        mini = {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o-mini"}
+
+        results = await asyncio.gather(
+            service.create_target_async(request=_save_request(), recipes_source=str(tmp_path)),
+            service.create_target_async(request=_save_request(params=mini), recipes_source=str(tmp_path)),
+            return_exceptions=True,
+        )
+
+        assert sorted(type(result).__name__ for result in results) == ["SavedEntryConflictError", "TargetInstance"]
+        registered = service.get_target_object(target_registry_name="contoso_gpt4o")
+        assert _saved_document(tmp_path, "contoso_gpt4o")["params"]["model_name"] == registered._model_name
+
+    async def test_saves_a_round_robin_only_over_targets_that_come_back_after_a_restart(self, tmp_path: Path) -> None:
+        service = TargetService()
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            for name in ("startup_one", "startup_two"):
+                await service.create_target_async(request=_save_request(name=name, persist=False))
+        await service.create_target_async(request=_save_request(name="launch_member", persist=False))
+        await service.create_target_async(request=_save_request(name="saved_member"), recipes_source=str(tmp_path))
+
+        def pool(name: str, *members: str) -> CreateTargetRequest:
+            return CreateTargetRequest(
+                name=name, type="RoundRobinTarget", params={"targets": list(members)}, persist=True
+            )
+
+        with pytest.raises(ValueError, match="Uses temporary target 'launch_member'"):
+            await service.create_target_async(
+                request=pool("pool", "startup_one", "launch_member"), recipes_source=str(tmp_path)
+            )
+        startup_pool = await service.create_target_async(
+            request=pool("startup_pool", "startup_one", "startup_two"), recipes_source=str(tmp_path)
+        )
+        mixed_pool = await service.create_target_async(
+            request=pool("mixed_pool", "startup_one", "saved_member"), recipes_source=str(tmp_path)
+        )
+
+        assert (startup_pool.origin, mixed_pool.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.SAVED)
+        assert _saved_document(tmp_path, "mixed_pool")["params"] == {"targets": ["startup_one", "saved_member"]}
+        assert not (tmp_path / "targets" / "pool.json").exists()
+
+    async def test_saves_a_class_registered_under_another_name_so_restore_finds_it(self, tmp_path: Path) -> None:
+        class AliasedTextTarget(TextTarget):
+            pass
+
+        TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
+        request = CreateTargetRequest(name="aliased", type="contoso_text", params={}, persist=True)
+
+        await TargetService().create_target_async(request=request, recipes_source=str(tmp_path))
+
+        assert _saved_document(tmp_path, "aliased")["class_name"] == "contoso_text"
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
+        assert (await _restore(tmp_path)).failures == []
+
+    async def test_a_reserved_name_is_refused_as_invalid_not_as_taken(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="reserved") as refusal:
+            await TargetService().create_target_async(request=_save_request(name="types"), recipes_source=str(tmp_path))
+
+        assert not isinstance(refusal.value, SavedEntryConflictError)
+
+    async def test_lists_where_each_target_comes_from(self, tmp_path: Path) -> None:
+        service = TargetService()
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            service._registry.instances.register(MockPromptTarget(), name="from_startup_script")
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            service._registry.instances.register(MockPromptTarget(), name="from_launch_script")
+        await service.create_target_async(request=_save_request(name="temporary_one", persist=False))
+        await service.create_target_async(request=_save_request(name="saved_one"), recipes_source=str(tmp_path))
+
+        listed = await service.list_targets_async()
+
+        assert {item.target_registry_name: item.origin for item in listed.items} == {
+            "from_startup_script": RegistryEntryOrigin.CONFIGURATION,
+            "from_launch_script": RegistryEntryOrigin.TEMPORARY,
+            "temporary_one": RegistryEntryOrigin.TEMPORARY,
+            "saved_one": RegistryEntryOrigin.SAVED,
+        }
+        fetched = await service.get_target_async(target_registry_name="temporary_one")
+        assert isinstance(fetched, TargetInstance)
+        assert fetched.origin is RegistryEntryOrigin.TEMPORARY
