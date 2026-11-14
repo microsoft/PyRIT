@@ -66,6 +66,9 @@ class InitializerService:
 
         Returns:
             ListRegisteredInitializersResponse: Paginated initializer summaries.
+
+        Raises:
+            ValueError: If the cursor does not name a registered initializer.
         """
         all_metadata = self._registry.get_all_registered_class_metadata()
         all_summaries = [_metadata_to_registered_initializer(m) for m in all_metadata]
@@ -164,6 +167,9 @@ class InitializerService:
 
         Returns:
             tuple[list[RegisteredInitializer], bool]: Paginated items and has-more flag.
+
+        Raises:
+            ValueError: If the cursor does not name a registered initializer.
         """
         start_idx = 0
         if cursor:
@@ -171,6 +177,10 @@ class InitializerService:
                 if item.initializer_name == cursor:
                     start_idx = index + 1
                     break
+            else:
+                # A cursor naming an entry that no longer exists must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the initializer registry")
 
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit

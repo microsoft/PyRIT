@@ -149,6 +149,18 @@ class TestInitializerServiceListInitializers:
             assert result.items[1].initializer_name == "init_3"
             assert result.pagination.has_more is True
 
+    async def test_list_initializers_rejects_a_cursor_that_names_no_initializer(self) -> None:
+        """A stale cursor must raise, not silently restart at the first page."""
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(5)]
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with pytest.raises(ValueError, match="cursor is not valid for the initializer registry"):
+                await service.list_initializers_async(limit=2, cursor="removed_initializer")
+
     async def test_list_initializers_last_page_has_more_false(self) -> None:
         metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)]
 
@@ -255,6 +267,30 @@ class TestInitializerRoutes:
             assert item["required_env_vars"] == ["AZURE_OPENAI_ENDPOINT"]
             assert item["supported_parameters"][0]["name"] == "tags"
             assert item["supported_parameters"][0]["default"] == ["default"]
+
+    def test_list_initializers_returns_400_after_the_cursor_initializer_is_removed(self, client: TestClient) -> None:
+        """Removing the initializer a client's cursor names must not replay the first page."""
+        metadata_list = [_make_initializer_metadata(registry_name=f"init_{i}", class_name=f"Init{i}") for i in range(3)]
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = metadata_list
+
+            with patch("pyrit.backend.routes.initializers.get_initializer_service", return_value=service):
+                first = client.get("/api/initializers?limit=1")
+                cursor = first.json()["pagination"]["next_cursor"]
+                assert cursor == "init_0"
+                assert (
+                    client.get(f"/api/initializers?limit=1&cursor={cursor}").json()["items"][0]["initializer_name"]
+                    == "init_1"
+                )
+
+                service._registry.get_all_registered_class_metadata.return_value = metadata_list[1:]
+                response = client.get(f"/api/initializers?limit=1&cursor={cursor}")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["detail"] == "The cursor is not valid for the initializer registry"
 
     def test_list_initializers_passes_pagination_params(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:

@@ -31,12 +31,20 @@ class TechniqueService:
 
         Returns:
             TechniqueListResponse: A page and its pagination metadata.
+
+        Raises:
+            ValueError: If the cursor does not name a registered technique.
         """
         return await asyncio.to_thread(self._list, limit=limit, cursor=cursor)
 
     def _list(self, *, limit: int, cursor: str | None) -> TechniqueListResponse:
         entries = self._registry.instances.get_all_instances()
-        start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
+        start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), None)
+        if cursor and start is None:
+            # A cursor naming an entry that no longer exists must not silently
+            # restart at the first page, which would serve duplicate rows.
+            raise ValueError("The cursor is not valid for the technique registry")
+        start = start or 0
         page = entries[start : start + limit]
         has_more = len(entries) > start + limit
         return TechniqueListResponse(

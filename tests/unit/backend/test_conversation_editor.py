@@ -32,6 +32,7 @@ from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendSt
 from pyrit.backend.routes.attacks import get_saved_conversation_async as get_saved_conversation_route_async
 from pyrit.backend.services import AttackService, TargetService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError
+from pyrit.backend.services.target_service import StaleTargetCursorError
 from pyrit.memory import PromptMemoryEntry, SQLiteMemory
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import (
@@ -1929,3 +1930,95 @@ class TestConversationEditor:
         )
         with pytest.raises(LookupError, match="The destination attack does not exist"):
             await service.save_conversation_async(request=request)
+
+
+def _scan_target_service(*, list_async: Any, target: Any) -> MagicMock:
+    service = MagicMock(spec=TargetService)
+    service.list_targets_async.side_effect = list_async
+    service.get_target_object.return_value = target
+    return service
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_editor_target_scan_restarts_when_its_cursor_target_is_removed_async() -> None:
+    wanted = MockPromptTarget()
+    other = OpenAIResponseTarget(endpoint="https://example.invalid/v1/responses", model_name="other", api_key="x")
+    cursors: list[str | None] = []
+
+    async def list_async(*, cursor: str | None = None) -> TargetListResponse:
+        cursors.append(cursor)
+        if len(cursors) == 1:
+            return TargetListResponse(
+                items=[target_object_to_instance("other", other)],
+                pagination=PaginationInfo(limit=50, has_more=True, next_cursor="other"),
+            )
+        if cursor == "other":
+            raise StaleTargetCursorError("The cursor is not valid for the target registry")
+        return TargetListResponse(
+            items=[target_object_to_instance("wanted", wanted)],
+            pagination=PaginationInfo(limit=50, has_more=False),
+        )
+
+    service = _scan_target_service(list_async=list_async, target=wanted)
+    with patch("pyrit.backend.services.attack_service.get_target_service", return_value=service):
+        resolved = await AttackService()._validate_editor_target_async(
+            target_identifier=wanted.get_identifier(), registry_name=None
+        )
+
+    assert resolved is wanted
+    assert cursors == [None, "other", None]
+    service.get_target_object.assert_called_once_with(target_registry_name="wanted")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error_type", [ValueError, StaleTargetCursorError])
+async def test_editor_target_scan_raises_a_first_page_error_async(error_type: type[ValueError]) -> None:
+    wanted = MockPromptTarget()
+    cursors: list[str | None] = []
+
+    async def list_async(*, cursor: str | None = None) -> TargetListResponse:
+        cursors.append(cursor)
+        raise error_type("first page failed")
+
+    service = _scan_target_service(list_async=list_async, target=wanted)
+    with (
+        patch("pyrit.backend.services.attack_service.get_target_service", return_value=service),
+        pytest.raises(ValueError, match="first page failed"),
+    ):
+        await AttackService()._validate_editor_target_async(
+            target_identifier=wanted.get_identifier(), registry_name=None
+        )
+
+    assert cursors == [None]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_editor_target_scan_propagates_unrelated_continuation_error_async() -> None:
+    wanted = MockPromptTarget()
+    other = OpenAIResponseTarget(endpoint="https://example.invalid/v1/responses", model_name="other", api_key="x")
+    cursors: list[str | None] = []
+
+    async def list_async(*, cursor: str | None = None) -> TargetListResponse:
+        cursors.append(cursor)
+        if len(cursors) == 1:
+            return TargetListResponse(
+                items=[target_object_to_instance("other", other)],
+                pagination=PaginationInfo(limit=50, has_more=True, next_cursor="other"),
+            )
+        if cursor:
+            raise ValueError("invalid target metadata")
+        return TargetListResponse(
+            items=[target_object_to_instance("wanted", wanted)], pagination=PaginationInfo(limit=50, has_more=False)
+        )
+
+    service = _scan_target_service(list_async=list_async, target=wanted)
+    with (
+        patch("pyrit.backend.services.attack_service.get_target_service", return_value=service),
+        pytest.raises(ValueError, match="invalid target metadata"),
+    ):
+        await AttackService()._validate_editor_target_async(
+            target_identifier=wanted.get_identifier(), registry_name=None
+        )
+
+    assert cursors == [None, "other"]
+    service.get_target_object.assert_not_called()
