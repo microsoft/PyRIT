@@ -213,6 +213,7 @@ if TYPE_CHECKING:
         ScenarioSeedGroupProgress,
         ScenarioTechniqueProgress,
     )
+    from pyrit.models.scenario_run_execution_token import ScenarioRunExecutionToken
     from pyrit.models.scenario_suite_execution import (
         SCENARIO_SUITE_EXECUTION_METADATA_KEY,
         SCENARIO_SUITE_EXECUTION_METADATA_VERSION,
@@ -596,6 +597,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioTechniqueSummary": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "ScenarioRunState": "pyrit.models.results.scenario_result",
+    "ScenarioRunExecutionToken": "pyrit.models.scenario_run_execution_token",
     "SCENARIO_CONVERSATIONS_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",

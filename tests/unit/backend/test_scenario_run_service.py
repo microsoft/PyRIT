@@ -55,6 +55,7 @@ from pyrit.models import (
     ScenarioProgressResult,
     ScenarioProgressScore,
     ScenarioResult,
+    ScenarioRunExecutionToken,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -1172,8 +1173,8 @@ class TestScenarioRunServiceStartRun:
             metadata_call.kwargs["metadata_fields"][_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY]
         )
         assert persisted_start.tzinfo is not None
-        execution_token = metadata_call.kwargs["metadata_fields"][_svc_mod._SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY]
-        assert execution_token
+        execution_token = ScenarioRunExecutionToken.from_metadata(metadata_call.kwargs["metadata_fields"])
+        assert execution_token is not None
         assert service._active_tasks["sr-uuid-1"].execution_token == execution_token
         assert (
             metadata_call.kwargs["metadata_fields"][_svc_mod._SCHEDULER_METADATA_KEY]
@@ -3672,7 +3673,7 @@ class TestScenarioRunServiceCancelRun:
             scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
-            expected_metadata_fields={_svc_mod._SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY: execution_token},
+            expected_metadata_fields=execution_token.to_metadata(),
         )
         assert result is not None
         assert result.status == ScenarioRunState.CANCELLED
@@ -4010,11 +4011,11 @@ class TestScenarioRunServiceRecovery:
     ) -> None:
         mock_memory = mock_all_registries["memory"]
         run_id = "shutdown-resume-before-initial-cas"
-        token_key = _svc_mod._SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY
-        original_token = "original-execution"
-        resumed_token = "resumed-execution"
+        token_key = ScenarioRunExecutionToken.METADATA_KEY
+        original_token = ScenarioRunExecutionToken(token="a" * 32)
+        resumed_token = ScenarioRunExecutionToken(token="b" * 32)
         record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.IN_PROGRESS)
-        record.metadata = {token_key: original_token}
+        record.metadata = original_token.to_metadata()
 
         async def _run_async() -> None:
             record.scenario_run_state = ScenarioRunState.CANCELLED
@@ -4031,7 +4032,7 @@ class TestScenarioRunServiceRecovery:
         ) -> bool:
             if expected_states == {ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS}:
                 record.scenario_run_state = resumed_state
-                record.metadata = {token_key: resumed_token}
+                record.metadata = resumed_token.to_metadata()
                 record.error_message = "resumed execution error"
                 record.error_type = "ResumedExecutionError"
             if record.scenario_run_state not in expected_states:
@@ -4061,13 +4062,13 @@ class TestScenarioRunServiceRecovery:
         await service._execute_run_async(scenario_result_id=run_id)
 
         assert record.scenario_run_state == resumed_state
-        assert record.metadata[token_key] == resumed_token
+        assert record.metadata == resumed_token.to_metadata()
         assert record.error_message == "resumed execution error"
         assert record.error_type == "ResumedExecutionError"
         assert [
             call.kwargs["expected_metadata_fields"]
             for call in mock_memory.try_update_scenario_run_state_async.await_args_list
-        ] == [{token_key: original_token}, {token_key: original_token}]
+        ] == [original_token.to_metadata(), original_token.to_metadata()]
         assert not service._active_tasks
 
     async def test_shutdown_waits_for_preparation_before_terminalizing_run(self, mock_all_registries) -> None:

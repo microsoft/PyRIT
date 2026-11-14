@@ -89,6 +89,7 @@ from pyrit.models import (
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
+    ScenarioRunExecutionToken,
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -118,7 +119,6 @@ _SCHEDULER_RETRY_INITIAL_SECONDS = 0.05
 _SCHEDULER_RETRY_MAX_SECONDS = 1.0
 _SCHEDULER_METADATA_KEY = "scheduler_managed_by"
 _SCHEDULER_METADATA_VALUE = "ScenarioRunService.process_local_fifo"
-_SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY = "scenario_run_execution_token_v1"
 _INTERRUPTED_ERROR_TYPE = "ScenarioInterruptedError"
 _RESTART_INTERRUPTION_REASON = (
     "The backend process restarted before this scenario run completed; "
@@ -135,7 +135,7 @@ _RESERVED_INITIAL_METADATA_KEYS = frozenset(
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
         _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
-        _SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY,
+        ScenarioRunExecutionToken.METADATA_KEY,
         SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -225,7 +225,7 @@ class _ActiveTask:
     created_at: datetime | None = None
     enqueued_at: datetime | None = None
     started_at: datetime | None = None
-    execution_token: str | None = None
+    execution_token: ScenarioRunExecutionToken | None = None
     cancellation_state: ScenarioRunState = ScenarioRunState.CANCELLED
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
@@ -1476,14 +1476,15 @@ class ScenarioRunService:
     async def _start_scheduled_run_locked_async(self, *, scheduled: _ActiveTask) -> None:
         """Start one run while the scheduler lock guarantees exclusive ownership."""
         scheduled.started_at = datetime.now(UTC)
-        scheduled.execution_token = uuid.uuid4().hex
+        execution_token = ScenarioRunExecutionToken(token=uuid.uuid4().hex)
+        scheduled.execution_token = execution_token
         await self._memory.update_scenario_run_state_and_metadata_fields_async(
             scenario_result_id=scheduled.scenario_result_id,
             scenario_run_state=ScenarioRunState.IN_PROGRESS,
             metadata_fields={
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
-                _SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY: scheduled.execution_token,
+                **execution_token.to_metadata(),
             },
         )
         self._launch_scheduled_run_locked(scheduled=scheduled)
@@ -1861,9 +1862,7 @@ class ScenarioRunService:
 
         except asyncio.CancelledError:
             expected_metadata_fields = (
-                {_SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY: active.execution_token}
-                if active.execution_token is not None
-                else None
+                active.execution_token.to_metadata() if active.execution_token is not None else None
             )
             try:
                 updated = await self._memory.try_update_scenario_run_state_async(
