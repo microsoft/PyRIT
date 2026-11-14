@@ -1491,7 +1491,7 @@ describe("ChatWindow Integration", () => {
       });
       await settleDraftRestore();
 
-      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue(prompt);
       expect(screen.getByRole("button", { name: /^Remove converter first/ })).toBeInTheDocument();
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
     });
