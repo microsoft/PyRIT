@@ -26,6 +26,7 @@ from azure.ai.contentsafety.models import TextCategory
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import Parameter, SeedPrompt
 from pyrit.registry import ScorerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.score import (
     AzureContentFilterScorer,
     DecisionScorer,
@@ -145,7 +146,6 @@ class ScorerInitializer(PyRITInitializer):
     ACS_SELF_HARM: ClassVar[str] = "acs_self_harm"
     ACS_SEXUAL: ClassVar[str] = "acs_sexual"
     ACS_VIOLENCE: ClassVar[str] = "acs_violence"
-    TASK_ACHIEVED_GPT4O_TEMP9: ClassVar[str] = "task_achieved_gpt4o_temp9"
 
     # Preferred name for each BEST_* category tag. If the preferred name
     # is not registered, the first available scorer in that category is used.
@@ -445,23 +445,10 @@ class ScorerInitializer(PyRITInitializer):
                 )
 
     def _register_task_achieved_scorers(self) -> None:
-        """
-        Register task-achieved true/false scorer variants.
-
-        All are tagged ``TASK_ACHIEVED``.
-        """
+        """Register the refined task-achieved scorer, tagged ``TASK_ACHIEVED``."""
         gpt4o_temp9 = self._get_chat_target_prefer_rr(GPT4O_TEMP9_TARGET)
         task_tag = [ScorerInitializerTags.TASK_ACHIEVED]
 
-        self._try_register(
-            name=self.TASK_ACHIEVED_GPT4O_TEMP9,
-            factory=lambda: SelfAskTrueFalseScorer.from_question(
-                chat_target=self._require_dependency(gpt4o_temp9, name=GPT4O_TEMP9_TARGET),
-                question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value),
-            ),
-            required_targets=[gpt4o_temp9],
-            tags=task_tag,
-        )
         self._try_register(
             name=TASK_ACHIEVED_REFINED_GPT4O_TEMP9,
             factory=lambda: SelfAskTrueFalseScorer.from_question(
@@ -513,6 +500,8 @@ class ScorerInitializer(PyRITInitializer):
         for best_tag, (preferred_name, category_tag) in self._PREFERRED_BEST.items():
             entry = scorer_registry.instances.get_entry(preferred_name)
             if entry is not None:
+                # A saved scorer under this name would stand in for the one this script couldn't build.
+                refuse_saved_entry(entry)
                 scorer_registry.instances.add_tags(name=preferred_name, tags=[best_tag])
                 logger.info(f"Tagged {preferred_name} as {best_tag}")
                 continue
@@ -635,7 +624,10 @@ class ScorerInitializer(PyRITInitializer):
 
         # Fall back: prefer scale_and_refusal, then first composite
         best_tags: list[str] = [ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
-        if scorer_registry.instances.get_entry(self.SCALE_AND_REFUSAL):
+        scale_and_refusal = scorer_registry.instances.get_entry(self.SCALE_AND_REFUSAL)
+        if scale_and_refusal is not None:
+            # A saved scorer under this name would stand in for the one this script couldn't build.
+            refuse_saved_entry(scale_and_refusal)
             fallback_name = self.SCALE_AND_REFUSAL
         else:
             composites = scorer_registry.instances.get_by_tag(tag=ScorerInitializerTags.OBJECTIVE_COMPOSITE)
