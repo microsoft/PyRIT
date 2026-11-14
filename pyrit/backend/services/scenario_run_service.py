@@ -237,6 +237,7 @@ class _ActiveRunSnapshot:
     """Event-loop-owned state copied before database awaits allow live state to change."""
 
     error: str | None = None
+    error_token: ScenarioRunExecutionToken | None = None
     active_group_ids: tuple[str, ...] = ()
     executions: tuple[ActiveAttackExecution, ...] = ()
     queue_position: int | None = None
@@ -282,7 +283,7 @@ class ScenarioRunService:
 
         self._preparations: set[asyncio.Task[_PreparedRun]] = set()
         self._preparation_errors: list[Exception] = []
-        self._terminal_errors: OrderedDict[str, str] = OrderedDict()
+        self._terminal_errors: OrderedDict[str, tuple[str, ScenarioRunExecutionToken | None]] = OrderedDict()
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
         self._handoff_retry_tasks: set[asyncio.Task[None]] = set()
@@ -854,6 +855,7 @@ class ScenarioRunService:
         response = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1079,6 +1081,7 @@ class ScenarioRunService:
         return await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1088,6 +1091,7 @@ class ScenarioRunService:
         *,
         scenario_result_id: str,
         active_error: str | None,
+        active_error_token: ScenarioRunExecutionToken | None = None,
         queue_position: int | None = None,
         active_scenario_result_id: str | None = None,
     ) -> ScenarioRunSummary | None:
@@ -1097,6 +1101,7 @@ class ScenarioRunService:
         Args:
             scenario_result_id: The scenario result ID.
             active_error: Error copied from the active asyncio task, if any.
+            active_error_token: Execution that produced the error, if available.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
 
@@ -1106,6 +1111,7 @@ class ScenarioRunService:
         return await self._build_response_async(
             scenario_result_id=scenario_result_id,
             active_error=active_error,
+            active_error_token=active_error_token,
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
@@ -1302,6 +1308,7 @@ class ScenarioRunService:
         result = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1545,7 +1552,7 @@ class ScenarioRunService:
         completed = self._active_tasks.pop(scenario_result_id, None)
         if completed is None or completed.error is None:
             return
-        self._terminal_errors[scenario_result_id] = completed.error
+        self._terminal_errors[scenario_result_id] = (completed.error, completed.execution_token)
         self._terminal_errors.move_to_end(scenario_result_id)
         while len(self._terminal_errors) > _MAX_TERMINAL_ERRORS:
             self._terminal_errors.popitem(last=False)
@@ -1932,6 +1939,7 @@ class ScenarioRunService:
         active_error: str | None,
         queue_position: int | None,
         active_scenario_result_id: str | None,
+        active_error_token: ScenarioRunExecutionToken | None = None,
     ) -> ScenarioRunSummary | None:
         """
         Build a ScenarioRunResponse by querying the database and merging active task state.
@@ -1939,6 +1947,7 @@ class ScenarioRunService:
         Args:
             scenario_result_id: The scenario result ID.
             active_error: Error copied from the active asyncio task, if any.
+            active_error_token: Execution that produced the error, if available.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
 
@@ -1948,6 +1957,10 @@ class ScenarioRunService:
         results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
+        if active_error_token is not None and any(
+            results[0].metadata.get(key) != value for key, value in active_error_token.to_metadata().items()
+        ):
+            active_error = None
         return await self._build_response_from_db_async(
             scenario_result=results[0],
             active_error=active_error,
@@ -2689,14 +2702,17 @@ class ScenarioRunService:
         )
         active = self._get_active_task(scenario_result_id=scenario_result_id)
         if active is None:
+            error, error_token = self._terminal_errors.get(scenario_result_id, (None, None))
             return _ActiveRunSnapshot(
-                error=self._terminal_errors.get(scenario_result_id),
+                error=error,
+                error_token=error_token,
                 queue_position=queue_position,
                 active_scenario_result_id=active_scenario_result_id,
             )
         active_group_ids = tuple(sorted(active.scenario.active_atomic_group_ids)) if active.scenario is not None else ()
         return _ActiveRunSnapshot(
             error=active.error,
+            error_token=active.execution_token,
             active_group_ids=active_group_ids,
             executions=active.scenario.active_executions if active.scenario is not None else (),
             queue_position=queue_position,

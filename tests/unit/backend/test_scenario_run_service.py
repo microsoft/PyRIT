@@ -1158,7 +1158,7 @@ class TestScenarioRunServiceStartRun:
         """Test that starting a run returns RUNNING status with run_id = scenario_result_id."""
         service = ScenarioRunService()
         mock_memory = mock_all_registries["memory"]
-        service._terminal_errors["sr-uuid-1"] = "prior failed attempt"
+        service._terminal_errors["sr-uuid-1"] = ("prior failed attempt", None)
         response = await service.start_run_async(request=_make_request())
 
         assert response.scenario_result_id == "sr-uuid-1"
@@ -4384,6 +4384,8 @@ class TestScenarioRunServiceExecution:
         active = service._active_tasks.get(response.scenario_result_id)
         assert active is not None
         assert active.task is not None
+        assert active.execution_token is not None
+        mock_all_registries["db_result"].metadata = active.execution_token.to_metadata()
         release_execution.set()
         await active.task
 
@@ -4461,6 +4463,7 @@ class TestScenarioRunServiceExecution:
             return True
 
         mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_try_update_state)
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[record])
         scenario = MagicMock(spec=Scenario)
         scenario.run_async = AsyncMock(side_effect=_run_async)
         service = ScenarioRunService()
@@ -4486,6 +4489,37 @@ class TestScenarioRunServiceExecution:
             error_type="RuntimeError",
             expected_metadata_fields=original_token.to_metadata(),
         )
+        record.error_message = None
+        record.error_type = None
+        resumed = await service.get_run_async(scenario_result_id=run_id)
+        assert resumed is not None
+        assert resumed.status == ScenarioRunState.IN_PROGRESS
+        assert resumed.error is None
+
+    async def test_cached_error_is_hidden_if_run_resumes_later_async(self, mock_all_registries: dict[str, Any]) -> None:
+        mock_memory = mock_all_registries["memory"]
+        run_id = "cached-error-before-resume"
+        original_token = ScenarioRunExecutionToken(token="c" * 32)
+        resumed_token = ScenarioRunExecutionToken(token="d" * 32)
+        record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.FAILED)
+        record.metadata = original_token.to_metadata()
+        record.error_message = None
+        record.error_type = None
+        mock_memory.get_scenario_results_async = AsyncMock(return_value=[record])
+        mock_memory.get_attack_results_async = AsyncMock(return_value=[])
+        service = ScenarioRunService()
+        service._terminal_errors[run_id] = ("old execution failed", original_token)
+
+        before_resume = await service.get_run_async(scenario_result_id=run_id)
+        assert before_resume is not None
+        assert before_resume.error == "old execution failed"
+
+        record.scenario_run_state = ScenarioRunState.IN_PROGRESS
+        record.metadata = resumed_token.to_metadata()
+        after_resume = await service.get_run_async(scenario_result_id=run_id)
+        assert after_resume is not None
+        assert after_resume.status == ScenarioRunState.IN_PROGRESS
+        assert after_resume.error is None
 
     async def test_terminalization_retry_cas_preserves_a_resumed_execution_async(
         self, mock_all_registries: dict[str, Any]
