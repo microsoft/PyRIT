@@ -11,7 +11,7 @@ from pyrit.converter import AzureSpeechAudioToTextConverter
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -39,7 +39,7 @@ class TestAzureSpeechAudioToTextConverter:
     @patch("azure.cognitiveservices.speech.SpeechRecognizer")
     @patch("pyrit.converter.azure_speech_audio_to_text_converter.logger")
     def test_stop_cb(self, mock_logger, MockSpeechRecognizer, mock_get_required_value):  # noqa: N803
-        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:import-not-found]
 
         # Create a mock event
         mock_event = MagicMock(spec=speechsdk.SpeechRecognitionCanceledEventArgs)
@@ -63,7 +63,7 @@ class TestAzureSpeechAudioToTextConverter:
 
     @patch("pyrit.converter.azure_speech_audio_to_text_converter.logger")
     def test_stop_cb_session_stopped_event_has_no_result(self, mock_logger):
-        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:import-not-found]
 
         # session_stopped delivers a SessionEventArgs, which has no `result`; spec keeps the mock
         # from inventing one.
@@ -80,7 +80,7 @@ class TestAzureSpeechAudioToTextConverter:
 
     @patch("pyrit.converter.azure_speech_audio_to_text_converter.logger")
     def test_stop_cb_canceled_event_logs_error_details(self, mock_logger):
-        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:import-not-found]
 
         event = MagicMock(spec=speechsdk.SpeechRecognitionCanceledEventArgs)
         event.result.reason = speechsdk.ResultReason.Canceled
@@ -103,7 +103,7 @@ class TestAzureSpeechAudioToTextConverter:
     @patch("azure.cognitiveservices.speech.SpeechRecognizer")
     @patch("pyrit.converter.azure_speech_audio_to_text_converter.logger")
     def test_transcript_cb(self, mock_logger, MockSpeechRecognizer, mock_get_required_value):  # noqa: N803
-        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:import-not-found]
 
         # Create a mock event
         mock_event = MagicMock()

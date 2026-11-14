@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 def is_torch_installed():
     try:
-        import torch  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import torch  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except ModuleNotFoundError:

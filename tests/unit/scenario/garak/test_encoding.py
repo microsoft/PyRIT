@@ -12,7 +12,7 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
-from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
 

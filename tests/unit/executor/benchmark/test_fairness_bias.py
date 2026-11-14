@@ -23,7 +23,7 @@ from pyrit.prompt_target import PromptTarget
 
 def is_spacy_installed():
     try:
-        import spacy  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import spacy  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except Exception:

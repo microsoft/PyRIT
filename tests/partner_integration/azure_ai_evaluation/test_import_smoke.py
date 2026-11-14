@@ -18,7 +18,7 @@ from pyrit.score import TrueFalseScorer
 def _azure_ai_evaluation_available() -> bool:
     """Check if azure-ai-evaluation[redteam] is installed."""
     try:
-        from azure.ai.evaluation.red_team import RedTeam  # type: ignore[ty:unresolved-import]  # noqa: F401
+        from azure.ai.evaluation.red_team import RedTeam  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except ImportError:
@@ -37,7 +37,7 @@ class TestRedTeamModuleImports:
 
     def test_redteam_public_api_imports(self):
         """Verify all public classes from azure.ai.evaluation.red_team are importable."""
-        from azure.ai.evaluation.red_team import (  # type: ignore[ty:unresolved-import]
+        from azure.ai.evaluation.red_team import (  # type: ignore[ty:import-not-found]
             AttackStrategy,
             RedTeam,
             RedTeamResult,
@@ -70,7 +70,7 @@ class TestCallbackChatTargetInheritance:
 
     def test_callback_chat_target_extends_prompt_target(self):
         """_CallbackChatTarget must be a subclass of pyrit.prompt_target.PromptTarget."""
-        from azure.ai.evaluation.red_team._callback_chat_target import (  # type: ignore[ty:unresolved-import]
+        from azure.ai.evaluation.red_team._callback_chat_target import (  # type: ignore[ty:import-not-found]
             _CallbackChatTarget,
         )
 
@@ -87,7 +87,7 @@ class TestRAIScorerInheritance:
 
     def test_rai_scorer_extends_true_false_scorer(self):
         """RAIServiceScorer must be a subclass of pyrit.score.true_false.TrueFalseScorer."""
-        from azure.ai.evaluation.red_team._foundry._rai_scorer import (  # type: ignore[ty:unresolved-import]
+        from azure.ai.evaluation.red_team._foundry._rai_scorer import (  # type: ignore[ty:import-not-found]
             RAIServiceScorer,  # private: intentional
         )
 
