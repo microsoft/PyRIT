@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
+from shutil import which
+from subprocess import run
 
 import yaml
 from pypdf import PdfReader
@@ -64,7 +64,7 @@ def _check_engine_log(path: Path) -> None:
 def build_pdf(doc_root: Path) -> int:
     """Build the repository's XeLaTeX PDF export and reject missing, stale, or failed output."""
     output = _pdf_output(doc_root)
-    missing = [tool for tool in ("latexmk", "xelatex") if shutil.which(tool) is None]
+    missing = [tool for tool in ("latexmk", "xelatex") if which(tool) is None]
     if missing:
         raise ValueError(
             f"Missing PDF prerequisites on PATH: {', '.join(missing)}. "
@@ -73,7 +73,7 @@ def build_pdf(doc_root: Path) -> int:
     logs_dir = output.parent / f"{output.stem}_pdf_logs"
     logs = [logs_dir / f"{output.stem}.log", logs_dir / f"{output.stem}.shell.log"]
     previous = {path: _signature(path) for path in [output, *logs]}
-    result = subprocess.run(
+    result = run(
         [sys.executable, "-m", "jupyter_book", "build", "--site", "--pdf", "--strict", "--logs"],
         cwd=doc_root,
         check=False,
