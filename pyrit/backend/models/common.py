@@ -97,6 +97,14 @@ class ProblemDetail(BaseModel):
     errors: list[FieldError] | None = Field(None, description="Field-level errors for validation")
 
 
+class SaveabilityResponse(BaseModel):
+    """Whether an entry could be saved as asked, decided by the checks saving it runs."""
+
+    not_saveable_reason: str | None = Field(
+        None, description="Why the entry can't be saved, though it can be created without saving it; null if it can"
+    )
+
+
 # Sensitive field patterns to filter from identifiers
 SENSITIVE_FIELD_PATTERNS = frozenset(
     [
