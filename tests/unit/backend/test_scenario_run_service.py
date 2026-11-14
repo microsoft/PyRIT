@@ -1172,6 +1172,9 @@ class TestScenarioRunServiceStartRun:
             metadata_call.kwargs["metadata_fields"][_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY]
         )
         assert persisted_start.tzinfo is not None
+        execution_token = metadata_call.kwargs["metadata_fields"][_svc_mod._SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY]
+        assert execution_token
+        assert service._active_tasks["sr-uuid-1"].execution_token == execution_token
         assert (
             metadata_call.kwargs["metadata_fields"][_svc_mod._SCHEDULER_METADATA_KEY]
             == _svc_mod._SCHEDULER_METADATA_VALUE
@@ -3650,6 +3653,8 @@ class TestScenarioRunServiceCancelRun:
         mock_all_registries["scenario_instance"].run_async.side_effect = run_until_cancelled_async
         response = await service.start_run_async(request=_make_request())
         await asyncio.wait_for(run_started.wait(), timeout=5)
+        execution_token = service._active_tasks[response.scenario_result_id].execution_token
+        assert execution_token is not None
 
         # After update_scenario_run_state, the next DB query should return CANCELLED
         cancelled_result = _make_db_scenario_result(
@@ -3667,6 +3672,7 @@ class TestScenarioRunServiceCancelRun:
             scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
+            expected_metadata_fields={_svc_mod._SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY: execution_token},
         )
         assert result is not None
         assert result.status == ScenarioRunState.CANCELLED
@@ -3996,6 +4002,72 @@ class TestScenarioRunServiceRecovery:
         assert record.error_type == "ExistingError"
         assert record.completion_time == completion_time
         mock_memory.update_scenario_run_state_async.assert_not_awaited()
+        assert not service._active_tasks
+
+    @pytest.mark.parametrize("resumed_state", [ScenarioRunState.IN_PROGRESS, ScenarioRunState.CANCELLED])
+    async def test_shutdown_cas_preserves_resume_started_before_initial_update_async(
+        self, mock_all_registries: dict[str, Any], resumed_state: ScenarioRunState
+    ) -> None:
+        mock_memory = mock_all_registries["memory"]
+        run_id = "shutdown-resume-before-initial-cas"
+        token_key = _svc_mod._SCENARIO_RUN_EXECUTION_TOKEN_METADATA_KEY
+        original_token = "original-execution"
+        resumed_token = "resumed-execution"
+        record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.IN_PROGRESS)
+        record.metadata = {token_key: original_token}
+
+        async def _run_async() -> None:
+            record.scenario_run_state = ScenarioRunState.CANCELLED
+            record.error_message = "Scenario run was cancelled"
+            record.error_type = "CancelledError"
+            raise asyncio.CancelledError
+
+        def _try_update_state(
+            *,
+            expected_states: set[ScenarioRunState],
+            scenario_run_state: ScenarioRunState,
+            expected_metadata_fields: dict[str, str] | None = None,
+            **kwargs: Any,
+        ) -> bool:
+            if expected_states == {ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS}:
+                record.scenario_run_state = resumed_state
+                record.metadata = {token_key: resumed_token}
+                record.error_message = "resumed execution error"
+                record.error_type = "ResumedExecutionError"
+            if record.scenario_run_state not in expected_states:
+                return False
+            if any(record.metadata.get(key) != value for key, value in (expected_metadata_fields or {}).items()):
+                return False
+            record.scenario_run_state = scenario_run_state
+            record.error_message = kwargs.get("error_message")
+            record.error_type = kwargs.get("error_type")
+            return True
+
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_try_update_state)
+        scenario = MagicMock(spec=Scenario)
+        scenario.run_async = AsyncMock(side_effect=_run_async)
+        service = ScenarioRunService()
+        service._stopping = True
+        service._active_scenario_result_id = run_id
+        service._active_tasks[run_id] = _svc_mod._ActiveTask(
+            scenario_result_id=run_id,
+            scenario=scenario,
+            execution_token=original_token,
+            cancellation_state=ScenarioRunState.FAILED,
+            cancellation_reason="shutdown",
+            cancellation_error_type="ScenarioInterruptedError",
+        )
+
+        await service._execute_run_async(scenario_result_id=run_id)
+
+        assert record.scenario_run_state == resumed_state
+        assert record.metadata[token_key] == resumed_token
+        assert record.error_message == "resumed execution error"
+        assert record.error_type == "ResumedExecutionError"
+        assert [
+            call.kwargs["expected_metadata_fields"]
+            for call in mock_memory.try_update_scenario_run_state_async.await_args_list
+        ] == [{token_key: original_token}, {token_key: original_token}]
         assert not service._active_tasks
 
     async def test_shutdown_waits_for_preparation_before_terminalizing_run(self, mock_all_registries) -> None:
