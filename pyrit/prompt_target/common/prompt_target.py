@@ -371,6 +371,7 @@ class PromptTarget(Identifiable):
         3. Validates the normalized conversation against the target's capabilities.
         4. Delegates to ``_send_prompt_to_target_async`` with the normalized conversation.
 
+        System-prompt support is checked here even when a target overrides ``_validate_request``.
         Subclasses MUST NOT override this method. Override
         ``_send_prompt_to_target_async`` instead.
 
@@ -384,7 +385,7 @@ class PromptTarget(Identifiable):
             list[Message]: Response messages from the target.
 
         Raises:
-            ValueError: If the message or normalized conversation are empty.
+            ValueError: If the message or normalized conversation are empty, or unsupported system messages remain.
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
@@ -422,6 +423,13 @@ class PromptTarget(Identifiable):
             normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
             if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
+            if not self.configuration.includes(capability=CapabilityName.SYSTEM_PROMPT) and any(
+                piece.api_role == "system" for turn in normalized_conversation for piece in turn.message_pieces
+            ):
+                raise ValueError(
+                    "This target does not support system prompts and no normalizer adapted the system message. "
+                    "If your target does support this, set the custom_configuration parameter accordingly."
+                )
             self._validate_request(normalized_conversation=normalized_conversation)
             self.validate_request_generation_config(normalized_request)
             with target_trace_context(
