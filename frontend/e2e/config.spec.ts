@@ -302,7 +302,7 @@ test.describe("Target Registry Page", () => {
 
     // Dialog should open
     await expect(page.getByText("Create New Target")).toBeVisible();
-    await expect(page.getByText("Create Target")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save Target" })).toBeVisible();
   });
 
   test("should update targets after a visible minute without a Refresh control", async ({ page }) => {
@@ -406,12 +406,14 @@ test.describe("Create Target Dialog", () => {
     await expect(selectedDetails).toContainText("Supported authentication: API key");
   });
 
-  test("should create a target through the dialog", async ({ page }) => {
+  test("should save a target through the dialog", async ({ page }) => {
     let createdTarget: FlatTarget | null = null;
+    let createBody: Record<string, unknown> | null = null;
 
     await page.route(/\/api\/targets/, async (route) => {
       if (route.request().method() === "POST") {
         const body = JSON.parse(route.request().postData() ?? "{}");
+        createBody = body;
         createdTarget = {
           target_registry_name: "new-target-1",
           target_type: body.type,
@@ -428,6 +430,27 @@ test.describe("Create Target Dialog", () => {
         const items = createdTarget ? [createdTarget] : [];
         await route.fulfill(mockTargetsList(items));
       }
+    });
+    // Registered last, so it answers the type list instead of the route above.
+    await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              target_type: "OpenAIChatTarget",
+              parameters: [
+                { name: "endpoint", type_name: "str", required: true, default: null },
+                { name: "model_name", type_name: "str", required: true, default: null },
+              ],
+              supported_auth_modes: ["api_key", "identity", "none"],
+              saveable_auth_modes: ["identity", "none"],
+              not_saveable_reason: null,
+            },
+          ],
+        }),
+      });
     });
 
     await goToTargets(page);
@@ -453,11 +476,16 @@ test.describe("Create Target Dialog", () => {
     // Fill model name
     await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("gpt-4o-test");
 
-    // Click Create Target
-    await dialog.getByRole("button", { name: "Create Target" }).click();
+    await dialog.getByRole("button", { name: "Save Target" }).click();
 
     // Dialog should close and target should appear in the list
     await expect(page.getByText("Create New Target")).not.toBeVisible({ timeout: 5_000 });
+    expect(createBody).toMatchObject({
+      name: "openai_chat_gpt_4o_test",
+      type: "OpenAIChatTarget",
+      auth_mode: "identity",
+      persist: true,
+    });
     await expect(page.getByText("gpt-4o-test", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
   });
@@ -496,7 +524,7 @@ test.describe("Create Target Dialog", () => {
     await expect(page.getByText("Create New Target")).toBeVisible();
 
     const dialog = page.locator('[role="dialog"]');
-    const createBtn = dialog.getByRole("button", { name: "Create Target" });
+    const createBtn = dialog.getByRole("button", { name: "Save Target" });
     await expect(createBtn).toBeDisabled();
 
     await selectTargetType(
