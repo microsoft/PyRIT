@@ -56,10 +56,12 @@ import {
   canApplyPendingImport,
   hasChatDraftState,
   historyContainsAcceptedDraft,
+  historyMayContainAcceptedDraft,
   isChatDraftDirty,
   computeAttachmentSignature,
   stableMetadataString,
 } from '@/utils/chatDraft'
+import { isMessageSendConversationConfirmed } from '@/services/messageSendObservation'
 import { resolveTargetReference, sameTarget, targetReference } from '@/utils/targetIdentity'
 import { mergeImportedHistory } from '@/utils/seedImport'
 import { resolveChatScorerReference } from '@/utils/scorerPresentation'
@@ -99,6 +101,7 @@ import type {
   CreateConversationRequest,
   Message,
   MessageAttachment,
+  MessageSendStatus,
   NewAttackContext,
   TargetInstance,
   TargetInfo,
@@ -358,6 +361,9 @@ export default function ChatWindow({
     return () => { window.clearTimeout(fade); window.clearTimeout(dismiss) }
   }, [noticeId])
   const [editorError, setEditorError] = useState<string | null>(null)
+  const [acceptedSendCheck, setAcceptedSendCheck] = useState<
+    { key: string; status: MessageSendStatus } | { key: string; error: unknown } | null
+  >(null)
   const [importSystemConflict, setImportSystemConflict] = useState<string | null>(null)
   const [importSystemChoice, setImportSystemChoice] = useState<{ id: string; choice: 'destination' | 'imported' } | null>(null)
   const exitSaveRef = useRef<Promise<boolean> | null>(null)
@@ -439,11 +445,12 @@ export default function ChatWindow({
   const handoffRestoredRef = useRef<number | null>(null)
   // An accepted send restored before its prompt reached history; kept until the composer changes.
   const restoredAcceptedSendRef = useRef<{
-    submissionId: string
+    sendId: string
     history: AcceptedSendHistory
     conversationId: string | null
     draftRevision?: number
   } | null>(null)
+  const acceptedSendCheckRef = useRef<string | null>(null)
   const importInFlightRef = useRef<string | null>(null)
   const importFailedRef = useRef<string | null>(null)
   const importMountedRef = useRef(true)
@@ -722,12 +729,12 @@ export default function ChatWindow({
       if (shouldDiscard || !ownsDraftRef.current || isWaitingForRestore
         || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
       const operation = draftConversationId ? getPendingSend(draftConversationId) : undefined
-      const acceptedSend: { submissionId: string, history: AcceptedSendHistory } | undefined = operation?.progress
+      const acceptedSend: { sendId: string, history: AcceptedSendHistory } | undefined = operation?.progress
         && operation.originalValue === savedDraft.text
         && getLatestSendId() === operation.submissionId
         && operation.draftRevision === composerRevision
         ? {
-          submissionId: operation.submissionId,
+          sendId: operation.progress.send_id,
           history: {
             ...(operation.progress.request_turn_number != null
               ? { requestTurnNumber: operation.progress.request_turn_number } : {}),
@@ -737,7 +744,7 @@ export default function ChatWindow({
         : restoredAcceptedSend
           && restoredAcceptedSend.conversationId === draftConversationId
           && restoredAcceptedSend.draftRevision === composerRevision
-          ? { submissionId: restoredAcceptedSend.submissionId, history: restoredAcceptedSend.history }
+          ? { sendId: restoredAcceptedSend.sendId, history: restoredAcceptedSend.history }
           : undefined
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
@@ -745,7 +752,7 @@ export default function ChatWindow({
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
         draft: acceptedSend
-          ? { ...savedDraft, acceptedSubmissionId: acceptedSend.submissionId, acceptedSendHistory: acceptedSend.history }
+          ? { ...savedDraft, acceptedSendId: acceptedSend.sendId, acceptedSendHistory: acceptedSend.history }
           : savedDraft,
       }, draftHandoff.activeSequence, draftHandoff.pendingImport?.id)
     }
@@ -827,17 +834,58 @@ export default function ChatWindow({
         draftHandoff.clearPreservedDraft(preserved.sequence, draftAttackId, draftConversationId)
         return
       }
+      const preservedMessages = getLoadedBackendMessages(draftConversationId ?? '')
+      const canContainAcceptedSend = historyMayContainAcceptedDraft(preserved.draft, preservedMessages)
+      const acceptedSendId = preserved.draft.acceptedSendId
+      let acceptedSendStatus: MessageSendStatus | undefined
+      if (canContainAcceptedSend && acceptedSendId && draftAttackId && draftConversationId) {
+        const checkKey = JSON.stringify([preserved.sequence, draftAttackId, draftConversationId, acceptedSendId])
+        const check = acceptedSendCheck?.key === checkKey ? acceptedSendCheck : undefined
+        if (!check) {
+          if (acceptedSendCheckRef.current !== checkKey) {
+            acceptedSendCheckRef.current = checkKey
+            void attacksApi.getMessageSend(draftAttackId, acceptedSendId).then((status: MessageSendStatus) => {
+              if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
+                || currentAttackIdRef.current !== draftAttackId
+                || currentConversationIdRef.current !== draftConversationId) return
+              setAcceptedSendCheck({ key: checkKey, status })
+            }).catch((error: unknown) => {
+              if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
+                || currentAttackIdRef.current !== draftAttackId
+                || currentConversationIdRef.current !== draftConversationId) return
+              setAcceptedSendCheck({ key: checkKey, error })
+            })
+          }
+          return
+        }
+        if ('error' in check) {
+          setEditorNotice(`${toApiError(check.error).detail || 'Could not verify send status.'} The preserved draft was kept.`)
+        } else {
+          acceptedSendStatus = check.status
+          if (acceptedSendStatus.send_id !== acceptedSendId || acceptedSendStatus.attack_result_id !== draftAttackId) {
+            setEditorNotice('Send status did not match the preserved draft. The draft was kept.')
+          }
+        }
+      }
       const consumed = draftHandoff.consumePreservedDraft(draftAttackId, draftConversationId, preserved.sequence)
       if (!consumed) return
       handoffRestoredRef.current = preserved.sequence
-      const completedAcceptedSend = historyContainsAcceptedDraft(
-        consumed,
-        getLoadedBackendMessages(draftConversationId ?? ''),
+      const acceptedSendConversation = acceptedSendStatus?.conversations?.length
+        ? acceptedSendStatus.conversations.find((conversation) => conversation.conversation_id === draftConversationId)
+        : acceptedSendStatus
+      const sendProgressConfirmed = Boolean(acceptedSendStatus && consumed.acceptedSendId
+        && acceptedSendStatus.send_id === consumed.acceptedSendId
+        && acceptedSendStatus.attack_result_id === draftAttackId
+        && acceptedSendConversation
+        && acceptedSendConversation.conversation_id === draftConversationId
+        && isMessageSendConversationConfirmed(acceptedSendConversation))
+      const completedAcceptedSend = sendProgressConfirmed && historyContainsAcceptedDraft(
+        consumed, preservedMessages, acceptedSendConversation?.request_turn_number,
       )
-      restoredAcceptedSendRef.current = consumed.acceptedSubmissionId && consumed.acceptedSendHistory
+      restoredAcceptedSendRef.current = consumed.acceptedSendId && consumed.acceptedSendHistory
         && !completedAcceptedSend
         ? {
-          submissionId: consumed.acceptedSubmissionId,
+          sendId: consumed.acceptedSendId,
           history: consumed.acceptedSendHistory,
           conversationId: draftConversationId,
         }
@@ -846,7 +894,7 @@ export default function ChatWindow({
       draft = completedAcceptedSend
         ? {
           ...consumed, text: '', attachments: [], textMetadata: undefined,
-          acceptedSubmissionId: undefined, acceptedSendHistory: undefined,
+          acceptedSendId: undefined, acceptedSendHistory: undefined,
           converters: consumed.converters && {
             ...consumed.converters, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
           },
@@ -1082,6 +1130,7 @@ export default function ChatWindow({
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
     activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets, importSystemChoice,
     getLoadedBackendMessages, rememberBackendMessages,
+    acceptedSendCheck,
   ])
 
   // Handle conversation selection from the panel

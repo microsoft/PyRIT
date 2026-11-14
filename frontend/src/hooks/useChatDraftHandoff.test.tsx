@@ -10,6 +10,7 @@ import {
   canApplyPendingImport,
   hasChatDraftState,
   historyContainsAcceptedDraft,
+  historyMayContainAcceptedDraft,
   isChatDraftDirty,
   releaseSupersededUrls,
   revokeAttachmentUrls,
@@ -204,21 +205,23 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
     })
     const earlier = userTurn(0, 'piece-earlier', 'same prompt')
 
-    it('matches the accepted request turn, not an identical earlier prompt', () => {
+    it('matches only the confirmed request turn, not an identical earlier prompt', () => {
       const draft = {
-        acceptedSubmissionId: 'send-1',
+        acceptedSendId: 'send-1',
         acceptedSendHistory: { requestTurnNumber: 2, priorUserPieceIds: ['piece-earlier'] },
       }
-      expect(historyContainsAcceptedDraft(draft, [earlier])).toBe(false)
-      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-repeat', 'same prompt')])).toBe(true)
-      expect(historyContainsAcceptedDraft({ acceptedSendHistory: draft.acceptedSendHistory }, [earlier, userTurn(2, 'p', '')]))
+      expect(historyContainsAcceptedDraft(draft, [earlier], 2)).toBe(false)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-repeat', 'same prompt')], 2)).toBe(true)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-repeat', 'same prompt')], 3)).toBe(false)
+      expect(historyContainsAcceptedDraft({ acceptedSendHistory: draft.acceptedSendHistory }, [earlier, userTurn(2, 'p', '')], 2))
         .toBe(false)
     })
 
-    it('uses user pieces saved after the send when the request turn was not yet known', () => {
-      const draft = { acceptedSubmissionId: 'send-1', acceptedSendHistory: { priorUserPieceIds: ['piece-earlier'] } }
-      expect(historyContainsAcceptedDraft(draft, [earlier])).toBe(false)
-      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-attachment', '')])).toBe(true)
+    it('uses new user pieces only as a candidate when the request turn was not yet known', () => {
+      const draft = { acceptedSendId: 'send-1', acceptedSendHistory: { priorUserPieceIds: ['piece-earlier'] } }
+      expect(historyMayContainAcceptedDraft(draft, [earlier])).toBe(false)
+      expect(historyMayContainAcceptedDraft(draft, [earlier, userTurn(2, 'piece-attachment', '')])).toBe(true)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-attachment', '')], null)).toBe(false)
     })
   })
 

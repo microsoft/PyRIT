@@ -1086,7 +1086,7 @@ describe("ChatWindow Integration", () => {
       error: null,
       failure_stage: null,
     };
-    const complete: MessageSendStatus = { ...queued, state: "completed" };
+    const complete: MessageSendStatus = { ...queued, state: "completed", target_invoked: true };
     const empty = { conversation_id: props.conversationId, messages: [], target_response_status: null };
     const reply = { ...makeTextResponse("Async reply").messages, conversation_id: props.conversationId };
     const readError = {
@@ -1376,6 +1376,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
 
       mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
       rendered.rerender(<ChatOrDatasets showChat={false} />);
       expect(screen.getByRole("heading", { name: "Datasets" })).toBeInTheDocument();
 
@@ -1385,6 +1386,35 @@ describe("ChatWindow Integration", () => {
       await settleDraftRestore();
       expect(screen.getByRole("textbox")).toHaveValue("");
       expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("keeps the accepted draft when another client reuses its failed request turn", async () => {
+      const user = userEvent.setup();
+      const prompt = "Unsent request from client A";
+      const acceptedSendId = "backend-send-a";
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, send_id: acceptedSendId });
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await sendPrompt(user, prompt);
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor("Request from client B"));
+      mockedAttacksApi.getMessageSend.mockResolvedValue({
+        ...queued,
+        send_id: acceptedSendId,
+        state: "failed",
+        failure_stage: "preparation",
+        target_invoked: false,
+      });
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      await settleDraftRestore();
+
+      expect(screen.getByRole("textbox")).toHaveValue(prompt);
+      expect(mockedAttacksApi.getMessageSend).toHaveBeenLastCalledWith(props.attackResultId, acceptedSendId);
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
     });
 
     it("keeps an attachment added after a failed status read when the send later completes", async () => {
@@ -1440,6 +1470,7 @@ describe("ChatWindow Integration", () => {
       await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
 
       mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
       rendered.rerender(<ChatOrDatasets showChat={false} />);
       rendered.rerender(<ChatOrDatasets showChat />);
       expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
@@ -1464,6 +1495,7 @@ describe("ChatWindow Integration", () => {
       await settleDraftRestore();
 
       mockedAttacksApi.getMessages.mockResolvedValue(completedHistoryFor(prompt));
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
       rendered.rerender(<ChatOrDatasets showChat={false} />);
       rendered.rerender(<ChatOrDatasets showChat />);
       expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
@@ -1523,6 +1555,7 @@ describe("ChatWindow Integration", () => {
         converted_value: "/media/only-attachment.png",
       };
       mockedAttacksApi.getMessages.mockResolvedValue(history);
+      mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
       rendered.rerender(<ChatOrDatasets showChat={false} chatProps={attachmentProps} />);
       rendered.rerender(<ChatOrDatasets showChat chatProps={attachmentProps} />);
       expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();

@@ -47,17 +47,29 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
   ))
 }
 
-/**
- * True when this accepted send's request is already saved in conversation history.
- * Matches the send's history position, not its text, so an identical earlier prompt or an
- * attachment-only send cannot be mistaken for it. Genuinely new edits have no accepted submission ID.
- */
+/** True when the confirmed send turn is present in history and agrees with the captured position. */
 export function historyContainsAcceptedDraft(
-  draft: Pick<ChatDraftContent, 'acceptedSubmissionId' | 'acceptedSendHistory'>,
+  draft: Pick<ChatDraftContent, 'acceptedSendId' | 'acceptedSendHistory'>,
+  messages?: readonly BackendMessage[] | null,
+  requestTurnNumber?: number | null,
+): boolean {
+  const position = draft.acceptedSendHistory
+  if (!draft.acceptedSendId || !position || !messages || requestTurnNumber == null) return false
+  if (position.requestTurnNumber != null && position.requestTurnNumber !== requestTurnNumber) return false
+  return messages.some((message: BackendMessage) => (
+    message.role === 'user' && message.turn_number === requestTurnNumber
+  ))
+}
+
+/**
+ * A position match is only a reason to check the exact send status; it is not proof that this send was saved.
+ */
+export function historyMayContainAcceptedDraft(
+  draft: Pick<ChatDraftContent, 'acceptedSendId' | 'acceptedSendHistory'>,
   messages?: readonly BackendMessage[] | null,
 ): boolean {
   const position = draft.acceptedSendHistory
-  if (!draft.acceptedSubmissionId || !position || !messages) return false
+  if (!draft.acceptedSendId || !position || !messages) return false
   const userMessages = messages.filter((message: BackendMessage) => message.role === 'user')
   if (position.requestTurnNumber !== undefined) {
     return userMessages.some((message: BackendMessage) => message.turn_number === position.requestTurnNumber)
