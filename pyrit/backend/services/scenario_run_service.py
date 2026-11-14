@@ -76,6 +76,8 @@ from pyrit.models import (
     AttackResult,
     AttackResultMetadata,
     ComponentIdentifier,
+    DatasetExampleSelection,
+    DatasetExampleSelectionError,
     ScenarioActiveConversation,
     ScenarioAttackResultDelta,
     ScenarioHierarchyNode,
@@ -155,6 +157,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "dataset_names",
     "max_dataset_size",
     "dataset_filters",
+    "example_selection",
     "max_concurrency",
     "max_retries",
     "include_baseline",
@@ -168,6 +171,7 @@ _OPTIONAL_LAUNCH_FIELDS = frozenset(
         "max_dataset_size",
         "technique_override",
         "objective_scorer",
+        "example_selection",
     }
 )
 
@@ -357,10 +361,12 @@ class ScenarioRunService:
             return None
         request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
         await asyncio.to_thread(self._validate_rerun_references, stored=stored, request=request)
-        payload = request.model_dump(
-            mode="json",
-            exclude={"scenario_result_id", "datasets", "dataset_names", "max_dataset_size", "dataset_filters"},
-        )
+        excluded = {"scenario_result_id", "datasets", "dataset_names", "max_dataset_size", "dataset_filters"}
+        if request.example_selection is None:
+            excluded.add("example_selection")
+        payload = request.model_dump(mode="json", exclude=excluded)
+        if request.example_selection is not None:
+            payload["example_selection"] = request.example_selection.model_dump(mode="json")
         if request.dataset_request is not None:
             payload["datasets"] = request.dataset_request.model_dump(mode="json", exclude_unset=True)
         if request.labels is not None:
@@ -712,7 +718,12 @@ class ScenarioRunService:
         identifier = stored.scenario_identifier
         if (
             "scenario_techniques" in declared_names and request.techniques is None and identifier.techniques is None
-        ) or ("dataset_config" in declared_names and request.dataset_request is None and identifier.datasets is None):
+        ) or (
+            "dataset_config" in declared_names
+            and request.dataset_request is None
+            and request.example_selection is None
+            and identifier.datasets is None
+        ):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
@@ -991,6 +1002,7 @@ class ScenarioRunService:
                 declared=scenario_class.supported_parameters(),
                 owner=request.scenario_name,
             )
+        example_selection = await self._example_selection_for_run_async(request=request)
         await self._run_initializers_async(request=request)
         reference_issues, _, _ = await run_legacy_sync_async(
             self._configuration_resolver.resolve_named_roles,
@@ -1009,8 +1021,7 @@ class ScenarioRunService:
             target_name=request.adversarial_target_name
         )
         with override_default_adversarial_target(adversarial_target):
-            init_kwargs = await run_legacy_sync_async(
-                self._configuration_resolver.resolve_configuration,
+            init_kwargs = await self._configuration_resolver.resolve_configuration_async(
                 scenario_name=request.scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
@@ -1018,6 +1029,7 @@ class ScenarioRunService:
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
+                example_selection=example_selection,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
                 if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
@@ -1026,6 +1038,7 @@ class ScenarioRunService:
                 if "max_retries" in declared_names or "max_retries" in request.model_fields_set
                 else None,
                 memory_labels=request.labels,
+                scenario_params=request.scenario_params,
             )
             init_kwargs["operation_id"] = request.operation_id
             metadata = dict(
@@ -1044,6 +1057,33 @@ class ScenarioRunService:
                 initial_metadata=metadata,
             )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
+
+    async def _example_selection_for_run_async(self, *, request: RunScenarioRequest) -> DatasetExampleSelection | None:
+        """
+        Use the caller's selection for a new run and the saved selection on resume.
+
+        Older runs have no saved launch body. The run API still accepts the caller's
+        original configuration for those. A saved body wins, including when the caller
+        omits the field, and a different supplied selection is rejected.
+
+        Returns:
+            DatasetExampleSelection | None: The selection to resolve.
+
+        Raises:
+            DatasetExampleSelectionError: If a resume request supplies a different selection.
+        """
+        if request.scenario_result_id is None:
+            return request.example_selection
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=request.scenario_result_id)
+        if stored is None or _LAUNCH_REQUEST_METADATA_KEY not in stored.metadata:
+            return request.example_selection
+        saved = await asyncio.to_thread(self._restore_launch_request, stored=stored)
+        if "example_selection" in request.model_fields_set and request.example_selection != saved.example_selection:
+            raise DatasetExampleSelectionError(
+                code="conflicting_mode",
+                detail="Resume must keep the saved exact example selection.",
+            )
+        return saved.example_selection
 
     @staticmethod
     def _validate_initial_metadata(*, initial_metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -1746,6 +1786,8 @@ class ScenarioRunService:
         declared = scenario_class.supported_parameters()
         declared_names = {parameter.name for parameter in declared}
         launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
+        if launch_request.get("example_selection") is None:
+            launch_request.pop("example_selection", None)
         policy_parameter = next(
             (parameter for parameter in declared if parameter.name == "incompatible_technique_policy"),
             None,

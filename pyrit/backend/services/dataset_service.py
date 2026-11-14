@@ -32,6 +32,10 @@ from pyrit.backend.models.datasets import (
     SeedExampleSummary,
     SeedMemberView,
 )
+from pyrit.backend.services.dataset_example_fingerprint import (
+    dataset_example_fingerprint,
+    parse_dataset_selection_key,
+)
 from pyrit.common.pagination import DecodedKeysetCursor, decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
 from pyrit.common.text_search import compile_like_pattern, validate_text_search
 from pyrit.datasets import SeedDatasetProvider
@@ -259,7 +263,10 @@ class DatasetService:
             if next_after
             else None
         )
-        items = [self._summarize(example_id=example_id, seeds=seeds) for example_id, seeds in examples.items()]
+        items = [
+            self._summarize(selection_key=selection_key, example_id=example_id, seeds=seeds)
+            for example_id, seeds in examples.items()
+        ]
         if version is not None:
             for item in items:
                 item.editable_seeds = await asyncio.to_thread(
@@ -309,7 +316,7 @@ class DatasetService:
             seeds = await self._memory.get_seed_example_async(dataset_name=name, example_id=example_id)
         if not seeds:
             return None
-        summary = self._summarize(example_id=example_id, seeds=seeds)
+        summary = self._summarize(selection_key=selection_key, example_id=example_id, seeds=seeds)
         members = [await self._seed_member_view_async(seed) for seed in seeds]
         if version is not None:
             summary.editable_seeds = await asyncio.to_thread(self._editable_seeds, records=seeds, version=version)
@@ -447,15 +454,10 @@ class DatasetService:
         Raises:
             ValueError: If the selection key is not valid.
         """
-        if selection_key == "dataset:unnamed":
-            return None
-        name = selection_key.removeprefix("dataset:named:")
-        if not name or name == selection_key:
-            raise ValueError(f"Invalid dataset selection key: {selection_key}")
-        return name
+        return parse_dataset_selection_key(selection_key)
 
     @classmethod
-    def _summarize(cls, *, example_id: UUID, seeds: Sequence[SeedRecord]) -> SeedExampleSummary:
+    def _summarize(cls, *, selection_key: str, example_id: UUID, seeds: Sequence[SeedRecord]) -> SeedExampleSummary:
         preview, truncated = cls._preview(seeds)
         return SeedExampleSummary(
             example_id=example_id,
@@ -468,6 +470,7 @@ class DatasetService:
             objective_count=sum(seed.seed_type == "objective" for seed in seeds),
             harm_categories=sorted({category for seed in seeds for category in seed.harm_categories or []}),
             has_unlabeled_harm=any(not seed.harm_categories for seed in seeds),
+            fingerprint=dataset_example_fingerprint(selection_key=selection_key, example_id=example_id, members=seeds),
         )
 
     @staticmethod

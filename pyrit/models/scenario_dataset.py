@@ -5,11 +5,16 @@
 
 from enum import Enum
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from pyrit.models.dataset_limit import normalize_dataset_limit
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+
+# Matches the browse ``selection_key`` query limit (``MAX_CURSOR_LENGTH``).
+MAX_SELECTION_KEY_LENGTH = 1_024
+_FINGERPRINT_PATTERN = r"^[0-9a-f]{64}$"
 
 # Dataset seed filters exposed to clients. Each key is a list-valued ``MemoryInterface.get_seeds``
 # keyword argument. Comma-list semantics differ per key because ``get_seeds`` treats each field
@@ -76,6 +81,55 @@ class DatasetSourceInput(BaseModel):
         if not value.strip():
             raise ValueError("Dataset names must be non-empty.")
         return value
+
+
+class DatasetExampleSelectionError(ValueError):
+    """An exact example selection cannot be resolved."""
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        detail: str,
+        selection_key: str | None = None,
+        example_id: UUID | None = None,
+    ) -> None:
+        """
+        Record a stable selection error.
+
+        Args:
+            code: Stable error code such as ``stale`` or ``missing``.
+            detail: Explanation that does not include seed text.
+            selection_key: Browse key of the offending reference, when there is one.
+            example_id: Example id of the offending reference, when there is one.
+        """
+        self.code = code
+        self.selection_key = selection_key
+        self.example_id = example_id
+        reference = ""
+        if selection_key is not None:
+            reference = f" selection_key={selection_key!r}"
+            if example_id is not None:
+                reference += f" example_id={example_id}"
+        super().__init__(f"{code}:{reference} {detail}")
+
+
+class DatasetExampleReference(BaseModel):
+    """One stored logical example, pinned to the membership and content the client was shown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selection_key: str = Field(min_length=1, max_length=MAX_SELECTION_KEY_LENGTH)
+    example_id: UUID
+    fingerprint: str = Field(pattern=_FINGERPRINT_PATTERN)
+
+
+class DatasetExampleSelection(BaseModel):
+    """Exact examples to preview, estimate, and launch. Empty and oversized lists are rejected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    examples: list[DatasetExampleReference] = Field(min_length=1, max_length=MAX_ITEMS)
 
 
 class ScenarioDatasetRequest(BaseModel):

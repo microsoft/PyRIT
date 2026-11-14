@@ -5,22 +5,34 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
+from pyrit.backend.services.dataset_example_selection import (
+    exact_example_dataset_configuration,
+    resolve_dataset_example_selection_async,
+    scenario_accepts_dataset_config,
+    selection_conflicts_with_datasets,
+)
+from pyrit.models import DatasetExampleSelectionError
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
+from pyrit.scenario import ExactExampleDatasetConfiguration
 from pyrit.scenario.core import override_default_adversarial_target, resolve_technique_tokens
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.converter import Converter
-    from pyrit.models import ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
+    from pyrit.memory import MemoryInterface
+    from pyrit.models import DatasetExampleSelection, ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
     from pyrit.models.catalog import RunScenarioRequest
     from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario import Scenario
+    from pyrit.scenario import DatasetAttackConfiguration, Scenario
 
 
 class ScenarioConfigurationResolver:
@@ -235,20 +247,33 @@ class ScenarioConfigurationResolver:
         techniques: list[str] | None = None,
         technique_override: TechniqueOverride | None = None,
         datasets: ScenarioDatasetRequest | None = None,
+        dataset_config: DatasetAttackConfiguration | None = None,
         include_baseline: bool | None = None,
         max_concurrency: int | None = None,
         max_retries: int | None = None,
         memory_labels: dict[str, str] | None = None,
+        scenario_params: Mapping[str, Any] | None = None,
+        inspect_exact_selection: bool = False,
     ) -> dict[str, Any]:
         """
         Resolve shared launch and estimate fields into scenario parameters.
 
         Dataset edits pass through unchanged; the scenario applies and validates them.
+        An exact selection is supplied as ``dataset_config`` by ``resolve_configuration_async``.
+        Its examples must run unchanged under every selected technique that has a factory:
+        the shared compatibility checks reject a technique that would skip an example or
+        run it only after objective-only adaptation. The factories checked are the ones
+        the scenario executes, resolved by the scenario itself with ``scenario_params``
+        and the resolved values, so a registered override or run-local edit is checked
+        rather than a catalog default it replaces. Estimates set ``inspect_exact_selection``
+        so the check reads stored seed types, roles, and sequences and never rebuilds a
+        simulated conversation or loads a prompt template; launch checks the built seeds.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
 
         Raises:
+            DatasetExampleSelectionError: If a selected technique cannot run an exact example unchanged.
             ValueError: If techniques or dataset overrides are invalid.
         """
         resolved: dict[str, Any] = {}
@@ -265,9 +290,12 @@ class ScenarioConfigurationResolver:
         if memory_labels:
             resolved["memory_labels"] = memory_labels
 
-        if datasets is not None:
+        if dataset_config is not None:
+            resolved["dataset_config"] = dataset_config
+        elif datasets is not None:
             resolved["dataset_overrides"] = datasets
-        if not techniques and technique_override is None:
+        exact_selection = dataset_config if isinstance(dataset_config, ExactExampleDatasetConfiguration) else None
+        if not techniques and technique_override is None and exact_selection is None:
             return resolved
 
         try:
@@ -302,6 +330,13 @@ class ScenarioConfigurationResolver:
                 raise ValueError("A technique edit requires exactly its one selected concrete source technique")
             resolved["local_technique_factory"] = TechniqueEditService.resolve(technique_override)
 
+        if exact_selection is not None:
+            # Configure the introspection instance with the parameters the run receives, then
+            # ask the scenario which factory it executes for each selected technique.
+            introspection_instance.set_params_from_args(args={**(scenario_params or {}), **resolved})
+            exact_selection.validate_technique_factories(
+                introspection_instance._get_selected_technique_factories(), inspect_only=inspect_exact_selection
+            )
         return resolved
 
     @classmethod
@@ -335,3 +370,87 @@ class ScenarioConfigurationResolver:
         if resolution.issues:
             raise ValueError(resolution.issues[0].message)
         return resolution.techniques, resolution.technique_converters
+
+    @classmethod
+    async def resolve_configuration_async(
+        cls,
+        *,
+        scenario_name: str,
+        scenario_class: type[Scenario],
+        objective_target: Any | None = None,
+        scoring_target_name: str | None = None,
+        techniques: list[str] | None = None,
+        technique_override: TechniqueOverride | None = None,
+        datasets: ScenarioDatasetRequest | None = None,
+        example_selection: DatasetExampleSelection | None = None,
+        include_baseline: bool | None = None,
+        max_concurrency: int | None = None,
+        max_retries: int | None = None,
+        memory_labels: dict[str, str] | None = None,
+        memory: MemoryInterface | None = None,
+        reject_exact_selection: bool = False,
+        scenario_params: Mapping[str, Any] | None = None,
+        inspect_exact_selection: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Resolve launch and estimate fields, including an exact example selection.
+
+        Named-dataset requests keep today's override behavior. An exact selection replaces
+        the population and is rejected by the explicit dataset load route. Estimates pass
+        ``inspect_exact_selection`` so the technique check uses stored inspection data only;
+        launch leaves it off and checks the executable seeds.
+
+        Returns:
+            dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
+
+        Raises:
+            DatasetExampleSelectionError: If the exact selection is stale, missing, or unsupported.
+            ValueError: If techniques or dataset overrides are invalid.
+        """
+        dataset_config = None
+        datasets_for_named_mode = datasets
+        if example_selection is not None:
+            if reject_exact_selection:
+                raise DatasetExampleSelectionError(
+                    code="conflicting_mode",
+                    detail="Exact example selection has nothing to fetch.",
+                )
+            if selection_conflicts_with_datasets(datasets):
+                raise DatasetExampleSelectionError(
+                    code="conflicting_mode",
+                    detail=(
+                        "Exact example selection cannot be combined with dataset sources, filters, limits, or fetch."
+                    ),
+                )
+            if not scenario_class.SUPPORTS_EXACT_EXAMPLE_SELECTION:
+                raise DatasetExampleSelectionError(
+                    code="unsupported",
+                    detail="This scenario does not support an exact example selection.",
+                )
+            if not scenario_accepts_dataset_config(scenario_class):
+                raise DatasetExampleSelectionError(
+                    code="unsupported",
+                    detail="This scenario does not accept a dataset configuration.",
+                )
+            resolved_examples = await resolve_dataset_example_selection_async(
+                selection=example_selection, memory=memory
+            )
+            dataset_config = exact_example_dataset_configuration(resolved_examples)
+            datasets_for_named_mode = None
+        return await asyncio.to_thread(
+            cls.resolve_configuration,
+            scenario_name=scenario_name,
+            scenario_class=scenario_class,
+            objective_target=objective_target,
+            scoring_target_name=scoring_target_name,
+            techniques=techniques,
+            technique_override=technique_override,
+            datasets=datasets_for_named_mode,
+            dataset_config=dataset_config,
+            include_baseline=include_baseline,
+            max_concurrency=max_concurrency,
+            max_retries=max_retries,
+            memory_labels=memory_labels,
+            scenario_params=scenario_params,
+            inspect_exact_selection=inspect_exact_selection,
+        )

@@ -85,6 +85,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetSource,
     DatasetSourceKind,
+    ExactExampleDatasetConfiguration,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
@@ -765,6 +766,10 @@ class Scenario(ABC):
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
 
+    #: False when initialization reads named datasets or a private configuration instead of
+    #: the attack groups on ``dataset_config``.
+    SUPPORTS_EXACT_EXAMPLE_SELECTION: ClassVar[bool] = True
+
     @final
     async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
@@ -791,7 +796,9 @@ class Scenario(ABC):
         ``set_params_from_args`` should be called first for a request-specific
         estimate. Omitted values use the same declared defaults, aggregate
         expansion, dataset limits, and baseline policy as ``initialize_async``.
-        Dataset contents are not read. The initialized run plan supplies exact counts.
+        Named-dataset contents are not read. An exact example selection reports its
+        already resolved count and does not build seeds. The initialized run plan
+        supplies exact counts for every other population.
 
         Args:
             target_is_configured: Whether a concrete objective target has been resolved.
@@ -806,9 +813,10 @@ class Scenario(ABC):
         self._resolve_runtime_configuration(require_objective_target=False)
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
-        budget = self._get_run_size_budget()
+        exact_population = isinstance(self._dataset_config, ExactExampleDatasetConfiguration)
+        budget = self._dataset_config.get_size_budget() if exact_population else self._get_run_size_budget()
         cap = self._dataset_config.max_total
-        if cap != "all" and isinstance(budget, BoundedDatasetSize):
+        if not exact_population and cap != "all" and isinstance(budget, BoundedDatasetSize):
             budget = BoundedDatasetSize(value=min(cap, budget.value))
         dataset_limit = self._get_dataset_limit_input()
         if isinstance(budget, IndeterminateDatasetSize):
@@ -829,6 +837,12 @@ class Scenario(ABC):
         values["dataset_size"] = budget
         values["dataset_limit"] = dataset_limit
         if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable:
+            return ScenarioRunSizeEstimate.model_validate(values)
+        if exact_population:
+            values["note"] = (
+                "Count is the resolved example count times the scenario's current technique and baseline policy. "
+                + (estimate.note or "")
+            )
             return ScenarioRunSizeEstimate.model_validate(values)
         if estimate.status is ScenarioRunSizeEstimateStatus.Exact:
             values["status"] = ScenarioRunSizeEstimateStatus.Approximate
@@ -1198,6 +1212,27 @@ class Scenario(ABC):
         if local_factory is not None:
             factories[local_factory.name] = local_factory
         return factories
+
+    def _get_selected_technique_factories(self) -> dict[str, "AttackTechniqueFactory"]:
+        """
+        Return the factory this scenario runs for each selected concrete technique.
+
+        Resolves the selection from ``params`` with ``_resolve_scenario_techniques`` and
+        looks each technique up in ``_get_readiness_factories``, the same view readiness
+        and execution use. A scenario's own precedence therefore applies, for example
+        registered factories over catalog defaults in ``AdaptiveScenario``, scenario-local
+        factories, and a run-local edit. Techniques without a factory are omitted.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Factories keyed by technique name, in selection order.
+        """
+        factories = self._get_readiness_factories()
+        selected = self._resolve_scenario_techniques(scenario_techniques=self.params.get("scenario_techniques"))
+        return {
+            technique.value: factory
+            for technique in selected
+            if (factory := factories.get(technique.value)) is not None
+        }
 
     @staticmethod
     def _get_target_requirements(factory: "AttackTechniqueFactory") -> "TechniqueRequirements":

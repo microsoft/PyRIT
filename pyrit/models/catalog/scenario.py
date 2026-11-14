@@ -36,6 +36,7 @@ from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_dataset import (
     DATASET_FILTERS,
+    DatasetExampleSelection,
     DatasetLimitInputValue,
     DatasetSourceInput,
     ScenarioDatasetOptions,
@@ -147,6 +148,13 @@ class _DatasetRequestModel(BaseModel):
 
     datasets: ScenarioDatasetRequest | None = Field(
         None, description="Dataset sources, limits, fetch policy, and filters. Omit to use scenario defaults."
+    )
+    example_selection: DatasetExampleSelection | None = Field(
+        None,
+        description=(
+            "Exact stored examples. Omit for named-dataset behavior. "
+            "Cannot be combined with sources, filters, limits, fetch, or deprecated dataset fields."
+        ),
     )
     dataset_names: _RequestNames | None = Field(None, description="Deprecated; use datasets.sources.")
     max_dataset_size: DatasetLimitInputValue = Field("default", description="Deprecated; use datasets.max_total.")

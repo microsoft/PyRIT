@@ -27,6 +27,7 @@ if TYPE_CHECKING:
         DatasetFetchPolicy,
         DatasetSource,
         DatasetSourceKind,
+        ExactExampleDatasetConfiguration,
         ResolvedDataset,
         require_nonempty,
     )
@@ -66,6 +67,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DatasetFetchPolicy": "pyrit.scenario.core.dataset_configuration",
     "DatasetSource": "pyrit.scenario.core.dataset_configuration",
     "DatasetSourceKind": "pyrit.scenario.core.dataset_configuration",
+    "ExactExampleDatasetConfiguration": "pyrit.scenario.core.dataset_configuration",
     "INLINE_DATASET_NAME": "pyrit.scenario.core.dataset_configuration",
     "Parameter": "pyrit.models.parameter",
     "ResolvedDataset": "pyrit.scenario.core.dataset_configuration",

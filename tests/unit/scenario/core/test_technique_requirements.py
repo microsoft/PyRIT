@@ -32,7 +32,11 @@ from pyrit.scenario import (
     IncompatibleTechniquePolicy,
     TechniqueRequirements,
 )
-from pyrit.scenario.core.technique_requirements import filter_seed_groups, prepare_seed_group
+from pyrit.scenario.core.technique_requirements import (
+    filter_seed_groups,
+    prepare_seed_group,
+    require_unchanged_seed_group,
+)
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -281,3 +285,44 @@ class TestTechniqueTargetRequirements:
             AtomicAttackIdentifier.build(technique_identifier=adapted.get_identifier())
         ).eval_hash
         assert default_eval != adapted_eval
+
+
+class TestRequireUnchangedSeedGroup:
+    @staticmethod
+    def _conversation() -> AttackSeedGroup:
+        return AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn", data_type="text", role="user", sequence=0),
+            ]
+        )
+
+    def test_compatible_group_passes(self) -> None:
+        require_unchanged_seed_group(seed_group=self._conversation(), requirements=SeedGroupRequirements())
+
+    def test_group_that_would_be_skipped_fails(self) -> None:
+        with pytest.raises(IncompatibleTechniqueError, match="accepts only an objective"):
+            require_unchanged_seed_group(
+                seed_group=self._conversation(), requirements=SeedGroupRequirements(objective_only=True)
+            )
+
+    def test_group_that_would_be_adapted_fails(self) -> None:
+        requirements = SeedGroupRequirements(objective_only=True, try_adapt=True)
+        assert prepare_seed_group(seed_group=self._conversation(), requirements=requirements).adaptation
+        with pytest.raises(IncompatibleTechniqueError, match="objective_only adaptation"):
+            require_unchanged_seed_group(seed_group=self._conversation(), requirements=requirements)
+
+    def test_objective_only_group_passes_an_adapting_technique(self) -> None:
+        require_unchanged_seed_group(
+            seed_group=AttackSeedGroup(seeds=[SeedObjective(value="objective")]),
+            requirements=SeedGroupRequirements(objective_only=True, try_adapt=True),
+        )
+
+    def test_group_validation_failure_propagates(self) -> None:
+        def reject(_: AttackSeedGroup) -> None:
+            raise IncompatibleTechniqueError("named prompts are not accepted")
+
+        with pytest.raises(IncompatibleTechniqueError, match="named prompts"):
+            require_unchanged_seed_group(
+                seed_group=self._conversation(), requirements=SeedGroupRequirements(), validate_group=reject
+            )

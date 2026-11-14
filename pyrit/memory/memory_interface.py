@@ -6286,6 +6286,25 @@ class MemoryInterface(abc.ABC):
             )
         return seeds.get(example_id, [])
 
+    def _execute_get_seed_examples_by_ids(
+        self, *, dataset_name: str | None, example_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[SeedRecord]]:
+        """
+        Read the stored members of specific logical examples in one dataset.
+
+        Returns:
+            dict[uuid.UUID, list[SeedRecord]]: Members keyed by the requested ids that this
+            dataset contains, in request order. Ids with no members are omitted.
+        """
+        if not example_ids:
+            return {}
+        with closing(self._get_session()) as session:
+            return self._get_seed_example_seeds(
+                session=session,
+                scope=self._seed_example_scope(dataset_name=dataset_name),
+                example_ids=example_ids,
+            )
+
     def _execute_get_seed_dataset_names(self) -> Sequence[str]:
         """
         Return a list of all seed dataset names in the memory storage.
@@ -11743,6 +11762,28 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(
             self._execute_get_seed_example, dataset_name=dataset_name, example_id=example_id
+        )
+
+    async def get_seed_examples_by_ids_async(
+        self, *, dataset_name: str | None, example_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[SeedRecord]]:
+        """
+        Read specific logical examples from one dataset in one query.
+
+        This is the batch form of ``get_seed_example_async``. The paginated reader keeps the
+        name ``get_seed_examples_async``. Ids are not looked up in any other dataset.
+
+        Args:
+            dataset_name: The dataset name. None or an empty string selects seeds without a dataset name.
+            example_ids: Example ids to read. Each id is a ``prompt_group_id``, or a seed id when
+                the seed has no group.
+
+        Returns:
+            dict[uuid.UUID, list[SeedRecord]]: Stored members for the ids this dataset contains,
+            in ``example_ids`` order, objectives first. Missing ids are omitted.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_examples_by_ids, dataset_name=dataset_name, example_ids=example_ids
         )
 
     def get_seed_dataset_names(self) -> Sequence[str]:

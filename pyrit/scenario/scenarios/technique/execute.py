@@ -84,6 +84,7 @@ class Execute(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = 1

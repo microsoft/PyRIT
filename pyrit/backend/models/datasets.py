@@ -180,6 +180,15 @@ class SeedExampleSummary(BaseModel):
     objective_count: int
     harm_categories: list[str]
     has_unlabeled_harm: bool = Field(..., description="Whether any member has no harm category")
+    fingerprint: str = Field(
+        ...,
+        description=(
+            "Lowercase SHA-256 of the selection key, example id, and stored member records. "
+            "Send it back unchanged to require those exact records."
+        ),
+        min_length=64,
+        max_length=64,
+    )
     editable_seeds: list[dict[str, Any]] | None = Field(None, description="Opt-in submit-ready seed replacements")
 
 
