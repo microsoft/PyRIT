@@ -225,6 +225,48 @@ def test_objective_metrics_baselines_round_trip_through_json(tmp_path):
     assert loaded.baseline_f1_score == 0.65
 
 
+def test_find_objective_metrics_reads_entries_recorded_before_the_trial_consistency_fields(tmp_path):
+    identifier = _make_identifier()
+    entry = identifier.model_dump()
+    entry["eval_hash"] = "hash_abc"
+    metrics = _metrics_to_registry_dict(_make_objective_metrics(accuracy=0.88))
+    for name in ("single_trial_accuracy", "num_inconsistent_responses", "krippendorff_alpha_model"):
+        metrics.pop(name, None)
+    entry["metrics"] = metrics
+    path = tmp_path / "objective_achieved_metrics.jsonl"
+    _write_jsonl(path, [entry])
+
+    result = find_objective_metrics_by_eval_hash(eval_hash="hash_abc", file_path=path)
+    assert result is not None
+    assert result.single_trial_accuracy is None
+    assert result.num_inconsistent_responses is None
+    assert result.krippendorff_alpha_model is None
+
+
+def test_objective_metrics_trial_consistency_round_trips_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(
+        _make_objective_metrics(
+            num_scorer_trials=3, single_trial_accuracy=0.84, num_inconsistent_responses=7, krippendorff_alpha_model=0.71
+        ).to_json()
+    )
+
+    loaded = ObjectiveScorerMetrics.from_json_file(path)
+
+    assert loaded.single_trial_accuracy == 0.84
+    assert loaded.num_inconsistent_responses == 7
+    assert loaded.krippendorff_alpha_model == 0.71
+
+
+def test_harm_metrics_single_trial_error_round_trips_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(_make_harm_metrics(num_scorer_trials=3, single_trial_mean_absolute_error=0.21).to_json())
+
+    loaded = HarmScorerMetrics.from_json_file(path)
+
+    assert loaded.single_trial_mean_absolute_error == 0.21
+
+
 def test_find_objective_metrics_by_eval_hash_not_found(tmp_path):
     path = tmp_path / "objective_achieved_metrics.jsonl"
     _write_jsonl(path, [])
