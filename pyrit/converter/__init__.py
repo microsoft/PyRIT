@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pyrit.converter.add_image_text_converter import AddImageTextConverter
     from pyrit.converter.add_image_to_video_converter import AddImageVideoConverter
     from pyrit.converter.add_text_image_converter import AddTextImageConverter
+    from pyrit.converter.adversarial_poetry_converter import AdversarialPoetryConverter
     from pyrit.converter.ansi_escape.ansi_attack_converter import AnsiAttackConverter
     from pyrit.converter.arabic_presentation_form_converter import ArabicPresentationFormConverter
     from pyrit.converter.arabizi_converter import ArabiziConverter
@@ -151,6 +152,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AddImageTextConverter": "pyrit.converter.add_image_text_converter",
     "AddImageVideoConverter": "pyrit.converter.add_image_to_video_converter",
     "AddTextImageConverter": "pyrit.converter.add_text_image_converter",
+    "AdversarialPoetryConverter": "pyrit.converter.adversarial_poetry_converter",
     "AllWordsSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "AnsiAttackConverter": "pyrit.converter.ansi_escape.ansi_attack_converter",
     "ArabicPresentationFormConverter": "pyrit.converter.arabic_presentation_form_converter",
