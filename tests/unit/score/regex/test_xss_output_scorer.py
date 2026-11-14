@@ -347,6 +347,59 @@ async def test_xss_javascript_uri_near_miss_does_not_backtrack(
     assert score.get_value() is False
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<svg><animate onbegin=alert(1) attributeName=x dur=1s>",
+        "<svg><animate onend=alert(1) attributeName=x dur=1s>",
+        "<body onpageshow=alert(1)>",
+        "<body onhashchange=alert(1)>",
+        "<body onresize=alert(1)>",
+        "<marquee onstart=alert(1)>",
+        "<div onpointerup=alert(1)>x</div>",
+        "<div onauxclick=alert(1)>x</div>",
+        "<video src=x onloadstart=alert(1)>",
+        "<audio autoplay onplay=alert(1) src=x>",
+        "<input oninvalid=alert(1) required>",
+        "<div popover id=p onbeforetoggle=alert(1)>",
+        '<video src="x"onloadstart="alert(1)">',
+        "<svg/onbegin=alert(1)>",
+        "<IMG SRC=x ONPAGESHOW = 'alert(1)'>",
+    ],
+)
+async def test_xss_event_handler_attribute_in_tag_detected(text: str, patch_central_database: MagicMock) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == "Matched: Event Handler Attribute"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Outside a tag only the named handlers match, so script explanations stay unflagged.
+        "In JavaScript, set ws.onmessage = handleMessage to read replies.",
+        'Use <button type="submit"> and assign worker.onmessage = render.',
+        '<a href="/docs/online-help">online help</a>',
+        "<p>Turn the lights on = bright.</p>",
+    ],
+)
+async def test_xss_on_text_outside_event_handler_attribute_not_detected(
+    text: str, patch_central_database: MagicMock
+) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is False
+
+
+async def test_xss_event_handler_attribute_near_miss_does_not_backtrack(patch_central_database: MagicMock) -> None:
+    text = "<a b" * 20_000
+    scorer = XSSOutputScorer()
+    start = perf_counter()
+    matched = scorer._compiled["Event Handler Attribute"].search(text)
+    elapsed = perf_counter() - start
+    assert matched is None
+    assert elapsed < 0.5, f"Event handler near miss took {elapsed:.3f}s"
+
+
 async def test_xss_custom_patterns_do_not_decode_javascript_uri(patch_central_database: MagicMock) -> None:
     scorer = XSSOutputScorer(patterns={"JavaScript URI": r"(?i)href\s*=\s*[\"']?javascript:"})
     score = (await scorer.score_text_async(text='<a href="jav&#x09;ascript:alert(1)">x</a>'))[0]
