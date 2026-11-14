@@ -14,7 +14,8 @@ the public internet).
 GCG needs. It preserves target strings supplied in seed metadata and uses an
 adversarial ``PromptTarget`` to generate only the missing strings. The resolved
 values are accepted by a caller-supplied scorer and stored inline before an
-AzureML job is submitted.
+AzureML job is submitted. The prompt normalizer retains generation requests and
+all returned messages in memory, including exchanges whose completion is rejected.
 
 The bundled ``adv_bench`` dataset already carries its canonical completion
 strings under ``metadata["gcg_target"]``, so it needs no generation calls.
@@ -22,7 +23,6 @@ strings under ``metadata["gcg_target"]``, so it needs no generation calls.
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING
 
 from pyrit.executor.promptgen.gcg.config import (
@@ -31,7 +31,8 @@ from pyrit.executor.promptgen.gcg.config import (
     _get_seed_target,
     _validate_nonblank_string,
 )
-from pyrit.models import MessagePiece, SeedDataset, SeedPrompt
+from pyrit.models import Message, SeedDataset, SeedPrompt
+from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -234,16 +235,10 @@ async def _generate_target_completion_async(
         max_length=max_generated_target_length,
     )
     _validate_nonblank_string(value=prompt, field_name="Rendered completion_prompt")
-    request = MessagePiece(
-        role="user",
-        original_value=prompt,
-        conversation_id=str(uuid.uuid4()),
-    ).to_message()
-    responses = await adversarial_target.send_prompt_async(message=request)
-    if not responses:
-        raise ValueError(f"Adversarial target returned no target completion for seed {objective!r}.")
-
-    final_response = responses[-1]
+    final_response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt=prompt, role="user"),
+        target=adversarial_target,
+    )
     if len(final_response.message_pieces) != 1:
         raise ValueError("Expected a single text piece in the final target completion response.")
     piece = final_response.message_pieces[0]

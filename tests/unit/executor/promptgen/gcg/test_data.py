@@ -6,20 +6,25 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import get_mock_target
 
 from pyrit.executor.promptgen.gcg.config import GCGDataConfig
 from pyrit.executor.promptgen.gcg.data import create_gcg_data_config_async, load_goals_and_targets
 from pyrit.models import Message, MessagePiece, Score, SeedDataset, SeedObjective, SeedPrompt
-from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.memory import SQLiteMemory
+
+pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 
 def _mock_adversarial_target(*responses: str) -> MagicMock:
-    target = MagicMock(spec=PromptTarget)
+    target = get_mock_target()
     target.send_prompt_async = AsyncMock(
         side_effect=[[Message.from_prompt(prompt=response, role="assistant")] for response in responses]
     )
@@ -162,10 +167,10 @@ async def test_create_config_empty_generated_target_raises(response: str, comple
 
 async def test_create_config_missing_generated_response_raises(completion_scorer: MagicMock) -> None:
     dataset = SeedDataset(seeds=[SeedObjective(value="goal")])
-    target = MagicMock(spec=PromptTarget)
+    target = get_mock_target()
     target.send_prompt_async = AsyncMock(return_value=[])
 
-    with pytest.raises(ValueError, match="returned no target completion"):
+    with pytest.raises(ValueError, match="error-free assistant text"):
         await create_gcg_data_config_async(
             dataset=dataset, adversarial_target=target, completion_scorer=completion_scorer
         )
@@ -242,12 +247,12 @@ async def test_create_config_generates_for_none_metadata(completion_scorer: Magi
     ],
 )
 async def test_create_config_rejects_invalid_final_response(
-    role: str, data_type: str, error: str, completion_scorer: MagicMock
+    role: str, data_type: str, error: str, completion_scorer: MagicMock, sqlite_instance: SQLiteMemory
 ) -> None:
     piece = MessagePiece.model_validate(
         {"role": role, "original_value": "Response", "original_value_data_type": data_type, "response_error": error}
     )
-    target = MagicMock(spec=PromptTarget)
+    target = get_mock_target()
     target.send_prompt_async = AsyncMock(return_value=[piece.to_message()])
 
     with pytest.raises(ValueError, match="error-free assistant text"):
@@ -258,15 +263,26 @@ async def test_create_config_rejects_invalid_final_response(
         )
 
     completion_scorer.score_text_async.assert_not_awaited()
+    request = target.send_prompt_async.await_args.kwargs["message"]
+    stored = await sqlite_instance.get_message_pieces_async(conversation_id=request.get_piece().conversation_id)
+    assert len(stored) == 2
+    assert stored[0].id == request.get_piece().id
+    assert stored[0].role == "user"
+    assert stored[1].id == piece.id
+    assert stored[1].original_value == "Response"
+    assert stored[1].role == role
+    assert stored[1].response_error == error
 
 
-async def test_create_config_uses_final_text_after_tool_interaction(completion_scorer: MagicMock) -> None:
-    target = MagicMock(spec=PromptTarget)
+async def test_create_config_uses_final_text_after_tool_interaction(
+    completion_scorer: MagicMock, sqlite_instance: SQLiteMemory
+) -> None:
+    target = get_mock_target()
     target.send_prompt_async = AsyncMock(
         return_value=[
             MessagePiece(role="assistant", original_value="{}", original_value_data_type="function_call").to_message(),
             Message.from_prompt(prompt="Tool output", role="tool"),
-            Message.from_prompt(prompt="Final prefix", role="assistant"),
+            Message.from_prompt(prompt="  Final prefix  ", role="assistant"),
         ]
     )
 
@@ -278,10 +294,20 @@ async def test_create_config_uses_final_text_after_tool_interaction(completion_s
 
     assert config.train_targets == ["Final prefix"]
     assert completion_scorer.score_text_async.await_args.args == ("Final prefix",)
+    request = target.send_prompt_async.await_args.kwargs["message"]
+    stored = await sqlite_instance.get_message_pieces_async(conversation_id=request.get_piece().conversation_id)
+    assert [piece.role for piece in stored] == ["user", "assistant", "tool", "assistant"]
+    assert "goal" in stored[0].original_value
+    assert [piece.original_value for piece in stored[1:]] == ["{}", "Tool output", "  Final prefix  "]
+    assert stored[1].original_value_data_type == "function_call"
+    assert [piece.id for piece in stored] == [
+        request.get_piece().id,
+        *[response.get_piece().id for response in target.send_prompt_async.return_value],
+    ]
 
 
 async def test_create_config_rejects_multiple_final_pieces(completion_scorer: MagicMock) -> None:
-    target = MagicMock(spec=PromptTarget)
+    target = get_mock_target()
     target.send_prompt_async = AsyncMock(
         return_value=[
             Message(
