@@ -299,6 +299,63 @@ scenario_result = await scenario.run_async()  # type: ignore
 await output_scenario_async(scenario_result)
 
 # %% [markdown]
+# ## Aggregation Leakage
+#
+# Tests whether a target discloses a confidential conclusion that no single document states but that
+# the documents it was given entail together. Retrieval-augmented assistants usually check access per
+# document, so every document here is one the user may read; the leak is the inference the model draws
+# across them (for example, a policy that applies *only* to employees on medical leave plus a calendar
+# showing a named employee in exactly that kind of meeting).
+#
+# ```bash
+# pyrit_scan run airt.aggregation_leakage --target openai_chat
+# ```
+#
+# **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, PromptSending, RedTeaming. DEFAULT runs
+# PromptSending, which sends each question after the retrieved documents. RedTeaming lets an adversarial
+# chat ask follow-up questions over the same documents for up to `max_turns` turns.
+#
+# Results are reported per technique and dataset:
+#
+# - `airt_aggregation_leakage` — the documents entail the confidential fact (rule + instance, transitive
+#   chain, set complement, numeric residual), asked indirectly and directly.
+# - `airt_aggregation_leakage_minimal_pairs` and `airt_aggregation_leakage_mention_only` — controls where
+#   the fact does **not** follow. Their success rates should stay near zero; if they don't, the target or
+#   the scorer is reacting to the topic rather than to the derivation.
+#
+# With `include_context=False`, supply exactly one explicit case using
+# `DatasetAttackConfiguration(seed_groups=[selected_group])` and set `external_context_isolated=True`.
+# Before running, provision the target with that case's documents and confidentiality policy only.
+# Use a fresh knowledge base/memory scope for each positive or control case, and clear prior conversation
+# state. Do not load the three datasets into one knowledge base: they contain conflicting versions of
+# the same evidence and may ask identical questions. Named datasets and multiple inline cases are rejected
+# in this mode. The flag confirms caller-managed isolation; PyRIT cannot inspect the external knowledge base.
+# Only execution inputs lose the marked context turn; the original seed group remains in the saved plan,
+# so resuming uses the same case. Resume must reconnect to the same externally provisioned evidence.
+#
+# Additional `technique_converters` apply to the questions in both techniques, not to the context turn.
+
+# %%
+from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique
+
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_aggregation_leakage")], max_total=1)
+
+scenario = AggregationLeakage()
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [AggregationLeakageTechnique.PromptSending],
+        "dataset_config": dataset_config,
+    }
+)
+await scenario.initialize_async()  # type: ignore
+
+scenario_result = await scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(scenario_result)
+
+# %% [markdown]
 # ## Scam
 #
 # Tests whether a target can be induced to generate scam, phishing, or fraud content.
