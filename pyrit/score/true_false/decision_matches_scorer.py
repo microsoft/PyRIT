@@ -25,9 +25,9 @@ def _read_probability(value: object) -> float | None:
     Returns:
         float | None: The value as a float when it is a finite number between 0 and 1, else None.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
         return None
-    return float(value) if 0 <= value <= 1 else None
+    return float(value) if math.isfinite(value) else None
 
 
 class DecisionMatchesScorer(MessageTrueFalseScorer):
@@ -232,7 +232,7 @@ class DecisionMatchesScorer(MessageTrueFalseScorer):
                 f"an option name, not {expected!r}."
             )
         choice = answer.get("choice")
-        if not isinstance(choice, str):
+        if not isinstance(choice, str) or not choice.strip():
             raise InvalidJsonException(
                 message=f"The choice answer for {condition.question_name!r} must name an option."
             )

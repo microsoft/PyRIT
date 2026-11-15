@@ -134,8 +134,9 @@ async def test_choice_answer_does_not_match(patch_central_database: MagicMock) -
     assert scores[0].score_metadata["answer_probability"] == 0.3
 
 
-async def test_choice_match_is_case_sensitive(patch_central_database: MagicMock) -> None:
-    scores = await _score(_choice_response("Refund"), _expect("refund", "route"))
+@pytest.mark.parametrize("choice", ["Refund", " refund", "refund "])
+async def test_choice_match_is_exact(patch_central_database: MagicMock, choice: str) -> None:
+    scores = await _score(_choice_response(choice), _expect("refund", "route"))
 
     assert scores[0].get_value() is False
 
@@ -150,6 +151,10 @@ async def test_choice_match_is_case_sensitive(patch_central_database: MagicMock)
         {"refund": "0.4"},
         {"refund": 5},
         {"refund": -1},
+        pytest.param({"refund": 10**400}, id="huge-positive-integer"),
+        pytest.param({"refund": -(10**400)}, id="huge-negative-integer"),
+        {"refund": 1e308},
+        {"refund": -1e308},
         {"refund": float("nan")},
         {"refund": float("inf")},
     ],
@@ -231,6 +236,10 @@ async def test_rejects_missing_or_duplicate_conditions(
         (_noul_response(True), "must be a probability between 0 and 1"),
         (_noul_response(1.5), "must be a probability between 0 and 1"),
         (_noul_response(-0.1), "must be a probability between 0 and 1"),
+        pytest.param(_noul_response(10**400), "must be a probability between 0 and 1", id="huge-positive-integer"),
+        pytest.param(_noul_response(-(10**400)), "must be a probability between 0 and 1", id="huge-negative-integer"),
+        (_noul_response(1e308), "must be a probability between 0 and 1"),
+        (_noul_response(-1e308), "must be a probability between 0 and 1"),
         ('{"answers": {"is_phishing": {"type": "noul", "noul": NaN}}}', "must be a probability between 0 and 1"),
         ('{"answers": {"is_phishing": {"type": "noul", "noul": Infinity}}}', "must be a probability between 0 and 1"),
     ],
@@ -240,7 +249,7 @@ async def test_noul_rejects_invalid_responses(patch_central_database: MagicMock,
         await _score(response, _expect(False))
 
 
-@pytest.mark.parametrize("choice", [None, 1, ["refund"]])
+@pytest.mark.parametrize("choice", [None, 1, ["refund"], "", " ", "\t\n"])
 async def test_choice_rejects_missing_option(patch_central_database: MagicMock, choice: object) -> None:
     with pytest.raises(InvalidJsonException, match="must name an option"):
         await _score(_choice_response(choice), _expect("refund", "route"))
