@@ -5,7 +5,8 @@ import itertools
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
-from typing import Any, NoReturn, cast
+from types import MappingProxyType
+from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
 from pyrit.exceptions import (
@@ -201,6 +202,8 @@ class LiteLLMChatTarget(PromptTarget):
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
             sends a fresh ``traceparent`` in ``extra_headers``.
     """
+
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).

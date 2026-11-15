@@ -146,6 +146,17 @@ export interface ChatDraftContent {
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Backend send ID for status verification before reconciling this snapshot with history. */
+  acceptedSendId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {
@@ -760,6 +771,8 @@ export interface Parameter {
   multiline?: boolean
   /** Whether the value must be omitted when identity-based authentication is selected. */
   identity_conflicting?: boolean
+  /** Whether a private copy keeps its source's value, because it sets where requests go or how they sign in. */
+  copy_locked?: boolean
   description?: string | null
 }
 
