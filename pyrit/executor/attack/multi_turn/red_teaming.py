@@ -93,6 +93,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     allowing for various attack techniques and scenarios.
     """
 
+    # Each turn's response drives the next adversarial prompt, so a write-only target cannot run this attack.
+    TARGET_REQUIREMENTS = TargetRequirements(native_required=frozenset({CapabilityName.RESPONSES}))
     ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,

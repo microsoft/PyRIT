@@ -190,7 +190,9 @@ async def test_composite_of_file_and_trace_scorers_judges_write_only_target_asyn
         http_request="POST / HTTP/1.1\nHost: agent.test\n\n{PROMPT}",
         transport=httpx.MockTransport(respond),
         trace_config=TargetTraceConfig(enabled=True),
-        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=True, supports_responses=False)
+        ),
     )
     # Neither leaf reads the request text, but together they accept only a MessageScorable.
     objective_scorer = TrueFalseCompositeScorer(

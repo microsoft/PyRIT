@@ -190,6 +190,9 @@ class TestTargetCapabilitiesModalities:
         assert caps.input_modalities == frozenset({frozenset(["text"])})
         assert caps.output_modalities == frozenset({frozenset(["text"])})
 
+    def test_default_capabilities_support_responses(self):
+        assert TargetCapabilities().includes(capability=CapabilityName.RESPONSES)
+
     @patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
     def test_openai_chat_target_modalities(self):
         from pyrit.prompt_target import OpenAIChatTarget

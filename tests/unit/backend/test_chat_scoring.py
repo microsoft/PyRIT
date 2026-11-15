@@ -1886,6 +1886,7 @@ async def test_write_only_delivery_is_not_scored_whatever_its_role_async(
     role: str,
 ) -> None:
     service, attack, target, scorer = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
     # The request matches the scorer, so scoring the delivered request would report success.
     request = chat_request(attack).model_copy(
         update={"role": role, "pieces": [MessagePieceRequest(original_value="default request")]}

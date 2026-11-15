@@ -26,6 +26,7 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
     ChunkedRequestAttack,
+    CrescendoAttack,
     MultiPromptSendingAttack,
     PromptSendingAttack,
     RedTeamingAttack,
@@ -35,9 +36,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringCon
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import TextTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration, TextTarget
 from pyrit.score import FloatScaleThresholdScorer, MessageScorer, RegexScorer
 
 _NO_RESPONSE_REASON = "Objective target returned no response to score"
@@ -77,16 +76,28 @@ class _JsonAdversarialChat(MockPromptTarget):
 
 
 class _ScriptedTarget(MockPromptTarget):
-    """Returns each scripted reply in turn; ``None`` returns no response, like a write-only target."""
+    """
+    Returns each scripted reply in turn; ``None`` returns no response and an exception is raised.
 
-    def __init__(self, *, replies: list[str | None]) -> None:
-        super().__init__()
+    By default it declares no response support, so an unanswered send is a delivery, while a send
+    that does return a reply (like a storage receipt) is still processed as a response.
+    """
+
+    def __init__(self, *, replies: list[str | Exception | None], supports_responses: bool = False) -> None:
+        capabilities = MockPromptTarget._DEFAULT_CONFIGURATION.capabilities
+        super().__init__(
+            custom_configuration=TargetConfiguration(
+                capabilities=capabilities.model_copy(update={"supports_responses": supports_responses})
+            )
+        )
         self._replies = list(replies)
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]
         self.prompt_sent.append(message.get_value())
         reply = self._replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
         if reply is None:
             return []
         return [
@@ -213,6 +224,26 @@ class TestPromptSendingAttackWriteOnlyTarget:
         assert [(piece.role, piece.original_value, piece.converted_value) for piece in pieces] == [
             ("user", "Hello QA", encoded)
         ]
+
+    async def test_missing_reply_from_responding_target_is_an_empty_response(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        target = _ScriptedTarget(replies=[None, None, None], supports_responses=True)
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
+            max_attempts_on_failure=2,
+        )
+
+        result = await attack.execute_async(objective="Hello QA")
+
+        # The target should have replied, so the missing reply is an empty error response and is resent.
+        assert len(target.prompt_sent) == 3
+        assert result.outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome_reason is not None
+        assert "Response had an error: empty" in result.outcome_reason
+        assert result.last_response is not None
+        assert (result.last_response.role, result.last_response.response_error) == ("assistant", "empty")
 
     async def test_responding_target_with_same_scorer_succeeds(self, sqlite_instance: SQLiteMemory) -> None:
         attack = PromptSendingAttack(
@@ -383,23 +414,62 @@ class TestChunkedRequestAttackWriteOnlyTarget:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestRedTeamingAttackWriteOnlyTarget:
-    async def test_write_only_target_raises_instead_of_scoring_the_request(self, sqlite_instance: SQLiteMemory) -> None:
+class TestCrescendoAttackWriteOnlyTarget:
+    def test_write_only_target_is_rejected_before_sending(self) -> None:
         text_stream = io.StringIO()
+        # Declares every other capability Crescendo needs, so only the missing response support fails.
+        target = TextTarget(
+            text_stream=text_stream,
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=True)
+            ),
+        )
+
+        with pytest.raises(ValueError, match="supports_responses") as exc_info:
+            CrescendoAttack(
+                objective_target=target,
+                attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
+            )
+
+        assert "1 required capability" in str(exc_info.value)
+        assert text_stream.getvalue() == ""
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestRedTeamingAttackWriteOnlyTarget:
+    def test_write_only_target_is_rejected_before_sending(self) -> None:
+        text_stream = io.StringIO()
+
+        with pytest.raises(ValueError, match="supports_responses"):
+            RedTeamingAttack(
+                objective_target=TextTarget(text_stream=text_stream),
+                attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
+                attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
+            )
+
+        assert text_stream.getvalue() == ""
+
+    async def test_target_made_write_only_after_construction_raises_instead_of_scoring_the_request(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        target = _ScriptedTarget(replies=[None])
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": True}))
         adversarial_chat = _JsonAdversarialChat()
         attack = RedTeamingAttack(
-            objective_target=TextTarget(text_stream=text_stream),
+            objective_target=target,
             attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
             attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
             max_turns=2,
         )
+        # Capabilities can change after the construction check, so the send itself must still be guarded.
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
 
         with pytest.raises(RuntimeError, match="cannot run against a write-only target") as exc_info:
             await attack.execute_async(objective="Hello QA")
 
         assert isinstance(exc_info.value.__cause__, ValueError)
         assert len(adversarial_chat.prompt_sent) == 1
-        assert text_stream.getvalue().count("Hello from adversary") == 1
+        assert target.prompt_sent == ["Hello from adversary"]
         assert await _all_scores_async(sqlite_instance) == []
 
 
@@ -429,14 +499,17 @@ def _always_true_threshold_scorer() -> MagicMock:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksWriteOnlyTarget:
-    async def test_write_only_target_is_undetermined_and_never_scored(self, sqlite_instance: SQLiteMemory) -> None:
+    @pytest.mark.parametrize("tree_width", [1, 2])
+    async def test_write_only_target_is_undetermined_and_never_scored(
+        self, sqlite_instance: SQLiteMemory, tree_width: int
+    ) -> None:
         objective_scorer = _always_true_threshold_scorer()
         text_stream = io.StringIO()
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=TextTarget(text_stream=text_stream),
             attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
             attack_scoring_config=TAPAttackScoringConfig(objective_scorer=objective_scorer),
-            tree_width=1,
+            tree_width=tree_width,
             tree_depth=2,
             branching_factor=1,
             on_topic_checking_enabled=False,
@@ -449,21 +522,31 @@ class TestTreeOfAttacksWriteOnlyTarget:
         assert result.outcome_reason == _NO_RESPONSE_REASON
         assert result.last_response is None
         assert result.automated_score is None
-        assert text_stream.getvalue().count("Hello from adversary") == 1
-        # The objective conversation holds only the delivered request, with no fabricated response.
+        assert text_stream.getvalue().count("Hello from adversary") == tree_width
+        # Each branch's objective conversation holds only its delivered request, with no fabricated response.
         delivered = [
             piece
             for piece in await sqlite_instance.get_message_pieces_async()
             if piece.converted_value == "Hello from adversary"
         ]
-        assert [piece.role for piece in delivered] == ["user"]
-        objective_pieces = await sqlite_instance.get_message_pieces_async(conversation_id=delivered[0].conversation_id)
-        assert [piece.role for piece in objective_pieces] == ["user"]
+        assert [piece.role for piece in delivered] == ["user"] * tree_width
+        for piece in delivered:
+            objective_pieces = await sqlite_instance.get_message_pieces_async(conversation_id=piece.conversation_id)
+            assert [objective_piece.role for objective_piece in objective_pieces] == ["user"]
+        # Pruning removes every unanswered branch, but the result still points at a delivered conversation.
+        assert result.conversation_id in {piece.conversation_id for piece in delivered}
         assert await _all_scores_async(sqlite_instance) == []
 
-    async def test_unanswered_branch_does_not_discard_scored_sibling(self, sqlite_instance: SQLiteMemory) -> None:
+    @pytest.mark.parametrize(
+        "replies",
+        [["Hello actual response", None], [None, "Hello actual response"]],
+        ids=["answered-first", "unanswered-first"],
+    )
+    async def test_unanswered_branch_does_not_discard_scored_sibling(
+        self, sqlite_instance: SQLiteMemory, replies: list[str | None]
+    ) -> None:
         objective_scorer = _always_true_threshold_scorer()
-        target = _ScriptedTarget(replies=["Hello actual response", None])
+        target = _ScriptedTarget(replies=replies)
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=target,
             attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
@@ -485,3 +568,32 @@ class TestTreeOfAttacksWriteOnlyTarget:
         # Only the answered branch was scored.
         assert objective_scorer.score_async.await_count == 1
         assert len(target.prompt_sent) == 2
+
+    async def test_failed_branch_with_unanswered_sibling_is_error_on_delivered_conversation(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        objective_scorer = _always_true_threshold_scorer()
+        target = _ScriptedTarget(replies=[RuntimeError("Hello target failure"), None])
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=target,
+            attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
+            attack_scoring_config=TAPAttackScoringConfig(objective_scorer=objective_scorer),
+            tree_width=2,
+            tree_depth=1,
+            branching_factor=1,
+            batch_size=1,
+            on_topic_checking_enabled=False,
+        )
+
+        result = await attack.execute_async(objective="Hello QA")
+
+        # The crash is reported, and the unanswered delivery is not counted as a second failure.
+        assert result.outcome is AttackOutcome.ERROR
+        assert result.outcome_reason is not None
+        assert "1 branch failed to execute" in result.outcome_reason
+        assert result.last_response is None
+        assert result.automated_score is None
+        objective_scorer.score_async.assert_not_awaited()
+        # The result points at the unanswered branch's conversation, which holds only its delivered request.
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
+        assert [(piece.role, piece.converted_value) for piece in pieces] == [("user", "Hello from adversary")]

@@ -2076,8 +2076,14 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         """
         # Send prompts to all nodes and collect results
         await self._send_prompts_to_all_nodes_async(context)
-        if any(node.delivered_without_response for node in context.nodes):
+        delivered_node = next((node for node in context.nodes if node.delivered_without_response), None)
+        if delivered_node is not None:
             context.delivered_without_response = True
+            if not context.best_conversation_id:
+                # Pruning drops unanswered nodes, so keep a delivered conversation for the result
+                # until a scored branch replaces it.
+                context.best_conversation_id = delivered_node.objective_target_conversation_id
+                context.best_adversarial_conversation_id = delivered_node.adversarial_chat_conversation_id
 
         # Prune nodes based on width constraint
         self._prune_nodes_to_maintain_width(context)
@@ -2610,8 +2616,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 about the attack execution, including conversation ID, objective, outcome,
                 outcome reason, executed turns, last response, last score, and additional metadata.
         """
-        last_response = await self._get_result_response_async(
-            conversation_id=context.best_conversation_id, score=context.best_objective_score
+        # Without a score, a delivered conversation ends with the sent request, which is not a response.
+        last_response = (
+            None
+            if context.best_objective_score is None and context.delivered_without_response
+            else await self._get_result_response_async(
+                conversation_id=context.best_conversation_id, score=context.best_objective_score
+            )
         )
 
         auxiliary_scores_summary = self._get_auxiliary_scores_summary(context.best_auxiliary_scores)

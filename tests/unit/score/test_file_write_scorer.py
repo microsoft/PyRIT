@@ -40,6 +40,7 @@ from pyrit.models import (
     ToolCallRequirement,
     ToolsCalled,
 )
+from pyrit.prompt_target import TargetConfiguration
 from pyrit.score import (
     FileWriteScorer,
     LocalFileSurfaceSource,
@@ -449,6 +450,12 @@ async def test_attack_scores_file_write_async(
 
 class _WriteOnlyAgentTarget(MockPromptTarget):
     """An agent stand-in that writes the prompt it receives to /data/out.txt and returns no response."""
+
+    _DEFAULT_CONFIGURATION = TargetConfiguration(
+        capabilities=MockPromptTarget._DEFAULT_CONFIGURATION.capabilities.model_copy(
+            update={"supports_responses": False}
+        )
+    )
 
     def __init__(self, *, root: Path, write: bool) -> None:
         super().__init__()

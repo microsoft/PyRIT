@@ -2512,6 +2512,9 @@ class TestNormalizerPersistence:
             request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
         elif failure == "response-converter":
             request.response_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        if failure == "write-only":
+            # Only a target that declares no response support turns an empty reply into a delivery.
+            target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
         component = target if failure in {"target", "write-only"} else converter
         method = "_send_prompt_to_target_async" if failure in {"target", "write-only"} else "convert_async"
         with patch.object(
