@@ -852,6 +852,64 @@ async def test_build_input_for_multi_modal_async_rejects_generic_error(target: O
         await target._build_input_for_multi_modal_async([Message(message_pieces=[error_piece])])
 
 
+async def test_construct_input_item_rejects_non_blocked_error_piece(target: OpenAIResponseTarget):
+    error_piece = MessagePiece(
+        role="assistant",
+        original_value="transport failed",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="processing",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported piece type for inline content: error"):
+        await target._construct_input_item_from_piece_async(error_piece)
+
+
+async def test_send_after_content_filtered_turn_replays_it_as_text_async(*, target: OpenAIResponseTarget) -> None:
+    content_filter_response = {
+        "id": "resp_123",
+        "object": "response",
+        "status": None,
+        "error": {
+            "code": "content_filter",
+            "innererror": {
+                "code": "ResponsibleAIPolicyViolation",
+                "content_filter_result": {"violence": {"filtered": True, "severity": "medium"}},
+            },
+        },
+        "model": "o4-mini",
+    }
+    filtered = create_mock_response(content_filter_response)
+    filtered.error = MagicMock(code="content_filter", message="Content filtered")
+    target._async_client.responses.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[filtered, create_mock_response()]
+    )
+    normalizer = PromptNormalizer()
+    conversation_id = str(uuid.uuid4())
+
+    first = await normalizer.send_prompt_async(
+        message=Message(
+            message_pieces=[MessagePiece(role="user", original_value="gets filtered", conversation_id=conversation_id)]
+        ),
+        target=target,
+        conversation_id=conversation_id,
+    )
+    second = await normalizer.send_prompt_async(
+        message=Message(
+            message_pieces=[MessagePiece(role="user", original_value="follow-up", conversation_id=conversation_id)]
+        ),
+        target=target,
+        conversation_id=conversation_id,
+    )
+
+    assert first.get_piece().response_error == "blocked"
+    assert second.get_piece().response_error == "none"
+    sent = target._async_client.responses.create.call_args_list[1].kwargs["input"]
+    assert [item["role"] for item in sent] == ["user", "assistant", "user"]
+    assert sent[1]["content"] == [{"type": "output_text", "text": first.get_piece().converted_value}]
+    assert "content_filter_result" in sent[1]["content"][0]["text"]
+
+
 # New pytests
 async def test_build_input_for_multi_modal_async_system_message_maps_to_developer(target: OpenAIResponseTarget):
     system_piece = MessagePiece(
