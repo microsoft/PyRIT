@@ -11,11 +11,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.component.conversation_manager import ConversationManager
-from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core import (
+    AttackParamsT,
+    AttackStrategyResultT,
+)
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
     AttackStrategy,
-    AttackStrategyResultT,
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import Conversation, ConversationReference, ConversationType

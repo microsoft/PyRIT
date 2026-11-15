@@ -82,3 +82,16 @@ Element.prototype.scrollIntoView = jest.fn();
 // Mock URL.createObjectURL and URL.revokeObjectURL for file handling
 global.URL.createObjectURL = jest.fn(() => "blob:mock-url");
 global.URL.revokeObjectURL = jest.fn();
+
+// Tests assert English number formatting, but Intl defaults to the machine's
+// locale. Pin the default so the suite passes on non-English machines too.
+const SystemNumberFormat = Intl.NumberFormat;
+Intl.NumberFormat = new Proxy(SystemNumberFormat, {
+  // Only an omitted/undefined locale is pinned: an explicit null must still
+  // throw like the native constructor, and newTarget rides along so a
+  // subclass would get the right prototype.
+  construct: (target, [locales, options], newTarget) =>
+    Reflect.construct(target, [locales === undefined ? "en-US" : locales, options], newTarget),
+  apply: (target, _thisArg, [locales, options]) =>
+    target(locales === undefined ? "en-US" : locales, options),
+});

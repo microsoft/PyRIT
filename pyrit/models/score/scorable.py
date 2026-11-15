@@ -15,13 +15,13 @@ from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Py
 )
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
-from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
 
 
-class Scorable(BaseModel, ABC):  # noqa: B024  root type; each scorer family declares its own contract
+class Scorable(BaseModel, ABC):  # root type; each scorer family declares its own contract
     """
     What a scorer looks at.
 
@@ -35,6 +35,18 @@ class Scorable(BaseModel, ABC):  # noqa: B024  root type; each scorer family dec
 
     # Pydantic Baseclass overrride: we want frozen models and to forbid extras.
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    def names_same_evidence(self, other: Scorable | None) -> bool:
+        """
+        Check whether ``other`` names the same evidence.
+
+        Args:
+            other (Scorable | None): The scorable to compare.
+
+        Returns:
+            bool: True when both scorables identify the same evidence.
+        """
+        return self == other
 
 
 class MessageScorable(Scorable):
@@ -65,6 +77,18 @@ class MessageScorable(Scorable):
         if len(set(seen)) != len(seen):
             raise ValueError(f"A MessageScorable must name each message piece once, got {seen}.")
         return self
+
+    def names_same_evidence(self, other: Scorable | None) -> bool:
+        """
+        Check whether ``other`` names the same message pieces, in any order.
+
+        Args:
+            other (Scorable | None): The scorable to compare.
+
+        Returns:
+            bool: True when both scorables name the same set of pieces.
+        """
+        return isinstance(other, MessageScorable) and set(self.message_piece_ids) == set(other.message_piece_ids)
 
     @classmethod
     def from_message(

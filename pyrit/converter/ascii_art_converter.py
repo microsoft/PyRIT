@@ -7,13 +7,13 @@ from collections.abc import Sequence
 from functools import lru_cache
 from typing import cast
 
-import regex
 from art import ASCII_FONTS, NON_ASCII_FONTS, artError, text2art
 from art.functions import get_font_dic
 from art.params import MIX_FILTERED_FONTS
 from art.utils import indirect_font
 from wcwidth import wcswidth
 
+from pyrit.common.text_helper import graphemes
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -44,16 +44,6 @@ _ART_RANDOM_FONTS = sorted(set(ASCII_FONTS) - _ART_RANDOM_EXCLUDED_ASCII_FONTS)
 # art's plain-random aliases, which it resolves over the pool mirrored above.
 # PyRIT intercepts them to make the pick seeded and prompt-aware.
 _ART_RANDOM_SELECTORS = frozenset({"rand", "random", "rnd"})
-
-
-def _graphemes(text: str) -> list[str]:
-    """
-    Split text into user-perceived characters without separating combining or emoji sequences.
-
-    Returns:
-        list[str]: The extended grapheme clusters in source order.
-    """
-    return cast("list[str]", regex.findall(r"\X", text))
 
 
 # Bounded so prompts with many distinct unrenderable characters cannot grow the
@@ -99,7 +89,7 @@ def _fonts_that_render(*, text: str, fonts: Sequence[str]) -> list[str]:
     Returns:
         list[str]: The font names whose glyphs cover every character of ``text``.
     """
-    characters = set(_graphemes(text))
+    characters = set(graphemes(text))
     return [
         font
         for font in fonts
@@ -122,7 +112,7 @@ def _segment_by_renderability(*, line: str, font: str) -> list[tuple[str, bool]]
         list[tuple[str, bool]]: ``(segment, renderable)`` pairs in input order.
     """
     segments: list[tuple[str, bool]] = []
-    for character in _graphemes(line):
+    for character in graphemes(line):
         renderable = _font_renders_character(character=character, font=font)
         if renderable and segments and segments[-1][1]:
             segments[-1] = (segments[-1][0] + character, True)
@@ -287,7 +277,7 @@ class AsciiArtConverter(Converter):
         glyphs.update({"\n": "\n", "\r": ""})
         output: list[str] = []
         unrenderable: list[str] = []
-        for character in _graphemes(prompt):
+        for character in graphemes(prompt):
             if character in {" ", "\n", "\r", "\r\n"} or all(glyphs.get(part, "").strip() for part in character):
                 output.append("".join(glyphs[part] for part in character))
             else:
@@ -319,7 +309,7 @@ class AsciiArtConverter(Converter):
 
         unrenderable = [
             character
-            for character in dict.fromkeys(_graphemes(prompt))
+            for character in dict.fromkeys(graphemes(prompt))
             if not _font_renders_character(character=character, font=font)
         ]
         if not unrenderable:

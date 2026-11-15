@@ -8,10 +8,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common import combine_dict, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.attack_result_scope import get_current_attack_result_id
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
     PrependedConversationConfig,
 )
@@ -30,7 +29,7 @@ from pyrit.models import (
     Score,
     UndeterminedScoreError,
 )
-from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.executor.attack.core import AttackContext
-    from pyrit.prompt_normalizer.converter_configuration import (
+    from pyrit.prompt_normalizer import (
         ConverterConfiguration,
     )
 

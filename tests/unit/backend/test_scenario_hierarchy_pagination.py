@@ -14,9 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.dialects import sqlite
 
 from pyrit.backend.main import app
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService, ScenarioRunService
 from pyrit.backend.services.message_send_service import MessageSendService
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.memory import SQLiteMemory, set_message_piece_sha256_async
 from pyrit.models import (
     AttackOutcome,

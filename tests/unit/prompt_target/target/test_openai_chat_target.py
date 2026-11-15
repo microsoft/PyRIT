@@ -22,21 +22,21 @@ from unit.mocks import (
     openai_chat_response_json_dict,
 )
 
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     RateLimitException,
 )
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
 )
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 def fake_construct_response_from_request(request, response_text_pieces):

@@ -11,12 +11,14 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedDataset
 from pyrit.prompt_target import PromptTarget
+from pyrit.scenario.scenarios.garak import (
+    SystemPromptExtraction,
+    SystemPromptExtractionTechnique,
+)
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
     DATASET_DRH_SYSTEM_PROMPTS,
     DATASET_EXTRACTION_TEMPLATES,
     DATASET_TM_SYSTEM_PROMPTS,
-    SystemPromptExtraction,
-    SystemPromptExtractionTechnique,
 )
 from pyrit.score import FloatScaleThresholdScorer, SystemPromptExtractionScorer, TrueFalseScorer
 

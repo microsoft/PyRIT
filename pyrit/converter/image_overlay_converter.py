@@ -123,7 +123,11 @@ class ImageOverlayConverter(Converter):
             )
 
         base = base.convert("RGBA")
-        base.paste(overlay, self._position, mask=overlay)
+        # Composite with source-over so translucent overlay pixels blend with the base
+        # instead of being scaled by their own alpha twice (paste with mask=overlay).
+        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        layer.paste(overlay, self._position)
+        base = Image.alpha_composite(base, layer)
 
         if self._save_format == "jpeg":
             background = Image.new("RGB", base.size, (255, 255, 255))

@@ -1,7 +1,6 @@
 import type { CSSProperties } from 'react'
 
 import {
-  Badge,
   Button,
   MessageBar,
   MessageBarActions,
@@ -15,11 +14,11 @@ import {
   Text,
 } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
-import { Link, useLocation, useNavigate } from 'react-router'
+import { Link, useLocation } from 'react-router'
 
 import {
-  formatAttackOutcome,
   formatDuration,
+  formatRetries,
   formatTimestamp,
   objectivePreview,
 } from '@/components/AttackResults/attackAttemptFormatting'
@@ -27,9 +26,12 @@ import OutcomeBadge from '@/components/OutcomeBadge'
 import type { HierarchyChildrenState, UseScenarioResultHierarchyResult } from '@/hooks/useScenarioResultHierarchy'
 import type { ScenarioHierarchyNode, ScenarioProgressResult } from '@/types'
 import { attackConversationRoutePath } from '@/utils/routeParams'
+import { scoreSummaryFromProgressScore } from '@/utils/scoreSummary'
 
 import { useAttackExecutionTableStyles } from './AttackExecutionTable.styles'
-import { childSlots, hasChildReferences, resultRoleLabel } from './scenarioHierarchy'
+import { childSlots, hasChildReferences } from './scenarioHierarchy'
+
+type AttackExecution = ScenarioProgressResult | ScenarioHierarchyNode
 
 interface AttackExecutionTableProps {
   readonly scenarioResultId: string
@@ -38,10 +40,28 @@ interface AttackExecutionTableProps {
   readonly totalAttempts: number
   readonly roots: ScenarioHierarchyNode[]
   readonly hierarchy: UseScenarioResultHierarchyResult
-  readonly seedObjectives: Map<string, string>
-  readonly onOpenDetails: (result: ScenarioProgressResult | ScenarioHierarchyNode, trigger: HTMLElement) => void
+  readonly seedObjectives: ReadonlyMap<string, string>
+  readonly onOpenDetails: (result: AttackExecution, trigger: HTMLElement) => void
+  /** Technique shorthand per atomic group, shown under each objective instead of the attack class. */
+  readonly techniqueNames?: ReadonlyMap<string, string>
+  readonly showTimestamp?: boolean
+  readonly showConversationLink?: boolean
+  readonly booleanOutcome?: boolean
 }
 
+/** How every row in one table renders, shared by top-level and child rows. */
+interface RowOptions {
+  readonly scenarioResultId: string
+  readonly hierarchy: UseScenarioResultHierarchyResult
+  readonly onOpenDetails: AttackExecutionTableProps['onOpenDetails']
+  readonly techniqueNames?: ReadonlyMap<string, string>
+  readonly showTimestamp: boolean
+  readonly showConversationLink: boolean
+  readonly booleanOutcome: boolean
+  readonly columnCount: number
+}
+
+/** Attack executions as compact rows that open their details; compound parents expand to their saved children. */
 export default function AttackExecutionTable({
   scenarioResultId,
   label,
@@ -51,10 +71,18 @@ export default function AttackExecutionTable({
   hierarchy,
   seedObjectives,
   onOpenDetails,
+  techniqueNames,
+  showTimestamp = true,
+  showConversationLink = false,
+  booleanOutcome = false,
 }: AttackExecutionTableProps) {
   const styles = useAttackExecutionTableStyles()
+  const options: RowOptions = {
+    scenarioResultId, hierarchy, onOpenDetails, techniqueNames, showTimestamp, showConversationLink, booleanOutcome,
+    columnCount: 4 + Number(showTimestamp) + Number(showConversationLink),
+  }
   const savedRelationships = hierarchy.roots.status === 'ready'
-  const results: readonly (ScenarioProgressResult | ScenarioHierarchyNode)[] = savedRelationships ? roots : attempts
+  const results: readonly AttackExecution[] = savedRelationships ? roots : attempts
 
   if (results.length === 0) {
     return (
@@ -74,15 +102,14 @@ export default function AttackExecutionTable({
         </Text>
       )}
       <Table size="small" className={styles.table} aria-label={label}>
-        <TableHeader>
-          <TableRow className={styles.headerRow}>
-            <TableHeaderCell>Result / objective</TableHeaderCell>
-            <TableHeaderCell>Result type</TableHeaderCell>
-            <TableHeaderCell>Attack outcome</TableHeaderCell>
-            <TableHeaderCell>Duration</TableHeaderCell>
-            <TableHeaderCell>Retries / error</TableHeaderCell>
-            <TableHeaderCell>Timestamp</TableHeaderCell>
-            <TableHeaderCell>Actions</TableHeaderCell>
+        <TableHeader className={styles.semanticHeader}>
+          <TableRow>
+            <TableHeaderCell scope="col">Objective</TableHeaderCell>
+            <TableHeaderCell scope="col">Outcome</TableHeaderCell>
+            <TableHeaderCell scope="col">Duration</TableHeaderCell>
+            <TableHeaderCell scope="col">Retries / error</TableHeaderCell>
+            {showTimestamp && <TableHeaderCell scope="col">Timestamp</TableHeaderCell>}
+            {showConversationLink && <TableHeaderCell scope="col">Conversation</TableHeaderCell>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -99,9 +126,7 @@ export default function AttackExecutionTable({
                 position={null}
                 depth={0}
                 ancestors={NO_ANCESTORS}
-                hierarchy={hierarchy}
-                scenarioResultId={scenarioResultId}
-                onOpenDetails={onOpenDetails}
+                options={options}
               />
             )
           })}
@@ -113,57 +138,44 @@ export default function AttackExecutionTable({
 
 interface ResultRowsProps {
   readonly nodeKey: string
-  readonly result: ScenarioProgressResult | ScenarioHierarchyNode
+  readonly result: AttackExecution
   readonly objective: string
   readonly position: number | null
   readonly depth: number
   readonly ancestors: ReadonlySet<string>
-  readonly hierarchy: UseScenarioResultHierarchyResult
-  readonly scenarioResultId: string
-  readonly onOpenDetails: AttackExecutionTableProps['onOpenDetails']
+  readonly options: RowOptions
 }
 
-function ResultRows({
-  nodeKey, result, objective, position, depth, ancestors, hierarchy, scenarioResultId, onOpenDetails,
-}: ResultRowsProps) {
+function ResultRows({ nodeKey, result, objective, position, depth, ancestors, options }: ResultRowsProps) {
   const styles = useAttackExecutionTableStyles()
-  const navigate = useNavigate()
   const location = useLocation()
+  const { hierarchy, onOpenDetails } = options
   const node = 'objective' in result ? result : null
   const isExpanded = hierarchy.expanded.has(nodeKey)
   const expandable = node !== null && hasChildReferences(node)
   const preview = objectivePreview(objective || null, result.seed_group_id)
   const label = resultLabel(result, preview, position)
-  const role = node?.result_role ?? 'unknown'
   const conversationPath = result.conversation_id
-    ? attackConversationRoutePath(result.attack_result_id, result.conversation_id, scenarioResultId)
+    ? attackConversationRoutePath(result.attack_result_id, result.conversation_id, options.scenarioResultId)
     : null
-
-  const openResult = (trigger: HTMLElement): void => {
-    if (conversationPath) {
-      navigate(conversationPath, { state: location.state })
-    } else if (expandable) {
-      hierarchy.toggleNode(nodeKey, node)
-    } else {
-      onOpenDetails(result, trigger)
-    }
-  }
+  const error = result.outcome === 'error' ? result.error_message ?? result.error_type ?? 'Error' : null
 
   return (
     <>
       <TableRow
         className={styles.resultRow}
         tabIndex={0}
-        aria-label={`${conversationPath ? 'View conversation' : expandable ? 'View child results' : 'View details'} for ${label}`}
+        aria-label={`View attack details for ${label}`}
         onClick={(event) => {
+          if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return
           if (event.target instanceof Element && event.target.closest('a, button')) return
-          openResult(event.currentTarget)
+          onOpenDetails(result, event.currentTarget)
         }}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            openResult(event.currentTarget)
+            onOpenDetails(result, event.currentTarget)
           }
         }}
       >
@@ -184,48 +196,36 @@ function ResultRows({
             )}
             {position !== null && <Text className={styles.position}>#{position + 1}</Text>}
             <div className={styles.identity}>
-              {conversationPath ? (
-                <Link className={styles.objectiveLink} to={conversationPath} state={location.state} title={objective}>
-                  {preview}
-                </Link>
-              ) : (
-                <Text title={objective}>{preview}</Text>
-              )}
-              <Text size={200} className={styles.hint}>{result.atomic_attack_name}</Text>
+              <Text weight="semibold" title={objective}>{preview}</Text>
+              <Text size={200} className={styles.hint}>
+                {options.techniqueNames?.get(result.atomic_group_id) ?? result.atomic_attack_name}
+              </Text>
             </div>
           </div>
         </TableCell>
-        <TableCell>
-          <Badge appearance="outline" color={role === 'unknown' ? 'subtle' : 'brand'}>
-            {resultRoleLabel(role)}
-          </Badge>
+        <TableCell aria-label="Attack outcome">
+          <OutcomeBadge
+            appearance="tint"
+            outcome={result.outcome}
+            labelStyle={options.booleanOutcome ? 'success' : 'outcome'}
+            score={result.score ? scoreSummaryFromProgressScore(result.score) : null}
+            scoreFallback={error ?? 'No score was saved for this result.'}
+            scoreButtonLabel={`View score for ${label}`}
+          />
         </TableCell>
-        <TableCell>
-          <OutcomeBadge appearance="tint" outcome={result.outcome} label={formatAttackOutcome(result.outcome)} />
+        <TableCell aria-label="Duration" className={styles.nowrap}>{formatDuration(result.execution_time_ms)}</TableCell>
+        <TableCell aria-label="Retries / error">
+          <Text>{formatRetries(result.total_retries)}{error ? ' / error' : ''}</Text>
+          {error && <Text as="p" size={200} className={styles.hint}>{error}</Text>}
         </TableCell>
-        <TableCell className={styles.nowrap}>{formatDuration(result.execution_time_ms)}</TableCell>
-        <TableCell>
-          <Text>{result.total_retries}</Text>
-          {result.outcome === 'error' && (
-            <Text as="p" size={200} className={styles.hint}>
-              {result.error_message ?? result.error_type ?? 'Error'}
-            </Text>
-          )}
-        </TableCell>
-        <TableCell className={styles.nowrap}>{formatTimestamp(result.timestamp)}</TableCell>
-        <TableCell>
-          <Button
-            size="small"
-            className={styles.touchTarget}
-            aria-label={`Open details for ${label}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onOpenDetails(result, event.currentTarget)
-            }}
-          >
-            Details
-          </Button>
-        </TableCell>
+        {options.showTimestamp && (
+          <TableCell aria-label="Timestamp" className={styles.nowrap}>{formatTimestamp(result.timestamp)}</TableCell>
+        )}
+        {options.showConversationLink && (
+          <TableCell className={styles.actions}>
+            {conversationPath && <Link to={conversationPath} state={location.state}>Conversation</Link>}
+          </TableCell>
+        )}
       </TableRow>
       {node && expandable && isExpanded && (
         <ChildRows
@@ -234,9 +234,7 @@ function ResultRows({
           depth={depth + 1}
           ancestors={new Set([...ancestors, node.attack_result_id])}
           state={hierarchy.children.get(nodeKey)}
-          hierarchy={hierarchy}
-          scenarioResultId={scenarioResultId}
-          onOpenDetails={onOpenDetails}
+          options={options}
         />
       )}
     </>
@@ -249,15 +247,12 @@ interface ChildRowsProps {
   readonly depth: number
   readonly ancestors: ReadonlySet<string>
   readonly state: HierarchyChildrenState | undefined
-  readonly hierarchy: UseScenarioResultHierarchyResult
-  readonly scenarioResultId: string
-  readonly onOpenDetails: AttackExecutionTableProps['onOpenDetails']
+  readonly options: RowOptions
 }
 
-function ChildRows({
-  parentKey, parent, depth, ancestors, state, hierarchy, scenarioResultId, onOpenDetails,
-}: ChildRowsProps) {
+function ChildRows({ parentKey, parent, depth, ancestors, state, options }: ChildRowsProps) {
   const styles = useAttackExecutionTableStyles()
+  const { hierarchy, columnCount } = options
   const pages = state?.pages ?? []
   const slots = pages.flatMap(childSlots)
   return (
@@ -274,16 +269,14 @@ function ChildRows({
               position={slot.position}
               depth={depth}
               ancestors={ancestors}
-              hierarchy={hierarchy}
-              scenarioResultId={scenarioResultId}
-              onOpenDetails={onOpenDetails}
+              options={options}
             />
           )
         }
         const id = slot.kind === 'child' ? slot.node.attack_result_id : slot.attackResultId
         return (
           <TableRow key={`${slot.position}:${id}`}>
-            <TableCell colSpan={COLUMN_COUNT}>
+            <TableCell colSpan={columnCount}>
               <div className={styles.resultCell} style={indent(depth)}>
                 <span className={styles.expandSpacer} />
                 <Text className={styles.position}>#{slot.position + 1}</Text>
@@ -297,7 +290,7 @@ function ChildRows({
         )
       })}
       <TableRow>
-        <TableCell colSpan={COLUMN_COUNT}>
+        <TableCell colSpan={columnCount}>
           <div className={styles.footer} style={indent(depth)}>
             {state?.loading && <Text role="status" className={styles.hint}>Loading children...</Text>}
             {!state?.loading && pages.length > 0 && (
@@ -344,7 +337,6 @@ function ChildRows({
 }
 
 const NO_ANCESTORS: ReadonlySet<string> = new Set()
-const COLUMN_COUNT = 7
 const LABEL_OBJECTIVE_LENGTH = 60
 const INDENT_STEP = '1.5rem'
 
@@ -352,7 +344,7 @@ function indent(depth: number): CSSProperties {
   return { paddingInlineStart: `calc(${depth} * ${INDENT_STEP})` }
 }
 
-function resultLabel(result: ScenarioProgressResult, objective: string, position: number | null): string {
+function resultLabel(result: ScenarioProgressResult | ScenarioHierarchyNode, objective: string, position: number | null): string {
   const text = objective.length > LABEL_OBJECTIVE_LENGTH
     ? `${objective.slice(0, LABEL_OBJECTIVE_LENGTH)}...`
     : objective

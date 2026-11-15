@@ -26,6 +26,14 @@ export function withDraftIdentity(attachment: MessageAttachment): MessageAttachm
   return { ...attachment, draftId: attachment.draftId ?? generateClientId() }
 }
 
+export function attachmentsFromFiles(files: File[]): MessageAttachment[] {
+  return files.map((file: File): MessageAttachment => withDraftIdentity({
+    type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio'
+      : file.type.startsWith('video/') ? 'video' : 'file',
+    name: file.name, url: URL.createObjectURL(file), mimeType: file.type, size: file.size, file,
+  }))
+}
+
 export function buildConverterInputs(text: string, attachments: MessageAttachment[]): ConverterInputPiece[] {
   return [
     { id: 'text', pieceType: 'text', name: 'Text', dataType: 'text', value: text },
@@ -63,7 +71,8 @@ export function applyConvertedValues(
   if (Object.keys(conversions).length === 0) return pieces
   if (pieces.length !== pieceIds.length) throw new Error('Message pieces do not match the draft identities.')
   return pieces.map((piece: MessagePieceRequest, index: number): MessagePieceRequest => {
-    const conversion = conversions[pieceIds[index]]
+    const pieceId = pieceIds[index]
+    const conversion = pieceId !== undefined ? conversions[pieceId] : undefined
     return conversion ? {
       ...piece,
       converted_value: conversion.convertedValue,

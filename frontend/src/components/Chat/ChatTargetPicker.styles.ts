@@ -1,10 +1,13 @@
-import { makeStyles } from '@fluentui/react-components'
+import { makeStyles, tokens } from '@fluentui/react-components'
 
 import { mobileTouchTarget } from '@/styles/touchTargets'
 
 export const useChatTargetPickerStyles = makeStyles({
   root: {
     display: 'inline-flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
     minWidth: 0,
     maxWidth: '100%',
     '& > span': {

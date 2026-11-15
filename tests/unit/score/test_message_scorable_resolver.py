@@ -8,7 +8,7 @@ import pytest
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import ContentEntryScorable, ContentScorable, Message, MessagePiece, MessageScorable, Score
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score import MessageScorableResolver
 
 
 def _stored_message(value: str = "stored response") -> Message:

@@ -17,7 +17,7 @@ export function findingExportFilename(operation: Pick<Operation, 'id' | 'name'>,
     end = NAME_LIMIT
     if (name[end] !== '-' && name.slice(0, end).includes('-')) end = name.lastIndexOf('-', end - 1)
     // A word longer than the limit is cut between letters, never between a letter and its marks.
-    while (end > 0 && MARK.test(name[end])) end -= 1
+    while (end > 0 && MARK.test(name[end] ?? '')) end -= 1
   }
   const slug = name.slice(0, end).join('').replace(/-+$/, '')
   const pad = (value: number) => String(value).padStart(2, '0')

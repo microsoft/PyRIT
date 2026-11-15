@@ -112,15 +112,10 @@ function AnalyticsFacetPicker({
         </div>
       )}
       {tooMany && <MessageBar intent="error"><MessageBarBody>Select at most 100 values in one filter.</MessageBarBody></MessageBar>}
+      {facet.error && <MessageBar intent="error"><MessageBarBody>{facet.error}</MessageBarBody></MessageBar>}
       {!facet.ready ? <Text role="status">Filter values will load when the runtime is ready. Selections are preserved.</Text>
-        : facet.loading ? <Spinner size="tiny" label="Loading filter values" /> : facet.error ? (
-        <MessageBar intent="error">
-          <MessageBarBody>
-            Could not load filter values. {facet.error}{' '}
-            <Button className={styles.button} onClick={facet.retry}>Retry values</Button>
-          </MessageBarBody>
-        </MessageBar>
-      ) : (
+        : facet.loading ? <Spinner size="tiny" label="Loading filter values" />
+        : facet.error && facet.items.length === 0 ? null : (
         <>
           <div role="group" aria-label="Available filter values" className={styles.options}>
             {facet.items
@@ -380,11 +375,12 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange, dr
           const occurrence = occurrences.get(fingerprint) ?? 0
           occurrences.set(fingerprint, occurrence + 1)
           const label = `${analyticsDimensionLabel(predicate.dimension)} (${predicate.match_mode.toUpperCase()}): ` +
-            predicate.values.map((value: AttackAnalyticsValue) =>
-              labels[analyticsOptionLabelKey(predicate.dimension, value)]
-                ? analyticsOptionLabel({ key: value, label: labels[analyticsOptionLabelKey(predicate.dimension, value)] })
-                : analyticsValueLabel(value),
-            ).join(', ')
+            predicate.values.map((value: AttackAnalyticsValue) => {
+              const optLabel = labels[analyticsOptionLabelKey(predicate.dimension, value)]
+              return optLabel
+                ? analyticsOptionLabel({ key: value, label: optLabel })
+                : analyticsValueLabel(value)
+            }).join(', ')
           return (
             <div key={`${fingerprint}:${occurrence}`} className={styles.chip}>
               <Button appearance="subtle" className={styles.chipLabel}

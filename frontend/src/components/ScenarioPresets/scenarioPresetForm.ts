@@ -1,11 +1,14 @@
 import { buildParametersFromForm, getInitialFormValues } from '@/components/Parameters/parameterForm'
 import {
+  buildScenarioConfig,
   dynamicScenarioParameters,
   initialScenarioConfigState,
   uniqueTechniqueOptions,
+  type BuildScenarioConfigResult,
   type ScenarioConfigFields,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { untouchedPresetScenarioParams } from '@/components/Scenarios/scenarioPresetSeed'
 import type { RegisteredScenario, ScenarioPreset } from '@/types'
 import { validateRegistryName } from '@/utils/registryName'
 
@@ -70,6 +73,39 @@ export function presetToConfigState(
   }
 }
 
+/** Preserve unchanged stored values before parsing edits for either preview or save. */
+export function buildPresetScenarioConfig(
+  scenario: RegisteredScenario,
+  state: ScenarioConfigFormState,
+  previous: ScenarioPreset | null,
+): BuildScenarioConfigResult {
+  const parameters = dynamicScenarioParameters(scenario)
+  const untouched = untouchedPresetScenarioParams(
+    previous?.scenario_params,
+    parameters,
+    state.scenarioParamValues,
+  )
+  const result = buildScenarioConfig({
+    techniques: state.techniques,
+    dynamicParameters: parameters.filter(
+      (parameter) => !Object.prototype.hasOwnProperty.call(untouched, parameter.name),
+    ),
+    scenarioParamValues: state.scenarioParamValues,
+    datasets: state.datasets,
+    includeBaseline: state.includeBaseline,
+  })
+  if (!result.ok || Object.keys(untouched).length === 0) {
+    return result
+  }
+  return {
+    ok: true,
+    config: {
+      ...result.config,
+      scenario_params: { ...result.config.scenario_params, ...untouched },
+    },
+  }
+}
+
 interface PresetIdentity {
   name: string
   scenarioName: string
@@ -130,11 +166,10 @@ function presetScenarioParams(
   defaults: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const stored = previous?.scenario_params ?? {}
-  const edited = Object.entries(config.scenario_params ?? {}).filter(
-    ([name, value]) => (
+  const edited = Object.entries(config.scenario_params ?? {})
+    .filter(([name, value]) => (
       Object.prototype.hasOwnProperty.call(stored, name) || !matchesDefault(value, defaults[name])
-    ),
-  )
+    ))
   const merged = {
     ...Object.fromEntries(edited),
     ...uneditableScenarioParams(scenario, previous),

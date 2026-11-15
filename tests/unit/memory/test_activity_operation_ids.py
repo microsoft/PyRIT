@@ -16,9 +16,9 @@ from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_interface import OperationInUseError
-from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
+from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AttackResult,
     ComponentIdentifier,

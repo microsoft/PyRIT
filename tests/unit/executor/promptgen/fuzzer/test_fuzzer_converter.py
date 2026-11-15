@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.promptgen.fuzzer import (
     FuzzerCrossOverConverter,
     FuzzerExpandConverter,
@@ -14,7 +15,8 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
     FuzzerSimilarConverter,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import OpenAIChatTarget
 
 
 @pytest.mark.parametrize(
@@ -124,3 +126,77 @@ def test_fuzzer_converter_input_supported(converter_class, sqlite_instance) -> N
     converter = converter_class(converter_target=prompt_target)
     assert converter.input_supported("text") is True
     assert converter.input_supported("image_path") is False
+
+
+@pytest.mark.parametrize(
+    "converter_class",
+    [
+        FuzzerExpandConverter,
+        FuzzerShortenConverter,
+        FuzzerRephraseConverter,
+        FuzzerCrossOverConverter,
+        FuzzerSimilarConverter,
+    ],
+)
+def test_fuzzer_converter_identifier_differs_by_prompt_template(converter_class, sqlite_instance) -> None:
+    prompt_target = MockPromptTarget()
+    template_1 = SeedPrompt(value="Shorten this sentence: {{ prompt }}")
+    template_2 = SeedPrompt(value="Rephrase this sentence: {{ prompt }}")
+
+    converter_1 = converter_class(converter_target=prompt_target, prompt_template=template_1)
+    converter_2 = converter_class(converter_target=prompt_target, prompt_template=template_2)
+
+    assert converter_1.get_identifier().unique_name != converter_2.get_identifier().unique_name
+    assert (
+        converter_1.get_identifier().params["prompt_template_hash"]
+        != converter_2.get_identifier().params["prompt_template_hash"]
+    )
+
+
+@pytest.mark.parametrize(
+    "converter_class",
+    [
+        FuzzerExpandConverter,
+        FuzzerShortenConverter,
+        FuzzerRephraseConverter,
+        FuzzerCrossOverConverter,
+        FuzzerSimilarConverter,
+    ],
+)
+def test_fuzzer_converter_identifier_differs_by_target(converter_class, sqlite_instance) -> None:
+    target_a = OpenAIChatTarget(endpoint="https://example.invalid/v1", api_key="unused", model_name="model-a")
+    target_b = OpenAIChatTarget(endpoint="https://example.invalid/v1", api_key="unused", model_name="model-b")
+    template = SeedPrompt(value="Rewrite: {{ prompt }}")
+
+    converter_a = converter_class(converter_target=target_a, prompt_template=template)
+    converter_b = converter_class(converter_target=target_b, prompt_template=template)
+
+    assert converter_a.get_identifier().unique_name != converter_b.get_identifier().unique_name
+    assert converter_a.get_identifier().converter_target != converter_b.get_identifier().converter_target
+
+
+@pytest.mark.parametrize(
+    "converter_class",
+    [
+        FuzzerExpandConverter,
+        FuzzerShortenConverter,
+        FuzzerRephraseConverter,
+        FuzzerCrossOverConverter,
+        FuzzerSimilarConverter,
+    ],
+)
+def test_fuzzer_converter_identifier_deterministic_and_matches_expected_hash(converter_class, sqlite_instance) -> None:
+    target = OpenAIChatTarget(endpoint="https://example.invalid/v1", api_key="unused", model_name="model-a")
+    template_val = "Rewrite: {{ prompt }}"
+    template = SeedPrompt(value=template_val)
+
+    converter_1 = converter_class(converter_target=target, prompt_template=template)
+    converter_2 = converter_class(converter_target=target, prompt_template=template)
+
+    expected_hash = hashlib.sha256(template_val.encode("utf-8")).hexdigest()[:16]
+    ident_1 = converter_1.get_identifier()
+    ident_2 = converter_2.get_identifier()
+
+    assert ident_1.unique_name == ident_2.unique_name
+    assert ident_1.params["prompt_template_hash"] == expected_hash
+    assert ident_1.converter_target == target.get_identifier()

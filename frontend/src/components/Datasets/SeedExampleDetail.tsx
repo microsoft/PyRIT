@@ -1,11 +1,23 @@
 import { useState } from 'react'
 import type { ReactNode, Ref } from 'react'
 
-import { Badge, Button, Text } from '@fluentui/react-components'
-import { ClipboardRegular } from '@fluentui/react-icons'
+import {
+  Badge,
+  Button,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  MessageBar,
+  MessageBarBody,
+  Text,
+  Tooltip,
+} from '@fluentui/react-components'
+import { ChatRegular, ClipboardRegular } from '@fluentui/react-icons'
 
 import MediaPreview, { MediaAccessLink } from '@/components/Media/MediaPreview'
-import type { SeedCondition, SeedExampleDetailResponse, SeedRecord } from '@/types'
+import type { ImportDestinationType, SeedCondition, SeedExampleDetailResponse, SeedRecord } from '@/types'
 import { basenameFromValue, mapMediaUrl } from '@/utils/media'
 
 import { useSeedExampleDetailStyles } from './SeedExampleDetail.styles'
@@ -21,6 +33,10 @@ interface SeedExampleDetailProps {
   headingRef?: Ref<HTMLHeadingElement>
   /** Refetch signed display URLs for one member. The stored value stays unchanged. */
   onRefreshUrls?: (memberId: string) => Promise<string | null>
+  hasActiveAttack?: boolean
+  hasActiveConversation?: boolean
+  onImport?: (destination: ImportDestinationType) => void
+  importError?: string | null
 }
 
 function memberKeys(members: readonly SeedRecord[]): string[] {
@@ -248,7 +264,15 @@ function MemberView({
 }
 
 /** Inspection view for stored members. Text stays text. Media loads only when asked and never plays itself. */
-export default function SeedExampleDetail({ detail, headingRef, onRefreshUrls }: SeedExampleDetailProps) {
+export default function SeedExampleDetail({
+  detail,
+  headingRef,
+  onRefreshUrls,
+  hasActiveAttack = false,
+  hasActiveConversation = false,
+  onImport,
+  importError,
+}: SeedExampleDetailProps) {
   const styles = useSeedExampleDetailStyles()
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [failedKey, setFailedKey] = useState<string | null>(null)
@@ -290,7 +314,70 @@ export default function SeedExampleDetail({ detail, headingRef, onRefreshUrls }:
         >
           {copiedKey === exampleCopyKey ? 'Copied example ID' : 'Copy example ID'}
         </Button>
+        {onImport ? (
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Button
+                className={styles.touchTarget}
+                appearance="primary"
+                icon={<ChatRegular />}
+                data-testid="import-into-chat-button"
+              >
+                Import into Chat
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem
+                  data-testid="import-new-attack-item"
+                  onClick={() => onImport('new_attack')}
+                >
+                  Import to new attack
+                </MenuItem>
+                <Tooltip
+                  content={
+                    !hasActiveAttack
+                      ? 'Open or start an attack first'
+                      : !hasActiveConversation
+                      ? 'Select a conversation first'
+                      : 'Import into current conversation'
+                  }
+                  relationship="label"
+                >
+                  <MenuItem
+                    data-testid="import-current-conversation-item"
+                    disabled={!hasActiveAttack || !hasActiveConversation}
+                    onClick={() => onImport('current_conversation')}
+                  >
+                    Import to current conversation
+                  </MenuItem>
+                </Tooltip>
+                <Tooltip
+                  content={
+                    !hasActiveAttack
+                      ? 'Open or start an attack first'
+                      : 'Import into a new conversation within the current attack'
+                  }
+                  relationship="label"
+                >
+                  <MenuItem
+                    data-testid="import-new-conversation-item"
+                    disabled={!hasActiveAttack}
+                    onClick={() => onImport('new_conversation')}
+                  >
+                    Import to new conversation
+                  </MenuItem>
+                </Tooltip>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
+        ) : null}
       </div>
+      {importError ? (
+        <MessageBar intent="error" data-testid="import-error-bar">
+          <MessageBarBody>{importError}</MessageBarBody>
+        </MessageBar>
+      ) : null}
       {failedKey === exampleCopyKey ? <p role="alert" className={styles.note}>{COPY_FAILED_MESSAGE}</p> : null}
       {detail.members.length === 0 ? <Text>No stored members were returned.</Text> : null}
       {detail.members.map((member, index) => (

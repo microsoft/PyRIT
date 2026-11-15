@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.message_normalizer import TokenizerTemplateNormalizer
-from pyrit.models import Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole
+from pyrit.models import ChatMessageRole, Message, MessagePiece
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:

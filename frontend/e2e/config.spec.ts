@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "./_fixtures";
+import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { makeTarget, type FlatTarget } from "./_targets";
 import { READY_RUNTIME } from "./_runtime";
 
@@ -24,6 +24,7 @@ const SAMPLE_TARGETS = [
     target_type: "OpenAIChatTarget",
     endpoint: "https://api.openai.com",
     model_name: "gpt-4o",
+    capabilities: { supports_multi_turn: true },
   },
   {
     target_registry_name: "target-image-1",
@@ -272,7 +273,7 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText(/error/i)).toBeVisible({ timeout: 10000 });
   });
 
-  test("should set a default objective target", async ({ page }) => {
+  test("should retain the adversarial default without an objective default control", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
@@ -281,12 +282,12 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
 
     const defaults = page.getByRole("region", { name: "Target defaults" });
-    const objectiveDefault = defaults.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible();
-    await objectiveDefault.selectOption("target-chat-1");
+    await expect(defaults.getByRole("combobox", { name: "Default objective target", exact: true })).toHaveCount(0);
+    const adversarialDefault = defaults.getByRole("combobox", { name: "Default adversarial target", exact: true });
+    await adversarialDefault.selectOption("target-chat-1");
 
-    await expect(page.getByTestId("target-row-target-chat-1").getByText("Objective", { exact: true })).toBeVisible();
-    await expect(objectiveDefault).toHaveValue("target-chat-1");
+    await expect(page.getByTestId("target-row-target-chat-1").getByText("Adversarial", { exact: true })).toBeVisible();
+    await expect(adversarialDefault).toHaveValue("target-chat-1");
   });
 
   test("should open create target dialog", async ({ page }) => {
@@ -304,7 +305,8 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText("Create Target")).toBeVisible();
   });
 
-  test("should refresh targets on Refresh click", async ({ page }) => {
+  test("should update targets after a visible minute without a Refresh control", async ({ page }) => {
+    await page.clock.install();
     // Start with initial targets, then after refresh show an additional one.
     // Using a flag-based approach avoids React StrictMode double-mount issues.
     let showExtra = false;
@@ -319,9 +321,9 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("dall-e-3", { exact: true })).not.toBeVisible();
 
-    // Flip the flag and click refresh
     showExtra = true;
-    await page.getByRole("button", { name: /refresh/i }).click();
+    await expect(page.getByRole("button", { name: /^Refresh$/ })).toHaveCount(0);
+    await page.clock.fastForward(60_000);
 
     // Second target should now appear
     await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
@@ -671,7 +673,7 @@ test.describe("Responsive Target Registry", () => {
 });
 
 test.describe("Target Config ↔ Chat Navigation", () => {
-  test("should preselect the objective default in a new chat", async ({ page }) => {
+  test("should select a target in a new chat without a Registry objective default", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
@@ -679,12 +681,8 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await goToTargets(page);
     await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // Set the first target as the objective default.
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-
-    // Navigate back to chat
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
-    await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Default objective target", exact: true })).toHaveCount(0);
+    await selectChatTarget(page, "target-chat-1");
 
     // Chat should show the selected target type. Scope to the badge to
     // avoid matching the (hidden) tooltip copy of the same text.
@@ -706,20 +704,9 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await draft.fill("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
-    // Go to targets, set a target
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-
-    // Returning retains the original draft; a new attack adopts the new default.
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
-    await expect(draft).toHaveValue("Draft without a target");
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
-    await page.getByRole("button", { name: "New attack", exact: true }).click();
+    await page.getByRole("combobox", { name: "Objective target", exact: true }).selectOption("target-chat-1");
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
-    await expect(input).toHaveValue("");
-    await expect(page.getByRole("combobox", { name: "Chat target", exact: true })).toHaveValue("target-chat-1");
-    await input.fill("Hello");
+    await expect(input).toHaveValue("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
   });
 });

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.datasets import SeedDatasetFilter, SeedDatasetProvider
-from pyrit.datasets.seed_datasets.remote.mask_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     MaskQuestionArchetype,
     _MaskDataset,
 )

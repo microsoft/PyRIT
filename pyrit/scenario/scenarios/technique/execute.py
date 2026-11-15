@@ -9,18 +9,19 @@ import asyncio
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
-from pyrit.executor.attack import AttackScoringConfig
-from pyrit.executor.attack.component.conversation_manager import get_prepended_turn_count
-from pyrit.executor.attack.compound.sequential_attack import (
+from pyrit.executor.attack import (
+    AttackScoringConfig,
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialChildAttack,
 )
+from pyrit.executor.attack.component import get_prepended_turn_count
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackSeedGroup,
     BoundedDatasetSize,
+    Parameter,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -28,7 +29,6 @@ from pyrit.models import (
     SeedPrompt,
     config_hash,
 )
-from pyrit.models.parameter import Parameter
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
@@ -97,12 +97,11 @@ class Execute(Scenario):
         """Initialize the scenario with an optional scorer and resume ID."""
         self._prepended_conversation_hash: str | None = None
         self._local_technique_hash: str | None = None
-        self._objective_scorer: TrueFalseScorer = objective_scorer or self._get_default_objective_scorer()
         super().__init__(
             version=self.VERSION,
             technique_class=_build_execute_technique(),
             default_dataset_config=DatasetAttackConfiguration(seed_groups=[], max_total="all"),
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 

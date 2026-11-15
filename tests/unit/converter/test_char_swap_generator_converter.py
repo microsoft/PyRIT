@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.converter.charswap_attack_converter import CharSwapConverter
-from pyrit.converter.text_selection_strategy import (
+from pyrit.converter import (
+    CharSwapConverter,
     WordProportionSelectionStrategy,
 )
 

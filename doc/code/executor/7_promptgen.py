@@ -98,7 +98,8 @@ print(f"Stored {len(assert_result.seed_groups)} seed groups.")
 # named prompts through `AttackAdversarialConfig` to a fresh attack instance.
 # Existing attacks handle feedback and stopping using the standard `adversarial_chat`
 # JSON schema; only `next_message` goes to the application. Generation does not run
-# or score attacks.
+# or score attacks. To run stored groups and judge them against their policy, use
+# the [`foundry.assert_policy` scenario](../../scanner/foundry.ipynb).
 
 # %% [markdown]
 # ## Anecdoctor Generator

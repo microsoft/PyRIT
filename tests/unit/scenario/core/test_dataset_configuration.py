@@ -17,26 +17,30 @@ from pyrit.models import (
     SeedPrompt,
     scenario_dataset_size_from_limit,
 )
-from pyrit.scenario.core.dataset_configuration import (
-    INLINE_DATASET_NAME,
+from pyrit.scenario import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConfiguration,
-    DatasetConstraintError,
     DatasetFetchPolicy,
     DatasetSourceKind,
     ResolvedDataset,
+)
+from pyrit.scenario.core import (
+    INLINE_DATASET_NAME,
+    DatasetConstraintError,
+    require_nonempty,
+)
+from pyrit.scenario.core.dataset_configuration import (
     forbid_inline_seeds,
     require_harm_categories,
     require_inline_seeds,
     require_min_size,
-    require_nonempty,
     require_seed_type,
     restrict_dataset_names,
 )
 
 MEMORY_PATCH_TARGET = "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance"
-PROVIDER_PATCH_TARGET = "pyrit.datasets.seed_datasets.seed_dataset_provider.SeedDatasetProvider"
+PROVIDER_PATCH_TARGET = "pyrit.datasets.SeedDatasetProvider"
 
 
 def resolved(

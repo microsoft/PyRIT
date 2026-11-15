@@ -4,7 +4,7 @@
 import re
 from urllib.parse import unquote
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -108,15 +108,18 @@ class LDAPInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
             params={**base_identifier.params, "decode_url_filters": self._use_default_patterns}
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Evaluate the original text and decode default LDAP URL filter fields once.
 
         Returns:
             list[Score]: One true/false score with the matching pattern names.
         """
+        objective = expectation.objective if expectation else None
         if not self._use_default_patterns:
-            return await super()._score_piece_async(message_piece, objective=objective)
+            return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
 
         text = message_piece.converted_value
         matched = [name for name, pattern in self._compiled.items() if pattern.search(text)]

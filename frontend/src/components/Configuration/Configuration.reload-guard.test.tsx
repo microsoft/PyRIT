@@ -8,6 +8,9 @@ import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 're
 import { configurationApi } from '@/services/api'
 
 import Configuration from './Configuration'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   configurationApi: {
@@ -131,20 +134,18 @@ describe('Configuration failed environment reload guard', () => {
     })
   })
 
-  it('keeps navigation protection when a confirmed reload fails and preserves drafts', async () => {
+  it('keeps navigation protection for edits after a failed automatic read', async () => {
     const user = userEvent.setup()
     renderPage()
 
     const editor = await screen.findByLabelText('Environment file contents')
+    mockedConfigurationApi.listEnvironmentFiles.mockRejectedValueOnce(new Error('Reload failed'))
+    await advanceAutoRefresh()
+    expect(await screen.findByText('Reload failed')).toBeInTheDocument()
     await user.clear(editor)
     await user.type(editor, 'API_KEY=unsaved\n')
-
-    mockedConfigurationApi.listEnvironmentFiles.mockRejectedValueOnce(new Error('Reload failed'))
-
-    await user.click(screen.getByRole('button', { name: 'Reload file' }))
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
-
-    expect(await screen.findByText('Reload failed')).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(2)
     expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=unsaved\n')
 
     await user.click(await screen.findByRole('button', { name: 'Go to scanner' }))

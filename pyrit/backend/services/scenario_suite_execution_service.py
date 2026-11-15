@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
 from pyrit.models import (
     LaunchScenarioSuiteRequest,
@@ -23,14 +24,17 @@ from pyrit.models import (
     ScenarioSuiteExecutionSummary,
     ScenarioSuiteSubmissionState,
 )
+from pyrit.models.scenario_readiness import ScenarioReadiness
 from pyrit.registry import (
     ResolvedScenarioSuiteEntry,
     ScenarioPresetRegistry,
     ScenarioSuiteLaunchResolver,
+    ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
 )
 
 if TYPE_CHECKING:
+    from pyrit.models import ScenarioSuiteReadinessRequest
     from pyrit.models.catalog import ScenarioRunSummary, ScenarioSuiteRegistryEntry
 
 logger = logging.getLogger(__name__)
@@ -57,6 +61,7 @@ class _ExecutionEntryState:
     """Mutable process-local submission state for one resolved entry."""
 
     resolved: ResolvedScenarioSuiteEntry
+    role_references: dict[str, str] = field(default_factory=dict)
     state: ScenarioSuiteExecutionEntryState = ScenarioSuiteSubmissionState.PENDING
     scenario_result_id: str | None = None
     error: str | None = None
@@ -159,6 +164,15 @@ class ScenarioSuiteExecutionService:
             name=name,
             request=request,
         )
+        if request.initializers:
+            await self._get_run_service()._run_initializers_async(request=resolved_launch.entries[0].request)
+        readiness, references = await self._resolve_roles_async(entries=resolved_launch.entries)
+        if readiness.issues:
+            raise ScenarioSuiteNotRunnableError(
+                "\n".join(
+                    f"{issue.component}, {issue.role}: {issue.reason} {issue.remediation}" for issue in readiness.issues
+                )
+            )
         if self._stopping:
             raise RuntimeError("Scenario suite launch scheduling is stopping.")
 
@@ -171,7 +185,10 @@ class ScenarioSuiteExecutionService:
             state = _ExecutionState(
                 execution_id=uuid4(),
                 suite=resolved_launch.suite,
-                entries=[_ExecutionEntryState(resolved=entry) for entry in resolved_launch.entries],
+                entries=[
+                    _ExecutionEntryState(resolved=entry, role_references=references[entry.entry_id])
+                    for entry in resolved_launch.entries
+                ],
                 created_at=now,
                 updated_at=now,
             )
@@ -181,6 +198,42 @@ class ScenarioSuiteExecutionService:
             self._tasks.add(task)
             task.add_done_callback(self._submission_done)
         return await self._build_summary_async(state=state)
+
+    async def get_readiness_async(
+        self, *, name: str, request: LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest
+    ) -> ScenarioReadiness:
+        """
+        Preview all child roles without submitting or persisting executable work.
+
+        Returns:
+            ScenarioReadiness: Combined child bindings and entry-specific issues.
+        """
+        launch = await asyncio.to_thread(self._resolver.resolve, name=name, request=request)
+        readiness, _ = await self._resolve_roles_async(entries=launch.entries)
+        return readiness
+
+    @staticmethod
+    async def _resolve_roles_async(
+        *,
+        entries: tuple[ResolvedScenarioSuiteEntry, ...],
+    ) -> tuple[ScenarioReadiness, dict[UUID, dict[str, str]]]:
+        result = ScenarioReadiness()
+        references: dict[UUID, dict[str, str]] = {}
+        for entry in entries:
+            readiness = await asyncio.to_thread(
+                ScenarioConfigurationResolver.resolve_readiness,
+                scenario_name=entry.request.scenario_name,
+                request=entry.request,
+            )
+            prefix = f"Entry {entry.entry_position} ({entry.preset_name})"
+            result.issues.extend(
+                issue.model_copy(update={"component": f"{prefix}: {issue.component}"}) for issue in readiness.issues
+            )
+            result.bindings.extend(binding.model_copy(update={"component": prefix}) for binding in readiness.bindings)
+            references[entry.entry_id] = {
+                f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings
+            }
+        return result, references
 
     async def get_execution_async(self, *, execution_id: UUID) -> ScenarioSuiteExecutionSummary | None:
         """
@@ -240,11 +293,16 @@ class ScenarioSuiteExecutionService:
                     entry.state = ScenarioSuiteSubmissionState.SUBMITTING
                     task = asyncio.create_task(
                         self._get_run_service().start_run_async(
-                            request=entry.resolved.request,
-                            initial_metadata=entry.resolved.metadata(
-                                suite_execution_id=state.execution_id,
-                                suite=state.suite,
+                            request=entry.resolved.request.model_copy(
+                                update={"initializers": None, "initializer_args": None}
                             ),
+                            initial_metadata={
+                                **entry.resolved.metadata(
+                                    suite_execution_id=state.execution_id,
+                                    suite=state.suite,
+                                ),
+                                "scenario_expected_role_references_v1": entry.role_references,
+                            },
                         )
                     )
                     entry.submission_task = task

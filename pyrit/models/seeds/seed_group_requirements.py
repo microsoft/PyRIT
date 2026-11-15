@@ -18,6 +18,7 @@ class SeedGroupRequirements:
 
     objective_only: bool = False
     try_adapt: bool = False
+    user_prompts_only: bool = False
 
     def __post_init__(self) -> None:
         """
@@ -42,5 +43,14 @@ class SeedGroupRequirements:
         if self.objective_only and len(seed_group.seeds) != 1:
             return [
                 "Technique accepts only an objective; dataset prompts and simulated conversations are not accepted."
+            ]
+        if self.user_prompts_only and (
+            seed_group.has_simulated_conversation or any(prompt.role != "user" for prompt in seed_group.prompts)
+        ):
+            return [
+                (
+                    "Technique accepts only an objective and static user prompts; "
+                    "non-user history and simulated conversations are not accepted."
+                )
             ]
         return []

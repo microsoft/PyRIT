@@ -6,7 +6,7 @@ from enum import Enum
 
 import numpy as np
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -270,13 +270,15 @@ class PlagiarismScorer(MessageFloatScaleScorer):
 
         raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Scores the AI response against the reference text using the specified metric.
 
         Args:
             message_piece (MessagePiece): The piece to score.
-            objective (str | None): Not applicable for this scorer.
+            expectation (ScoringExpectation | None): The scoring criteria. Ignored by this scorer.
 
         Returns:
             list[Score]: A list containing the computed score.

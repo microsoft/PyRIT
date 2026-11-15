@@ -148,7 +148,7 @@ async def test_chunked_request_without_an_objective_score_is_undetermined_async(
         result = await attack.execute_async(objective="objective")
     else:
         # The scorer runs and produces nothing for the combined text.
-        with patch.object(scorer, "_score_piece_async", new_callable=AsyncMock, return_value=[]):
+        with patch.object(scorer, "_score_piece_with_expectation_async", new_callable=AsyncMock, return_value=[]):
             result = await attack.execute_async(objective="objective")
 
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id])

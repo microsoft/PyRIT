@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.backend.mappers._preview import format_last_message_preview
     from pyrit.backend.mappers.attack_mappers import (
         attack_result_to_summary_async,
+        fetch_message_scores_async,
         pyrit_messages_to_dto_async,
         request_piece_to_pyrit_message_piece,
         request_to_pyrit_message,
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "attack_result_to_summary_async": "pyrit.backend.mappers.attack_mappers",
     "converter_object_to_instance": "pyrit.backend.mappers.converter_mappers",
+    "fetch_message_scores_async": "pyrit.backend.mappers.attack_mappers",
     "format_last_message_preview": "pyrit.backend.mappers._preview",
     "pyrit_messages_to_dto_async": "pyrit.backend.mappers.attack_mappers",
     "request_piece_to_pyrit_message_piece": "pyrit.backend.mappers.attack_mappers",

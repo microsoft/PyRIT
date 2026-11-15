@@ -21,9 +21,10 @@ export function basenameFromValue(value: string, fallback: string): string {
   if (!value) return fallback
   if (value.startsWith('/api/media')) {
     const match = /[?&]path=([^&]+)/.exec(value)
-    if (match) {
+    const matchPath = match?.[1]
+    if (matchPath) {
       try {
-        const decoded = decodeURIComponent(match[1])
+        const decoded = decodeURIComponent(matchPath)
         const parts = decoded.split(/[/\\]/)
         return parts[parts.length - 1] || fallback
       } catch {
@@ -32,7 +33,7 @@ export function basenameFromValue(value: string, fallback: string): string {
     }
     return fallback
   }
-  const cleaned = value.split('?')[0]
+  const cleaned = value.split('?')[0] ?? ''
   const parts = cleaned.split(/[/\\]/)
   return parts[parts.length - 1] || fallback
 }
@@ -211,7 +212,7 @@ export function mapMediaUrl({ dataType, value, valueUrl }: MapMediaUrlInput): Ma
   if (isBinary) return { status: 'unsupported', url: supportedDownloadUrl(url) }
 
   const classified = dataUriKind(url) ?? kindForExtension(extensionOf(url))
-  if (classified === 'unsupported') return { status: 'unsupported', url: supportedDownloadUrl(url) }
+  if (classified === 'unsupported' || !previewKind) return { status: 'unsupported', url: supportedDownloadUrl(url) }
   if (classified !== 'unknown' && classified !== previewKind) {
     return { status: 'unsupported', url: supportedDownloadUrl(url) }
   }

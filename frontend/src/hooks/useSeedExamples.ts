@@ -5,6 +5,8 @@ import { datasetsApi } from '@/services/api'
 import { toApiError, type ApiError } from '@/services/errors'
 import type { SeedExampleDetailResponse, SeedExampleListResponse } from '@/types'
 
+import { useAutoRefresh } from './useAutoRefresh'
+
 interface SeedExamplePageState {
   readonly page: SeedExampleListResponse | null
   readonly loading: boolean
@@ -50,7 +52,8 @@ export function useSeedExamples(
   const [page, setPage] = useState<SeedExampleListResponse | null>(null)
   const [loading, setLoading] = useState(selectionKey !== '' && !query.cursorRepeated)
   const [error, setError] = useState<ApiError | null>(null)
-  const [refetchCount, setRefetchCount] = useState(0)
+  const [refresh, setRefresh] = useState({ version: 0, quiet: false })
+  const pending = useRef(false)
 
   if (activeRequest !== requestKey) {
     setActiveRequest(requestKey)
@@ -62,6 +65,7 @@ export function useSeedExamples(
   useEffect(() => {
     if (!selectionKey || query.cursorRepeated) return
     const controller = new AbortController()
+    pending.current = true
     const load = async (): Promise<void> => {
       try {
         const response = await datasetsApi.listSeedExamples({
@@ -78,23 +82,31 @@ export function useSeedExamples(
         setError(null)
       } catch (err: unknown) {
         if (controller.signal.aborted) return
-        setPage(null)
-        setError(toApiError(err))
+        const apiError = toApiError(err)
+        if (!refresh.quiet || (apiError.status != null && apiError.status < 500)) setPage(null)
+        setError(apiError)
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          pending.current = false
+        }
       }
     }
     void load()
     return () => {
       controller.abort()
+      pending.current = false
     }
-  }, [requestKey, refetchCount, selectionKey, query, generation])
+  }, [requestKey, refresh, selectionKey, query, generation])
 
   const retry = useCallback(() => {
     setLoading(selectionKey !== '' && !query.cursorRepeated)
     setError(null)
-    setRefetchCount((count) => count + 1)
+    setRefresh((current) => ({ version: current.version + 1, quiet: false }))
   }, [query.cursorRepeated, selectionKey])
+  useAutoRefresh(() => {
+    if (!pending.current) setRefresh((current) => ({ version: current.version + 1, quiet: true }))
+  }, selectionKey !== '' && !query.cursorRepeated && !loading)
 
   return { page, loading, error, retry }
 }
@@ -123,7 +135,8 @@ export function useSeedExampleDetail(
   const [loading, setLoading] = useState(exampleId != null && !exampleRepeated && selectionKey !== '')
   const [error, setError] = useState<ApiError | null>(null)
   const [notFound, setNotFound] = useState(false)
-  const [refetchCount, setRefetchCount] = useState(0)
+  const [refresh, setRefresh] = useState({ version: 0, quiet: false })
+  const pending = useRef(false)
   const lifecycleRef = useRef<AbortController | null>(null)
   const lifecycleKeyRef = useRef(requestKey)
   const memberRefreshRef = useRef(new Map<string, AbortController>())
@@ -148,6 +161,7 @@ export function useSeedExampleDetail(
     controller.signal.addEventListener('abort', stopMembers)
     const load = async (): Promise<void> => {
       if (!selectionKey || !exampleId || exampleRepeated) return
+      pending.current = true
       try {
         const response = await datasetsApi.getSeedExample(exampleId, selectionKey, controller.signal)
         if (controller.signal.aborted) return
@@ -157,7 +171,7 @@ export function useSeedExampleDetail(
       } catch (err: unknown) {
         if (controller.signal.aborted) return
         const apiError = toApiError(err)
-        setDetail(null)
+        if (!refresh.quiet || (apiError.status != null && apiError.status < 500)) setDetail(null)
         if (apiError.status === 404) {
           setNotFound(true)
           setError(null)
@@ -166,23 +180,30 @@ export function useSeedExampleDetail(
           setError(apiError)
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          pending.current = false
+        }
       }
     }
     void load()
     return () => {
       controller.abort()
+      pending.current = false
       controller.signal.removeEventListener('abort', stopMembers)
       if (lifecycleRef.current === controller) lifecycleRef.current = null
     }
-  }, [requestKey, refetchCount, selectionKey, exampleId, exampleRepeated, generation])
+  }, [requestKey, refresh, selectionKey, exampleId, exampleRepeated, generation])
 
   const retry = useCallback(() => {
     setLoading(exampleId != null && !exampleRepeated && selectionKey !== '')
     setError(null)
     setNotFound(false)
-    setRefetchCount((count) => count + 1)
+    setRefresh((current) => ({ version: current.version + 1, quiet: false }))
   }, [exampleId, exampleRepeated, selectionKey])
+  useAutoRefresh(() => {
+    if (!pending.current) setRefresh((current) => ({ version: current.version + 1, quiet: true }))
+  }, selectionKey !== '' && exampleId != null && !exampleRepeated && !loading)
 
   const refreshDisplayUrls = useCallback(async (memberId: string): Promise<string | null> => {
     if (!selectionKey || !exampleId || exampleRepeated) {

@@ -15,18 +15,19 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pyrit.analytics.scenario_statistics import (
-    ScenarioPlanLookup,
+from pyrit.analytics import (
     compute_scenario_statistics,
     count_execution_units,
+)
+from pyrit.analytics.scenario_statistics import (
+    ScenarioPlanLookup,
     resolve_attack_result_attempt,
     resolve_execution_unit,
     retry_pressure,
 )
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -64,8 +65,8 @@ from pyrit.models import (
     ScorerIdentifier,
     project_behavioral_identity,
 )
-from pyrit.models.catalog.scenario import AttackErrorSummary, AttackRetrySummary
-from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
+from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary
+from pyrit.score import find_objective_metrics_by_eval_hash
 
 logger = logging.getLogger(__name__)
 
@@ -902,6 +903,12 @@ class ScenarioProgressReadModel:
             error_type=delta.error_type,
             error_message=delta.error_message,
             score=delta.score,
+            seed_identifiers=[
+                ScenarioProgressReadModel._build_component_identity(component_identifier=seed)
+                for seed in delta.atomic_attack_identifier.seed_identifiers
+            ]
+            if delta.atomic_attack_identifier is not None
+            else [],
             result_role=result_metadata.result_role,
             child_attack_result_ids=ScenarioProgressReadModel._read_child_attack_result_ids(
                 attack_metadata=delta.attack_metadata

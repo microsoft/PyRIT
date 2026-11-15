@@ -11,6 +11,8 @@ const FACET_PAGE_SIZE = 50
 
 interface FacetRequestIdentity {
   readonly key: string
+  readonly pageKey: string
+  readonly scope: { readonly key: string }
 }
 
 interface FacetState {
@@ -33,20 +35,22 @@ export function useAttackAnalyticsFacet(
   const runtime = useRuntime()
   const [search, setSearch] = useState('')
   const [paging, setPaging] = useState<{ scope: { key: string } | null; offset: number }>({ scope: null, offset: 0 })
-  const [retryVersion, setRetryVersion] = useState(0)
   const [settled, setSettled] = useState<FacetState | null>(null)
   const retryAt = useRef(0)
   const scope = JSON.stringify([
-    analyticsDimensionKey(dimension), analyticsFiltersKey(filters), search, refreshVersion, runtime.generation, runtime.ready,
+    analyticsDimensionKey(dimension), analyticsFiltersKey(filters), search, runtime.generation, runtime.ready,
   ])
   const scopeIdentity = useMemo(() => ({ key: scope }), [scope])
-  // Search/cohort/Reload changes start at the first page; Retry keeps the offset.
+  // Only a different search or cohort resets the page.
   const offset = paging.scope === scopeIdentity ? paging.offset : 0
   const query: AttackAnalyticsFacetQuery = { dimension, filters, search, offset, limit: FACET_PAGE_SIZE }
-  const key = JSON.stringify([scope, offset, retryVersion])
+  const pageKey = JSON.stringify([scope, offset])
+  const key = JSON.stringify([pageKey, refreshVersion])
   // Returning to an earlier search is a new read, not a revival of its old options.
-  const request = useMemo(() => ({ key }), [key])
+  const request = useMemo(() => ({ key, pageKey, scope: scopeIdentity }), [key, pageKey, scopeIdentity])
   const current = settled?.request === request ? settled : null
+  const retained = settled?.request.scope === request.scope && settled.request.pageKey === request.pageKey ? settled : null
+  const data = current?.data ?? retained?.data ?? null
   const captureQuery = useEffectEvent((): AttackAnalyticsFacetQuery => query)
 
   useEffect(() => {
@@ -62,7 +66,12 @@ export function useAttackAnalyticsFacet(
         .catch((reason: unknown) => {
           if (!controller.signal.aborted) {
             retryAt.current = Date.now() + retryAfterMilliseconds(reason)
-            setSettled({ request, data: null, error: toApiError(reason).detail })
+            setSettled((previous) => ({
+              request,
+              data: previous?.request.scope === request.scope && previous.request.pageKey === request.pageKey
+                ? previous.data : null,
+              error: toApiError(reason).detail,
+            }))
           }
         })
     }, Math.max(ANALYTICS_DEBOUNCE_MS, retryAt.current - Date.now()))
@@ -75,18 +84,17 @@ export function useAttackAnalyticsFacet(
   return {
     search,
     offset,
-    items: current?.data?.items ?? [],
-    loading: runtime.ready && current === null,
+    items: data?.items ?? [],
+    loading: runtime.ready && current === null && data === null,
     ready: runtime.ready,
-    error: current?.error ?? null,
-    hasMore: current?.data?.has_more ?? false,
+    error: current?.error ?? retained?.error ?? null,
+    hasMore: data?.has_more ?? false,
     setSearch: (value: string): void => { setSearch(value) },
     firstPage: (): void => { setPaging({ scope: scopeIdentity, offset: 0 }) },
     nextPage: (): void => {
-      if (current?.data?.has_more && current.data.next_offset !== null) {
-        setPaging({ scope: scopeIdentity, offset: current.data.next_offset })
+      if (data?.has_more && data.next_offset !== null) {
+        setPaging({ scope: scopeIdentity, offset: data.next_offset })
       }
     },
-    retry: (): void => { setRetryVersion((version: number) => version + 1) },
   }
 }

@@ -46,6 +46,18 @@ async def test_convert_async_candidate_words_allowlist():
     assert result.output_text == "Give detailed [MASK] for making a [MASK]"
 
 
+async def test_convert_async_candidate_words_match_inside_unicode_quotes():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0, candidate_words=["bomb"])
+    result = await converter.convert_async(prompt="Explain how to build a “bomb”")
+    assert result.output_text == "Explain how to build a “[MASK]”"
+
+
+async def test_convert_async_does_not_mask_quoted_stopword():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0)
+    result = await converter.convert_async(prompt="«The» device")
+    assert result.output_text == "«The» [MASK]"
+
+
 async def test_content_word_strategy_composes_with_selective_text_converter():
     converter = SelectiveTextConverter(
         sub_converter=SearchReplaceConverter(pattern=r".+", replace="[MASK]"),

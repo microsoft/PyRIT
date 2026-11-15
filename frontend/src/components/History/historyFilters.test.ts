@@ -21,11 +21,7 @@ describe("historyFilters URL encoding", () => {
 
   it("round-trips a fully populated filter set", () => {
     const filters: HistoryFilters = {
-      attackTypes: ["PromptSendingAttack", "CrescendoAttack"],
       outcome: "success",
-      converter: ["Base64Converter", "ROT13Converter"],
-      converterMatchMode: "all",
-      hasConverters: true,
       includeScenarioAttacks: true,
       operator: ["roakey"],
       operationId: ["6f1b2c3d-0000-4000-8000-000000000001"],
@@ -36,26 +32,16 @@ describe("historyFilters URL encoding", () => {
     expect(decoded).toEqual(filters);
   });
 
-  it("omits the converter match mode when it is the default 'any'", () => {
-    const params = filtersToSearchParams({
-      ...DEFAULT_HISTORY_FILTERS,
-      converter: ["Base64Converter"],
-      converterMatchMode: "any",
-    });
-    expect(params.has("converterMatch")).toBe(false);
-  });
+  it.each([
+    "attackType=PromptSendingAttack&attackType=CrescendoAttack",
+    "converter=Base64Converter&converter=ROT13Converter",
+    "converterMatch=all",
+    "hasConverters=false",
+  ])("ignores removed filters in older URLs: %s", (legacyQuery: string) => {
+    const filters = filtersFromSearchParams(new URLSearchParams(`outcome=success&${legacyQuery}`));
 
-  it("preserves hasConverters=false distinctly from undefined", () => {
-    const explicitFalse = filtersToSearchParams({
-      ...DEFAULT_HISTORY_FILTERS,
-      hasConverters: false,
-    });
-    expect(explicitFalse.get("hasConverters")).toBe("false");
-    expect(filtersFromSearchParams(explicitFalse).hasConverters).toBe(false);
-
-    const unset = filtersToSearchParams(DEFAULT_HISTORY_FILTERS);
-    expect(unset.has("hasConverters")).toBe(false);
-    expect(filtersFromSearchParams(unset).hasConverters).toBeUndefined();
+    expect(filters).toEqual({ ...DEFAULT_HISTORY_FILTERS, outcome: "success" });
+    expect(filtersToSearchParams(filters).toString()).toBe("outcome=success");
   });
 
   it("only stores explicit scanner attack exclusion", () => {
@@ -72,8 +58,8 @@ describe("historyFilters URL encoding", () => {
   it("repeats multi-value keys for list filters", () => {
     const params = filtersToSearchParams({
       ...DEFAULT_HISTORY_FILTERS,
-      attackTypes: ["A", "B"],
+      operator: ["alice", "bob"],
     });
-    expect(params.getAll("attackType")).toEqual(["A", "B"]);
+    expect(params.getAll("operator")).toEqual(["alice", "bob"]);
   });
 });

@@ -4,7 +4,6 @@ import {
   Button, Field, MessageBar, MessageBarBody, Select, Skeleton, SkeletonItem, Text,
 } from '@fluentui/react-components'
 import type { SelectOnChangeData } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
 import { useLocation, useNavigate } from 'react-router'
 
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -17,7 +16,7 @@ import type {
 import {
   ANALYTICS_ASR_NOTE, DEFAULT_ANALYTICS_VIEW, analyticsAsrDefinition,
   analyticsDimensionKey, analyticsLabelEpoch, analyticsOptionLabelKey, analyticsQuery, analyticsQueryKey, analyticsViewError,
-  analyticsViewFromLocation, analyticsViewToHash, appendAnalyticsDrilldown, formatAnalyticsTime, hasAnalyticsFilters,
+  analyticsViewFromLocation, analyticsViewToHash, appendAnalyticsDrilldown, hasAnalyticsFilters,
   withoutAnalyticsOperationIdLabels,
 } from '@/utils/attackAnalytics'
 
@@ -122,11 +121,6 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
     setDrilldownLabels((previous: Record<string, string>) => ({ ...previous, ...labels }))
   }
 
-  function reload(): void {
-    setGroupPage({ query: groupQuery, offset: 0 })
-    analytics.reload()
-  }
-
   function changeGroupPage(nextOffset: number): void {
     setGroupPage({ query: groupQuery, offset: nextOffset })
     // After a failure, the requested offset can differ from the still-visible
@@ -142,19 +136,9 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   }
 
   return (
-    <div className={styles.root} data-testid="analytics-page">
+    <div className={styles.root} data-testid="analytics-page" aria-busy={analytics.loading}>
       <header className={styles.header}>
         <Text as="h1" className={styles.title} size={600} weight="semibold">Analytics</Text>
-        <div className={styles.row}>
-          <Text size={200}>
-            Last refreshed: {report
-              ? <time dateTime={report.computed_at}>{formatAnalyticsTime(report.computed_at)}</time>
-              : 'Not loaded'}
-          </Text>
-          <Button className={styles.button} appearance="subtle" icon={<ArrowSyncRegular />}
-            disabled={analytics.loading || parsed.error !== null || !runtime.ready}
-            onClick={reload}>Reload</Button>
-        </div>
       </header>
       <div className={styles.body}>
         {parsed.error ? (
@@ -223,14 +207,12 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
             </Text>}
             {analytics.error && (
               <MessageBar intent="error"><MessageBarBody>
-                {report ? 'Reload failed. Showing the last successful report; data may be stale.' : 'Could not load analytics for these filters.'}
-                {' '}{analytics.error}{' '}
-                <Button className={styles.button} onClick={reload}>Retry</Button>
+                {analytics.error}
               </MessageBarBody></MessageBar>
             )}
-            {analytics.loading && (
-              <div role="status" aria-label={report ? 'Reloading saved results' : 'Loading analytics for current filters'}>
-                <Text>{report ? 'Reloading saved results...' : 'Loading analytics for current filters...'}</Text>
+            {analytics.loading && !report && (
+              <div role="status" aria-label="Loading analytics for current filters">
+                <Text>Loading analytics for current filters...</Text>
                 {!report && <Skeleton className={styles.skeleton} aria-label="Loading report">
                   <SkeletonItem size={48} /><SkeletonItem size={128} /><SkeletonItem size={96} />
                 </Skeleton>}
@@ -255,7 +237,7 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
                     </Text>
                     <Text>{filtersActive
                       ? 'Remove a filter or widen the last updated range to explore other saved results.'
-                      : 'Analytics reads persisted results only. Save attack results, then use Reload to see them here.'}</Text>
+                      : 'Analytics reads persisted results only. Save attack results to see them here.'}</Text>
                     {filtersActive && <Button className={styles.button}
                       onClick={() => { changeFilters({ dimensions: [], outcomes: [] }) }}>Clear filters</Button>}
                   </section>

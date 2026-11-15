@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
+from pyrit.datasets import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.remote import (
     FigStepCategory,
     FigStepVariant,
     _FigStepDataset,
     _FigStepProDataset,
 )
-from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 

@@ -50,6 +50,52 @@ test.describe("dataset examples against the real backend @seeded", () => {
     await waitForBackend(request);
   });
 
+  for (const entry of ["chat", "dataset"]) {
+    test(`imports a template from ${entry} into the visible prompt box without sending @seeded`, async ({ page, request }) => {
+      test.setTimeout(90_000);
+      const headers = compatibilityHeaders();
+      const list = await request.get(
+        `/api/datasets/seeds?selection_key=${encodeURIComponent(SELECTION_KEY)}&limit=20`,
+        { headers },
+      );
+      expect(list.ok(), await list.text()).toBe(true);
+      const examples = await list.json() as SeedExamplePage;
+      const selected = examples.items.find((example: SeedExampleSummary) => example.name === "wikipedia with title");
+      if (!selected) throw new Error("Expected the bundled wikipedia with title template");
+      const response = await request.get(
+        `/api/datasets/seeds/${selected.example_id}?selection_key=${encodeURIComponent(SELECTION_KEY)}`,
+        { headers },
+      );
+      expect(response.ok(), await response.text()).toBe(true);
+      const detail = await response.json() as SeedExampleDetail;
+      const prompt = detail.members.find((member: SeedMember) => member.data_type === "text");
+      if (!prompt) throw new Error("Expected template text");
+      const mutations: string[] = [];
+      page.on("request", (outgoing) => {
+        if (outgoing.method() === "POST") mutations.push(new URL(outgoing.url()).pathname);
+      });
+
+      if (entry === "chat") {
+        await page.goto("/attack/chat");
+        await expect(page.getByPlaceholder("Type prompt here")).toBeEnabled();
+        await page.getByRole("button", { name: "Datasets", exact: true }).click();
+        await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
+      } else {
+        await page.goto(`/datasets/detail?selection_key=${encodeURIComponent(SELECTION_KEY)}`);
+      }
+      await page.getByRole("button", { name: "Show wikipedia with title", exact: true }).click();
+      await page.getByTestId("import-into-chat-button").click();
+      await page.getByTestId("import-new-attack-item").click();
+      await expect(page).toHaveURL(/\/attack\/chat$/);
+      const composer = page.getByPlaceholder("Type prompt here");
+      await expect(composer).toBeVisible();
+      await expect(composer).toHaveValue(prompt.value);
+      await composer.fill("Edited imported template");
+      await expect(composer).toHaveValue("Edited imported template");
+      expect(mutations.filter((path: string) => path.startsWith("/api/attacks"))).toEqual([]);
+    });
+  }
+
   test("lists stored examples and opens one member @seeded", async ({ page, request }) => {
     test.setTimeout(90_000);
     const headers = compatibilityHeaders();

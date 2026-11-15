@@ -16,12 +16,14 @@ from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for
 from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
+from pyrit.score import (
+    MessageFloatScaleScorer,
+    MessageTrueFalseScorer,
+    ScorerPromptValidator,
+    VideoFloatScaleScorer,
+    VideoTrueFalseScorer,
+)
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
-from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
 from pyrit.score.video_scorer import VideoHelper
 
 

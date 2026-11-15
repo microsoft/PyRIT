@@ -6,17 +6,17 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from pyrit.models import TargetIdentifier
 from pyrit.models.catalog import TargetInstance
-from pyrit.models.identifiers import TargetIdentifier
-from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
     get_known_capabilities,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
 
 
 class TestCapabilityHandlingPolicy:
@@ -320,7 +320,9 @@ class TestTargetCapabilitiesModalities:
 
         from pyrit.prompt_target import PlaywrightCopilotTarget
 
-        target = PlaywrightCopilotTarget(page=MagicMock())
+        page = MagicMock()
+        page.url = "https://copilot.microsoft.com/"
+        target = PlaywrightCopilotTarget(page=page)
         assert any("text" in combo for combo in target.capabilities.input_modalities)
         assert any("image_path" in combo for combo in target.capabilities.input_modalities)
         assert any("text" in combo for combo in target.capabilities.output_modalities)
@@ -401,6 +403,12 @@ class TestTargetCapabilitiesModalities:
 
 class TestGetKnownCapabilities:
     """Test get_known_capabilities for every recognized model."""
+
+    @pytest.mark.parametrize("model", ["gpt-4o", "gpt-5.1", "gpt-5", "gpt-5.4"])
+    def test_model_profile_does_not_resolve_runtime_temperature(self, model: str) -> None:
+        caps = get_known_capabilities(model)
+        assert caps is not None
+        assert not caps.supports_temperature
 
     def test_gpt_4o_supports_multi_turn_and_json_output(self):
         caps = get_known_capabilities("gpt-4o")
@@ -489,6 +497,15 @@ class TestGetKnownCapabilities:
         assert get_known_capabilities("") is None
 
 
+def test_gpt_5_aliases_share_full_model_profile() -> None:
+    gpt_5 = get_known_capabilities("gpt-5")
+    gpt_5_1 = get_known_capabilities("gpt-5.1")
+    gpt_5_4 = get_known_capabilities("gpt-5.4")
+    assert gpt_5 is not None and gpt_5_1 is not None and gpt_5_4 is not None
+    assert gpt_5_1 is gpt_5
+    assert gpt_5_4 is gpt_5
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestGetDefaultConfiguration:
     """Test PromptTarget.get_default_configuration classmethod."""
@@ -496,7 +513,7 @@ class TestGetDefaultConfiguration:
     def _make_target_class(self, *, default_config: "TargetConfiguration"):
         """Create a minimal concrete PromptTarget subclass with the given _DEFAULT_CONFIGURATION."""
         from pyrit.models import Message
-        from pyrit.prompt_target.common.prompt_target import PromptTarget
+        from pyrit.prompt_target import PromptTarget
 
         class _ConcreteTarget(PromptTarget):
             _DEFAULT_CONFIGURATION = default_config
@@ -520,11 +537,12 @@ class TestGetDefaultConfiguration:
         assert expected is not None
         assert result.capabilities == expected.model_copy(
             update={
+                "supports_temperature": False,
                 "input_modalities": frozenset(
                     combo
                     for combo in expected.input_modalities
                     if not combo & {"function_call", "function_call_output"}
-                )
+                ),
             }
         )
 
@@ -555,7 +573,7 @@ class TestGetDefaultConfiguration:
         assert result.capabilities.output_modalities == frozenset({frozenset(["audio_path"])})
 
     def test_prompt_target_preserves_system_prompt_for_recognized_model(self):
-        from pyrit.prompt_target.common.prompt_target import PromptTarget
+        from pyrit.prompt_target import PromptTarget
 
         result = PromptTarget.get_default_configuration("gpt-4o")
 

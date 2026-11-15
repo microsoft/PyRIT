@@ -61,6 +61,7 @@ async function setupMocks(
     id: operationId(index),
     name,
     created_at: "2026-01-01T00:00:00Z",
+    finding_counts: {},
   }));
   // Everything the app calls while booting, so the run does not depend on a
   // dev-server proxy with no backend behind it.
@@ -106,8 +107,11 @@ async function setupMocks(
         ...json({ detail: "Operation not found" }), status: 404,
       });
     }
-    if (path === "/attacks") {
-      return route.fulfill(json({ items: [], total: 0, limit: 5, offset: 0 }));
+    if (path === "/attacks" || path === "/scenarios/runs") {
+      return route.fulfill(json({
+        items: [],
+        pagination: { limit: 5, has_more: false, next_cursor: null, prev_cursor: null },
+      }));
     }
     return route.fulfill(json({}));
   });

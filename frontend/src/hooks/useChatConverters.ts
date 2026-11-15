@@ -100,9 +100,9 @@ function changePipeline(state: ConversionState, pieceType: string, stages: Conve
   let prefixLength = 0
   while (
     prefixLength < previous.length && prefixLength < stages.length
-    && previous[prefixLength].id === stages[prefixLength].id
-    && previous[prefixLength].converterId === stages[prefixLength].converterId
-    && previous[prefixLength].temporary === stages[prefixLength].temporary
+    && previous[prefixLength]?.id === stages[prefixLength]?.id
+    && previous[prefixLength]?.converterId === stages[prefixLength]?.converterId
+    && previous[prefixLength]?.temporary === stages[prefixLength]?.temporary
   ) prefixLength++
   if (prefixLength === previous.length && prefixLength === stages.length) return state
 
@@ -142,7 +142,7 @@ function completedResults(state: ConversionState): Record<string, ConverterPrevi
     }
     const last = stages[stages.length - 1]
     if (!last || stages.length !== pipeline.length || stages.some(
-      (stage: ConverterStageResult, index: number) => stage.stageId !== pipeline[index].id,
+      (stage: ConverterStageResult, index: number) => stage.stageId !== pipeline[index]?.id,
     )) continue
     results[input.id] = {
       original_value: input.value,
@@ -372,8 +372,9 @@ export function usePieceConverters(
       )
       if (afterStageId !== undefined && boundary < 0) return []
       const start = boundary + 1
-      const value = boundary < 0 ? state.workingInputs[input.id] ?? input.value : previous[boundary].value
-      const dataType = boundary < 0 ? input.dataType : previous[boundary].generated.output_data_type
+      const prevBoundary = boundary >= 0 ? previous[boundary] : undefined
+      const value = prevBoundary ? prevBoundary.value : (state.workingInputs[input.id] ?? input.value)
+      const dataType = prevBoundary ? prevBoundary.generated.output_data_type : input.dataType
       if (start >= pipeline.length || (boundary < 0 && !value.trim() && !input.file)) return []
       return [{ input, pipeline, prefix: previous.slice(0, start), start, value, dataType }]
     })
@@ -418,10 +419,10 @@ export function usePieceConverters(
           } : {}),
         })
         if (response.steps.length !== remaining.length || response.steps.some(
-          (step: ConverterPreviewStep, index: number) => step.converter_id !== remaining[index].converterId,
+          (step: ConverterPreviewStep, index: number) => step.converter_id !== remaining[index]?.converterId,
         )) throw new Error('The conversion response does not match the requested stages.')
         const stages: ConverterStageResult[] = response.steps.map((step: ConverterPreviewStep, index: number) => ({
-          stageId: remaining[index].id, generated: step, value: step.output_value,
+          stageId: remaining[index]?.id ?? '', generated: step, value: step.output_value,
         }))
         return { input, pipelineRevision, stages: [...prefix, ...stages] }
       } catch (error) {

@@ -1,4 +1,98 @@
-import { test, expect, type Page } from "./_fixtures";
+import { test, expect, type APIRequestContext, type Page, type Request } from "./_fixtures";
+
+import type { AttackSummary, CreateAttackResponse, Operation } from "../src/types";
+import { compatibilityHeaders } from "./_compatibility";
+import { waitForAppReady } from "./_runtime";
+
+for (const width of [1280, 390]) {
+  test(`shows objectives and expandable saved targets at ${width}px @seeded`, async ({ page, request }: {
+    page: Page;
+    request: APIRequestContext;
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const headers = compatibilityHeaders();
+    const operationResponse = await request.post("/api/operations", {
+      headers, data: { name: `Attack history ${width} ${Date.now()}` },
+    });
+    expect(operationResponse.status()).toBe(201);
+    const operation: Operation = await operationResponse.json();
+    const createdResponse = await request.post("/api/attacks", {
+      headers,
+      data: {
+        target_registry_name: "browser_offline",
+        operator: "history-test",
+        operation_id: operation.id,
+        labels: { category: "history" },
+      },
+    });
+    expect(createdResponse.status()).toBe(201);
+    const created: CreateAttackResponse = await createdResponse.json();
+    const objective = "Inspect the saved conversation for this history entry.";
+    const updatedResponse = await request.patch(`/api/attacks/${created.attack_result_id}`, {
+      headers, data: { objective },
+    });
+    expect(updatedResponse.ok()).toBe(true);
+    const attack: AttackSummary = await updatedResponse.json();
+    if (!attack.target?.identifier) throw new Error("Saved attack target identity is missing.");
+
+    const listRequest = page.waitForRequest((apiRequest: Request) =>
+      new URL(apiRequest.url()).pathname === "/api/attacks" && apiRequest.method() === "GET");
+    await page.goto(`/attack/history?operation_id=${operation.id}&attackType=UnknownAttack&converter=UnknownConverter&converterMatch=all&hasConverters=false`);
+    await waitForAppReady(page);
+    const listParams = new URL((await listRequest).url()).searchParams;
+    expect(listParams.getAll("operation_id")).toEqual([operation.id]);
+    for (const removed of ["attack_types", "converter_types", "converter_types_match", "has_converters"]) {
+      expect(listParams.has(removed)).toBe(false);
+    }
+    const table = page.getByTestId("attacks-table");
+    const row = page.getByTestId(`attack-row-${created.attack_result_id}`);
+    await expect(row).toBeVisible();
+    await expect(page.getByTestId("attack-type-filter")).toHaveCount(0);
+    await expect(page.getByTestId("converter-filter")).toHaveCount(0);
+    await expect(page.getByTestId("converter-match-mode-toggle")).toHaveCount(0);
+    expect(await table.getByRole("columnheader").allTextContents()).toEqual([
+      "Status", "Objective", "Target", "Operator", "Operation", "Labels", "Last Update",
+    ]);
+    await expect(row.getByRole("cell")).toHaveCount(7);
+    await expect(row.getByRole("cell").nth(1)).toHaveText(objective);
+    await expect(row.getByRole("cell").nth(3)).toHaveText("history-test");
+    await expect(row.getByRole("cell").nth(4)).toHaveText(operation.name);
+    await expect(row.getByRole("cell").nth(5)).toHaveText("category: history");
+    const objectiveButton = row.getByRole("button", { name: `Open attack: ${objective}`, exact: true });
+    await expect(objectiveButton).toHaveText(objective);
+    await expect(row.getByTestId(`open-attack-${created.attack_result_id}`)).toHaveCount(0);
+
+    const toggle = row.getByRole("button", { name: "Identity for browser_offline" });
+    if (width === 390) {
+      await toggle.scrollIntoViewIfNeeded();
+      expect(await page.getByTestId("attack-history-scroll-region").evaluate(
+        (element: HTMLElement | SVGElement): number => element.scrollLeft,
+      )).toBeGreaterThan(0);
+    }
+    await toggle.press("Enter");
+    const details = page.getByRole("region", { name: "Identity for browser_offline" });
+    await expect(details).toHaveText(JSON.stringify(attack.target.identifier, null, 2));
+    await expect(toggle).toBeFocused();
+    if (width === 390) {
+      await expect.poll(async (): Promise<boolean> => details.evaluate((element: HTMLElement | SVGElement): boolean => {
+        const text = element.querySelector("pre")?.firstChild;
+        const start = text?.textContent?.indexOf('"class_name"') ?? -1;
+        if (!text || start < 0) throw new Error("Expanded identity is missing its class name.");
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, start + '"class_name"'.length);
+        const bounds = range.getBoundingClientRect();
+        return bounds.left >= 0 && bounds.right <= window.innerWidth;
+      })).toBe(true);
+    }
+    await expect(page).toHaveURL(/\/attack\/history\?/);
+    await toggle.press("Space");
+    await expect(details).toHaveCount(0);
+    await expect(toggle).toBeFocused();
+    await objectiveButton.press("Enter");
+    await expect(page).toHaveURL(new RegExp(`/attack/chat/${created.attack_result_id}(?:/|$)`));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses for history tests
@@ -110,8 +204,6 @@ async function mockHistoryAPIs(
   page: Page,
   opts: {
     attacks?: MockAttackSummary[];
-    attackTypes?: string[];
-    converterTypes?: string[];
     operatorLabels?: string[];
     operationLabels?: string[];
     /** Extra label keys surfaced as "key:value" filter options. */
@@ -122,30 +214,10 @@ async function mockHistoryAPIs(
 ) {
   const {
     attacks = ATTACKS,
-    attackTypes = ["SingleTurnAttack", "MultiTurnAttack"],
-    converterTypes = [],
     operatorLabels = ["alice", "bob"],
     operationLabels = ["test_a", "test_b"],
     labels = {},
   } = opts;
-
-  // Attack options
-  await page.route(/\/api\/attacks\/attack-options/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ attack_types: attackTypes }),
-    });
-  });
-
-  // Converter options
-  await page.route(/\/api\/attacks\/converter-options/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ converter_types: converterTypes }),
-    });
-  });
 
   // Labels
   await page.route(/\/api\/labels/, async (route) => {
@@ -227,26 +299,16 @@ async function goToHistory(page: Page) {
 // ---------------------------------------------------------------------------
 
 test.describe("Attack History Filters", () => {
-  test("should filter by attack type", async ({ page }) => {
+  test("should ignore removed filters in older history links", async ({ page }) => {
     await mockHistoryAPIs(page);
-    await goToHistory(page);
+    await page.goto("/attack/history?attackType=SingleTurnAttack&converter=Base64Converter&converterMatch=all&hasConverters=false");
 
-    // All 4 attacks visible initially
     await expect(page.getByTestId("attack-row-atk-alice-a")).toBeVisible();
     await expect(page.getByTestId("attack-row-atk-bob-b")).toBeVisible();
-
-    // Open the attack type combobox. Multiselect Combobox renders items as
-    // role="menuitemcheckbox", not role="option".
-    const dropdown = page.getByTestId("attack-type-filter");
-    await dropdown.click();
-    await page.getByRole("menuitemcheckbox", { name: "SingleTurnAttack" }).click();
-
-    // Only SingleTurnAttack attacks should be visible
-    await expect(page.getByTestId("attack-row-atk-alice-a")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByTestId("attack-row-atk-alice-b")).toBeVisible();
-    // MultiTurnAttack attacks should not be visible
-    await expect(page.getByTestId("attack-row-atk-bob-b")).not.toBeVisible();
-    await expect(page.getByTestId("attack-row-atk-bob-a")).not.toBeVisible();
+    await expect(page.getByTestId("attack-row-atk-bob-a")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "All attack types" })).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "All converters" })).toHaveCount(0);
   });
 
   test("should filter by outcome", async ({ page }) => {
@@ -533,7 +595,7 @@ test.describe("Attack History Filters", () => {
 });
 
 test.describe("Attack History empty state", () => {
-  test("guides keyboard users to target configuration and preserves Back navigation", async ({ page }) => {
+  test("guides keyboard users to Chat target selection and preserves Back navigation", async ({ page }) => {
     await mockHistoryAPIs(page, { attacks: [] });
     await page.route(/\/api\/targets(?:\?|$)/, async (route) => {
       await route.fulfill({
@@ -548,17 +610,18 @@ test.describe("Attack History empty state", () => {
 
     await page.goto("/attack/history");
 
-    const configureTargetButton = page.getByRole("button", { name: "Configure target" });
-    await expect(configureTargetButton).toBeVisible();
-    await configureTargetButton.focus();
-    await expect(configureTargetButton).toBeFocused();
-    await configureTargetButton.press("Enter");
+    const openChatButton = page.getByRole("button", { name: "Open Chat", exact: true });
+    await expect(openChatButton).toBeVisible();
+    await openChatButton.focus();
+    await expect(openChatButton).toBeFocused();
+    await openChatButton.press("Enter");
 
-    await expect(page).toHaveURL(/\/registry\/targets$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Target Registry" })).toBeVisible();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Objective target", exact: true })).toBeDisabled();
 
     await page.goBack();
     await expect(page).toHaveURL(/\/attack\/history$/);
-    await expect(page.getByRole("button", { name: "Configure target" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open Chat", exact: true })).toBeVisible();
   });
 });

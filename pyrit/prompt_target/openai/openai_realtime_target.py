@@ -12,8 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
-from pyrit.common import forward_init_parameters
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import forward_init_parameters, print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )

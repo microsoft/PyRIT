@@ -11,9 +11,6 @@ export const useScorerRegistryStyles = makeStyles({
     flexShrink: 0,
     marginBlock: tokens.spacingVerticalXL,
   },
-  details: {
-    paddingBlock: tokens.spacingVerticalM,
-  },
   section: {
     flexShrink: 0,
     marginBottom: tokens.spacingVerticalXL,
@@ -25,23 +22,6 @@ export const useScorerRegistryStyles = makeStyles({
   },
   comparisonTable: {
     minWidth: '960px',
-  },
-  json: {
-    margin: 0,
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-    backgroundColor: tokens.colorNeutralBackground2,
-    fontFamily: tokens.fontFamilyMonospace,
-    fontSize: tokens.fontSizeBase200,
-    whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
-  },
-  name: {
-    ...mobileTouchTargetHeight,
-    cursor: 'pointer',
-    paddingBlock: tokens.spacingVerticalS,
-    overflowWrap: 'anywhere',
-    justifyContent: 'flex-start',
-    textAlign: 'left',
   },
   nameColumn: {
     width: '20%',

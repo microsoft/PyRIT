@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { Button, MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
+import { MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
 
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { InitializerSettingsResponse, RegisteredInitializer } from '@/types'
@@ -31,9 +31,11 @@ export default function Initializers() {
   const [loading, setLoading] = useState(true)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
+  const pending = useRef(false)
 
   useEffect(() => {
     let cancelled = false
+    pending.current = true
 
     const loadInitializersAsync = async (): Promise<void> => {
       const [settingsResult, registeredResult] = await Promise.allSettled([
@@ -46,40 +48,36 @@ export default function Initializers() {
 
       if (settingsResult.status === 'fulfilled') {
         setSettings(settingsResult.value)
-      } else {
-        setStatusMessage({ intent: 'error', text: toApiError(settingsResult.reason).detail })
       }
 
       if (registeredResult.status === 'fulfilled') {
         setRegisteredInitializers(registeredResult.value.items)
         setCatalogStatus('loaded')
       } else {
-        // Drop the previous catalog: entries left behind would keep rendering stale
-        // descriptions and env vars after the user was told the refresh failed.
-        setRegisteredInitializers([])
-        setCatalogStatus('error')
-        const catalogError = toApiError(registeredResult.reason).detail
-        setStatusMessage((current: StatusMessage | null) =>
-          current
-            ? { intent: 'error', text: `${current.text} ${catalogError}` }
-            : { intent: 'error', text: catalogError },
-        )
+        setCatalogStatus((current) => current === 'loaded' ? current : 'error')
       }
 
       setLoading(false)
+      pending.current = false
+      const failures = [
+        settingsResult.status === 'rejected' ? toApiError(settingsResult.reason).detail : null,
+        registeredResult.status === 'rejected' ? toApiError(registeredResult.reason).detail : null,
+      ].filter((detail: string | null): detail is string => detail !== null)
+      setStatusMessage(failures.length > 0 ? { intent: 'error', text: failures.join(' ') } : null)
     }
 
     void loadInitializersAsync()
     return () => {
       cancelled = true
+      pending.current = false
     }
   }, [refetchCount, generation])
 
   const refreshSettings = (): void => {
-    setLoading(true)
-    setStatusMessage(null)
+    if (pending.current) return
     setRefetchCount((currentCount: number) => currentCount + 1)
   }
+  useAutoRefresh(refreshSettings, !loading)
 
   return (
     <section className={styles.root} data-testid="initializers">
@@ -93,15 +91,6 @@ export default function Initializers() {
             catalogStatus={catalogStatus}
             disabled={loading || catalogStatus !== 'loaded'}
           />
-          <Button
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            className={styles.touchTarget}
-            onClick={refreshSettings}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 

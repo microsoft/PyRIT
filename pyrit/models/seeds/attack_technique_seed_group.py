@@ -50,6 +50,14 @@ class AttackTechniqueSeedGroup(SeedGroup):
         ),
     )
 
+    append_objective_prompt: bool = Field(
+        default=False,
+        description=(
+            "Append the objective as a separate final user prompt after merged static prompts "
+            "and reserved simulated-conversation sequences."
+        ),
+    )
+
     @classmethod
     def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> Self:
         """

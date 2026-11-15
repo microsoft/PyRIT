@@ -97,6 +97,18 @@ def test_identifier_includes_template():
     assert medical_id.params["template"] == "medical_advisor"
 
 
+def test_identifier_distinguishes_custom_templates():
+    first = PolicyPuppetryConverter(
+        prompt_template=SeedPrompt(value="<policy>{{ prompt }}</policy>", parameters=["prompt"])
+    )
+    second = PolicyPuppetryConverter(
+        prompt_template=SeedPrompt(value="<config>allow: {{ prompt }}</config>", parameters=["prompt"])
+    )
+
+    assert first.get_identifier().params["template_hash"] != second.get_identifier().params["template_hash"]
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
 def test_supported_types():
     assert PolicyPuppetryConverter.SUPPORTED_INPUT_TYPES == ("text",)
     assert PolicyPuppetryConverter.SUPPORTED_OUTPUT_TYPES == ("text",)

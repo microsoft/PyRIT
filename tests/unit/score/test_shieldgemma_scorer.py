@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions import InvalidJsonException
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (

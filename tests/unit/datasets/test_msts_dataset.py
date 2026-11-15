@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.msts_dataset import _MSTSDataset
+from pyrit.datasets.seed_datasets.remote import _MSTSDataset
 from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset
 
@@ -293,6 +293,39 @@ async def test_metadata_handles_none_nullable_fields():
     assert text_prompt.metadata["subsubcategory"] == ""
     # With no subcategory, harm categories fall back to the hazard_category mapping.
     assert text_prompt.harm_categories == ["VIOLENT_CONTENT"]
+
+
+@pytest.mark.parametrize(
+    ("hazard_subcategory", "expected_harm_categories"),
+    [
+        ("Suicide", ["SUICIDE", "SELF_HARM"]),
+        ("Eating disorders", ["EATING_DISORDERS", "SELF_HARM"]),
+        ("Self-harm", ["SELF_HARM"]),
+    ],
+)
+async def test_self_harm_subcategories_keep_every_mapped_category(hazard_subcategory, expected_harm_categories):
+    loader = _MSTSDataset()
+    row = _make_row(
+        case_id="case_self_harm",
+        image_id="img_self_harm",
+        prompt_type="assistance",
+        prompt_text="text",
+        hazard_category="Suicide & Self-Harm",
+        hazard_subcategory=hazard_subcategory,
+    )
+
+    with (
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[row])),
+        patch.object(
+            loader,
+            "_fetch_and_save_image_async",
+            new=AsyncMock(return_value="/tmp/msts.jpg"),
+        ),
+    ):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 2
+    assert all(seed.harm_categories == expected_harm_categories for seed in dataset.seeds)
 
 
 def test_infer_image_extension_from_url():

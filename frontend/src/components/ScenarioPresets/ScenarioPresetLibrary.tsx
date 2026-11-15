@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -23,13 +23,13 @@ import {
 } from '@fluentui/react-components'
 import {
   AddRegular,
-  ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { ScenarioRunEstimateSummary } from '@/components/Scenarios/ScenarioRunEstimate'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { mapScenarioRunEstimate } from '@/components/Scenarios/scenarioRunEstimateAdapter'
 import { scenarioPresetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -38,7 +38,7 @@ import type { ScenarioPresetResponse } from '@/types'
 import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetLibraryStyles } from './ScenarioPresetLibrary.styles'
 import { NEW_PRESET_ROUTE, presetEditorRoutePath } from './presetRoutes'
-import { estimatePresetRunSizes } from './presetRunSizes'
+import { estimatePresetRunSizes, retainPresetRunSizes } from './presetRunSizes'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
@@ -74,21 +74,31 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
   const [deleting, setDeleting] = useState(false)
   const [togglingVisibility, setTogglingVisibility] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const pending = useRef(false)
+  const mutationEpoch = useRef(0)
+  const [settledLoads, setSettledLoads] = useState(0)
+  const editButtons = useRef(new Map<string, HTMLElement>())
+  const newPresetButton = useRef<HTMLButtonElement>(null)
+  // A conflict reload can drop the record, so focus waits until the reload settles.
+  const focusAfterReload = useRef<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
+    const epoch = mutationEpoch.current
 
     // Estimate the displayed definitions, without re-reading storage or changing
     // the versions that row actions send as their expected version.
     const loadPresets = async (): Promise<void> => {
       try {
         const response = await scenarioPresetsApi.list(controller.signal, false)
-        if (cancelled) return
-        setItems(response.items)
+        if (cancelled || epoch !== mutationEpoch.current) return
+        setItems((current) => retainPresetRunSizes(response.items, current))
         setSource(response.source)
         setError(null)
         setLoading(false)
+        setSettledLoads((count) => count + 1)
 
         if (response.items.length === 0) {
           setEstimatesLoading(false)
@@ -105,10 +115,13 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         setEstimateError(failures.length > 0 ? failures.join('; ') : null)
         setEstimatesLoading(false)
       } catch (err: unknown) {
-        if (cancelled || controller.signal.aborted) return
+        if (cancelled || controller.signal.aborted || epoch !== mutationEpoch.current) return
         setError(toApiError(err).detail)
         setLoading(false)
         setEstimatesLoading(false)
+        setSettledLoads((count) => count + 1)
+      } finally {
+        if (!cancelled) pending.current = false
       }
     }
 
@@ -117,30 +130,48 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
   }, [generation])
 
   const refresh = useCallback(() => {
-    setLoading(true)
-    setEstimatesLoading(true)
-    setError(null)
-    setEstimateError(null)
     setGeneration((current) => current + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting && !togglingVisibility)
+
+  useEffect(() => {
+    const name = focusAfterReload.current
+    if (name === null) return
+    focusAfterReload.current = null
+    const editButton = editButtons.current.get(name)
+    if (editButton && !editButton.matches(':disabled')) editButton.focus()
+    else newPresetButton.current?.focus()
+  }, [settledLoads])
 
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
     }
     setDeleting(true)
+    mutationEpoch.current++
     setActionError(null)
     try {
-      await scenarioPresetsApi.remove(pendingDelete.preset.name)
+      await scenarioPresetsApi.remove(pendingDelete.preset.name, pendingDelete.version ?? undefined)
       setPendingDelete(null)
       refresh()
       onPresetDeleted()
     } catch (err) {
-      setActionError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        focusAfterReload.current = pendingDelete.preset.name
+        setPendingDelete(null)
+        refresh()
+        setActionError(
+          `Preset '${pendingDelete.preset.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
     } finally {
       setDeleting(false)
     }
@@ -154,6 +185,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
       return
     }
     setTogglingVisibility(true)
+    mutationEpoch.current++
     setActionError(null)
     try {
       const updated = await scenarioPresetsApi.update(
@@ -200,6 +232,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         </div>
         <div className={styles.headerActions}>
           <Button
+            ref={newPresetButton}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
@@ -207,16 +240,6 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
             data-testid="new-preset-btn"
           >
             New preset
-          </Button>
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            disabled={loading}
-            aria-label="Refresh presets"
-          >
-            Refresh
           </Button>
         </div>
       </div>
@@ -235,30 +258,17 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
 
       {estimateError && (
         <MessageBar intent="warning">
-          <MessageBarBody>Run sizes could not be calculated: {estimateError}</MessageBarBody>
+          <MessageBarBody>{estimateError}</MessageBarBody>
         </MessageBar>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading presets..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            data-testid="retry-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : items.length === 0 ? (
+      ) : error && items.length === 0 ? null
+      : items.length === 0 ? (
         <div className={styles.centeredState} data-testid="empty-state">
           <Text size={400}>No presets saved yet</Text>
           <Text size={200}>
@@ -355,6 +365,10 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
                     <TableCell>
                       <div className={styles.cardActions}>
                         <Button
+                          ref={(node) => {
+                            if (node) editButtons.current.set(item.preset.name, node)
+                            else editButtons.current.delete(item.preset.name)
+                          }}
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}

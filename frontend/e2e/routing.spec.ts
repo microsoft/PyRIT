@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "./_fixtures";
+import { makeAttackMetadata } from "./_attacks";
 import { READY_RUNTIME } from "./_runtime";
+import type { AttackSummary } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so URL-driven navigation can be
@@ -34,12 +36,13 @@ const ROUTING_TARGET = {
   inner_targets: null,
 };
 
-/** Build an attack summary for the single-attack (getAttack) endpoint. */
-function makeAttackSummary(attackResultId: string, outcome: "success" | "failure") {
+/** Build attack details for compact metadata and full-detail reads. */
+function makeAttackSummary(attackResultId: string, outcome: "success" | "failure"): AttackSummary {
   return {
     attack_result_id: attackResultId,
     conversation_id: `conv-${attackResultId}`,
     attack_type: "SingleTurnAttack",
+    objective: "",
     target: {
       target_type: "OpenAIChatTarget",
       target_registry_name: ROUTING_TARGET.target_registry_name,
@@ -179,13 +182,14 @@ async function mockRoutingAPIs(page: Page) {
     });
   });
 
-  // Single attack (getAttack). Unknown ids 404 to drive the not-found UX.
-  await page.route(/\/api\/attacks\/[^/]+$/, async (route) => {
+  // Unknown ids return 404 from both attack read endpoints.
+  await page.route(/\/api\/attacks\/[^/?]+(?:\/metadata)?(?:\?.*)?$/, async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
     }
-    const attackResultId = new URL(route.request().url()).pathname.split("/")[3] ?? "";
+    const url = new URL(route.request().url());
+    const attackResultId = url.pathname.split("/")[3] ?? "";
     const known = KNOWN_ATTACKS[attackResultId];
     if (!known) {
       await route.fulfill({
@@ -195,10 +199,13 @@ async function mockRoutingAPIs(page: Page) {
       });
       return;
     }
+    const attack = makeAttackSummary(attackResultId, known.outcome);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(makeAttackSummary(attackResultId, known.outcome)),
+      body: JSON.stringify(url.pathname.endsWith("/metadata")
+        ? makeAttackMetadata(attack, url.searchParams.get("conversation_id") ?? undefined)
+        : attack),
     });
   });
 
