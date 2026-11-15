@@ -100,14 +100,21 @@ def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) 
 
             cleanup.callback(stop_process)
             deadline = time.monotonic() + TEST_WATCHDOG_SECONDS
-            while not marker.exists():
-                if process.poll() is not None:
-                    stdout, stderr = process.communicate()
-                    pytest.fail(f"Store did not acquire the shared lock: {stdout} {stderr}")
-                if time.monotonic() >= deadline:
-                    pytest.fail("Store did not attempt the shared lock before the watchdog expired")
-                time.sleep(0.01)
-            assert Path(marker.read_text()) == tmp_path / ".staging.lock"
+            while True:
+                try:
+                    recorded_lock = marker.read_text()
+                    break
+                except (FileNotFoundError, PermissionError):
+                    # On Windows the marker can exist but be briefly unopenable right after
+                    # the child's atomic rename (e.g. while antivirus scans the new file),
+                    # surfacing as a transient PermissionError.
+                    if process.poll() is not None:
+                        stdout, stderr = process.communicate()
+                        pytest.fail(f"Store did not acquire the shared lock: {stdout} {stderr}")
+                    if time.monotonic() >= deadline:
+                        pytest.fail("Store did not record the shared lock attempt before the watchdog expired")
+                    time.sleep(0.01)
+            assert Path(recorded_lock) == tmp_path / ".staging.lock"
         stdout, stderr = process.communicate(timeout=TEST_WATCHDOG_SECONDS)
         assert process.returncode == 0, f"{stdout} {stderr}"
     if operation == "cleanup":
