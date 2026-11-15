@@ -8,7 +8,7 @@ The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common import AuthMode
@@ -59,6 +59,8 @@ class TargetListResponse(BaseModel):
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     # LEGACY COMPATIBILITY: The current target configuration UI does not send a
     # name. Make this field required after that UI sends explicit registry names.
     name: str | None = Field(
@@ -67,7 +69,9 @@ class CreateTargetRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name; omitted only for legacy UI compatibility",
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    register_instance: bool = Field(
+        True, alias="register", description="Register the object; false returns only its descriptor"
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
@@ -85,9 +89,18 @@ class CreateTargetRequest(BaseModel):
         ),
     )
 
+    @property
+    def register(self) -> bool:
+        """The registration flag, retained for Python caller compatibility."""
+        return self.register_instance
+
+    @register.setter
+    def register(self, value: bool) -> None:
+        self.register_instance = value
+
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
-        if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
+        if self.source is not None and (self.register_instance or self.params or "auth_mode" in self.model_fields_set):
             raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
         return self
 

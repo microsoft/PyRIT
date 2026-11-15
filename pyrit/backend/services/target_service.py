@@ -471,7 +471,7 @@ class TargetService:
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        if request.register:
+        if request.register_instance:
             self._registry.instances.validate_name_available(target_registry_name)
         if (
             request.source
@@ -490,7 +490,7 @@ class TargetService:
                 request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
             )
         )
-        if not request.register:
+        if not request.register_instance:
             try:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),

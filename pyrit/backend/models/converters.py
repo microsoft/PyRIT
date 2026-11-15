@@ -9,7 +9,7 @@ This module defines the Instance models and preview functionality.
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.backend.models.common import (
     MAX_IDENTIFIER_LENGTH,
@@ -93,13 +93,17 @@ class ConverterInstanceListResponse(BaseModel):
 class CreateConverterRequest(BaseModel):
     """Request to create a new converter instance."""
 
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name for the converter instance",
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    register_instance: bool = Field(
+        True, alias="register", description="Register the object; false returns only its descriptor"
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
     params: dict[IdentifierStr, Any] = Field(
@@ -108,9 +112,18 @@ class CreateConverterRequest(BaseModel):
         description="Converter constructor parameters",
     )
 
+    @property
+    def register(self) -> bool:
+        """The registration flag, retained for Python caller compatibility."""
+        return self.register_instance
+
+    @register.setter
+    def register(self, value: bool) -> None:
+        self.register_instance = value
+
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateConverterRequest":
-        if self.register and not self.name:
+        if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         if self.source is not None and self.params:
             raise ValueError("Use source.params for reconstruction overrides")

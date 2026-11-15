@@ -3,7 +3,7 @@
 
 """Request and response models for scorer registry endpoints."""
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter, ScorerIdentifier
@@ -35,18 +35,31 @@ class ScorerListResponse(BaseModel):
 class CreateScorerRequest(BaseModel):
     """Request to construct and register a named scorer."""
 
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     name: str | None = Field(
         None, min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name"
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    register_instance: bool = Field(
+        True, alias="register", description="Register the object; false returns only its descriptor"
+    )
     type: IdentifierStr = Field(..., description="Scorer class name")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
     )
 
+    @property
+    def register(self) -> bool:
+        """The registration flag, retained for Python caller compatibility."""
+        return self.register_instance
+
+    @register.setter
+    def register(self, value: bool) -> None:
+        self.register_instance = value
+
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateScorerRequest":
-        if self.register and not self.name:
+        if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         return self
 

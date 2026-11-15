@@ -55,6 +55,21 @@ its database collation.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Component registration
+
+`POST /api/targets`, `POST /api/converters`, and `POST /api/scorers` accept
+`register`, which defaults to `true`. Setting it to `false` returns a descriptor
+without registering the component. Converter and scorer registration requires
+`name`; targets still accept an omitted name for legacy UI compatibility.
+
+The Python request models store this flag as `register_instance` with the
+`register` alias. Existing `register=` construction and read/write `.register`
+access remain supported. Default model serialization and OpenAPI schemas keep
+the public key `register`. Field-oriented operations such as `model_fields`,
+`model_fields_set`, `model_copy(update=...)`, serialization include/exclude
+filters, and `model_dump(by_alias=False)` use the internal name
+`register_instance`.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
