@@ -148,3 +148,20 @@ async def test_path_traversal_scorer_adds_to_memory():
         await scorer.score_text_async(text="nothing here")
 
         memory.add_scores_to_memory_async.assert_called_once()
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A long run of traversal segments with no target used to be rescanned from every segment.
+        pytest.param("../" * 20_000, False, id="slashes"),
+        pytest.param("%2e%2e%2f" * 15_000, False, id="url-encoded"),
+        pytest.param("../" * 20_000 + "etc/passwd", True, id="slashes-then-target"),
+        pytest.param("../" * 20_000 + "etc/passwd.bak", False, id="slashes-then-suffixed-target"),
+    ],
+)
+async def test_path_traversal_scorer_scales_on_long_walks(text: str, expected: bool, patch_central_database):
+    scorer = PathTraversalOutputScorer()
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is expected
