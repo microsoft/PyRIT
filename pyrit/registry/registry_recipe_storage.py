@@ -236,8 +236,9 @@ class RegistryRecipeStorage(FileDocumentStorage):
             recipe = model.model_validate(payload)
             return StoredRecipe(ref=SavedEntryRef(kind=self._kind, name=name), recipe=recipe, version=version)
         except ValidationError as error:
-            # pydantic stops at a fixed depth and reports it as a recursion error, though a JSON file can't hold a loop.
-            if any(issue["type"] == "recursion_loop" for issue in error.errors()):
+            # pydantic stops at a fixed depth and reports it as a recursion error, though a JSON file can't hold a
+            # loop. The error type is "recursion_loop" before pydantic 2.14.3 and "recursion_depth_exceeded" after.
+            if any(issue["type"] in ("recursion_loop", "recursion_depth_exceeded") for issue in error.errors()):
                 return self._failure(name=name, version=version, reason=invalid, message=too_deep)
             if causes is not None:
                 # Not the error itself: its text repeats the stored values.
