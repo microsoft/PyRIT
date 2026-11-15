@@ -607,6 +607,170 @@ class TestFuzzerGenerator:
         assert fuzzer_context.jailbreak_conversation_ids == ["conv-second"]
         assert fuzzer_context.total_target_query_count == 2
 
+    def test_process_scoring_results_multiple_passing_scores_counts_once_per_response(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        fuzzer_context: FuzzerContext,
+    ) -> None:
+        """Multiple passing scores on a single response must count as one jailbreak and record its conversation once."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+
+        first_piece = MessagePiece(role="assistant", original_value="first", conversation_id="conv-first")
+        second_piece = MessagePiece(role="assistant", original_value="second", conversation_id="conv-second")
+        responses = [first_piece.to_message(), second_piece.to_message()]
+
+        def _score(piece: MessagePiece, value: str, category: str = "") -> Score:
+            return Score(
+                score_value=value,
+                score_value_description="",
+                score_type="true_false",
+                score_category=[category] if category else [],
+                score_rationale="",
+                score_metadata={},
+                message_piece_id=piece.id,
+                scorer_class_identifier=get_mock_scorer_identifier(),
+            )
+
+        node = _PromptNode(template="template", parent=None)
+
+        # first_piece has two failing scores; second_piece has two passing scores (e.g., Hate and Violence).
+        scores = [
+            _score(first_piece, "false", "Hate"),
+            _score(first_piece, "false", "Violence"),
+            _score(second_piece, "true", "Hate"),
+            _score(second_piece, "true", "Violence"),
+        ]
+        jailbreak_count = generator._process_scoring_results(
+            context=fuzzer_context,
+            scores=scores,
+            responses=responses,
+            template_node=node,
+            current_seed=node,
+        )
+        assert jailbreak_count == 1
+        assert fuzzer_context.jailbreak_conversation_ids == ["conv-second"]
+        assert fuzzer_context.total_jailbreak_count == 1
+        assert fuzzer_context.total_target_query_count == 2
+
+    def test_process_scoring_results_raises_when_piece_has_no_conversation_id(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        fuzzer_context: FuzzerContext,
+    ) -> None:
+        """When a passing score references a piece without a conversation_id, raise ValueError."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+
+        piece = MessagePiece(role="assistant", original_value="first", conversation_id=None)
+        responses = [piece.to_message()]
+        score = Score(
+            score_value="true",
+            score_value_description="",
+            score_type="true_false",
+            score_category=[],
+            score_rationale="",
+            score_metadata={},
+            message_piece_id=piece.id,
+            scorer_class_identifier=get_mock_scorer_identifier(),
+        )
+        node = _PromptNode(template="template", parent=None)
+        with pytest.raises(ValueError, match="Response piece has no conversation_id"):
+            generator._process_scoring_results(
+                context=fuzzer_context,
+                scores=[score],
+                responses=responses,
+                template_node=node,
+                current_seed=node,
+            )
+
+    @pytest.mark.asyncio
+    async def test_fuzzer_execution_counts_jailbreaks_per_response_with_multi_category_scorer(
+        self,
+    ) -> None:
+        """Verify that multiple passing score categories on one response do not count as multiple jailbreaks."""
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            request = normalized_conversation[-1].get_piece()
+            response = MessagePiece(
+                role="assistant", original_value="compliance", conversation_id=request.conversation_id
+            )
+            return [response.to_message()]
+
+        target = MockPromptTarget()
+        converter = FuzzerShortenConverter(converter_target=target)
+        scorer = MagicMock()
+
+        async def mock_score_batch_async(*, scorables, expectations):
+            result = []
+            for scorable in scorables:
+                piece_id = scorable.message_piece_ids[0]
+                result.extend(
+                    [
+                        Score(
+                            score_value="0.86",
+                            score_value_description="",
+                            score_type="float_scale",
+                            score_category=["Hate"],
+                            score_rationale="",
+                            score_metadata={},
+                            message_piece_id=piece_id,
+                            scorer_class_identifier=get_mock_scorer_identifier(),
+                        ),
+                        Score(
+                            score_value="0.86",
+                            score_value_description="",
+                            score_type="float_scale",
+                            score_category=["Violence"],
+                            score_rationale="",
+                            score_metadata={},
+                            message_piece_id=piece_id,
+                            scorer_class_identifier=get_mock_scorer_identifier(),
+                        ),
+                    ]
+                )
+            return result
+
+        scorer.score_batch_async = AsyncMock(side_effect=mock_score_batch_async)
+
+        generator = FuzzerGenerator(
+            objective_target=target,
+            template_converters=[converter],
+            scorer=scorer,
+            scoring_success_threshold=0.8,
+            target_jailbreak_goal_count=2,
+        )
+
+        with (
+            patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=respond_async),
+            patch.object(
+                converter,
+                "convert_async",
+                new_callable=AsyncMock,
+                return_value=ConverterResult(output_text="{{ prompt }}", output_type="text"),
+            ),
+        ):
+            result = await generator.execute_async(
+                prompts=["objective"],
+                prompt_templates=["{{ prompt }}"],
+                max_query_limit=10,
+            )
+
+        ids = result.jailbreak_conversation_ids
+        assert len(ids) == 2
+        assert len(set(ids)) == 2
+        assert result.total_queries == 2
+
     def test_is_jailbreak_float_scale_scorer(
         self, scoring_target: MockPromptTarget, template_converters: list[FuzzerConverter]
     ) -> None:

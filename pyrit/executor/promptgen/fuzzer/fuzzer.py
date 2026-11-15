@@ -958,7 +958,7 @@ class FuzzerGenerator(
         )
 
         # Update MCTS rewards
-        self._update_mcts_rewards(context=context, jailbreak_count=jailbreak_count, num_queries=len(scores))
+        self._update_mcts_rewards(context=context, jailbreak_count=jailbreak_count, num_queries=len(responses))
 
     async def _teardown_async(self, *, context: FuzzerContext) -> None:
         """
@@ -1190,13 +1190,19 @@ class FuzzerGenerator(
         # response by the scored piece id rather than by position in that list.
         conversation_by_piece_id = {str(piece.id): piece.conversation_id for piece in response_pieces}
 
+        jailbroken_piece_ids: set[str] = set()
         for score in scores:
             if self._is_jailbreak(score):
-                jailbreak_count += 1
-                conversation_id = conversation_by_piece_id.get(str(score.message_piece_id))
+                piece_id = str(score.message_piece_id)
+                conversation_id = conversation_by_piece_id.get(piece_id)
                 if conversation_id is None:
                     raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
-                context.jailbreak_conversation_ids.append(conversation_id)
+                jailbroken_piece_ids.add(piece_id)
+
+        for piece in response_pieces:
+            if str(piece.id) in jailbroken_piece_ids:
+                jailbreak_count += 1
+                context.jailbreak_conversation_ids.append(piece.conversation_id)
 
         # Update tracking
         context.total_jailbreak_count += jailbreak_count
@@ -1262,9 +1268,9 @@ class FuzzerGenerator(
         if num_queries == 0:
             return
 
-        # The reward must stay a rate in [0, 1]: jailbreak_count counts flattened
-        # scores, and score_batch_async may yield several scores per response, so
-        # the denominator is the actual number of scored queries passed in.
+        # The reward must stay a rate in [0, 1]: jailbreak_count counts the number
+        # of target responses that achieved a jailbreak, and num_queries is the
+        # total number of target responses scored in this step.
         reward = jailbreak_count / num_queries
 
         # Use MCTS explorer to update rewards
