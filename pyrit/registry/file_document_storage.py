@@ -12,14 +12,19 @@ module exists, so they could not be layered on top.
 
 from __future__ import annotations
 
+import errno
+import fnmatch
 import hashlib
 import logging
 import os
+import stat
 import sys
 import tempfile
 import time
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
@@ -27,11 +32,99 @@ from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, red
 from pyrit.models import validate_registry_name
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
 
     from azure.storage.blob import ContainerClient
 
 logger = logging.getLogger(__name__)
+
+# Called through these names so tests can change the folder between steps without patching ``os`` for the
+# whole process.
+_open = os.open
+_stat = os.stat
+_lstat = os.lstat
+_scandir = os.scandir
+
+
+@dataclass(frozen=True)
+class UnreadableDocument:
+    """
+    A stored document with a valid name whose content could not be read.
+
+    ``message`` is a short reason that is safe to show. ``error`` is what stopped the read, kept for logging and
+    for telling a passing failure from a broken file; it is None when nothing raised, such as for a folder.
+    """
+
+    name: str
+    file_name: str
+    message: str
+    error: BaseException | None = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class IgnoredDocument:
+    """A stored file whose name breaks the naming rule, so no single-document call can address it."""
+
+    file_name: str
+    message: str
+
+
+@dataclass(frozen=True)
+class DocumentListing:
+    """Every document a listing found, including the ones it could not use."""
+
+    documents: Mapping[str, bytes] = field(default_factory=lambda: MappingProxyType({}))
+    unreadable: tuple[UnreadableDocument, ...] = ()
+    ignored: tuple[IgnoredDocument, ...] = ()
+
+
+class DocumentStorageUnavailableError(Exception):
+    """
+    The folder or container that holds the documents couldn't be used, so nothing was read or written.
+
+    The message names the location for logs; ``display_source`` already hides a SAS token. ``reason`` is short and
+    carries no path or URL, so an API response can show it.
+    """
+
+    def __init__(self, *, label: str, source: str, reason: str, message: str | None = None) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            label (str): The kind of document, such as "Scenario preset".
+            source (str): The storage location, without credentials.
+            reason (str): A short reason without a path or URL, such as "Permission denied".
+            message (str | None): The full message, or None for the default one. Defaults to None.
+        """
+        super().__init__(message or f"{label} storage at {source} is unavailable: {reason}")
+        self.label = label
+        self.source = source
+        self.reason = reason
+
+
+class DocumentUnreadableError(DocumentStorageUnavailableError):
+    """One stored document exists but couldn't be read, such as a file without read permission or a folder."""
+
+    def __init__(self, *, label: str, source: str, name: str, file_name: str, reason: str) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            label (str): The kind of document, such as "Scenario preset".
+            source (str): The storage location, without credentials.
+            name (str): The document's name.
+            file_name (str): The file or blob name in storage.
+            reason (str): A short reason without a path or URL, such as "Not a regular file".
+        """
+        super().__init__(
+            label=label,
+            source=source,
+            reason=reason,
+            message=f"{label} '{file_name}' in {source} can't be read: {reason}",
+        )
+        self.name = name
+        self.file_name = file_name
+
 
 # Both platforms lock a single byte at offset zero, which they allow past the end of an
 # empty file. The lock belongs to the open file handle, so it excludes other threads in
@@ -81,6 +174,84 @@ else:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
 
 
+# Opening without blocking keeps a pipe from hanging the read; it changes nothing for a regular
+# file. Windows has no O_NONBLOCK and needs O_BINARY so the bytes aren't translated.
+_READ_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+
+
+def _read_regular_file(path: str) -> bytes | None:
+    """
+    Read a file only if what was opened is a regular file.
+
+    The opened file is checked rather than the path, so the check still holds if the path
+    was replaced after it was listed. On Windows, opening a folder raises ``PermissionError``,
+    so a folder swapped in after listing is reported as "Permission denied" there.
+
+    Returns:
+        bytes | None: The content, or None if the path names something other than a regular file.
+    """
+    descriptor = _open(path, _READ_FLAGS)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        with open(descriptor, "rb", closefd=False) as file:
+            return file.read()
+    finally:
+        os.close(descriptor)
+
+
+def _affects_whole_store(error: Exception) -> bool:
+    """
+    Return whether a Blob error means the container can't be used, rather than one blob.
+
+    Returns:
+        bool: True for sign-in and permission failures, a missing container, and network errors.
+    """
+    from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError, ServiceResponseError
+    from azure.storage.blob import StorageErrorCode
+
+    if isinstance(error, (ClientAuthenticationError, ServiceRequestError, ServiceResponseError)):
+        return True
+    if getattr(error, "status_code", None) in (401, 403):
+        return True
+    error_code = getattr(error, "error_code", None)
+    return isinstance(error_code, str) and error_code == StorageErrorCode.CONTAINER_NOT_FOUND
+
+
+def _is_missing_blob(error: Exception) -> bool:
+    """
+    Return whether a Blob error says the blob itself doesn't exist, as opposed to its container.
+
+    Returns:
+        bool: True only for ``BlobNotFound``.
+    """
+    from azure.storage.blob import StorageErrorCode
+
+    error_code = getattr(error, "error_code", None)
+    return isinstance(error_code, str) and error_code == StorageErrorCode.BLOB_NOT_FOUND
+
+
+def describe_storage_error(error: Exception) -> str:
+    """
+    Describe a storage error in a few words, leaving out any path or URL it carries.
+
+    Args:
+        error (Exception): The error a local folder or Azure Blob Storage raised.
+
+    Returns:
+        str: For example ``Permission denied`` or ``HttpResponseError (403, AuthorizationPermissionMismatch)``.
+    """
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    error_code = getattr(error, "error_code", None)
+    details = [
+        str(detail)
+        for detail in (getattr(error, "status_code", None), getattr(error_code, "value", error_code))
+        if detail is not None
+    ]
+    return f"{type(error).__name__} ({', '.join(details)})" if details else type(error).__name__
+
+
 class DocumentConflictError(ValueError):
     """A stored document changed after the caller read it."""
 
@@ -91,6 +262,7 @@ class DocumentConflictError(ValueError):
         expected_version: str | None,
         actual_version: str | None,
         label: str = "Document",
+        action: str = "saved",
     ) -> None:
         """
         Initialize the error with the versions that failed to match.
@@ -100,6 +272,7 @@ class DocumentConflictError(ValueError):
             expected_version (str | None): The version the caller believed was stored.
             actual_version (str | None): The version storage actually held.
             label (str): Human-readable noun for the stored document. Defaults to "Document".
+            action (str): Past-tense verb for the refused operation. Defaults to "saved".
         """
         self.name = name
         self.expected_version = expected_version
@@ -110,7 +283,7 @@ class DocumentConflictError(ValueError):
             detail = "it already exists"
         else:
             detail = "it was changed by someone else"
-        super().__init__(f"{label} '{name}' could not be saved because {detail}. Reload it and reapply.")
+        super().__init__(f"{label} '{name}' could not be {action} because {detail}. Reload it and reapply.")
 
 
 class FileDocumentStorage:
@@ -132,6 +305,13 @@ class FileDocumentStorage:
     the first's edit, enforced by ``overwrite=False`` and ``If-Match`` ETags on blob and by
     an OS advisory lock held across the whole read-compare-replace locally. That lock binds
     only writers using this class; a direct edit is caught by the version instead.
+
+    A failure of the storage itself (a folder that can't be read, a missing container, a
+    sign-in or network error, a lock that stays taken) raises ``DocumentStorageUnavailableError``.
+    Its message names the location for logs, using ``display_source`` so a SAS token never
+    appears; an API response shows only its short reason. One document that exists but
+    can't be read raises ``DocumentUnreadableError`` from a single read, and is reported in
+    a listing's ``unreadable`` instead.
 
     Subclasses supply the extension and an error-message label.
     """
@@ -191,72 +371,262 @@ class FileDocumentStorage:
         """
         Read every stored document that the single-document operations can address.
 
-        A name is checked before its content is read, so a file this class cannot address
-        is never opened and cannot fail the listing on its way out.
+        The documents ``_list_documents_with_issues`` can't use are logged and left out. A storage
+        location that can't be listed at all raises instead of looking empty.
 
         Returns:
             dict[str, bytes]: Document content keyed by name.
-        """
-        return self._list_blob_documents() if self._is_blob else self._list_local_documents()
 
-    def _list_local_documents(self) -> dict[str, bytes]:
+        Raises:
+            DocumentStorageUnavailableError: If the folder or container can't be listed.
         """
-        Read addressable documents from the configured local directory.
+        listing = self._list_documents_with_issues()
+        for ignored in listing.ignored:
+            logger.warning(
+                f"Ignoring stored document '{ignored.file_name}' in {self.display_source}: {ignored.message}"
+            )
+        for unreadable in listing.unreadable:
+            logger.warning(
+                f"Skipping unreadable document '{unreadable.file_name}' in {self.display_source}: {unreadable.message}"
+            )
+        return dict(listing.documents)
+
+    def _list_documents_with_issues(self) -> DocumentListing:
+        """
+        Read every stored document and report the ones that can't be used.
+
+        A document that can't be read is reported as unreadable, and a file whose name breaks
+        the naming rule is reported as ignored without being read, because no single-document
+        call could address it. A storage location that can't be listed at all raises instead of
+        looking empty, and so does a Blob error that affects the whole container.
+
+        Messages carry only a short reason, never a path or URL, so they can be shown to users
+        without exposing server paths or a SAS token.
 
         Returns:
-            dict[str, bytes]: Document content keyed by file stem.
+            DocumentListing: Readable documents keyed by name, plus the unreadable and ignored ones.
+
+        Raises:
+            DocumentStorageUnavailableError: If the folder or container can't be listed or read.
+        """
+        with self._unavailable_on_storage_error():
+            if self._is_blob:
+                return self._list_blob_documents_with_issues()
+            return self._list_local_documents_with_issues()
+
+    def _list_local_documents_with_issues(self) -> DocumentListing:
+        """
+        Read the local directory, reporting unreadable and badly named documents.
+
+        Returns:
+            DocumentListing: The documents and issues found in the directory.
         """
         directory = self._local_directory(create=True)
+        # ``Path.glob`` returns nothing for a directory it can't read; listing it directly raises instead.
+        # ``fnmatch`` applies the platform's case rule, as ``glob`` does.
+        with _scandir(directory) as entries:
+            candidates = sorted(
+                (entry for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}")),
+                key=lambda entry: entry.name,
+            )
         documents: dict[str, bytes] = {}
-        for path in sorted(directory.glob(f"*{self._extension}")):
-            if not self._is_addressable_name(path.stem):
+        unreadable: list[UnreadableDocument] = []
+        ignored: list[IgnoredDocument] = []
+        for entry in candidates:
+            name = Path(entry.name).stem
+            problem = self._name_problem(name)
+            if problem is not None:
+                ignored.append(IgnoredDocument(file_name=entry.name, message=problem))
                 continue
             try:
-                documents[path.stem] = path.read_bytes()
-            except OSError as error:
-                logger.warning(f"Skipping unreadable document '{path.name}' in {self.display_source}: {error}")
-        return documents
+                content = self._read_local_document(path=entry.path, name=name, file_name=entry.name)
+            except DocumentUnreadableError as error:
+                unreadable.append(
+                    UnreadableDocument(name=name, file_name=entry.name, message=error.reason, error=error.__cause__)
+                )
+                continue
+            if content is not None:
+                documents[name] = content
+        return DocumentListing(
+            documents=MappingProxyType(documents), unreadable=tuple(unreadable), ignored=tuple(ignored)
+        )
 
-    def _is_addressable_name(self, name: str) -> bool:
+    def _read_local_document(self, *, path: str, name: str, file_name: str) -> bytes | None:
         """
-        Return whether a discovered document name is one this storage can address.
+        Read one local document, the same way for a listing and for a single read.
 
-        Ordinary files such as ``__init__.py`` or ``My-Script.py`` can sit alongside
-        valid documents, and a caller that fed such a name back into a read, write, or
-        delete would get a ``ValueError`` it has no way to anticipate.
+        The folder can change after it is listed, so what is opened is checked again: an entry
+        deleted in between counts as missing, whether or not it was a link, and anything that isn't
+        a regular file is reported without being read.
 
         Returns:
-            bool: Whether the name is a legal registry name.
+            bytes | None: The content, or None if nothing exists at the path.
+
+        Raises:
+            DocumentUnreadableError: If something exists at the path but can't be read as a regular file.
+        """
+        try:
+            if stat.S_ISREG(_stat(path).st_mode):
+                content = _read_regular_file(path)
+                if content is not None:
+                    return content
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise self._unreadable(name=name, file_name=file_name, reason=describe_storage_error(error)) from error
+        try:
+            _lstat(path)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise self._unreadable(name=name, file_name=file_name, reason=describe_storage_error(error)) from error
+        # A broken link, a folder, or a pipe, which would block if read.
+        raise self._unreadable(name=name, file_name=file_name, reason="Not a regular file")
+
+    def _list_blob_documents_with_issues(self) -> DocumentListing:
+        """
+        Read the blob container, reporting unreadable and badly named documents.
+
+        Returns:
+            DocumentListing: The documents and issues found under the configured prefix.
+
+        Raises:
+            DocumentStorageUnavailableError: If a blob error affects the whole container.
+        """
+        from azure.core.exceptions import AzureError
+
+        documents: dict[str, bytes] = {}
+        unreadable: list[UnreadableDocument] = []
+        ignored: list[IgnoredDocument] = []
+        with self._open_container_client() as client:
+            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
+            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
+            blob_names = sorted(
+                blob.name for blob in blobs if self._is_direct_document_blob(blob_name=blob.name, prefix=prefix)
+            )
+            for blob_name in blob_names:
+                file_name = blob_name.removeprefix(prefix or "")
+                name = PurePosixPath(file_name).stem
+                problem = self._name_problem(name)
+                if problem is not None:
+                    ignored.append(IgnoredDocument(file_name=file_name, message=problem))
+                    continue
+                try:
+                    documents[name] = client.download_blob(blob_name).readall()
+                except AzureError as error:
+                    if _is_missing_blob(error):
+                        # Deleted after the container was listed, so it is no longer part of the listing.
+                        continue
+                    if _affects_whole_store(error):
+                        raise self._unavailable(error) from error
+                    unreadable.append(
+                        UnreadableDocument(
+                            name=name, file_name=file_name, message=describe_storage_error(error), error=error
+                        )
+                    )
+        return DocumentListing(
+            documents=MappingProxyType(documents), unreadable=tuple(unreadable), ignored=tuple(ignored)
+        )
+
+    @staticmethod
+    def _name_problem(name: str) -> str | None:
+        """
+        Return why a discovered document name can't be addressed, or None if it can.
+
+        Returns:
+            str | None: The naming-rule error, or ``None`` for a legal name.
         """
         try:
             validate_registry_name(name)
         except ValueError as error:
-            logger.warning(f"Ignoring stored document '{name}{self._extension}' in {self.display_source}: {error}")
-            return False
-        return True
+            return str(error)
+        return None
 
     def _read_document_bytes(self, name: str) -> bytes | None:
         """
-        Read the raw bytes of one document.
+        Read the raw bytes of one document, agreeing with what a listing reports.
 
         Returns:
             bytes | None: Document content, or ``None`` if it does not exist.
 
         Raises:
             ValueError: If *name* is not a legal registry name.
+            DocumentUnreadableError: If the document exists but can't be read, such as a folder or a file
+                without read permission.
+            DocumentStorageUnavailableError: If the folder or container can't be used.
         """
         validate_registry_name(name)
-        if self._is_blob:
-            from azure.core.exceptions import ResourceNotFoundError
+        file_name = f"{name}{self._extension}"
+        with self._unavailable_on_storage_error():
+            if self._is_blob:
+                return self._read_blob_document(name=name, file_name=file_name)
+            path = self._local_directory() / file_name
+            return self._read_local_document(path=str(path), name=name, file_name=file_name)
 
-            with self._open_container_client() as client:
-                try:
-                    return client.download_blob(self._get_blob_name(name)).readall()
-                except ResourceNotFoundError:
+    def _read_blob_document(self, *, name: str, file_name: str) -> bytes | None:
+        """
+        Read one blob, treating only a missing blob as missing.
+
+        Returns:
+            bytes | None: The content, or None if the blob doesn't exist.
+
+        Raises:
+            DocumentUnreadableError: If the blob exists but can't be read.
+            DocumentStorageUnavailableError: If the error affects the whole container.
+        """
+        from azure.core.exceptions import AzureError
+
+        with self._open_container_client() as client:
+            try:
+                return client.download_blob(self._get_blob_name(name)).readall()
+            except AzureError as error:
+                if _is_missing_blob(error):
                     return None
+                if _affects_whole_store(error):
+                    raise self._unavailable(error) from error
+                raise self._unreadable(name=name, file_name=file_name, reason=describe_storage_error(error)) from error
 
-        path = self._local_directory() / f"{name}{self._extension}"
-        return path.read_bytes() if path.is_file() else None
+    def _unreadable(self, *, name: str, file_name: str, reason: str) -> DocumentUnreadableError:
+        """
+        Build the error for one document that exists but can't be read.
+
+        Returns:
+            DocumentUnreadableError: The error naming the document and the storage location.
+        """
+        return DocumentUnreadableError(
+            label=self._source_label, source=self.display_source, name=name, file_name=file_name, reason=reason
+        )
+
+    @contextmanager
+    def _unavailable_on_storage_error(self) -> Generator[None, None, None]:
+        """
+        Report a failure of the folder or container itself as ``DocumentStorageUnavailableError``.
+
+        Yields:
+            None: Control while storage is used.
+
+        Raises:
+            DocumentStorageUnavailableError: If an ``OSError`` or Azure error escapes the block.
+        """
+        from azure.core.exceptions import AzureError
+
+        try:
+            yield
+        except DocumentStorageUnavailableError:
+            raise
+        except (OSError, AzureError) as error:
+            raise self._unavailable(error) from error
+
+    def _unavailable(self, error: Exception) -> DocumentStorageUnavailableError:
+        """
+        Build the error for a folder or container that can't be used.
+
+        Returns:
+            DocumentStorageUnavailableError: The error naming the storage location and a short reason.
+        """
+        return DocumentStorageUnavailableError(
+            label=self._source_label, source=self.display_source, reason=describe_storage_error(error)
+        )
 
     def _save_document(self, *, name: str, content: bytes) -> None:
         """
@@ -264,14 +634,16 @@ class FileDocumentStorage:
 
         Raises:
             ValueError: If *name* is not a legal registry name.
+            DocumentStorageUnavailableError: If the folder or container can't be written.
         """
         validate_registry_name(name)
-        if self._is_blob:
-            with self._open_container_client() as client:
-                client.upload_blob(name=self._get_blob_name(name), data=content, overwrite=True)
-        else:
-            directory = self._local_directory(create=True)
-            self._replace_file(path=directory / f"{name}{self._extension}", content=content)
+        with self._unavailable_on_storage_error():
+            if self._is_blob:
+                with self._open_container_client() as client:
+                    client.upload_blob(name=self._get_blob_name(name), data=content, overwrite=True)
+            else:
+                directory = self._local_directory(create=True)
+                self._replace_file(path=directory / f"{name}{self._extension}", content=content)
 
     @staticmethod
     def _compute_version(content: bytes) -> str:
@@ -287,10 +659,10 @@ class FileDocumentStorage:
         return hashlib.sha256(content).hexdigest()
 
     def _conflict_error(
-        self, *, name: str, expected_version: str | None, actual_version: str | None
+        self, *, name: str, expected_version: str | None, actual_version: str | None, action: str = "saved"
     ) -> DocumentConflictError:
         """
-        Build the error raised when a conditional write is refused.
+        Build the error raised when a conditional write or delete is refused.
 
         Subclasses override this to surface a domain-specific error type without
         reimplementing the comparison that detects the conflict.
@@ -303,6 +675,7 @@ class FileDocumentStorage:
             expected_version=expected_version,
             actual_version=actual_version,
             label=self._source_label,
+            action=action,
         )
 
     def _save_document_conditional(self, *, name: str, content: bytes, expected_version: str | None) -> str:
@@ -321,12 +694,14 @@ class FileDocumentStorage:
         Raises:
             DocumentConflictError: If the stored version does not match *expected_version*.
             ValueError: If *name* is not a legal registry name.
-            TimeoutError: If a local write could not acquire the document lock.
+            DocumentStorageUnavailableError: If the folder or container can't be written, or a local write
+                could not acquire the document lock.
         """
         validate_registry_name(name)
-        if self._is_blob:
-            return self._save_blob_conditional(name=name, content=content, expected_version=expected_version)
-        return self._save_local_conditional(name=name, content=content, expected_version=expected_version)
+        with self._unavailable_on_storage_error():
+            if self._is_blob:
+                return self._save_blob_conditional(name=name, content=content, expected_version=expected_version)
+            return self._save_local_conditional(name=name, content=content, expected_version=expected_version)
 
     def _save_local_conditional(self, *, name: str, content: bytes, expected_version: str | None) -> str:
         """
@@ -337,11 +712,12 @@ class FileDocumentStorage:
 
         Raises:
             DocumentConflictError: If the stored version does not match *expected_version*.
+            DocumentUnreadableError: If something that can't be read is stored under the name.
             TimeoutError: If the document lock could not be acquired.
         """
         path = self._local_directory(create=True) / f"{name}{self._extension}"
         with self._local_document_lock(path):
-            stored = path.read_bytes() if path.is_file() else None
+            stored = self._read_local_document(path=str(path), name=name, file_name=path.name)
             actual_version = None if stored is None else self._compute_version(stored)
             if actual_version != expected_version:
                 raise self._conflict_error(name=name, expected_version=expected_version, actual_version=actual_version)
@@ -360,7 +736,7 @@ class FileDocumentStorage:
 
         Raises:
             DocumentConflictError: If the stored version does not match *expected_version*.
-            AzureError: If the container is unreachable or does not exist.
+            DocumentStorageUnavailableError: If the container is missing rather than the blob.
         """
         from azure.core import MatchConditions
         from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
@@ -388,7 +764,9 @@ class FileDocumentStorage:
                         etag=etag,
                         match_condition=MatchConditions.IfNotModified,
                     )
-                except (ResourceModifiedError, ResourceNotFoundError):
+                except (ResourceModifiedError, ResourceNotFoundError) as error:
+                    if isinstance(error, ResourceNotFoundError) and not _is_missing_blob(error):
+                        raise self._unavailable(error) from error
                     raise self._conflict_error(
                         name=name,
                         expected_version=expected_version,
@@ -410,12 +788,15 @@ class FileDocumentStorage:
 
         Raises:
             DocumentConflictError: If the blob is absent or no longer holds that version.
+            DocumentStorageUnavailableError: If the container is missing rather than the blob.
         """
         from azure.core.exceptions import ResourceNotFoundError
 
         try:
             downloader = client.download_blob(blob_name)
-        except ResourceNotFoundError:
+        except ResourceNotFoundError as error:
+            if not _is_missing_blob(error):
+                raise self._unavailable(error) from error
             raise self._conflict_error(name=name, expected_version=expected_version, actual_version=None) from None
         actual_version = self._compute_version(downloader.readall())
         if actual_version != expected_version:
@@ -428,12 +809,17 @@ class FileDocumentStorage:
 
         Returns:
             str | None: The version token, or ``None`` if the blob does not exist.
+
+        Raises:
+            DocumentStorageUnavailableError: If the container is missing rather than the blob.
         """
         from azure.core.exceptions import ResourceNotFoundError
 
         try:
             return self._compute_version(client.download_blob(blob_name).readall())
-        except ResourceNotFoundError:
+        except ResourceNotFoundError as error:
+            if not _is_missing_blob(error):
+                raise self._unavailable(error) from error
             return None
 
     @contextmanager
@@ -480,7 +866,9 @@ class FileDocumentStorage:
         deadline = time.monotonic() + self.LOCK_TIMEOUT_SECONDS
         while not _try_acquire_exclusive_lock(descriptor):
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Timed out waiting to write '{lock_path.name}'; another writer still holds it.")
+                raise TimeoutError(
+                    errno.ETIMEDOUT, f"Timed out waiting for another writer to finish with '{lock_path.name}'"
+                )
             time.sleep(self.LOCK_POLL_SECONDS)
 
     @staticmethod
@@ -510,7 +898,7 @@ class FileDocumentStorage:
             temporary_path.unlink(missing_ok=True)
             raise
 
-    def _delete_document(self, name: str) -> bool:
+    def _delete_document(self, name: str, *, expected_version: str | None = None) -> bool:
         """
         Delete one document, reporting whether it was there to delete.
 
@@ -521,33 +909,136 @@ class FileDocumentStorage:
         a writer: without it, a delete landing inside a save's read-compare-replace
         sequence is reported as successful and then immediately undone by that replace.
 
+        With *expected_version*, the delete is refused if the document changed after the
+        caller read it, so a reviewed delete cannot discard an edit the caller never saw.
+        A document that is already gone is reported as absent rather than as a conflict,
+        because the caller's intended end state already holds.
+
         Args:
             name (str): The document name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
 
         Returns:
             bool: True if the document existed and was deleted, False if it was already gone.
 
         Raises:
+            DocumentConflictError: If the stored version does not match *expected_version*.
             ValueError: If *name* is not a legal registry name.
-            TimeoutError: If a local delete could not acquire the document lock.
+            DocumentStorageUnavailableError: If the folder or container can't be written, or a local delete
+                could not acquire the document lock.
         """
         validate_registry_name(name)
-        if self._is_blob:
-            from azure.core.exceptions import ResourceNotFoundError
+        with self._unavailable_on_storage_error():
+            if self._is_blob:
+                return self._delete_blob(name=name, expected_version=expected_version)
+            return self._delete_local(name=name, expected_version=expected_version)
 
-            with self._open_container_client() as client:
-                try:
-                    client.delete_blob(self._get_blob_name(name))
-                except ResourceNotFoundError:
-                    return False
-            return True
+    def _delete_local(self, *, name: str, expected_version: str | None) -> bool:
+        """
+        Delete a local document while holding the lock that covers its version check.
 
+        Returns:
+            bool: True if the document existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the stored version does not match *expected_version*.
+            DocumentUnreadableError: If a version is given and something that can't be read is stored under
+                the name.
+            TimeoutError: If the document lock could not be acquired.
+        """
         path = self._local_directory(create=True) / f"{name}{self._extension}"
         with self._local_document_lock(path):
+            if expected_version is not None:
+                stored = self._read_local_document(path=str(path), name=name, file_name=path.name)
+                if stored is None:
+                    return False
+                actual_version = self._compute_version(stored)
+                if actual_version != expected_version:
+                    raise self._conflict_error(
+                        name=name,
+                        expected_version=expected_version,
+                        actual_version=actual_version,
+                        action="deleted",
+                    )
             try:
                 path.unlink()
             except FileNotFoundError:
                 return False
+        return True
+
+    def _delete_blob(self, *, name: str, expected_version: str | None) -> bool:
+        """
+        Delete a blob, behind an ETag precondition when the caller holds a version.
+
+        Returns:
+            bool: True if the blob existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the stored version does not match *expected_version*.
+            DocumentStorageUnavailableError: If the container is missing rather than the blob.
+        """
+        from azure.core.exceptions import ResourceNotFoundError
+
+        blob_name = self._get_blob_name(name)
+        with self._open_container_client() as client:
+            if expected_version is not None:
+                return self._delete_unmodified_blob(
+                    client=client, blob_name=blob_name, name=name, expected_version=expected_version
+                )
+            try:
+                client.delete_blob(blob_name)
+            except ResourceNotFoundError as error:
+                if not _is_missing_blob(error):
+                    raise self._unavailable(error) from error
+                return False
+        return True
+
+    def _delete_unmodified_blob(
+        self, *, client: ContainerClient, blob_name: str, name: str, expected_version: str
+    ) -> bool:
+        """
+        Delete a blob only while it still holds *expected_version*.
+
+        As with a conditional write, the version is compared first and the ETag read
+        alongside it guards the delete against a write that lands in between.
+
+        Returns:
+            bool: True if the blob existed and was deleted, False if it was already gone.
+
+        Raises:
+            DocumentConflictError: If the blob no longer holds *expected_version*.
+            DocumentStorageUnavailableError: If the container is missing rather than the blob.
+        """
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+
+        try:
+            downloader = client.download_blob(blob_name)
+        except ResourceNotFoundError as error:
+            if not _is_missing_blob(error):
+                raise self._unavailable(error) from error
+            return False
+        actual_version = self._compute_version(downloader.readall())
+        if actual_version != expected_version:
+            raise self._conflict_error(
+                name=name, expected_version=expected_version, actual_version=actual_version, action="deleted"
+            )
+        try:
+            client.delete_blob(
+                blob_name, etag=downloader.properties.etag, match_condition=MatchConditions.IfNotModified
+            )
+        except ResourceNotFoundError as error:
+            if not _is_missing_blob(error):
+                raise self._unavailable(error) from error
+            return False
+        except ResourceModifiedError:
+            actual_version = self._read_blob_version(client=client, blob_name=blob_name)
+            if actual_version is None:
+                return False
+            raise self._conflict_error(
+                name=name, expected_version=expected_version, actual_version=actual_version, action="deleted"
+            ) from None
         return True
 
     def _local_directory(self, *, create: bool = False) -> Path:
@@ -561,32 +1052,6 @@ class FileDocumentStorage:
         if create:
             directory.mkdir(parents=True, exist_ok=True)
         return directory
-
-    def _list_blob_documents(self) -> dict[str, bytes]:
-        """
-        Read addressable documents from the configured Azure Blob container.
-
-        Returns:
-            dict[str, bytes]: Document content keyed by blob stem.
-        """
-        from azure.core.exceptions import AzureError
-
-        documents: dict[str, bytes] = {}
-        with self._open_container_client() as client:
-            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
-            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
-            blob_names = sorted(
-                blob.name for blob in blobs if self._is_direct_document_blob(blob_name=blob.name, prefix=prefix)
-            )
-            for blob_name in blob_names:
-                name = PurePosixPath(blob_name.removeprefix(prefix or "")).stem
-                if not self._is_addressable_name(name):
-                    continue
-                try:
-                    documents[name] = client.download_blob(blob_name).readall()
-                except AzureError as error:
-                    logger.warning(f"Skipping unreadable document '{blob_name}' in {self.display_source}: {error}")
-        return documents
 
     def _parse_blob_source(self) -> tuple[str, str]:
         """

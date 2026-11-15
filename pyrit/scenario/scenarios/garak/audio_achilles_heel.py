@@ -198,11 +198,6 @@ class AudioAchillesHeel(Scenario):
                 Defaults to Garak's ``DEFAULT_TEXT_PROMPT``.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
         super().__init__(
             version=self.VERSION,
             technique_class=AudioAchillesHeelTechnique,
@@ -239,7 +234,7 @@ class AudioAchillesHeel(Scenario):
 
         attack = PromptSendingAttack(
             objective_target=context.objective_target,
-            attack_scoring_config=self._scorer_config,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
         )
 
         return [

@@ -20,6 +20,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetSource,
     DatasetSourceKind,
 )
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 
 
 def apply_dataset_overrides(
@@ -96,16 +97,23 @@ def validate_dataset_selection(
         raise DatasetConstraintError(f"Select at most {options.max_selected} dataset(s).")
 
 
-def project_dataset_settings(config: DatasetAttackConfiguration) -> ScenarioDatasetSettings:
+def project_dataset_settings(
+    config: DatasetAttackConfiguration, *, required_data: ScenarioRequiredData | None = None
+) -> ScenarioDatasetSettings:
     """
     Project configuration settings without memory reads or live wire objects.
+
+    Required datasets come first as uncapped sources, so clients keep seeing and
+    refreshing every dataset a run loads.
 
     Returns:
         ScenarioDatasetSettings: Effective settings for response data.
     """
     children = config.configurations if isinstance(config, CompoundDatasetAttackConfiguration) else (config,)
+    required_sources = required_data.project_sources() if required_data is not None else []
     return ScenarioDatasetSettings(
-        sources=[
+        sources=required_sources
+        + [
             ScenarioDatasetSourceSettings(
                 name=source.name,
                 max_size=child.source_limit(source.name),

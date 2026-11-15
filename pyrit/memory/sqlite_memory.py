@@ -27,7 +27,7 @@ from sqlalchemy.util.concurrency import greenlet_spawn
 
 from pyrit.common import Singleton
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.memory.analytics_sql import UnicodeLower, text_match, validate_text_search
+from pyrit.memory.analytics_sql import UnicodeCaseFold, UnicodeLower, text_match, validate_text_search
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -38,7 +38,7 @@ from pyrit.memory.memory_models import (
     UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
-from pyrit.memory.storage import DiskStorageIO
+from pyrit.memory.storage import DiskStorageIO, StorageIO
 from pyrit.models import ConversationStats
 
 if TYPE_CHECKING:
@@ -136,8 +136,10 @@ def _cleanup_interrupted_sqlite_connection(context: ExceptionContext) -> None:
 
 
 class _SQLiteAsyncSession(AsyncSession):
-    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None] | None = None) -> None:
-        super().__init__(bind=engine, sync_session_class=MemorySession)
+    def __init__(
+        self, *, engine: AsyncEngine, storage: StorageIO | None, release: Callable[[], None] | None = None
+    ) -> None:
+        super().__init__(bind=engine, sync_session_class=MemorySession, info={"dataset_storage_io": storage})
         self._release: Callable[[], None] | None = release
 
     async def close(self) -> None:  # pyrit-async-suffix-exempt
@@ -281,13 +283,26 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         return str(value).lower() if value is not None else None
 
     @staticmethod
+    def _unicode_casefold(value: str | int | float | bytes | None) -> str | None:
+        """
+        Casefold SQLite text per character, retaining NULL semantics.
+
+        Returns:
+            str | None: The folded value, or SQL NULL.
+        """
+        return str(value).casefold() if value is not None else None
+
+    @staticmethod
     def _register_analytics_lower(*, engine: Engine) -> None:
-        """Install the Unicode lowercase function for analytics and JSON filters on every pooled SQLite connection."""
+        """Install the Unicode fold functions for analytics and JSON filters on every pooled SQLite connection."""
 
         @event.listens_for(engine, "connect")
         def register(dbapi_connection: Any, connection_record: Any) -> None:
             dbapi_connection.create_function(
                 UnicodeLower.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_lower, deterministic=True
+            )
+            dbapi_connection.create_function(
+                UnicodeCaseFold.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_casefold, deterministic=True
             )
 
     async def get_session_async(self) -> AsyncSession:
@@ -309,11 +324,13 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             raise RuntimeError("Close the synchronous memory session before opening an async session on this thread.")
         connection_lock = self._transaction_lock
         if connection_lock is None:
-            return _SQLiteAsyncSession(engine=self._get_async_engine())
+            return _SQLiteAsyncSession(engine=self._get_async_engine(), storage=self.results_storage_io)
         while not connection_lock.acquire(blocking=False):
             await asyncio.sleep(0.01)
         try:
-            return _SQLiteAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
+            return _SQLiteAsyncSession(
+                engine=self._get_async_engine(), storage=self.results_storage_io, release=connection_lock.release
+            )
         except BaseException:
             connection_lock.release()
             raise
@@ -577,7 +594,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             RuntimeError: If acquiring a session would block an event loop.
         """
-        session = self.SessionFactory()
+        session = self.SessionFactory(info={"dataset_storage_io": self.results_storage_io})
         connection_lock = self._connection_lock
         if connection_lock is None:
             return session

@@ -873,6 +873,38 @@ class TestAdditionalPackageEcosystems:
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
 
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "use builtin qw(true false trim);",
+            "use sort 'stable';",
+            "use filetest 'access';",
+            "use Time::gmtime;",
+            "use IPC::SysV qw(IPC_PRIVATE S_IRUSR S_IWUSR);",
+            "use Tie::StdHandle;",
+            "use AnyDBM_File;",
+        ],
+    )
+    async def test_perl_core_modules_and_pragmas_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"JSON::MaybeXS"},
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = f"```perl\n{statement}\nuse JSON::MaybeXS;\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_perl_core_modules_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        code = "```perl\nuse strict;\nuse Time::gmtime;\nuse Time::Ghost;\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "Time::Ghost"
+
     def test_raku_extracts_module_references(self):
         scorer = PackageHallucinationScorer(
             known_packages=set(),
