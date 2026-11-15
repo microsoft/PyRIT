@@ -145,6 +145,21 @@ async def test_diff_chain_custom_template_and_identifier_stability(tmp_path: Pat
     assert DiffChainConverter.decode(res.output_text) == "The secret ingredient is cinnamon."
 
 
+@pytest.mark.asyncio
+async def test_diff_chain_template_with_datasets_path_and_deferred_condition(tmp_path: Path) -> None:
+    deferred_tpl = _write_custom_template(
+        tmp_path / "deferred_paths.yaml",
+        "Root: {{ datasets_path }}\n"
+        "{% if steps %}Steps: {{ steps }}\n{% endif %}"
+        "```python\n{{ base_file }}\n```\n{{ changesets }}",
+    )
+    converter = DiffChainConverter(steps=3, template=deferred_tpl, seed=7)
+    result = await converter.convert_async(prompt="The secret ingredient is cinnamon.")
+    assert "Steps: 3" in result.output_text
+    assert "{{ datasets_path }}" not in result.output_text
+    assert DiffChainConverter.decode(result.output_text) == "The secret ingredient is cinnamon."
+
+
 def test_diff_chain_template_validation_errors(tmp_path: Path) -> None:
     missing_var = _write_custom_template(tmp_path / "missing.yaml", "```python\n{{ base_file }}\n```")
     with pytest.raises(ValueError, match="missing required template variable\\(s\\): changesets"):
@@ -210,10 +225,30 @@ async def test_diff_chain_crlf_transport_and_selective_tokens_roundtrip() -> Non
     assert DiffChainConverter.decode(encoded.output_text.replace("\n", "\r\n")) == prompt
 
     selective = await DiffChainConverter(steps=2, include_instructions=False, seed=5).convert_tokens_async(
-        prompt="Keep prefix ⟪secret cinnamon recipe⟫ and suffix."
+        prompt="Keep prefix ⟪secret cinnamon recipe⟫ and suffix.",
+        keep_tokens=True,
     )
-    inner_encoded = selective.output_text.removeprefix("Keep prefix ").removesuffix(" and suffix.")
-    assert DiffChainConverter.decode(inner_encoded) == "secret cinnamon recipe"
+    restored = await DiffChainDecodeConverter().convert_tokens_async(prompt=selective.output_text)
+    assert restored.output_text == "Keep prefix secret cinnamon recipe and suffix."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "a⟪b⟫c",
+        "lone start ⟪ marker",
+        "lone end ⟫ marker",
+    ],
+)
+@pytest.mark.parametrize("steps", [1, 3])
+async def test_diff_chain_selection_markers_roundtrip_via_convert_tokens_async(prompt: str, steps: int) -> None:
+    encoded = await DiffChainConverter(steps=steps, seed=5).convert_async(prompt=prompt)
+    assert "⟪" not in encoded.output_text
+    assert "⟫" not in encoded.output_text
+
+    decoded = await DiffChainDecodeConverter().convert_tokens_async(prompt=encoded.output_text)
+    assert decoded.output_text == prompt
 
 
 @pytest.mark.asyncio

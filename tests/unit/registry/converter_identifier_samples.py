@@ -146,6 +146,7 @@ SETTINGS_A_MODE_REPLACES: dict[tuple[str, str], set[str]] = {
         "stopwords",
         "candidate_words",
     },
+    ("DiffChainConverter", "include_instructions"): {"template"},
 }
 
 _MANY_WORDS = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
@@ -292,6 +293,17 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
     code_attack_templates[1].write_text(
         code_attack.replace("{{ wrapped_input }}", "{{ wrapped_input }} ", 1), encoding="utf-8"
     )
+    diff_chain = (Path(CONVERTER_SEED_PROMPT_PATH) / "diff_chain.yaml").read_text(encoding="utf-8")
+    (folder / "first_diff_chain").mkdir(exist_ok=True)
+    (folder / "second_diff_chain").mkdir(exist_ok=True)
+    diff_chain_templates = (
+        folder / "first_diff_chain" / "custom.yaml",
+        folder / "second_diff_chain" / "custom.yaml",
+    )
+    diff_chain_templates[0].write_text(
+        diff_chain.replace("{{ changesets }}", "{{ changesets }}  ", 1), encoding="utf-8"
+    )
+    diff_chain_templates[1].write_text(diff_chain.replace("{{ changesets }}", "{{ changesets }} ", 1), encoding="utf-8")
     return {
         "img_to_add": (pngs[0], pngs[1], str(other_png)),
         "base_image": (pngs[0], pngs[1], str(other_png)),
@@ -330,6 +342,7 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "AddImageTextConverter.font_size": (16, (18, 30), (19, 30), (18, 31)),
         "CodeAttackConverter.template": code_attack_templates,
         "CodeAttackConverter.encoding": tuple(CodeAttackConverter.Encoding),
+        "DiffChainConverter.template": diff_chain_templates,
         "ScientificTranslationConverter.mode": ("academic", "technical"),
         "RepeatTokenConverter.token_insert_mode": ("prepend", "append", "repeat"),
         "DiacriticConverter.accent": ("grave", "tilde", "umlaut"),

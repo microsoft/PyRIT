@@ -11,9 +11,6 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jinja2 import meta
-from jinja2.sandbox import SandboxedEnvironment
-
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import SeedPrompt
@@ -41,13 +38,15 @@ def _partition_prompt(*, prompt: str, steps: int) -> list[str]:
 
 
 def _encode_chunk_literal(chunk: str) -> str:
-    # Escape triple backticks (Markdown fences) and Unicode line separators (str.splitlines()).
+    # Escape Markdown fences, Unicode line separators, and PyRIT selection markers (U+27EA/U+27EB).
     return (
         json.dumps(chunk, ensure_ascii=False)
         .replace("```", "``\\u0060")
         .replace("\x85", "\\u0085")
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
+        .replace("\u27ea", "\\u27ea")
+        .replace("\u27eb", "\\u27eb")
     )
 
 
@@ -237,7 +236,7 @@ class DiffChainConverter(Converter):
 
     @staticmethod
     def _validate_template(*, seed_prompt: SeedPrompt, path: Path) -> None:
-        referenced = meta.find_undeclared_variables(SandboxedEnvironment().parse(seed_prompt.value))
+        referenced = set(seed_prompt.get_template_parameter_names())
         missing = sorted(_REQUIRED_TEMPLATE_VARS - referenced)
         if missing:
             raise ValueError(
