@@ -141,9 +141,10 @@ def test_append_jsonl_entry_appends(tmp_path):
 @pytest.mark.parametrize(
     "call",
     [
-        lambda path: _append_jsonl_entry(path, threading.Lock(), {"value": 1}),
-        lambda path: _create_staging_file(path, 0o600),
-        lambda path: _rewrite_jsonl_atomically(path, ['{"value": 1}\n']),
+        # Positional calls on purpose: the test checks that they raise TypeError.
+        lambda path: _append_jsonl_entry(path, threading.Lock(), {"value": 1}),  # ty: ignore[too-many-positional-arguments]
+        lambda path: _create_staging_file(path, 0o600),  # ty: ignore[too-many-positional-arguments]
+        lambda path: _rewrite_jsonl_atomically(path, ['{"value": 1}\n']),  # ty: ignore[too-many-positional-arguments]
     ],
     ids=["append_jsonl_entry", "create_staging_file", "rewrite_jsonl_atomically"],
 )
