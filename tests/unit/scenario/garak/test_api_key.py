@@ -25,7 +25,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, DatasetSource, ScenarioRequiredData
 from pyrit.scenario.core import DatasetConstraintError, ResolvedDataset
 from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     ApiKey,
     ApiKeyDatasetConfiguration,
     ApiKeyTechnique,
