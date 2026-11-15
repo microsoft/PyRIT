@@ -16,6 +16,7 @@ from pyrit.exceptions import (
     InvalidJsonException,
     ScorerLLMResponseBlockedException,
     pyrit_json_retry,
+    remove_markdown_json,
 )
 from pyrit.models import (
     Acquisition,
@@ -52,6 +53,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MAX_DECODED_VERDICT_LENGTH = 2048
+_MAX_DECODED_CHARACTERS = 1_000_000
+_MAX_DECODE_ATTEMPTS = 20_000
+_MAX_STRING_DEPTH = 2
+
 
 def _format_string_references_message_piece(template: str | None) -> bool:
     """
@@ -69,6 +75,89 @@ def _format_string_references_message_piece(template: str | None) -> bool:
                 return True
         if format_spec and _format_string_references_message_piece(format_spec):
             return True
+    return False
+
+
+def _judgment_repeats_scored_text(*, response_text: str, scored_text: str) -> bool:
+    """
+    Check whether the JSON verdict read from a judge reply was copied from the scored text.
+
+    The scored text is the target's output, so a JSON object it contains is not the judge's own
+    verdict. When the judge quotes such an object and its own verdict does not decode, the quoted
+    object is the only JSON in the reply and would otherwise be read as the verdict. The verdict
+    counts as copied when it appears in the scored text ignoring whitespace, or when a JSON object
+    in the scored text, or in a JSON string inside it, decodes to an equal object with the same
+    keys and value types in any order. The second search stops after
+    ``_MAX_DECODED_CHARACTERS`` characters of decoding or ``_MAX_DECODE_ATTEMPTS`` attempts, and
+    is skipped for verdicts longer than ``_MAX_DECODED_VERDICT_LENGTH`` characters.
+
+    Returns:
+        bool: True when the verdict is found in ``scored_text``.
+    """
+    verdict_text = remove_markdown_json(response_text)
+    try:
+        verdict = json.loads(verdict_text)
+    except (ValueError, RecursionError):
+        return False
+    if not isinstance(verdict, dict):
+        return False
+    if "".join(verdict_text.split()) in "".join(scored_text.split()):
+        return True
+    if len(verdict_text) > _MAX_DECODED_VERDICT_LENGTH:
+        return False
+    return _contains_equal_object(
+        text=scored_text,
+        canonical=json.dumps(verdict, sort_keys=True),
+        max_object_length=6 * len(verdict_text) + 256,
+    )
+
+
+def _contains_equal_object(*, text: str, canonical: str, max_object_length: int) -> bool:
+    """
+    Search ``text`` for a JSON object whose canonical form is ``canonical``.
+
+    Each JSON value found in ``text`` is decoded once, from a slice of at most
+    ``max_object_length`` characters, and its nested objects are compared. Strings inside it
+    that contain JSON are searched as well, up to ``_MAX_STRING_DEPTH`` levels.
+
+    Returns:
+        bool: True when an equal object is found within the decoding budget.
+    """
+    decoder = json.JSONDecoder()
+    characters = 0
+    attempts = 0
+    pending = [(text, 0)]
+    while pending:
+        source, depth = pending.pop()
+        start = source.find("{")
+        while start != -1:
+            attempts += 1
+            if attempts > _MAX_DECODE_ATTEMPTS or characters > _MAX_DECODED_CHARACTERS:
+                return False
+            window = source[start : start + max_object_length]
+            try:
+                value, end = decoder.raw_decode(window)
+            except json.JSONDecodeError as error:
+                characters += error.pos + 1
+                start = source.find("{", start + 1)
+                continue
+            except (ValueError, RecursionError):
+                characters += len(window)
+                start = source.find("{", start + 1)
+                continue
+            characters += end
+            nodes = [value]
+            while nodes:
+                node = nodes.pop()
+                if isinstance(node, dict):
+                    if json.dumps(node, sort_keys=True) == canonical:
+                        return True
+                    nodes.extend(node.values())
+                elif isinstance(node, list):
+                    nodes.extend(node)
+                elif isinstance(node, str) and depth < _MAX_STRING_DEPTH and "{" in node:
+                    pending.append((node, depth + 1))
+            start = source.find("{", start + end)
     return False
 
 
@@ -126,8 +215,9 @@ async def _run_llm_scoring_async(
             an empty text piece, which fails JSON parsing and is therefore retried and, if still
             empty, ultimately raised as ``InvalidJsonException``.
         InvalidJsonException: If the response is not valid JSON, is missing required keys, or
-            fails the handler's value validation. This also covers an empty text reply (normalized
-            to ``""``), which is retried before being surfaced here.
+            fails the handler's value validation, or if its verdict was copied from the scored
+            content. This also covers an empty text reply (normalized to ``""``), which is retried
+            before being surfaced here.
         TypeError: If the active scorable cannot be persisted on an observation.
         RuntimeError: If the transport returns no terminal response.
         Exception: For other unexpected errors during scoring.
@@ -236,6 +326,21 @@ async def _run_llm_scoring_async(
                 message=(
                     "The scorer's LLM response contained no text to parse while scoring "
                     f"prompt ID: {request.scored_prompt_id}."
+                )
+            )
+
+        scored_piece = request.scored_message_piece
+        if (
+            scored_piece is not None
+            and scored_piece.converted_value_data_type == "text"
+            and _judgment_repeats_scored_text(
+                response_text=text_piece.converted_value, scored_text=scored_piece.converted_value
+            )
+        ):
+            raise InvalidJsonException(
+                message=(
+                    "Invalid JSON response, the verdict was copied from the scored content: "
+                    f"{text_piece.converted_value}"
                 )
             )
 
