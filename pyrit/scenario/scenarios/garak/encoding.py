@@ -15,6 +15,7 @@ from pyrit.converter import (
     Base2048Converter,
     BinAsciiConverter,
     BrailleConverter,
+    ColumnarTranspositionConverter,
     Converter,
     EcojiConverter,
     LeetspeakConverter,
@@ -125,6 +126,7 @@ class EncodingTechnique(ScenarioTechnique):
     Zalgo = ("zalgo", set[str]())
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
+    ColumnarTransposition = ("columnar_transposition", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -311,6 +313,7 @@ class Encoding(Scenario):
             ([ZalgoConverter()], "zalgo", "zalgo"),
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+            ([ColumnarTranspositionConverter(key="ZEBRAS")], "columnar_transposition", "columnar_transposition"),
         ]
 
     # These are the same as Garak encoding attacks
