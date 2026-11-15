@@ -36,6 +36,11 @@ from pyrit.score.score_utils import score_is_true
 
 logger = logging.getLogger(__name__)
 
+# An outgoing caller-written assistant prefix needs the target to send it natively for continuation.
+_ASSISTANT_PREFIX_TARGET_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.PREFILL, CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY})
+)
+
 
 @dataclass(frozen=True)
 class PromptSendingAttackParameters(AttackParameters):
@@ -393,11 +398,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         """
         is_assistant_prefix = message.api_role == "assistant" and message.is_simulated
         if is_assistant_prefix:
-            TargetRequirements(
-                native_required=frozenset(
-                    {CapabilityName.PREFILL, CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}
-                )
-            ).validate(target=self._objective_target)
+            _ASSISTANT_PREFIX_TARGET_REQUIREMENTS.validate(target=self._objective_target)
 
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
