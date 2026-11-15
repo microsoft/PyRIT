@@ -73,7 +73,7 @@ MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
-def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
+def _get_metadata_value(metadata: Any, *, key: str) -> tuple[bool, Any]:
     """
     Get a value from a metadata object by key.
 
@@ -125,7 +125,7 @@ def _matches_filters(
     """
     if include_filters:
         for key, filter_value in include_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 return False
             if isinstance(actual_value, (list, tuple)):
@@ -136,7 +136,7 @@ def _matches_filters(
 
     if exclude_filters:
         for key, filter_value in exclude_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 continue
             if isinstance(actual_value, (list, tuple)):
@@ -982,7 +982,8 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             InstanceT: The new component, owned by the caller.
 
         Raises:
-            ValueError: If overrides are unknown or the source class is unavailable.
+            ValueError: If overrides are unknown, external overrides set a connection setting the
+                source's class keeps for copies, or the source class is unavailable.
         """
         inputs = self.get_reconstruction_parameters(source)
         raw_params = dict(params)
@@ -1011,6 +1012,14 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 seam_base_type=self._seam_base_type(),
                 allowed_path_params=allowed_path_params,
             )
+            # A copy keeps where its source sends requests and how it signs in, so a credential
+            # can't be pointed at a different endpoint. Any value is refused, even the source's own.
+            locked = sorted(name for name in params if by_name[name].copy_locked)
+            if locked:
+                raise ValueError(
+                    f"A copy keeps its source's connection settings, so it can't set {', '.join(locked)}. "
+                    "Create a new one to use different settings."
+                )
             from pyrit.models import SeedPrompt
 
             for name, value in raw_params.items():

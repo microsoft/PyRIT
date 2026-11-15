@@ -10,6 +10,7 @@ from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from end_to_end.test_scenarios import SCENARIO_MAX_TOTAL
 from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
@@ -147,6 +148,19 @@ def _requests(scenario: LeakReplay, technique: str) -> list[tuple[str, Contains 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLeakReplay:
+    async def test_e2e_limit_preserves_default_populations_async(self) -> None:
+        scenario = LeakReplay()
+        scenario.set_params_from_args(
+            args={"dataset_overrides": {"max_total": SCENARIO_MAX_TOTAL["garak.leak_replay"]}}
+        )
+        await scenario.get_run_size_estimate_async()
+        assert isinstance(scenario._dataset_config, LeakReplayDatasetConfiguration)
+        assert set(scenario._dataset_config.population_names()) == {
+            f"{technique}_{corpus}"
+            for technique in ("cloze", "completion")
+            for corpus in ("literature", "potter", "nyt", "guardian")
+        }
+
     def test_defaults_run_both_techniques_over_every_corpus(self) -> None:
         scenario = LeakReplay()
 

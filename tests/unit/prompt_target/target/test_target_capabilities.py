@@ -320,7 +320,9 @@ class TestTargetCapabilitiesModalities:
 
         from pyrit.prompt_target import PlaywrightCopilotTarget
 
-        target = PlaywrightCopilotTarget(page=MagicMock())
+        page = MagicMock()
+        page.url = "https://copilot.microsoft.com/"
+        target = PlaywrightCopilotTarget(page=page)
         assert any("text" in combo for combo in target.capabilities.input_modalities)
         assert any("image_path" in combo for combo in target.capabilities.input_modalities)
         assert any("text" in combo for combo in target.capabilities.output_modalities)

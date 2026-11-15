@@ -232,6 +232,7 @@ async def attack_result_to_summary_async(
     operation_name: str | None = None,
     scoring_inputs: AttackScoringInputs | None = None,
     execution_read_only: bool = False,
+    in_progress: bool = False,
 ) -> AttackSummary:
     """
     Build an AttackSummary view from an AttackResult.
@@ -248,6 +249,7 @@ async def attack_result_to_summary_async(
             Legacy attacks without an Operation ID show their historical name instead.
         scoring_inputs: Effective inputs resolved against the current registry by the service.
         execution_read_only: Whether execution changes require a manual continuation.
+        in_progress: Whether ``ar`` projects an attack still running in a scan.
 
     Returns:
         AttackSummary view ready for the API response.
@@ -264,6 +266,8 @@ async def attack_result_to_summary_async(
         chat_scorer=scoring_inputs.scorer if scoring_inputs else None,
         chat_scorer_inherited=scoring_inputs.inherited if scoring_inputs else False,
         execution_read_only=execution_read_only,
+        in_progress=in_progress,
+        scenario_result_id=ar.attribution_parent_id,
         last_response=await _summary_last_response_async(ar.last_response),
         automated_score=(
             ScoreView.from_domain(ar.automated_score, is_objective_score=True) if ar.automated_score else None

@@ -491,6 +491,32 @@ async def test_apply_whole_batch_before_validating_surviving_group_and_preserve_
     assert len(await _seeds(sqlite_instance)) == 2
 
 
+@pytest.mark.parametrize(
+    ("seed_type", "is_general_technique"),
+    [("prompt", True), ("simulated_conversation", False)],
+)
+async def test_noop_edit_preserves_general_technique_flag_async(
+    *, client: AsyncClient, sqlite_instance: SQLiteMemory, seed_type: str, is_general_technique: bool
+) -> None:
+    seed = (
+        SeedPrompt(value="Technique prompt", is_general_technique=is_general_technique, dataset_name="upload")
+        if seed_type == "prompt"
+        else SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation."),
+            is_general_technique=is_general_technique,
+            dataset_name="upload",
+        )
+    )
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="sdk")
+    snapshot = await _editable_async(client)
+    [row] = _editable_rows(snapshot)
+    response = await _update_async(client, snapshot=snapshot, seeds=[row])
+    assert response.status_code == 200, response.text
+    assert row["is_general_technique"] is is_general_technique
+    [stored] = await _seeds(sqlite_instance)
+    assert stored.is_general_technique is is_general_technique
+
+
 async def test_all_variants_edit_typed_fields_and_attach_new_or_existing_groups(
     client: AsyncClient, sqlite_instance: SQLiteMemory
 ) -> None:
