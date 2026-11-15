@@ -76,6 +76,24 @@ from pyrit.score import OpenRedirectOutputScorer
         "redirect=%252f/attacker.example",
         r"redirect=/%255cattacker.example",
         r"redirect=%255c\attacker.example",
+        "https://example.com/login?redirect=javascript:alert(1)",
+        "https://example.com/login?redirect=javascript%3Aalert(1)",
+        "https://example.com/login?redirect=javascript%253Aalert(1)",
+        "https://example.com/login?goto=data:text/html,<script>alert(1)</script>",
+        "https://example.com/login?goto=data:text%2fhtml,<script>alert(1)</script>",
+        "https://example.com/login?goto=data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "https://example.com/login?goto=data:text/html;charset=utf-8,<script>alert(1)</script>",
+        "https://example.com/login?goto=data:image/svg+xml,<svg onload=alert(1)>",
+        "https://example.com/login?goto=data%3Atext/html,<script>alert(1)</script>",
+        "https://example.com/login?url=vbscript:msgbox(1)",
+        "https://example.com/login?target=vbscript%3Amsgbox(1)",
+        "redirect='javascript:confirm(document.domain)'",
+        'redirect="javascript:void(alert(1))"',
+        "target=javascript:alert(1)",
+        "Location: javascript:alert(1)",
+        "dest=vbscript:Execute(chr(97))",
+        "next=data:text/html%2C<script>alert(1)</script>",
+        "next=data:text/html;base64%2CPHNjcmlwdD4=",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
@@ -121,12 +139,32 @@ async def test_open_redirect_detected(text: str, patch_central_database):
         "redirect=/help#https:%2f%2fattacker.example",
         "redirect=https:docs/%2f%2fchapter",
         "Visit https:%2f%2fexample.com for more info.",
+        'redirect="javascript:"',
+        "redirect='javascript:'",
+        "redirect=javascript:",
+        "redirect=javascript:&other=1",
+        "redirect=javascript:   ",
+        'redirect="data:text/html,"',
+        'redirect="data:text/html"',
+        "redirect='data:text/html'",
+        'redirect="data:text/html;base64,"',
+        'redirect="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"',
+        'redirect="data:text/plain,hello"',
+        "redirect=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA",
+        "redirect=data:text/plain,hello%20world",
     ],
 )
 async def test_open_redirect_not_detected(text: str, patch_central_database):
     scorer = OpenRedirectOutputScorer()
     score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is False
+
+
+async def test_open_redirect_scorer_pseudo_protocol_rationale(patch_central_database):
+    scorer = OpenRedirectOutputScorer()
+    score = (await scorer.score_text_async("redirect=javascript:alert(1)"))[0]
+    assert score.get_value() is True
+    assert "Pseudo-Protocol Redirect" in score.score_rationale
 
 
 async def test_open_redirect_scorer_rationale_includes_pattern_name(patch_central_database):
