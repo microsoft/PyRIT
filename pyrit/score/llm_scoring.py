@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from string import Formatter
 from typing import TYPE_CHECKING, cast
@@ -56,7 +57,9 @@ logger = logging.getLogger(__name__)
 _MAX_DECODED_VERDICT_LENGTH = 2048
 _MAX_DECODED_CHARACTERS = 1_000_000
 _MAX_DECODE_ATTEMPTS = 20_000
-_MAX_STRING_DEPTH = 2
+_MAX_UNESCAPE_DEPTH = 2
+_JSON_SIMPLE_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+_JSON_ESCAPE = re.compile(r'\\(?:u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|["\\/bfnrt])')
 
 
 def _format_string_references_message_piece(template: str | None) -> bool:
@@ -78,18 +81,37 @@ def _format_string_references_message_piece(template: str | None) -> bool:
     return False
 
 
+def _decode_json_escape(match: re.Match[str]) -> str:
+    """
+    Decode one JSON string escape sequence.
+
+    Returns:
+        str: The character or surrogate pair the escape stands for.
+    """
+    escape = match.group(0)
+    simple = _JSON_SIMPLE_ESCAPES.get(escape[1])
+    if simple is not None:
+        return simple
+    code_point = int(escape[2:6], 16)
+    if len(escape) == 12:
+        code_point = 0x10000 + ((code_point - 0xD800) << 10) + (int(escape[8:12], 16) - 0xDC00)
+    return chr(code_point)
+
+
 def _judgment_repeats_scored_text(*, response_text: str, scored_text: str) -> bool:
     """
     Check whether the JSON verdict read from a judge reply was copied from the scored text.
 
     The scored text is the target's output, so a JSON object it contains is not the judge's own
     verdict. When the judge quotes such an object and its own verdict does not decode, the quoted
-    object is the only JSON in the reply and would otherwise be read as the verdict. The verdict
-    counts as copied when it appears in the scored text ignoring whitespace, or when a JSON object
-    in the scored text, or in a JSON string inside it, decodes to an equal object with the same
-    keys and value types in any order. The second search stops after
-    ``_MAX_DECODED_CHARACTERS`` characters of decoding or ``_MAX_DECODE_ATTEMPTS`` attempts, and
-    is skipped for verdicts longer than ``_MAX_DECODED_VERDICT_LENGTH`` characters.
+    object is the only JSON in the reply and would otherwise be read as the verdict. The scored
+    text is searched as written and with JSON string escapes undone up to ``_MAX_UNESCAPE_DEPTH``
+    times, so an object carried inside a JSON string is found as well. The verdict counts as
+    copied when it appears in one of these texts ignoring whitespace, or when one of them holds
+    a JSON object equal to it, with the same keys and value types in any order. The second
+    search stops after ``_MAX_DECODED_CHARACTERS`` decoded characters or
+    ``_MAX_DECODE_ATTEMPTS`` attempts per text, and is skipped for verdicts longer than
+    ``_MAX_DECODED_VERDICT_LENGTH`` characters.
 
     Returns:
         bool: True when the verdict is found in ``scored_text``.
@@ -101,14 +123,21 @@ def _judgment_repeats_scored_text(*, response_text: str, scored_text: str) -> bo
         return False
     if not isinstance(verdict, dict):
         return False
-    if "".join(verdict_text.split()) in "".join(scored_text.split()):
+    texts = [scored_text]
+    for _ in range(_MAX_UNESCAPE_DEPTH):
+        unescaped = _JSON_ESCAPE.sub(_decode_json_escape, texts[-1])
+        if unescaped == texts[-1]:
+            break
+        texts.append(unescaped)
+    compact_verdict = "".join(verdict_text.split())
+    if any(compact_verdict in "".join(text.split()) for text in texts):
         return True
     if len(verdict_text) > _MAX_DECODED_VERDICT_LENGTH:
         return False
-    return _contains_equal_object(
-        text=scored_text,
-        canonical=json.dumps(verdict, sort_keys=True),
-        max_object_length=6 * len(verdict_text) + 256,
+    canonical = json.dumps(verdict, sort_keys=True)
+    max_object_length = 6 * len(verdict_text) + 256
+    return any(
+        _contains_equal_object(text=text, canonical=canonical, max_object_length=max_object_length) for text in texts
     )
 
 
@@ -116,9 +145,8 @@ def _contains_equal_object(*, text: str, canonical: str, max_object_length: int)
     """
     Search ``text`` for a JSON object whose canonical form is ``canonical``.
 
-    Each JSON value found in ``text`` is decoded once, from a slice of at most
-    ``max_object_length`` characters, and its nested objects are compared. Strings inside it
-    that contain JSON are searched as well, up to ``_MAX_STRING_DEPTH`` levels.
+    Each JSON object found in ``text`` is decoded once, from a slice of at most
+    ``max_object_length`` characters, and the objects nested in it are compared.
 
     Returns:
         bool: True when an equal object is found within the decoding budget.
@@ -126,38 +154,33 @@ def _contains_equal_object(*, text: str, canonical: str, max_object_length: int)
     decoder = json.JSONDecoder()
     characters = 0
     attempts = 0
-    pending = [(text, 0)]
-    while pending:
-        source, depth = pending.pop()
-        start = source.find("{")
-        while start != -1:
-            attempts += 1
-            if attempts > _MAX_DECODE_ATTEMPTS or characters > _MAX_DECODED_CHARACTERS:
-                return False
-            window = source[start : start + max_object_length]
-            try:
-                value, end = decoder.raw_decode(window)
-            except json.JSONDecodeError as error:
-                characters += error.pos + 1
-                start = source.find("{", start + 1)
-                continue
-            except (ValueError, RecursionError):
-                characters += len(window)
-                start = source.find("{", start + 1)
-                continue
-            characters += end
-            nodes = [value]
-            while nodes:
-                node = nodes.pop()
-                if isinstance(node, dict):
-                    if json.dumps(node, sort_keys=True) == canonical:
-                        return True
-                    nodes.extend(node.values())
-                elif isinstance(node, list):
-                    nodes.extend(node)
-                elif isinstance(node, str) and depth < _MAX_STRING_DEPTH and "{" in node:
-                    pending.append((node, depth + 1))
-            start = source.find("{", start + end)
+    start = text.find("{")
+    while start != -1:
+        attempts += 1
+        if attempts > _MAX_DECODE_ATTEMPTS or characters > _MAX_DECODED_CHARACTERS:
+            return False
+        window = text[start : start + max_object_length]
+        try:
+            value, end = decoder.raw_decode(window)
+        except json.JSONDecodeError as error:
+            characters += error.pos + 1
+            start = text.find("{", start + 1)
+            continue
+        except (ValueError, RecursionError):
+            characters += len(window)
+            start = text.find("{", start + 1)
+            continue
+        characters += end
+        nodes = [value]
+        while nodes:
+            node = nodes.pop()
+            if isinstance(node, dict):
+                if json.dumps(node, sort_keys=True) == canonical:
+                    return True
+                nodes.extend(node.values())
+            elif isinstance(node, list):
+                nodes.extend(node)
+        start = text.find("{", start + end)
     return False
 
 
@@ -331,7 +354,8 @@ async def _run_llm_scoring_async(
 
         scored_piece = request.scored_message_piece
         if (
-            scored_piece is not None
+            response_handler.json_response_config.enabled
+            and scored_piece is not None
             and scored_piece.converted_value_data_type == "text"
             and _judgment_repeats_scored_text(
                 response_text=text_piece.converted_value, scored_text=scored_piece.converted_value
