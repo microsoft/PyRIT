@@ -125,8 +125,13 @@ class MessageToolCallScorer(TrueFalseScorer):
     Score tool invocations recorded as function_call and function_call_output message pieces.
 
     This scorer needs no trace pipeline. Stored messages are partial evidence, so it reports true
-    when every required tool ran and undetermined otherwise; it never reports false. Compose it
-    with ``OtelToolCallScorer`` under an OR aggregator when trace evidence is also available.
+    when every required tool ran and undetermined otherwise; absence never makes it report false.
+    Compose it with ``OtelToolCallScorer`` under an OR aggregator when trace evidence is also
+    available.
+
+    An exhaustive condition reverses which verdict the stored messages can support: a stored
+    execution of a tool the condition does not name disproves it, but stored messages can never
+    rule out other tools, so it is otherwise undetermined and never true.
 
     A requirement with argument constraints needs one execution whose requested arguments, as
     stored in its function_call piece, satisfy every constraint.
@@ -159,6 +164,8 @@ class MessageToolCallScorer(TrueFalseScorer):
         ]
         piece_id = self._piece_id_from_scorable(scorable)
         names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        if condition.exhaustive:
+            return [self._score_exhaustive(condition=condition, executed=set(calls), scorable=scorable)]
         if unmet:
             # A tool that ran with other arguments did run, so say so rather than report no execution.
             not_run = [describe_tool_requirement(tool) for tool in unmet if tool.name not in calls]
@@ -190,3 +197,35 @@ class MessageToolCallScorer(TrueFalseScorer):
                 message_piece_id=piece_id,
             )
         ]
+
+    def _score_exhaustive(self, *, condition: ToolsCalled, executed: set[str], scorable: MessageScorable) -> Score:
+        """
+        Disprove an exact match from a stored execution of an unnamed tool, or leave it open.
+
+        Returns:
+            Score: False when an unnamed tool ran, otherwise undetermined.
+        """
+        piece_id = self._piece_id_from_scorable(scorable)
+        description = "Tool invocation; successful completion is not required."
+        extra = sorted(executed - {tool.name for tool in condition.tools})
+        if extra:
+            return Score(
+                score_value="false",
+                score_type="true_false",
+                score_rationale=(
+                    "Stored function call outputs show execution of tools outside the required set: "
+                    f"{', '.join(extra)}."
+                ),
+                score_value_description=description,
+                scorer_class_identifier=self.get_identifier(),
+                scorable=scorable,
+                message_piece_id=piece_id,
+            )
+        names = ", ".join(tool.name for tool in condition.tools)
+        expected = f"exactly the required tools ({names}) ran" if names else "no tool ran"
+        return self._build_undetermined_score(
+            rationale=f"Stored messages cannot establish that {expected}. {_INCOMPLETE_EVIDENCE_REASON}",
+            description=description,
+            scorable=scorable,
+            message_piece_id=piece_id,
+        )

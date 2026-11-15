@@ -34,7 +34,7 @@ import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
 import FileDropZone from '@/components/Media/FileDropZone'
 import ObjectiveHeader from './ObjectiveHeader'
-import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft, ReadAttackConversationReferences } from '@/types'
+import type { AcceptedSendHistory, ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance, RequestGenerationDraft, ReadAttackConversationReferences } from '@/types'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
 import {
@@ -55,10 +55,13 @@ import {
   shouldApplyPreservedDraft,
   canApplyPendingImport,
   hasChatDraftState,
+  historyContainsAcceptedDraft,
+  historyMayContainAcceptedDraft,
   isChatDraftDirty,
   computeAttachmentSignature,
   stableMetadataString,
 } from '@/utils/chatDraft'
+import { isMessageSendConversationConfirmed } from '@/services/messageSendObservation'
 import { resolveTargetReference, sameTarget, targetReference } from '@/utils/targetIdentity'
 import { mergeImportedHistory } from '@/utils/seedImport'
 import { resolveChatScorerReference } from '@/utils/scorerPresentation'
@@ -98,6 +101,7 @@ import type {
   CreateConversationRequest,
   Message,
   MessageAttachment,
+  MessageSendStatus,
   NewAttackContext,
   TargetInstance,
   TargetInfo,
@@ -357,6 +361,11 @@ export default function ChatWindow({
     return () => { window.clearTimeout(fade); window.clearTimeout(dismiss) }
   }, [noticeId])
   const [editorError, setEditorError] = useState<string | null>(null)
+  const [acceptedSendCheck, setAcceptedSendCheck] = useState<
+    { key: string; converterPipelineSignature: string; generationDraftSignature: string; status: MessageSendStatus }
+    | { key: string; converterPipelineSignature: string; generationDraftSignature: string; error: unknown }
+    | null
+  >(null)
   const [importSystemConflict, setImportSystemConflict] = useState<string | null>(null)
   const [importSystemChoice, setImportSystemChoice] = useState<{ id: string; choice: 'destination' | 'imported' } | null>(null)
   const exitSaveRef = useRef<Promise<boolean> | null>(null)
@@ -436,6 +445,14 @@ export default function ChatWindow({
   const undoInFlight = useRef(false)
 
   const handoffRestoredRef = useRef<number | null>(null)
+  // An accepted send restored before its prompt reached history; kept until the composer changes.
+  const restoredAcceptedSendRef = useRef<{
+    sendId: string
+    history: AcceptedSendHistory
+    conversationId: string | null
+    draftRevision?: number
+  } | null>(null)
+  const acceptedSendCheckRef = useRef<string | null>(null)
   const importInFlightRef = useRef<string | null>(null)
   const importFailedRef = useRef<string | null>(null)
   const importMountedRef = useRef(true)
@@ -469,7 +486,7 @@ export default function ChatWindow({
   const sendState = useChatSendState({ activeConversationId, viewedConversationId, runtimeGeneration: runtime.generation })
   const {
     isSending, recoverableSend, isSendInFlight, reconcileLoadedConversation, getPendingSend,
-    getLoadedBackendMessages, rememberBackendMessages, clearUndoableSend, clearRecoveries,
+    getLoadedBackendMessages, getLatestSendId, rememberBackendMessages, clearUndoableSend, clearRecoveries,
   } = sendState
   const undoableSend = sendState.state.undoable
   const handleConversationLoaded = useCallback((
@@ -652,6 +669,7 @@ export default function ChatWindow({
       preserveOnUnmountRef.current = null
       ownsDraftRef.current = false
       handoffRestoredRef.current = null
+      restoredAcceptedSendRef.current = null
       lastTextRef.current = ''
       lastAttachmentsSignatureRef.current = ''
       inputBoxRef.current?.detachDraft()
@@ -692,6 +710,12 @@ export default function ChatWindow({
     isActiveDraftDirtyRef.current = isActiveDraftDirty
     if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
     const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
+    // The composer handle is detached before the unmount callback runs, so read its revision now.
+    const composerRevision = inputBoxRef.current?.getDraftRevision()
+    const restoredAcceptedSend = restoredAcceptedSendRef.current
+    if (restoredAcceptedSend && restoredAcceptedSend.draftRevision === undefined) {
+      restoredAcceptedSend.draftRevision = composerRevision
+    }
     const preservedForThis = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
     const isWaitingForRestore = matchingPreservedDraft !== null
       && handoffRestoredRef.current !== preservedForThis?.sequence
@@ -706,12 +730,32 @@ export default function ChatWindow({
       discardDraftOnUnmountRef.current = false
       if (shouldDiscard || !ownsDraftRef.current || isWaitingForRestore
         || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
+      const operation = draftConversationId ? getPendingSend(draftConversationId) : undefined
+      const acceptedSend: { sendId: string, history: AcceptedSendHistory } | undefined = operation?.progress
+        && operation.originalValue === savedDraft.text
+        && getLatestSendId() === operation.submissionId
+        && operation.draftRevision === composerRevision
+        ? {
+          sendId: operation.progress.send_id,
+          history: {
+            ...(operation.progress.request_turn_number != null
+              ? { requestTurnNumber: operation.progress.request_turn_number } : {}),
+            priorUserPieceIds: [...operation.priorUserPieceIds],
+          },
+        }
+        : restoredAcceptedSend
+          && restoredAcceptedSend.conversationId === draftConversationId
+          && restoredAcceptedSend.draftRevision === composerRevision
+          ? { sendId: restoredAcceptedSend.sendId, history: restoredAcceptedSend.history }
+          : undefined
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
         originatingConversationId: draftConversationId,
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
-        draft: savedDraft,
+        draft: acceptedSend
+          ? { ...savedDraft, acceptedSendId: acceptedSend.sendId, acceptedSendHistory: acceptedSend.history }
+          : savedDraft,
       }, draftHandoff.activeSequence, draftHandoff.pendingImport?.id)
     }
   })
@@ -792,10 +836,83 @@ export default function ChatWindow({
         draftHandoff.clearPreservedDraft(preserved.sequence, draftAttackId, draftConversationId)
         return
       }
+      const preservedMessages = getLoadedBackendMessages(draftConversationId ?? '')
+      const canContainAcceptedSend = historyMayContainAcceptedDraft(preserved.draft, preservedMessages)
+      const acceptedSendId = preserved.draft.acceptedSendId
+      let acceptedSendStatus: MessageSendStatus | undefined
+      let preserveCurrentConverters = false
+      let preserveCurrentGenerationDraft = false
+      if (canContainAcceptedSend && acceptedSendId && draftAttackId && draftConversationId) {
+        const checkKey = JSON.stringify([preserved.sequence, draftAttackId, draftConversationId, acceptedSendId])
+        const converterPipelineSignature = stableMetadataString(converters.snapshot().pipelines)
+        const generationDraftSignature = stableMetadataString(generationDraft)
+        const check = acceptedSendCheck?.key === checkKey ? acceptedSendCheck : undefined
+        if (!check) {
+          if (acceptedSendCheckRef.current !== checkKey) {
+            acceptedSendCheckRef.current = checkKey
+            void attacksApi.getMessageSend(draftAttackId, acceptedSendId).then((status: MessageSendStatus) => {
+              if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
+                || currentAttackIdRef.current !== draftAttackId
+                || currentConversationIdRef.current !== draftConversationId) return
+              if (status.send_id !== acceptedSendId || status.attack_result_id !== draftAttackId) {
+                setEditorNotice('Send status did not match the preserved draft. The draft was kept.')
+              }
+              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, generationDraftSignature, status })
+            }).catch((error: unknown) => {
+              if (!importMountedRef.current || acceptedSendCheckRef.current !== checkKey
+                || currentAttackIdRef.current !== draftAttackId
+                || currentConversationIdRef.current !== draftConversationId) return
+              setEditorNotice(`${toApiError(error).detail || 'Could not verify send status.'} The preserved draft was kept.`)
+              setAcceptedSendCheck({ key: checkKey, converterPipelineSignature, generationDraftSignature, error })
+            })
+          }
+          return
+        }
+        preserveCurrentConverters = check.converterPipelineSignature !== converterPipelineSignature
+        preserveCurrentGenerationDraft = check.generationDraftSignature !== generationDraftSignature
+        if ('status' in check) acceptedSendStatus = check.status
+      }
       const consumed = draftHandoff.consumePreservedDraft(draftAttackId, draftConversationId, preserved.sequence)
       if (!consumed) return
       handoffRestoredRef.current = preserved.sequence
-      draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
+      const acceptedSendConversation = acceptedSendStatus?.conversations?.length
+        ? acceptedSendStatus.conversations.find((conversation) => conversation.conversation_id === draftConversationId)
+        : acceptedSendStatus
+      const sendProgressConfirmed = Boolean(acceptedSendStatus && consumed.acceptedSendId
+        && acceptedSendStatus.send_id === consumed.acceptedSendId
+        && acceptedSendStatus.attack_result_id === draftAttackId
+        && acceptedSendConversation
+        && acceptedSendConversation.conversation_id === draftConversationId
+        && isMessageSendConversationConfirmed(acceptedSendConversation))
+      const completedAcceptedSend = sendProgressConfirmed && historyContainsAcceptedDraft(
+        consumed, preservedMessages, acceptedSendConversation?.request_turn_number,
+      )
+      const converterSnapshot = preserveCurrentConverters ? converters.snapshot() : consumed.converters
+      restoredAcceptedSendRef.current = consumed.acceptedSendId && consumed.acceptedSendHistory
+        && !completedAcceptedSend
+        ? {
+          sendId: consumed.acceptedSendId,
+          history: consumed.acceptedSendHistory,
+          conversationId: draftConversationId,
+        }
+        : null
+      // Match a normal completed send: keep converter pipelines, clear only their working state.
+      draft = completedAcceptedSend
+        ? {
+          ...consumed, text: '', attachments: [], textMetadata: undefined,
+          acceptedSendId: undefined, acceptedSendHistory: undefined,
+          converters: converterSnapshot && {
+            ...converterSnapshot, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+          },
+          ...(preserveCurrentGenerationDraft ? { generationDraft } : {}),
+          systemPrompt: consumed.systemPrompt ?? '',
+        }
+        : {
+          ...consumed,
+          ...(converterSnapshot ? { converters: converterSnapshot } : {}),
+          ...(preserveCurrentGenerationDraft ? { generationDraft } : {}),
+          systemPrompt: consumed.systemPrompt ?? '',
+        }
       if (consumed.conversation) {
         let editorTarget: TargetInstance | null = consumed.conversation.target === null ? null : activeTarget
         if (consumed.conversation.target) {
@@ -825,6 +942,7 @@ export default function ChatWindow({
     } else {
       if (!canApplyImportNow || !pending) return
       if (importInFlightRef.current === pending.id || importFailedRef.current === pending.id) return
+      restoredAcceptedSendRef.current = null
 
       const executeImportHandoff = async (): Promise<void> => {
         const snapshotGeneration = runtime.generation
@@ -1024,6 +1142,7 @@ export default function ChatWindow({
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
     activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets, importSystemChoice,
     getLoadedBackendMessages, rememberBackendMessages,
+    acceptedSendCheck, generationDraft,
   ])
 
   // Handle conversation selection from the panel
