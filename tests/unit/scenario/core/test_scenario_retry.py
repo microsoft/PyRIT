@@ -1089,3 +1089,90 @@ class TestGetCompletedObjectiveHashesByAttack:
         ]
         result = await scenario._get_completed_objective_hashes_by_attack_async()
         assert result == {("a", None): {to_sha256("old")}}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestRemainingAttackOrdering:
+    """Resume ordering: unstarted attacks before attacks that already failed."""
+
+    async def test_unstarted_attacks_are_queued_before_started_ones(self):
+        failed = create_mock_atomic_attack("failed", ["poison", "healthy"])
+        unstarted_a = create_mock_atomic_attack("unstarted-a", ["a"])
+        unstarted_b = create_mock_atomic_attack("unstarted-b", ["b"])
+
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = [failed, unstarted_a, unstarted_b]
+        scenario._memory = MagicMock(spec=MemoryInterface)
+
+        failed_row = MagicMock()
+        failed_row.outcome = AttackOutcome.ERROR
+        failed_row.attribution_data = {
+            "parent_collection": failed.atomic_attack_name,
+            "parent_eval_hash": failed.technique_eval_hash,
+        }
+        failed_row.objective = "poison"
+        failed_row.metadata = {}
+        failed_row.outcome_reason = None
+        scenario._memory.get_attack_results_async.return_value = [failed_row]
+
+        remaining = await scenario._get_remaining_atomic_attacks_async()
+
+        assert [attack.atomic_attack_name for attack in remaining] == [
+            "unstarted-a",
+            "unstarted-b",
+            "failed",
+        ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestApplyPersistedObjectives:
+    """Direct tests for ``Scenario._apply_persisted_objectives`` — the
+    resume-time replay that locks subsequent runs to the originally-sampled
+    objective subset."""
+
+    def _make_scenario_with_atomics(self, atomics):
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = atomics
+        return scenario
+
+    def test_noop_when_metadata_has_no_persisted_hashes(self):
+        atomic = MagicMock(spec=AtomicAttack)
+        atomic.attack_technique.attack.IS_COMPOUND = False
+        atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        scenario = self._make_scenario_with_atomics([atomic])
+        stored = MagicMock()
+        stored.metadata = {}
+        scenario._apply_persisted_objectives(stored_result=stored)
+        atomic.keep_seed_groups_with_hashes.assert_not_called()
+
+    def test_replays_persisted_subset_across_atomics(self):
+        atomic_a = MagicMock(spec=AtomicAttack)
+        atomic_a.attack_technique.attack.IS_COMPOUND = False
+        atomic_a.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        atomic_a.keep_seed_groups_with_hashes.return_value = {"h1", "h2"}
+        atomic_b = MagicMock(spec=AtomicAttack)
+        atomic_b.attack_technique.attack.IS_COMPOUND = False
+        atomic_b.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        atomic_b.keep_seed_groups_with_hashes.return_value = {"h3"}
+        scenario = self._make_scenario_with_atomics([atomic_a, atomic_b])
+
+        stored = MagicMock()
+        stored.metadata = {"objective_hashes": ["h1", "h2", "h3"]}
+        scenario._apply_persisted_objectives(stored_result=stored)
+
+        atomic_a.keep_seed_groups_with_hashes.assert_called_once_with(hashes={"h1", "h2", "h3"})
+        atomic_b.keep_seed_groups_with_hashes.assert_called_once_with(hashes={"h1", "h2", "h3"})
+
+    def test_raises_when_persisted_hash_is_missing(self):
+        atomic = MagicMock(spec=AtomicAttack)
+        atomic.attack_technique.attack.IS_COMPOUND = False
+        atomic.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        atomic.keep_seed_groups_with_hashes.return_value = {"h1"}  # h2 missing
+        scenario = self._make_scenario_with_atomics([atomic])
+
+        stored = MagicMock()
+        stored.metadata = {"objective_hashes": ["h1", "h2"]}
+        with pytest.raises(ValueError, match="cannot resume"):
+            scenario._apply_persisted_objectives(stored_result=stored)
