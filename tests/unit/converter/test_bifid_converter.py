@@ -76,6 +76,16 @@ async def test_bifid_converter_empty_and_non_letter_only_input():
     assert (await converter.convert_async(prompt="123 !?", input_type="text")).output_text == ""
 
 
+async def test_bifid_converter_letter_free_key_equals_default_square():
+    # A key with no letters leaves nothing to seed the square, so it collapses to the
+    # default plain-alphabet square (identical to passing no key at all).
+    default = BifidConverter()
+    letter_free = BifidConverter(key="123 !?-")
+    result_default = await default.convert_async(prompt="HELLO", input_type="text")
+    result_letter_free = await letter_free.convert_async(prompt="HELLO", input_type="text")
+    assert result_letter_free.output_text == result_default.output_text == "FNNVD"
+
+
 async def test_bifid_converter_single_letter_roundtrip_identity():
     # A single-letter message maps to itself: coords (r,c) fractionate back to (r,c).
     converter = BifidConverter(key=WIKIPEDIA_KEY)
