@@ -1170,6 +1170,9 @@ class FuzzerGenerator(
         """
         Process scoring results and track jailbreaks.
 
+        Any passing score on a response piece attributes a jailbreak to that response,
+        counting at most once per response message even if multiple categories or pieces pass.
+
         Args:
             context (FuzzerContext): The generation context.
             scores (list[Score]): The scores for each response.
@@ -1184,11 +1187,12 @@ class FuzzerGenerator(
             ValueError: If a scored response piece has no conversation_id.
         """
         jailbreak_count = 0
-        response_pieces = [response.message_pieces[0] for response in responses]
         # score_batch_async returns one flattened list where a scorable may yield
         # zero or several scores, so a jailbreak verdict is attributed to its
         # response by the scored piece id rather than by position in that list.
-        conversation_by_piece_id = {str(piece.id): piece.conversation_id for piece in response_pieces}
+        conversation_by_piece_id = {
+            str(piece.id): piece.conversation_id for response in responses for piece in response.message_pieces
+        }
 
         jailbroken_piece_ids: set[str] = set()
         for score in scores:
@@ -1199,12 +1203,13 @@ class FuzzerGenerator(
                     raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
                 jailbroken_piece_ids.add(piece_id)
 
-        for piece in response_pieces:
-            if str(piece.id) in jailbroken_piece_ids:
-                if piece.conversation_id is None:
+        for response in responses:
+            if any(str(piece.id) in jailbroken_piece_ids for piece in response.message_pieces):
+                conversation_id = response.message_pieces[0].conversation_id
+                if conversation_id is None:
                     raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
                 jailbreak_count += 1
-                context.jailbreak_conversation_ids.append(piece.conversation_id)
+                context.jailbreak_conversation_ids.append(conversation_id)
 
         # Update tracking
         context.total_jailbreak_count += jailbreak_count

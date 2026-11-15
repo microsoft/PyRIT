@@ -658,6 +658,59 @@ class TestFuzzerGenerator:
         assert fuzzer_context.total_jailbreak_count == 1
         assert fuzzer_context.total_target_query_count == 2
 
+    def test_process_scoring_results_multi_piece_response_counts_once(
+        self,
+        scoring_target: MockPromptTarget,
+        template_converters: list[FuzzerConverter],
+        mock_scorer: MagicMock,
+        fuzzer_context: FuzzerContext,
+    ) -> None:
+        """A single response with multiple pieces that both receive passing scores counts as one jailbreak."""
+        generator = FuzzerGenerator(
+            objective_target=scoring_target,
+            template_converters=template_converters,
+            scorer=mock_scorer,
+        )
+
+        piece_a = MessagePiece(role="assistant", original_value="part a", conversation_id="conv-multi")
+        piece_b = MessagePiece(role="assistant", original_value="part b", conversation_id="conv-multi")
+        multi_piece_response = Message(message_pieces=[piece_a, piece_b])
+
+        scores = [
+            Score(
+                score_value="true",
+                score_value_description="",
+                score_type="true_false",
+                score_category=["Hate"],
+                score_rationale="",
+                score_metadata={},
+                message_piece_id=piece_a.id,
+                scorer_class_identifier=get_mock_scorer_identifier(),
+            ),
+            Score(
+                score_value="true",
+                score_value_description="",
+                score_type="true_false",
+                score_category=["Violence"],
+                score_rationale="",
+                score_metadata={},
+                message_piece_id=piece_b.id,
+                scorer_class_identifier=get_mock_scorer_identifier(),
+            ),
+        ]
+        node = _PromptNode(template="template", parent=None)
+        jailbreak_count = generator._process_scoring_results(
+            context=fuzzer_context,
+            scores=scores,
+            responses=[multi_piece_response],
+            template_node=node,
+            current_seed=node,
+        )
+        assert jailbreak_count == 1
+        assert fuzzer_context.jailbreak_conversation_ids == ["conv-multi"]
+        assert fuzzer_context.total_jailbreak_count == 1
+        assert fuzzer_context.total_target_query_count == 1
+
     def test_process_scoring_results_raises_when_piece_has_no_conversation_id(
         self,
         scoring_target: MockPromptTarget,
