@@ -86,7 +86,7 @@ class TestAudioAchillesHeelInitialization:
 
     def test_default_dataset_config_caps_size(self, mock_objective_scorer):
         config = AudioAchillesHeel(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert config.max_dataset_size == DEFAULT_MAX_DATASET_SIZE
+        assert config.max_total == DEFAULT_MAX_DATASET_SIZE
 
     def test_default_technique_is_all(self, mock_objective_scorer):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
