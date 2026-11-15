@@ -1201,6 +1201,8 @@ class FuzzerGenerator(
 
         for piece in response_pieces:
             if str(piece.id) in jailbroken_piece_ids:
+                if piece.conversation_id is None:
+                    raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
                 jailbreak_count += 1
                 context.jailbreak_conversation_ids.append(piece.conversation_id)
 

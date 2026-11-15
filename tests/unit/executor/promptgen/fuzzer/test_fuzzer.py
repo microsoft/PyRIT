@@ -759,6 +759,11 @@ class TestFuzzerGenerator:
                 new_callable=AsyncMock,
                 return_value=ConverterResult(output_text="{{ prompt }}", output_type="text"),
             ),
+            patch.object(
+                generator._mcts_explorer,
+                "update_rewards",
+                wraps=generator._mcts_explorer.update_rewards,
+            ) as mock_update_rewards,
         ):
             result = await generator.execute_async(
                 prompts=["objective"],
@@ -770,6 +775,9 @@ class TestFuzzerGenerator:
         assert len(ids) == 2
         assert len(set(ids)) == 2
         assert result.total_queries == 2
+        assert mock_update_rewards.call_count == 2
+        for call in mock_update_rewards.call_args_list:
+            assert call.kwargs["reward"] == 1.0
 
     def test_is_jailbreak_float_scale_scorer(
         self, scoring_target: MockPromptTarget, template_converters: list[FuzzerConverter]
