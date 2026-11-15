@@ -1999,6 +1999,8 @@ class Scenario(ABC):
         started_attack_keys: set[tuple[str, str | None]] = set()
         for row in rows:
             attribution = row.attribution_data
+            name: Any = None
+            eval_hash: Any = None
             if isinstance(attribution, dict):
                 name = attribution.get("parent_collection")
                 eval_hash = attribution.get("parent_eval_hash")
