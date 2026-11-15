@@ -194,15 +194,19 @@ def test_pages_recovery_reuses_composed_artifact_and_fails_closed() -> None:
     steps = _workflow()["jobs"]["deploy"]["steps"]
     check = _step(job="deploy", name="Check deployment recovery safety")
     deploy = _step(job="deploy", name="Deploy to GitHub Pages")
-    diagnose = _step(job="deploy", name="Diagnose failed Pages deployment")
+    diagnose = _step(job="diagnose", name="Diagnose failed Pages deployment")
     assert _checkout("deploy")["with"] == {
         "ref": "${{ github.sha }}",
         "persist-credentials": "false",
         "sparse-checkout": "build_scripts",
     }
-    assert steps.index(check) < steps.index(deploy) < steps.index(diagnose)
+    assert steps.index(check) < steps.index(deploy)
     assert "if" not in check
-    assert diagnose["if"] == "failure() && steps.deployment.outcome == 'failure'"
+    diagnosis = _workflow()["jobs"]["diagnose"]
+    assert diagnosis["needs"] == "deploy"
+    assert diagnosis["if"] == "failure() && needs.deploy.result == 'failure'"
+    assert diagnosis["permissions"] == {"actions": "read", "contents": "read", "pages": "read"}
+    assert _checkout("diagnose")["with"] == _checkout("deploy")["with"]
     for step, mode in [(check, "preflight"), (diagnose, "diagnose")]:
         assert step["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
         assert step["with"]["retries"] == "0"

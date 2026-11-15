@@ -315,8 +315,24 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
+  # Job logs are downloadable only after Deploy completes.
+  diagnose:
+    name: Diagnose Pages deployment
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: failure() && needs.deploy.result == 'failure'
+    permissions:
+      actions: read
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: build_scripts
+
       - name: Diagnose failed Pages deployment
-        if: failure() && steps.deployment.outcome == 'failure'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 0
