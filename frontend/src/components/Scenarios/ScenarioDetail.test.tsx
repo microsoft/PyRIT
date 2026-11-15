@@ -1273,6 +1273,8 @@ describe('ScenarioDetail', () => {
     const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
     const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(cancel).toHaveFocus())
+    // A disabled button is not tabbable, so wait out the async checks that gate the confirm button.
+    await waitFor(() => expect(confirmLaunch).toBeEnabled())
     await user.tab()
     await waitFor(() => expect(confirmLaunch).toHaveFocus())
     await user.tab({ shift: true })
@@ -1283,11 +1285,11 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(launch).toHaveFocus())
     await user.keyboard('{Enter}')
     const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
+    const reopenedConfirm = within(reopened).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
+    await waitFor(() => expect(reopenedConfirm).toBeEnabled())
     await user.tab()
-    await waitFor(() => {
-      expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
-    })
+    await waitFor(() => expect(reopenedConfirm).toHaveFocus())
     await user.keyboard(' ')
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
       techniques: ['default_technique'], include_baseline: false,
