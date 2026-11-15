@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -313,8 +314,11 @@ class ImageCompressionConverter(Converter):
             )
 
         # Compress the image and get back a BytesIO buffer containing the compressed data
-        # along with the actual output format used (which may differ from input format)
-        compressed_bytes, output_format = self._compress_image(original_img, original_format, original_size)
+        # along with the actual output format used (which may differ from input format).
+        # Decoding and re-encoding is CPU-bound, so keep it off the event loop.
+        compressed_bytes, output_format = await asyncio.to_thread(
+            self._compress_image, original_img, original_format, original_size
+        )
         compressed_bytes_value = compressed_bytes.getvalue()
         compressed_size = len(compressed_bytes_value)
 
