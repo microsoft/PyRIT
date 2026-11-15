@@ -42,6 +42,7 @@ export default function FindingDialog({
   const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
+  const [attackResultIdError, setAttackResultIdError] = useState('')
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
   const attempt = useRef<{ signature: string; id: string } | null>(null)
@@ -52,7 +53,7 @@ export default function FindingDialog({
   const [harmSearch, setHarmSearch] = useState('')
   const classificationsValid = (draft.severity !== 'other' || Boolean(draft.severity_other?.trim()))
     && (draft.harm_type !== 'Other' || Boolean(draft.harm_type_other?.trim()))
-  const canSave = !saveDisabled && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
+  const canSave = !saveDisabled && !attackResultIdError && Boolean(draft.title.trim()) && classificationsValid && harmTypes !== null
     && !optionsError
 
   useEffect(() => {
@@ -81,13 +82,22 @@ export default function FindingDialog({
     submitting.current = true
     setSaving(true)
     setError('')
+    setAttackResultIdError('')
     const trimmedAttackResultId = attackResultId.trim()
     const signature = JSON.stringify([draft, trimmedAttackResultId])
     if (attempt.current?.signature !== signature) attempt.current = { signature, id: generateClientId() }
     try {
       await onSave(draft, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
-      setError(toApiError(cause).detail)
+      const apiError = toApiError(cause)
+      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
+        .map(item => item.message)
+      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
+        .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
+      setAttackResultIdError(evidenceMessages.join(' '))
+      if (evidenceMessages.length === 0 || otherMessages.length > 0) {
+        setError([otherMessages.length > 0 ? '' : apiError.detail, ...otherMessages].filter(Boolean).join(' '))
+      }
     } finally {
       submitting.current = false
       setSaving(false)
@@ -164,9 +174,10 @@ export default function FindingDialog({
                 onChange={(_, data) => { setDraft(value => ({ ...value, description: data.value })) }} />
             </Field>
             {evidenceField && <Field label="Evidence attack ID"
+              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
               <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
-                onChange={(_, data) => { setAttackResultId(data.value) }} />
+                onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />
             </Field>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>

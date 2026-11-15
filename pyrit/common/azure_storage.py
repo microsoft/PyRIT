@@ -3,7 +3,15 @@
 
 """Lightweight Azure Storage URI helpers."""
 
+import re
 from urllib.parse import parse_qs, urlparse
+
+# A scheme followed by "://" and everything up to whitespace, so a quote can't end a URL before its query.
+# A scheme starts only where one can't continue from the character before it, such as after "_" or a
+# space, so each run of scheme characters is scanned once and long text stays fast.
+_URL_IN_TEXT = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://\S+")
+# The signature of a SAS token, which can also appear in text without a scheme.
+_SAS_SIGNATURE = re.compile(r"(?i)\bsig=[^&\s]+")
 
 
 def is_azure_blob_uri(value: str, *, min_path_segments: int = 1) -> bool:
@@ -48,9 +56,30 @@ def has_sas_signature(value: str) -> bool:
 
 def redact_url_credentials(value: str) -> str:
     """
-    Remove query parameters and fragments from a URL for display or logging.
+    Remove the user name and password, query parameters, and fragment from a URL for display or logging.
 
     Returns:
-        str: The URL without query parameters or a fragment.
+        str: The URL without them.
     """
-    return urlparse(value)._replace(query="", fragment="").geturl()
+    parsed = urlparse(value)
+    return parsed._replace(netloc=parsed.netloc.rpartition("@")[2], query="", fragment="").geturl()
+
+
+def redact_urls(text: str) -> str:
+    """
+    Remove the user name and password, query parameters, and fragment from every URL in a text.
+
+    A query or user name can hold a credential, such as a SAS token. A URL that can't be parsed is
+    hidden entirely, and a SAS signature is hidden wherever it appears.
+
+    Returns:
+        str: The text with each URL redacted.
+    """
+
+    def redact(match: re.Match[str]) -> str:
+        try:
+            return redact_url_credentials(match.group(0))
+        except ValueError:
+            return "<URL hidden>"
+
+    return _SAS_SIGNATURE.sub("sig=<hidden>", _URL_IN_TEXT.sub(redact, text))

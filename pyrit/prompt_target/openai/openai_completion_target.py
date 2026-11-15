@@ -2,14 +2,14 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     limit_requests_per_minute,
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 class OpenAICompletionTarget(OpenAITarget):
     """A prompt target for OpenAI completion endpoints."""
 
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _response_adapter = CompletionsResponseAdapter()
 
@@ -83,8 +84,6 @@ class OpenAICompletionTarget(OpenAITarget):
         Raises:
             PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
         """
-        super().__init__(custom_configuration=custom_configuration, **kwargs)
-
         # Validate generation parameters.
         validate_temperature(temperature)
         validate_top_p(top_p)
@@ -97,6 +96,7 @@ class OpenAICompletionTarget(OpenAITarget):
         self._frequency_penalty = frequency_penalty
         self._presence_penalty = presence_penalty
         self._n = n
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -165,6 +165,7 @@ class OpenAICompletionTarget(OpenAITarget):
 
         # Filter out None values
         request_params: dict[str, Any] = {k: v for k, v in body_parameters.items() if v is not None}
+        self._prepare_request_generation(body=request_params, request=message)
 
         # Use unified error handler - automatically detects Completion and validates
         response = await self._handle_openai_request_async(

@@ -68,7 +68,9 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         """
         try:
             logger.info(f"Loading local dataset from {self.file_path}")
-            dataset = await asyncio.to_thread(SeedDataset.from_yaml_file, self.file_path)
+            dataset = await asyncio.to_thread(
+                SeedDataset.from_yaml_file, self.file_path, default_dataset_name=self.dataset_name
+            )
             if not dataset.dataset_name:
                 dataset.dataset_name = self.dataset_name
             return dataset
