@@ -3011,7 +3011,11 @@ class MemoryInterface(abc.ABC):
                 conditions.append(
                     or_(
                         *(
-                            self._get_scenario_result_label_condition(labels={key: str(value)}).unique_params()
+                            # Uniquify binds on a statement, then reuse only its predicate.
+                            select()
+                            .where(self._get_scenario_result_label_condition(labels={key: str(value)}))
+                            .unique_params()
+                            .whereclause
                             for value in values
                         )
                     )
