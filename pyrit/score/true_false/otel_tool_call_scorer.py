@@ -196,6 +196,11 @@ def match_tools_called_in_order(
     establish no order. An observed order stands with partial evidence. A negative needs
     complete evidence in which every candidate order is contradicted or a tool never ran.
 
+    Trace events do not retain arguments, so a requirement with argument constraints cannot be
+    confirmed: an observed order is undetermined, because the ordered attempts may not be the
+    matching calls. A contradiction still stands, because it rules out every choice of attempts,
+    matching ones included.
+
     Returns:
         bool | None: True for an observed order, false for a complete contradiction, otherwise None.
 
@@ -207,7 +212,7 @@ def match_tools_called_in_order(
         return None
     runs = [[event for event in payload.events if event.name == tool.name] for tool in condition.tools]
     if _ordered_chain_exists(runs=runs, tolerance=clock_skew_tolerance, definite=True):
-        return True
+        return None if any(tool.arguments for tool in condition.tools) else True
     if acquisition is not Acquisition.COMPLETE or not payload.coverage.complete:
         return None
     # A tool that never ran leaves no possible order, so complete evidence of its absence is false.
@@ -429,7 +434,13 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
             acquisition=observation.acquisition,
             clock_skew_tolerance=self._clock_skew_tolerance,
         )
-        names = " -> ".join(tool.name for tool in condition.tools)
+        constrains_arguments = any(tool.arguments for tool in condition.tools)
+        if constrains_arguments:
+            logger.warning(
+                "OtelToolCallOrderScorer received a requirement with argument constraints, which trace evidence "
+                "cannot confirm. Use MessageToolCallScorer to match arguments."
+            )
+        names = " -> ".join(describe_tool_requirement(tool) for tool in condition.tools)
         rationale = (
             f"Observed execution of the required tools in order: {names}."
             if value is True
@@ -437,6 +448,8 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
             if value is False
             else f"Trace evidence cannot establish the required tool order: {names}."
         )
+        if value is None and constrains_arguments:
+            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),

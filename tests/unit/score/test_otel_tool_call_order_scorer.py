@@ -10,11 +10,13 @@ import pytest
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     Acquisition,
+    Equals,
     Message,
     MessagePiece,
     MessageScorable,
     RequestTraceContext,
     ScoringExpectation,
+    ToolArgumentRequirement,
     ToolCallRequirement,
     ToolEventsObservationPayload,
     ToolExecution,
@@ -237,6 +239,61 @@ def test_presence_and_order_scorers_are_siblings_sharing_the_scope_version() -> 
         order.get_identifier().params["message_scope_version"]
         == presence.get_identifier().params["message_scope_version"]
     )
+
+
+def _order_with_constrained_send() -> ToolsCalledInOrder:
+    return ToolsCalledInOrder(
+        tools=(
+            ToolCallRequirement(name="read"),
+            ToolCallRequirement(
+                name="send", arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),)
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("runs", "expected"),
+    [
+        # An observed order may not use the matching calls, so it cannot be confirmed.
+        ((("read", 0, 1), ("send", 2, 3)), None),
+        # A contradiction rules out every choice of attempts, matching ones included.
+        ((("send", 0, 1), ("read", 2, 3)), False),
+        # So does a tool that never ran.
+        ((("read", 0, 1),), False),
+    ],
+)
+def test_argument_constraints_cannot_confirm_an_order_from_traces(
+    runs: tuple[tuple[str, float, float | None], ...], expected: bool | None
+) -> None:
+    assert (
+        match_tools_called_in_order(
+            condition=_order_with_constrained_send(),
+            payload=_payload(*runs, complete=True),
+            acquisition=Acquisition.COMPLETE,
+        )
+        is expected
+    )
+
+
+async def test_order_scorer_notes_unconfirmable_argument_constraints_async(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_span("read", 0, 1, 0))
+    client.add_span(_span("send", 2, 3, 1))
+    client.mark_complete(trace_ids=(_TRACE,))
+    scorer = OtelToolCallOrderScorer(source=OtelTraceSource(trace_client=client))
+    expectation = ScoringExpectation(conditions=(_order_with_constrained_send(),))
+
+    with caplog.at_level("WARNING"):
+        score = (await scorer.score_async(scorable=TraceScorable(trace_ids=(_TRACE,)), expectation=expectation))[0]
+
+    assert score.is_undetermined
+    assert "read -> send(to)" in score.score_rationale
+    assert "Trace evidence does not retain tool arguments" in score.score_rationale
+    assert "MessageToolCallScorer" in score.score_rationale
+    assert "argument constraints, which trace evidence cannot confirm" in caplog.text
 
 
 def test_scorer_declares_only_the_order_condition() -> None:
