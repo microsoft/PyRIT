@@ -201,6 +201,7 @@ jest.mock('@/components/Layout/MainLayout', () => {
   }
 })
 jest.mock('@/services/api', () => ({
+  mediaApi: { upload: jest.fn().mockResolvedValue({ value: '/stored/attachment' }) },
   runtimeApi: { getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }) },
   versionApi: { getVersion: jest.fn().mockResolvedValue({ version: 'test' }) },
   authApi: { getAccess: jest.fn().mockResolvedValue({ isAdmin: false }) },

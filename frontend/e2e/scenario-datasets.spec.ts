@@ -13,6 +13,8 @@ import { compatibilityHeaders } from './_compatibility'
 const SCENARIO = 'offline.datasets'
 const TARGET = 'Local dataset target'
 const ESTIMATE_PATH = `/api/scenarios/catalog/${SCENARIO}/estimate`
+const RUN_COMPLETION_TIMEOUT_MS = 15_000
+const RUN_POLL_INTERVAL_MS = 250
 const STORED = [
   { name: 'acceptance_primary', count: 8 },
   { name: 'acceptance_searchable', count: 3 },
@@ -132,14 +134,37 @@ async function assertNoPreparation(request: APIRequestContext): Promise<FixtureS
 }
 
 async function completedRun(request: APIRequestContext, run: ScenarioRunSummary): Promise<ScenarioRunSummary> {
-  let completed = run
-  await expect.poll(async (): Promise<string> => {
-    const reading = await request.get(`/api/scenarios/runs/${run.scenario_result_id}`, { headers: compatibilityHeaders() })
-    expect(reading.status()).toBe(200)
-    completed = await reading.json()
-    return completed.status
-  }).toBe('COMPLETED')
-  return completed
+  const deadline = performance.now() + RUN_COMPLETION_TIMEOUT_MS
+  let latest = run
+  try {
+    while (true) {
+      const remaining = deadline - performance.now()
+      if (remaining <= 0) throw new Error(`Completion deadline exceeded (${RUN_COMPLETION_TIMEOUT_MS}ms)`)
+      const reading = await request.get(`/api/scenarios/runs/${run.scenario_result_id}`, {
+        headers: compatibilityHeaders(), timeout: remaining,
+      })
+      expect(reading.status()).toBe(200)
+      const summary: ScenarioRunSummary = await reading.json()
+      expect(summary).toMatchObject({
+        scenario_result_id: run.scenario_result_id,
+        status: expect.stringMatching(/^(CREATED|QUEUED|IN_PROGRESS|COMPLETED|FAILED|CANCELLED)$/),
+        completed_attacks: expect.any(Number), total_attacks: expect.any(Number),
+      })
+      latest = summary
+      if (latest.status === 'FAILED' || latest.status === 'CANCELLED') {
+        throw new Error(`Run ended with ${latest.status}`)
+      }
+      const timeLeft = deadline - performance.now()
+      if (timeLeft <= 0) throw new Error(`Completion deadline exceeded (${RUN_COMPLETION_TIMEOUT_MS}ms)`)
+      if (latest.status === 'COMPLETED') return latest
+      await new Promise<void>((resolve) => { setTimeout(resolve, Math.min(RUN_POLL_INTERVAL_MS, timeLeft)) })
+    }
+  } catch (error) {
+    throw new Error(`Run ${run.scenario_result_id} did not complete: ${JSON.stringify({
+      status: latest.status, completed_attacks: latest.completed_attacks,
+      total_attacks: latest.total_attacks, error: latest.error,
+    })}\n${String(error)}`, { cause: error })
+  }
 }
 
 test.beforeEach(async ({ request }: { request: APIRequestContext }): Promise<void> => {

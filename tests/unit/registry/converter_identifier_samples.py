@@ -11,6 +11,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
+import yaml
 from PIL import Image
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -18,18 +19,21 @@ from pyrit.converter import (
     AllWordsSelectionStrategy,
     CodeAttackConverter,
     ContentWordSelectionStrategy,
+    ImagePromptStyleConverter,
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
     PositionSelectionStrategy,
     ProportionSelectionStrategy,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    RolePlayToolCallConverter,
     TokenSelectionStrategy,
     WordIndexSelectionStrategy,
     WordKeywordSelectionStrategy,
     WordPositionSelectionStrategy,
     WordProportionSelectionStrategy,
     WordRegexSelectionStrategy,
+    ZalgoConverter,
 )
 from pyrit.datasets import TextJailBreak
 from pyrit.models import SeedPrompt
@@ -107,11 +111,19 @@ _CUSTOM_CODE_ATTACK = {
     "encoding": CodeAttackConverter.Encoding.PYTHON_LIST,
 }
 
+LONG_TEXT = "x" * 1000
+LONG_LIST = [f"item{index}" for index in range(100)]
+_CODEWORDS = tuple(f"word{index}" for index in range(21))
+
+_IMAGE_FILTER = {"filter_name": ImagePromptStyleConverter.list_available_filters()[0]}
+
 SETTINGS_THAT_NEED_ANOTHER: dict[tuple[str, str], dict[str, Any]] = {
     ("DecompositionConverter", "codewords"): {"use_word_game": True},
+    ("GridCompositeConverter", "payload_position"): {"random_seed": 1},
     ("DecompositionConverter", "word_game_prompt"): {"use_word_game": True},
     ("SelectiveTextConverter", "word_separator"): {"selection_strategy": WordIndexSelectionStrategy(indices=[0])},
-    ("ImagePromptStyleConverter", "variation"): {"filter_name": "public_space_tv_broadcast"},
+    ("ImagePromptStyleConverter", "filter_name"): _IMAGE_FILTER,
+    ("ImagePromptStyleConverter", "variation"): _IMAGE_FILTER,
     ("CodeChameleonConverter", "encrypt_function"): _CUSTOM_CODECHAMELEON,
     ("CodeChameleonConverter", "decrypt_function"): _CUSTOM_CODECHAMELEON,
     ("CodeAttackConverter", "encoding"): _CUSTOM_CODE_ATTACK,
@@ -146,7 +158,12 @@ _PROPORTIONS = (
 
 SELECTION_STRATEGY_SETTINGS: dict[type, tuple[dict[str, Any], ...]] = {
     IndexSelectionStrategy: ({"end": 3}, {"end": 4}, {"start": 1, "end": 3}, {"end": 0}, {}),
-    RegexSelectionStrategy: ({"pattern": "a"}, {"pattern": "b"}, {"pattern": re.compile("a", re.IGNORECASE)}),
+    RegexSelectionStrategy: (
+        {"pattern": "a"},
+        {"pattern": "b"},
+        {"pattern": re.compile("a", re.IGNORECASE)},
+        {"pattern": re.compile("a", re.MULTILINE)},
+    ),
     KeywordSelectionStrategy: (
         {"keyword": "a"},
         {"keyword": "b"},
@@ -180,7 +197,12 @@ SELECTION_STRATEGY_SETTINGS: dict[type, tuple[dict[str, Any], ...]] = {
         {"proportion": 0.5, "seed": 1},
         {"proportion": 0.5, "seed": 0},
     ),
-    WordRegexSelectionStrategy: ({"pattern": "a"}, {"pattern": "b"}, {"pattern": re.compile("a", re.IGNORECASE)}),
+    WordRegexSelectionStrategy: (
+        {"pattern": "a"},
+        {"pattern": "b"},
+        {"pattern": re.compile("a", re.IGNORECASE)},
+        {"pattern": re.compile("a", re.MULTILINE)},
+    ),
     WordPositionSelectionStrategy: _PROPORTIONS,
     AllWordsSelectionStrategy: ({},),
     ContentWordSelectionStrategy: (
@@ -192,6 +214,7 @@ SELECTION_STRATEGY_SETTINGS: dict[type, tuple[dict[str, Any], ...]] = {
         {"stopwords": ["a", "c"]},
         {"stopwords": ["b", "c"]},
         {"stopwords": _MANY_WORDS},
+        {"stopwords": []},
         {"candidate_words": ["a", "b"]},
         {"candidate_words": ["a", "c"]},
         {"candidate_words": ["b", "c"]},
@@ -234,12 +257,28 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
     other_pdf, other_docx = folder / "first_document" / "other.pdf", folder / "first_document" / "other.docx"
     other_pdf.write_bytes(b"other")
     other_docx.write_bytes(b"other")
-    styles = Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
-    filters = []
-    for subfolder, source in (("first", "gritty_documentary.yaml"), ("second", "laundromat_fisheye.yaml")):
+    styles = ImagePromptStyleConverter.IMAGE_PROMPT_STYLE_DIR
+    filters, wordswaps = [], []
+    for subfolder, source in zip(("first", "second"), ImagePromptStyleConverter.list_available_filters(), strict=False):
         (folder / subfolder).mkdir(exist_ok=True)
         filters.append(folder / subfolder / "custom.yaml")
-        filters[-1].write_bytes((styles / source).read_bytes())
+        filters[-1].write_bytes((styles / f"{source}.yaml").read_bytes())
+        wordswaps.append(folder / subfolder / "wordswap.yaml")
+        wordswaps[-1].write_text(f"word: [{subfolder}]\n", encoding="utf-8")
+    first_filter = yaml.safe_load(filters[0].read_text(encoding="utf-8"))
+    variations = first_filter["variations"]
+    first_variation = next(iter(variations))
+    for subfolder, change in (
+        ("style_instructions", {"style_instructions": "Other."}),
+        ("variation_text", {"variations": {**variations, first_variation: "Other."}}),
+        (
+            "variation_name",
+            {"variations": {"other" if key == first_variation else key: value for key, value in variations.items()}},
+        ),
+    ):
+        (folder / subfolder).mkdir(exist_ok=True)
+        filters.append(folder / subfolder / "custom.yaml")
+        filters[-1].write_text(yaml.safe_dump({**first_filter, **change}, sort_keys=False), encoding="utf-8")
     code_attack = _CUSTOM_CODE_ATTACK["template"].read_text(encoding="utf-8")
     (folder / "first_code_attack").mkdir(exist_ok=True)
     (folder / "second_code_attack").mkdir(exist_ok=True)
@@ -258,7 +297,7 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "base_image": (pngs[0], pngs[1], str(other_png)),
         "carrier_image_path": (pngs[0], pngs[1], str(other_png)),
         "benign_image_path": (jpgs[0], jpgs[1], str(other_jpg)),
-        "innocuous_images": (pngs[:19], [pngs[19], *pngs[1:19]], [*pngs[:18], pngs[19]]),
+        "innocuous_images": (pngs[:19], [pngs[19], *pngs[1:19]], [*pngs[:18], pngs[19]], [*pngs[:19], pngs[18]]),
         "payload_background": (pngs[0], pngs[1], str(other_png)),
         "PDFConverter.existing_pdf": (documents[0], documents[2], other_pdf),
         "WordDocConverter.existing_docx": (documents[1], documents[3], other_docx),
@@ -271,6 +310,8 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             SeedPrompt(value="Second {{ prompt }}", parameters=["prompt"]),
         ),
         "LLMGenericTextConverter.system_prompt_template": (SeedPrompt(value="First"), SeedPrompt(value="Second")),
+        "PuzzledConverter.essential_words": (["value", "valuex"], ["valuex", "valuex"], ["value", "valuexy"]),
+        "TranslationConverter.language": ("first", "second", f"{LONG_TEXT}a", f"{LONG_TEXT}b"),
         "TranslationConverter.prompt_template": (
             SeedPrompt(value="First {{ language }}", parameters=["language"]),
             SeedPrompt(value="Second {{ language }}", parameters=["language"]),
@@ -291,10 +332,35 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
         "CodeAttackConverter.encoding": tuple(CodeAttackConverter.Encoding),
         "ScientificTranslationConverter.mode": ("academic", "technical"),
         "RepeatTokenConverter.token_insert_mode": ("prepend", "append", "repeat"),
+        "DiacriticConverter.accent": ("grave", "tilde", "umlaut"),
+        "DiacriticConverter.target_chars": ("aei", "aeo", "aeioux", "aeiouxy", "AEIOU"),
+        "ZalgoConverter.intensity": (11, 12, 0, ZalgoConverter.MAX_INTENSITY - 1, ZalgoConverter.MAX_INTENSITY),
+        "AsciiArtConverter.font": ("block", "block2", "mix", "rnd-small"),
+        "CharSwapConverter.word_selection_strategy": (
+            WordIndexSelectionStrategy(indices=[0]),
+            WordIndexSelectionStrategy(indices=[1]),
+            WordProportionSelectionStrategy(proportion=0.5),
+            WordProportionSelectionStrategy(proportion=0.6),
+        ),
+        "PDFConverter.font_type": ("Times", "Courier", "Symbol", "ZapfDingbats", "Helvetica-Bold", "Helvetica-Oblique"),
+        "PDFConverter.font_color": ((0, 0, 0), (1, 1, 1), (2, 1, 1), (1, 2, 1), (1, 1, 2), (255, 255, 255)),
+        "RolePlayToolCallConverter.message_format": (
+            *RolePlayToolCallConverter.MESSAGE_FORMATS,
+            "xml",
+            f"{LONG_TEXT}a",
+            f"{LONG_TEXT}b",
+        ),
+        "GridCompositeConverter.payload_position": (0, 2),
+        "GridCompositeConverter.random_seed": (2, 0),
+        "codewords": (
+            _CODEWORDS,
+            tuple(reversed(_CODEWORDS)),
+            *((*_CODEWORDS[:index], f"{word}x", *_CODEWORDS[index + 1 :]) for index, word in enumerate(_CODEWORDS)),
+        ),
         "SATAMaskingConverter.num_masks": (3, 4),
-        "SATAMaskingConverter.skip_first": (2, 3),
+        "SATAMaskingConverter.skip_first": (0, 2, 3),
         "video_path": ("first/video.mp4", "second/video.mp4", "first/other.mp4"),
-        "wordswap_path": ("filipino.yaml", "indian.yaml"),
+        "wordswap_path": ("filipino.yaml", "indian.yaml", *wordswaps),
         "font_name": (Path("first/font.ttf"), Path("second/font.ttf"), Path("first/other.ttf")),
         "filter_path": tuple(filters),
         "injection_items": (
@@ -304,29 +370,67 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             [{"text": "first", "page": 1}, {"text": "second"}],
             [{"text": "first", "x": 20}, {"text": "second"}],
             [{"text": "first", "font_size": 20}, {"text": "second"}],
+            [{"text": "first", "y": 20}, {"text": "second"}],
+            [{"text": "first", "font": "Times"}, {"text": "second"}],
+            [{"text": "first", "font_color": (255, 0, 0)}, {"text": "second"}],
         ),
         "encrypt_function": (*_SAME_QUALNAME_FUNCTIONS, _repeat(2), _repeat(3)),
         "decrypt_function": _SAME_QUALNAME_FUNCTIONS,
-        "filter_name": ("laundromat_fisheye", "polaroid_vintage_film"),
-        "variation": ("dive_bar_reflection", "airport_lounge"),
-        "replace": ("first", "second", ["first", "second"], ["first", "third"], ["second", "third"]),
+        "filter_name": tuple(ImagePromptStyleConverter.list_available_filters()),
+        "variation": tuple(ImagePromptStyleConverter.list_available_variations(**_IMAGE_FILTER)),
+        "replace": (
+            "first",
+            "second",
+            ["first", "second"],
+            ["first", "third"],
+            ["second", "third"],
+            ["first", "first", "second"],
+            f"{LONG_TEXT}a",
+            f"{LONG_TEXT}b",
+        ),
         "zero_char": ("\u200b", "\u200c"),
         "one_char": ("\u200d", "\u2060"),
         "base_char_utf8": ("a", "b"),
-        "custom_substitutions": ({"a": ["4"]}, {"a": ["@"]}, {"b": ["4"]}),
+        "custom_substitutions": (
+            {"a": ["4"]},
+            {"a": ["@"]},
+            {"b": ["4"]},
+            {"a": ["4", "@"]},
+            {"a": ["@", "4"]},
+            {"a": ["4"], "b": ["@"]},
+            {"a": ["4"], "b": ["4"]},
+        ),
         "stopwords": (["the", "of"], ["the", "in"], ["of", "in"]),
         "candidate_words": (["alpha", "beta"], ["alpha", "gamma"], ["beta", "gamma"]),
-        "template": ("First {{ prompt }}", "Second {{ prompt }}", "First {{ prompt }} now"),
+        "template": (
+            "First {{ prompt }}",
+            "Second {{ prompt }}",
+            "First {{ prompt }} now",
+            "First {{ prompt }} " + LONG_TEXT + "a",
+            "First {{ prompt }} " + LONG_TEXT + "b",
+        ),
         "seed": (0, 1),
         "random_seed": (0, 1),
-        "CaesarConverter.caesar_offset": (1, -1, 2),
-        "trap_template": ("{prompt} is {wrong_value}", "Is {prompt} {wrong_value}?"),
-        "encrypt_type": ("reverse", "binary_tree"),
-        "persuasion_technique": ("authority_endorsement", "expert_endorsement"),
+        "CaesarConverter.caesar_offset": (1, -1, 2, 0, 24, 25),
+        "trap_template": (
+            "{prompt} is {wrong_value}",
+            "Is {prompt} {wrong_value}?",
+            "{prompt} is {wrong_value} " + LONG_TEXT + "a",
+            "{prompt} is {wrong_value} " + LONG_TEXT + "b",
+        ),
+        "encrypt_type": ("reverse", "binary_tree", "odd_even", "length"),
+        "persuasion_technique": tuple(
+            sorted(path.stem for path in (Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion").glob("*.yaml"))
+        ),
         "tokenizer": (_Vocabulary("abcdefgh"), _Vocabulary("ijklmnop")),
         "MathObfuscationConverter.rng": (random.Random(1), random.Random(2)),
         "retry_exceptions": ((ValueError,), (KeyError,)),
-        "SearchReplaceConverter.regex_flags": (re.IGNORECASE, re.MULTILINE),
+        "SearchReplaceConverter.regex_flags": (
+            re.IGNORECASE,
+            re.MULTILINE,
+            re.IGNORECASE | re.MULTILINE,
+            re.DOTALL,
+        ),
         "jailbreak_template": (
             TextJailBreak(string_template="Say first {{ prompt }} now"),
             TextJailBreak(string_template="Say third {{ prompt }} now"),

@@ -131,6 +131,7 @@ from pyrit.converter import (
     EmojiConverter,
     FirstLetterConverter,
     FlipConverter,
+    FullwidthConverter,
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
@@ -169,6 +170,7 @@ print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore
+print("Fullwidth:", await FullwidthConverter().convert_async(prompt=prompt))  # type: ignore
 # Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
@@ -406,6 +408,7 @@ from pyrit.converter import (
     DenylistConverter,
     ImagePromptStyleConverter,
     IPAConverter,
+    LogicJailbreakConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -487,6 +490,10 @@ print("Toxic Sentence:", await toxic_generator.convert_async(prompt="building"))
 # MathPrompt [@bethany2024mathprompt] transforms text into symbolic math
 math_prompt_converter = MathPromptConverter(converter_target=attack_llm)
 print("Math Prompt:", await math_prompt_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Logic Jailbreak [@peng2026logic] rewrites the request as a formal logical expression
+logic_jailbreak_converter = LogicJailbreakConverter(converter_target=attack_llm)
+print("Logic Jailbreak:", await logic_jailbreak_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Scientific converter translates into scientific language
 scientific_translation_converter = ScientificTranslationConverter(converter_target=attack_llm, mode="academic")
