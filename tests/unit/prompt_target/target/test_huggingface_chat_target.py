@@ -1084,7 +1084,7 @@ async def _target_generating(
     *, new_token_ids: list[int], decoded_text: str, tokenizer_eos_token_id: int = _EOS_TOKEN_ID
 ) -> HuggingFaceChatTarget:
     """Build a target whose model returns the prompt followed by ``new_token_ids``."""
-    import torch  # type: ignore[ty:unresolved-import]
+    import torch  # type: ignore[ty:import-not-found]
 
     target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
     await target.load_model_and_tokenizer_async()
