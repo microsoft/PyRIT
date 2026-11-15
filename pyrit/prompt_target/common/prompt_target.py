@@ -6,7 +6,8 @@ import logging
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, ClassVar, final
+from types import MappingProxyType
+from typing import Any, ClassVar, Self, final
 
 from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
@@ -120,6 +121,33 @@ class PromptTarget(Identifiable):
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
 
+    # Credential parameters that, left empty, let the target fall back to a credential from this
+    # server (an environment variable, or the server's Azure identity), each mapped to the value
+    # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
+    # parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls back
+    # to this server's credentials, so a saved entry that would is refused. Choosing ``"identity"``
+    # isn't a fallback.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
+
+    # Parameters that say where the target sends requests (a URL, or a path the target adds to
+    # one), each mapped to whether an empty value takes this server's setting. A saved target sets
+    # each one that would, since a server setting can carry a credential, and none can carry a
+    # credential itself: a user name or password, a SAS token, a fragment, or a query other than
+    # ``api-version``.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({})
+
+    # Environment variables the target's client reads extra headers from, whatever the target's own
+    # settings say. A server can put a credential there, so a saved target isn't built while one is set.
+    server_header_variables: ClassVar[tuple[str, ...]] = ()
+
+    # Why this target type can't be saved even without a credential, or None when it can.
+    not_saveable_reason: ClassVar[str | None] = None
+
+    # Constructor parameters that choose where requests go or how they authenticate. A private
+    # copy built from API input keeps its source's values for these, so a credential stays
+    # with the endpoint it was configured for.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
@@ -153,6 +181,23 @@ class PromptTarget(Identifiable):
             dict[str, object]: Additional constructor parameters.
         """
         return {}
+
+    @classmethod
+    async def create_async(cls, **kwargs: Any) -> Self:
+        """
+        Build the target on the calling event loop.
+
+        Targets whose construction needs slow setup, such as a first import, override this to do that setup in a
+        worker thread first. The constructor itself still runs on the calling loop, so the tasks and locks it creates
+        belong to that loop.
+
+        Args:
+            **kwargs (Any): The constructor arguments.
+
+        Returns:
+            Self: The new target.
+        """
+        return cls(**kwargs)
 
     @classmethod
     def _validate_auth_mode(cls, auth_mode: AuthMode | None) -> None:
@@ -326,6 +371,7 @@ class PromptTarget(Identifiable):
         3. Validates the normalized conversation against the target's capabilities.
         4. Delegates to ``_send_prompt_to_target_async`` with the normalized conversation.
 
+        System-prompt support is checked here even when a target overrides ``_validate_request``.
         Subclasses MUST NOT override this method. Override
         ``_send_prompt_to_target_async`` instead.
 
@@ -339,7 +385,7 @@ class PromptTarget(Identifiable):
             list[Message]: Response messages from the target.
 
         Raises:
-            ValueError: If the message or normalized conversation are empty.
+            ValueError: If the message or normalized conversation are empty, or unsupported system messages remain.
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
@@ -377,6 +423,13 @@ class PromptTarget(Identifiable):
             normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
             if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
+            if not self.configuration.includes(capability=CapabilityName.SYSTEM_PROMPT) and any(
+                piece.api_role == "system" for turn in normalized_conversation for piece in turn.message_pieces
+            ):
+                raise ValueError(
+                    "This target does not support system prompts and no normalizer adapted the system message. "
+                    "If your target does support this, set the custom_configuration parameter accordingly."
+                )
             self._validate_request(normalized_conversation=normalized_conversation)
             self.validate_request_generation_config(normalized_request)
             with target_trace_context(

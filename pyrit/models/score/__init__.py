@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         ProgramBehaves,
         ProgramCase,
         ProgramResult,
+        ToolArgumentRequirement,
         ToolCallRequirement,
         ToolsCalled,
     )
@@ -112,6 +113,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SurfaceMatch": "pyrit.models.score.surface",
     "SurfaceObservationPayload": "pyrit.models.score.observation",
     "SurfaceScorable": "pyrit.models.score.scorable",
+    "ToolArgumentRequirement": "pyrit.models.score.condition",
     "ToolCallRequirement": "pyrit.models.score.condition",
     "ToolEventsObservationPayload": "pyrit.models.score.observation",
     "ToolExecution": "pyrit.models.score.trace",

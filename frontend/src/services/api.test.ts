@@ -43,8 +43,8 @@ import {
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
 import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import type { AttackFindingListResponse, FindingExportRequest } from "@/types";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
@@ -866,6 +866,28 @@ describe("api service", () => {
       expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/metadata", {
         params: { conversation_id: "selected" },
       });
+    });
+
+    it("should get the findings linked to an attack", async () => {
+      const data: AttackFindingListResponse = {
+        attack_result_id: "attack/id",
+        items: [{
+          id: "finding", operation_id: "operation", operation_name: "Red team", evidence_id: "evidence",
+          title: "Protected system instructions disclosed", description: "", severity: "important",
+          created_at: "2026-11-06T00:00:00Z",
+        }],
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getAttackFindings("attack/id")).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/findings");
+    });
+
+    it("should propagate attack finding errors", async () => {
+      const error = new Error("Findings unavailable");
+      (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
+      await expect(attacksApi.getAttackFindings("attack")).rejects.toBe(error);
     });
 
     it("should get attack messages", async () => {

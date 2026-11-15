@@ -4,14 +4,16 @@
  */
 
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { fluentProviderClassNames } from "@fluentui/react-components";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
 import App from "./App";
 
-import { attacksApi, operationsApi, targetsApi } from "./services/api";
+import { attacksApi, operationsApi, scenariosApi, targetsApi } from "./services/api";
 import { deferred } from "./test-utils/deferred";
 import { makeTarget } from "./test-utils/targetFixtures";
+import { LIVE_ATTACK_POLL_INTERVAL_MS } from "./hooks/useLiveAttackMetadata";
 import type { AttackMetadata } from "./types";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
@@ -109,6 +111,10 @@ jest.mock("./services/api", () => ({
   operationsApi: {
     get: jest.fn(),
   },
+  scenariosApi: {
+    getRunProgress: jest.fn(),
+    getRunConversation: jest.fn(),
+  },
   setMsalInstance: jest.fn(),
 }));
 
@@ -139,6 +145,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange,
     operatorReadOnly,
     featureNavigation,
+    banner,
   }: {
     children: React.ReactNode;
     currentView: string;
@@ -147,10 +154,12 @@ jest.mock("./components/Layout/MainLayout", () => {
     onLabelsChange: (labels: Record<string, string>) => void;
     operatorReadOnly: boolean;
     featureNavigation?: React.ReactNode;
+    banner?: React.ReactNode;
   }) => {
     const navigate = useNavigate();
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        {banner}
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
@@ -214,8 +223,12 @@ jest.mock("./components/Chat/ChatWindow", () => {
     scenarioResultId,
     isLoadingAttack,
     executionReadOnly,
+    inProgress,
+    attackScenarioResultId,
     relatedConversationCount,
     lastResponseMessagePieceId,
+    readConversationById,
+    readConversations,
   }: {
     activeTarget: import("./types").TargetInstance | null;
     draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
@@ -234,8 +247,12 @@ jest.mock("./components/Chat/ChatWindow", () => {
     scenarioResultId?: string | null;
     isLoadingAttack?: boolean;
     executionReadOnly?: boolean;
+    inProgress?: boolean;
+    attackScenarioResultId?: string | null;
     relatedConversationCount?: number;
     lastResponseMessagePieceId?: string | null;
+    readConversationById?: (id: string) => Promise<import("./types").ConversationMessagesResponse>;
+    readConversations?: import("./types").ReadAttackConversationReferences;
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();
@@ -323,8 +340,11 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
         <span data-testid="execution-read-only">{String(executionReadOnly)}</span>
+        <span data-testid="in-progress">{String(inProgress)}</span>
+        <span data-testid="attack-scenario-result-id">{attackScenarioResultId ?? "none"}</span>
         <span data-testid="related-conversation-count">{relatedConversationCount}</span>
         <span data-testid="last-response-id">{lastResponseMessagePieceId ?? "none"}</span>
+        <span data-testid="recorded-readers">{String(Boolean(readConversationById && readConversations))}</span>
         <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
           {`${location.pathname}${location.search}`}
         </span>
@@ -868,6 +888,18 @@ describe("App", () => {
       "home"
     );
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("says inside the app's layout and theme that saved entries couldn't be restored", async () => {
+    const { runtimeApi } = jest.requireMock("./services/api");
+    runtimeApi.getReadiness.mockResolvedValueOnce({
+      ready: false, state: "failed", generation: "first", restore_failures: 1,
+    });
+    renderApp();
+
+    const message = await screen.findByText(/Some saved entries couldn't be restored/);
+    expect(screen.getByTestId("main-layout")).toContainElement(message);
+    expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
   it("renders the view named by the initial URL", () => {
@@ -1597,6 +1629,132 @@ describe("App", () => {
     expect(mockGetAttack.mock.calls.filter((call: unknown[]) => call[0] === "ar-attack-1")).toHaveLength(2);
     await act(async () => { pending.resolve({ ...metadata, attack_result_id: "ar-attack-2", conversation_id: "other-main" }); });
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main");
+  });
+
+  it("follows a running scan attack and shows its saved result in place when it finishes", async () => {
+    jest.useFakeTimers();
+    try {
+      const scanId = "123e4567-e89b-12d3-a456-426614174000";
+      const live: AttackMetadata = {
+        attack_result_id: "live-attack", conversation_id: "branch-1", objective: "Goal", labels: {},
+        outcome: "undetermined", execution_read_only: true, in_progress: true, scenario_result_id: scanId,
+        related_conversation_count: 0, last_response_message_piece_id: null,
+        selected_conversation_id: "branch-1", selected_conversation_valid: true,
+      };
+      mockGetAttack
+        .mockResolvedValueOnce(live)
+        .mockResolvedValueOnce({ ...live, conversation_id: "branch-2", related_conversation_count: 1 })
+        .mockResolvedValueOnce({
+          ...live, conversation_id: "branch-2", related_conversation_count: 1, in_progress: false, outcome: "success",
+          last_response_message_piece_id: "final-response",
+        });
+
+      render(
+        <MemoryRouter initialEntries={["/attack/chat/live-attack"]}>
+          <App /><RouterProbe />
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByTestId("in-progress")).toHaveTextContent("true"));
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("branch-1");
+      expect(screen.getByTestId("attack-scenario-result-id")).toHaveTextContent(scanId);
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+      expect(screen.getByTestId("related-conversation-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("branch-2");
+      expect(screen.getByTestId("in-progress")).toHaveTextContent("true");
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+      expect(screen.getByTestId("in-progress")).toHaveTextContent("false");
+      expect(screen.getByTestId("outcome")).toHaveTextContent("success");
+      expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+      expect(screen.getByTestId("last-response-id")).toHaveTextContent("final-response");
+      expect(screen.getByTestId("route-location")).toHaveTextContent(/^\/attack\/chat\/live-attack$/);
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS * 3); });
+      expect(mockGetAttack).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  describe("recorded-only scan evidence", () => {
+    const scanId = "123e4567-e89b-12d3-a456-426614174000";
+    const canonical = `/attack/chat/interrupted/conversations/recorded?scenarioResultId=${scanId}`;
+    const record = {
+      attack_result_id: "interrupted", conversation_id: "recorded", atomic_attack_name: "direct",
+      objective: "Persisted interrupted objective", started_at: "2026-01-01T00:00:00Z", seed_identifiers: [],
+    };
+    const progress = {
+      run: { scenario_result_id: scanId, scenario_name: "Scenario", scenario_version: 1,
+        status: "CANCELLED" as const, created_at: "2026-01-01T00:00:00Z" },
+      plan: null, results: [], has_more: false, plan_complete: true, recorded_conversations: [record],
+      summary: { overall: { completed: 0, planned: 1, succeeded: 0, success_percentage: null, errors: 0, retries: 0 },
+        techniques: [], seed_groups: [], atomic_groups: [] },
+    };
+    beforeEach(() => {
+      mockGetAttack.mockReset().mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
+      jest.mocked(scenariosApi.getRunProgress).mockReset().mockResolvedValue(progress);
+      jest.mocked(scenariosApi.getRunConversation).mockReset().mockResolvedValue({
+        conversation_id: "recorded", messages: [], target_response_status: null,
+      });
+    });
+
+    it.each([canonical, `/scanner/history/${scanId}/conversations/recorded`])(
+      "should open and freshly reload %s through shared read-only Chat without a fabricated result", async (path: string) => {
+        const view = render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+        await waitFor(() => { expect(screen.getByTestId("recorded-readers")).toHaveTextContent("true"); });
+        expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("recorded");
+        expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
+        expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+        expect(screen.getByTestId("in-progress")).toHaveTextContent("false");
+        expect(screen.getByTestId("objective")).toHaveTextContent(record.objective);
+        expect(screen.getByTestId("outcome")).toHaveTextContent("undetermined");
+        expect(screen.getByTestId("last-response-id")).toHaveTextContent("none");
+        expect(screen.getByTestId("route-location")).toHaveTextContent(canonical);
+        expect(scenariosApi.getRunConversation).toHaveBeenCalledWith(scanId, "recorded");
+        expect(progress.results).toEqual([]);
+        expect(progress.summary.overall.completed).toBe(0);
+        view.unmount();
+        render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+        await waitFor(() => { expect(screen.getByTestId("recorded-readers")).toHaveTextContent("true"); });
+        expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("recorded");
+      },
+    );
+
+    it("should reject a conversation recorded for a different attack", async () => {
+      jest.mocked(scenariosApi.getRunProgress).mockResolvedValue({
+        ...progress, recorded_conversations: [{ ...record, attack_result_id: "other" }],
+      });
+      render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+      expect(await screen.findByTestId("attack-not-found")).toBeInTheDocument();
+      expect(scenariosApi.getRunConversation).not.toHaveBeenCalled();
+    });
+
+    it("should retain explicit transient metadata errors instead of substituting recorded evidence", async () => {
+      mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 503, data: {} } });
+      render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+      expect(await screen.findByText("Could not load attack")).toBeInTheDocument();
+      expect(scenariosApi.getRunProgress).not.toHaveBeenCalled();
+    });
+
+    it("should recover the same live Chat URL from recorded provenance after cancellation removes the execution", async () => {
+      jest.useFakeTimers();
+      try {
+        mockGetAttack.mockResolvedValueOnce({
+          attack_result_id: "interrupted", conversation_id: "recorded", objective: record.objective, labels: {},
+          execution_read_only: true, in_progress: true, scenario_result_id: scanId,
+          outcome: "undetermined", related_conversation_count: 0, last_response_message_piece_id: null,
+          selected_conversation_id: "recorded", selected_conversation_valid: true,
+        });
+        render(<MemoryRouter initialEntries={[canonical]}><App /></MemoryRouter>);
+        await waitFor(() => { expect(screen.getByTestId("in-progress")).toHaveTextContent("true"); });
+        await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+        expect(screen.getByTestId("recorded-readers")).toHaveTextContent("true");
+        expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+        expect(screen.getByTestId("route-location")).toHaveTextContent(canonical);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   it("merges default labels from backend version API", async () => {
