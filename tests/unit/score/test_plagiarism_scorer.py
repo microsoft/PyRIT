@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import unicodedata
 from enum import Enum
 from unittest.mock import patch
@@ -449,80 +450,107 @@ class TestPlagiarismScorerUtilityFunctions:
         reference = "Il était une fois"
         response = unicodedata.normalize("NFD", reference)
         for metric in PlagiarismMetric:
-            assert scorer._plagiarism_score(response, reference, metric=metric) == 1.0
+            assert scorer._plagiarism_score(response, reference=reference, metric=metric) == 1.0
 
     def test_plagiarism_score_distinguishes_combining_mark_words(self, scorer):
         """Different words that differ only by a combining mark are not plagiarism."""
         scorer = PlagiarismScorer(reference_text="दिन")
-        score = scorer._plagiarism_score("दीन", "दिन", metric=PlagiarismMetric.LCS)
+        score = scorer._plagiarism_score("दीन", reference="दिन", metric=PlagiarismMetric.LCS)
         assert score == 0.0
 
     def test_lcs_length_identical(self, scorer):
         """Test LCS with identical sequences."""
         a = ["hello", "world", "test"]
         b = ["hello", "world", "test"]
-        length = scorer._lcs_length(a, b)
+        length = scorer._lcs_length(a, b=b)
         assert length == 3
 
     def test_lcs_length_different(self, scorer):
         """Test LCS with different sequences."""
         a = ["hello", "world", "test"]
         b = ["hello", "test", "case"]
-        length = scorer._lcs_length(a, b)
+        length = scorer._lcs_length(a, b=b)
         assert length == 2  # "hello" and "test"
 
     def test_lcs_length_empty(self, scorer):
         """Test LCS with empty sequences."""
         a = []
         b = ["hello", "world"]
-        length = scorer._lcs_length(a, b)
+        length = scorer._lcs_length(a, b=b)
         assert length == 0
 
     def test_levenshtein_distance_identical(self, scorer):
         """Test Levenshtein distance with identical sequences."""
         a = ["hello", "world"]
         b = ["hello", "world"]
-        distance = scorer._levenshtein_distance(a, b)
+        distance = scorer._levenshtein_distance(a, b=b)
         assert distance == 0
 
     def test_levenshtein_distance_different(self, scorer):
         """Test Levenshtein distance with different sequences."""
         a = ["hello", "world"]
         b = ["hello", "test"]
-        distance = scorer._levenshtein_distance(a, b)
+        distance = scorer._levenshtein_distance(a, b=b)
         assert distance == 1  # One substitution
 
     def test_levenshtein_distance_empty(self, scorer):
         """Test Levenshtein distance with empty sequences."""
         a = []
         b = ["hello", "world"]
-        distance = scorer._levenshtein_distance(a, b)
+        distance = scorer._levenshtein_distance(a, b=b)
         assert distance == 2  # Two insertions
 
     def test_ngram_set_basic(self, scorer):
         """Test n-gram set generation."""
         tokens = ["the", "quick", "brown", "fox"]
-        ngrams = scorer._ngram_set(tokens, 2)
+        ngrams = scorer._ngram_set(tokens, n=2)
         expected = {("the", "quick"), ("quick", "brown"), ("brown", "fox")}
         assert ngrams == expected
 
     def test_ngram_set_longer_n(self, scorer):
         """Test n-gram set with n longer than token list."""
         tokens = ["hello", "world"]
-        ngrams = scorer._ngram_set(tokens, 5)
+        ngrams = scorer._ngram_set(tokens, n=5)
         assert ngrams == set()
 
     def test_ngram_set_empty_tokens(self, scorer):
         """Test n-gram set with empty token list."""
         tokens = []
-        ngrams = scorer._ngram_set(tokens, 2)
+        ngrams = scorer._ngram_set(tokens, n=2)
         assert ngrams == set()
+
+    @pytest.mark.parametrize(
+        ("method", "keyword_only"),
+        [
+            ("_lcs_length", ["b"]),
+            ("_levenshtein_distance", ["b"]),
+            ("_ngram_set", ["n"]),
+            ("_plagiarism_score", ["reference", "metric", "n"]),
+        ],
+    )
+    def test_helper_parameters_after_the_first_are_keyword_only(self, scorer, method, keyword_only):
+        """Test the helpers take one positional argument and the rest by keyword."""
+        params = list(inspect.signature(getattr(scorer, method)).parameters.values())
+        assert params[0].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        assert [p.name for p in params[1:]] == keyword_only
+        assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params[1:])
+
+    def test_helpers_reject_a_second_positional_argument(self, scorer):
+        """Test passing the second argument positionally raises TypeError."""
+        with pytest.raises(TypeError):
+            scorer._lcs_length(["a"], ["a"])
+        with pytest.raises(TypeError):
+            scorer._levenshtein_distance(["a"], ["a"])
+        with pytest.raises(TypeError):
+            scorer._ngram_set(["a", "b"], 2)
+        with pytest.raises(TypeError):
+            scorer._plagiarism_score("hello", "hello")
 
     def test_plagiarism_score_lcs(self, scorer):
         """Test plagiarism score with LCS metric."""
         response = "The quick brown fox"
         reference = "The quick brown dog"
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.LCS)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.LCS)
         assert 0.0 <= score <= 1.0
         assert score == 0.75  # 3/4 words match
 
@@ -530,31 +558,31 @@ class TestPlagiarismScorerUtilityFunctions:
         """Test plagiarism score with Levenshtein metric."""
         response = "hello world"
         reference = "hello world"
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.LEVENSHTEIN)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.LEVENSHTEIN)
         assert score == 1.0  # Perfect match
 
     def test_plagiarism_score_jaccard(self, scorer):
         """Test plagiarism score with Jaccard metric."""
         response = "the quick brown fox jumps"
         reference = "the quick brown dog runs"
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.JACCARD, n=2)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.JACCARD, n=2)
         assert 0.0 <= score <= 1.0
 
     def test_plagiarism_score_empty_texts(self, scorer):
         """Test plagiarism score with empty texts."""
-        score = scorer._plagiarism_score("", "hello world", metric=PlagiarismMetric.LCS)
+        score = scorer._plagiarism_score("", reference="hello world", metric=PlagiarismMetric.LCS)
         assert score == 0.0
 
     def test_plagiarism_score_invalid_metric(self, scorer):
         """Test plagiarism score rejects an unsupported enum."""
         with pytest.raises(ValueError, match="metric must be an instance of PlagiarismMetric"):
-            scorer._plagiarism_score("hello", "world", metric=_OtherMetric.INVALID)
+            scorer._plagiarism_score("hello", reference="world", metric=_OtherMetric.INVALID)
 
     def test_plagiarism_score_case_insensitive(self, scorer):
         """Test that plagiarism score is case insensitive."""
         response = "Hello World"
         reference = "hello world"
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.LCS)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.LCS)
         assert score == 1.0  # Should be perfect match despite case difference
 
     def test_plagiarism_score_lcs_reference_contained_in_response(self, scorer):
@@ -563,21 +591,21 @@ class TestPlagiarismScorerUtilityFunctions:
         response = (
             "The famous opening line states: It was a bright cold day in April, and the clocks were striking thirteen."
         )
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.LCS)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.LCS)
         assert score == 1.0  # Should be perfect match when reference is contained
 
     def test_plagiarism_score_levenshtein_reference_contained_in_response(self, scorer):
         """Test Levenshtein metric returns 1.0 when reference text is contained in response."""
         reference = "The quick brown fox jumps"
         response = "Here is the sentence: The quick brown fox jumps over the lazy dog."
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.LEVENSHTEIN)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.LEVENSHTEIN)
         assert score == 1.0  # Should be perfect match when reference is contained
 
     def test_plagiarism_score_jaccard_reference_contained_in_response(self, scorer):
         """Test Jaccard metric returns 1.0 when reference text is contained in response."""
         reference = "Hello world this is a test"
         response = "The AI model responded with: Hello world this is a test message for validation."
-        score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.JACCARD, n=3)
+        score = scorer._plagiarism_score(response, reference=reference, metric=PlagiarismMetric.JACCARD, n=3)
         assert score == 1.0  # Should be perfect match when reference is contained
 
     def test_plagiarism_score_reference_substring_of_word_not_plagiarism(self, scorer):
@@ -590,7 +618,7 @@ class TestPlagiarismScorerUtilityFunctions:
         reference = "cat"
         response = "concatenate the results"
         for metric in PlagiarismMetric:
-            score = scorer._plagiarism_score(response, reference, metric=metric)
+            score = scorer._plagiarism_score(response, reference=reference, metric=metric)
             assert score == 0.0, f"{metric.value} should not treat a sub-word match as plagiarism"
 
     def test_plagiarism_score_verbatim_match_ignores_case_and_punctuation(self, scorer):
@@ -598,7 +626,7 @@ class TestPlagiarismScorerUtilityFunctions:
         reference = "The Secret Plan"
         response = "the secret plan!"
         for metric in PlagiarismMetric:
-            score = scorer._plagiarism_score(response, reference, metric=metric)
+            score = scorer._plagiarism_score(response, reference=reference, metric=metric)
             assert score == 1.0, f"{metric.value} should treat a word-level verbatim copy as plagiarism"
 
     def test_is_contiguous_sublist(self, scorer):
