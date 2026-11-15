@@ -172,6 +172,29 @@ async def test_public_follow_up_replays_content_filter_error_as_text_async(adapt
 
 
 @pytest.mark.parametrize("adapter", ["chat", "litellm", "responses"])
+def test_validation_rejects_non_replayable_error_history(adapter: str) -> None:
+    """Only blocked errors replay as text; the builders reject every other stored error piece."""
+    conversation = [
+        Message.from_prompt(prompt="First request", role="user"),
+        Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="upstream failure",
+                    original_value_data_type="error",
+                    response_error="processing",
+                )
+            ]
+        ),
+        Message.from_prompt(prompt="Follow up", role="user"),
+    ]
+    with ExitStack() as stack:
+        target = _target(adapter=adapter, provider=AsyncMock(), stack=stack)
+        with pytest.raises(ValueError, match="Received: error"):
+            target._validate_request(normalized_conversation=conversation)
+
+
+@pytest.mark.parametrize("adapter", ["chat", "litellm", "responses"])
 async def test_public_follow_up_rejects_unsupported_image_history_async(adapter: str, tmp_path: Path) -> None:
     image = tmp_path / "image.png"
     image.write_bytes(b"image data")

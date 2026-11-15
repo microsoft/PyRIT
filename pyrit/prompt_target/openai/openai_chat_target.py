@@ -316,7 +316,7 @@ class OpenAIChatTarget(OpenAITarget):
         self, *, message_piece: MessagePiece, has_text_piece: bool
     ) -> PromptDataType | None:
         """
-        Match the Chat Completions adapter's text errors and omitted audio history.
+        Match the Chat Completions adapter's replayed blocked errors and omitted audio history.
 
         Args:
             message_piece: Historical message piece to check.
@@ -329,7 +329,7 @@ class OpenAIChatTarget(OpenAITarget):
             message_piece=message_piece, is_last_message=False, has_text_piece=has_text_piece
         ):
             return None
-        if message_piece.converted_value_data_type == "error":
+        if message_piece.is_blocked_error():
             return "text"
         return message_piece.converted_value_data_type
 

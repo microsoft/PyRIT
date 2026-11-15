@@ -526,7 +526,7 @@ class LiteLLMChatTarget(PromptTarget):
             prefer_transcript_for_history=prefer_transcript_for_history,
         ):
             return None
-        if message_piece.converted_value_data_type == "error":
+        if message_piece.is_blocked_error():
             return "text"
         return message_piece.converted_value_data_type
 
