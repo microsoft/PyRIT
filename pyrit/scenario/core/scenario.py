@@ -1960,61 +1960,80 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    async def _get_completed_objective_hashes_by_attack_async(self) -> dict[tuple[str, str | None], set[str]]:
+    async def _get_attack_progress_async(
+        self,
+    ) -> tuple[dict[tuple[str, str | None], set[str]], set[tuple[str, str | None]]]:
         """
-        Index completed objective hashes for every atomic attack in this scenario.
+        Read completed objectives and started attacks from one result snapshot.
 
-        Read the persisted attack results once by ``attribution_parent_id`` —
-        which is stamped at write-time by the attack persistence path — so
-        results from an interrupted run are visible even though the
-        ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
-        Identity is content-derived (``to_sha256(objective)``), so it stays
-        stable even if ``get_seed_groups()`` reorders or resamples between runs.
+        Completed objectives are content-addressed by ``to_sha256(objective)``
+        and keyed by ``(parent_collection, parent_eval_hash)`` so two atomic
+        attacks sharing a name but using different techniques never
+        cross-pollinate their progress on resume. Rows persisted before
+        ``parent_eval_hash`` existed match name-only as a backward-compatible
+        fallback.
 
-        Rows are matched on ``(parent_collection, parent_eval_hash)`` so that
-        two ``AtomicAttack`` instances sharing a name but using different
-        techniques (e.g. base64 vs hex encoders) never cross-pollinate their
-        completed-hash sets on resume. Rows persisted before
-        ``parent_eval_hash`` was introduced (or by callers that don't supply
-        one) match name-only as a backward-compatible fallback.
-
-        Child rows cannot complete their parent unit. ``ERROR`` rows and rows carrying
-        an ``AttackPreparationFailure`` also stay pending.
+        ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are not
+        completed, but they still mark the attack as started. Resume uses the
+        started set only for ordering: attacks that never started go before
+        attacks that already failed, so one failing objective cannot starve the
+        rest of the queue on every retry.
 
         Returns:
-            dict[tuple[str, str | None], set[str]]: Completed objective hashes keyed by
-                collection name and technique eval hash. A missing eval hash retains
-                the legacy name-only matching behavior.
+            tuple: Completed objective hashes per attack key, and the set of
+                attack keys with any persisted result. A missing eval hash is
+                represented as ``None`` in both.
 
         Raises:
-            Exception: If persisted progress cannot be read. Treating a failed read as
-                empty progress would re-execute already-completed objectives.
+            Exception: If persisted progress cannot be read. Treating a failed
+                read as empty progress would re-execute already-completed
+                objectives.
         """
         if not self._scenario_result_id:
-            return {}
+            return {}, set()
 
         rows = await self._memory.get_attack_results_async(
             scenario_result_id=self._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
         )
         completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
+        started_attack_keys: set[tuple[str, str | None]] = set()
         for row in rows:
+            attribution = row.attribution_data
+            if isinstance(attribution, dict):
+                name = attribution.get("parent_collection")
+                eval_hash = attribution.get("parent_eval_hash")
+                if isinstance(name, str) and (eval_hash is None or isinstance(eval_hash, str)):
+                    started_attack_keys.add((name, eval_hash))
+
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
             # objective target at all, so neither measured the objective and both stay pending.
             # Every other row did reach the target and recorded the best verdict available --
             # including UNDETERMINED when no scorer was configured or the scorer abstained. Those
             # are measured results of a deterministic configuration; retrying them would re-send
             # the objective on every resume without ever converging.
-            if row.outcome == AttackOutcome.ERROR or not row.attribution_data or not row.objective:
+            if row.outcome == AttackOutcome.ERROR or not attribution or not row.objective:
                 continue
-            if AttackResultMetadata.from_metadata(metadata=row.attribution_data).attempt_index is not None:
+            if AttackResultMetadata.from_metadata(metadata=attribution).attempt_index is not None:
                 continue
             if AttackPreparationFailure.from_result(result=row) is not None:
                 continue
-            name = row.attribution_data.get("parent_collection")
-            eval_hash = row.attribution_data.get("parent_eval_hash")
             if not isinstance(name, str) or (eval_hash is not None and not isinstance(eval_hash, str)):
                 continue
             completed_by_attack.setdefault((name, eval_hash), set()).add(to_sha256(row.objective))
+        return completed_by_attack, started_attack_keys
+
+    async def _get_completed_objective_hashes_by_attack_async(self) -> dict[tuple[str, str | None], set[str]]:
+        """
+        Return completed objective hashes keyed by attack identity.
+
+        Thin wrapper around [_get_attack_progress_async][pyrit.scenario.core.scenario.Scenario.
+        _get_attack_progress_async] for callers that only need completed work.
+
+        Returns:
+            dict[tuple[str, str | None], set[str]]: Completed objective hashes
+                keyed by collection name and technique eval hash.
+        """
+        completed_by_attack, _ = await self._get_attack_progress_async()
         return completed_by_attack
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
@@ -2037,7 +2056,7 @@ class Scenario(ABC):
 
         remaining_attacks: list[AtomicAttack] = []
         # Read and index one snapshot before changing any attack's remaining work.
-        completed_by_attack = await self._get_completed_objective_hashes_by_attack_async()
+        completed_by_attack, started_attack_keys = await self._get_attack_progress_async()
 
         for atomic_attack in self._atomic_attacks:
             name = atomic_attack.atomic_attack_name
@@ -2062,6 +2081,16 @@ class Scenario(ABC):
 
             remaining_attacks.append(atomic_attack)
 
+        # A retry/resume otherwise re-queues the same partially failed attack first,
+        # hits the same failing objective, and stops admission before the attacks
+        # behind it ever start. Put attacks with no persisted result first; the sort
+        # is stable, so original order is kept within each group.
+        remaining_attacks.sort(
+            key=lambda attack: (
+                (attack.atomic_attack_name, attack.technique_eval_hash) in started_attack_keys
+                or (attack.atomic_attack_name, None) in started_attack_keys
+            )
+        )
         return remaining_attacks
 
     async def _resolve_seed_groups_by_dataset_async(
