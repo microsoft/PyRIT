@@ -24,9 +24,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackOutcome, Message, MessagePiece, Score
-from pyrit.score import FloatScaleThresholdScorer
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score import FloatScaleThresholdScorer, MessageFloatScaleScorer, ScorerPromptValidator
 
 
 class _AdversarialTarget(MockPromptTarget):

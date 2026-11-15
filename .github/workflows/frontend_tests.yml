@@ -78,12 +78,32 @@ jobs:
             config: playwright.config.ts
             shard: 1
             total: 1
+          - project: scan-launch
+            config: playwright.scan-launch.config.ts
+            shard: 1
+            total: 1
           - project: analytics
             config: playwright.analytics.config.ts
             shard: 1
             total: 1
+          - project: paired-outcomes
+            config: playwright.paired-outcomes.config.ts
+            shard: 1
+            total: 1
           - project: scenario-hierarchy
             config: playwright.scenario-hierarchy.config.ts
+            shard: 1
+            total: 1
+          - project: scenario-datasets-desktop
+            config: playwright.scenario-datasets.config.ts
+            shard: 1
+            total: 1
+          - project: scenario-datasets-narrow
+            config: playwright.scenario-datasets.config.ts
+            shard: 1
+            total: 1
+          - project: scenario-techniques
+            config: playwright.scenario-techniques.config.ts
             shard: 1
             total: 1
     outputs:
@@ -111,7 +131,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: uv.lock
           enable-cache: true
@@ -131,7 +151,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Build the isolated fixture frontend
-        if: matrix.project == 'analytics' || matrix.project == 'scenario-hierarchy'
+        if: matrix.project == 'analytics' || matrix.project == 'paired-outcomes' || matrix.project == 'scenario-hierarchy' || startsWith(matrix.project, 'scenario-datasets-') || matrix.project == 'scenario-techniques' || matrix.project == 'scan-launch'
         run: npm run build
 
       - name: Run E2E shard (no credentials needed)

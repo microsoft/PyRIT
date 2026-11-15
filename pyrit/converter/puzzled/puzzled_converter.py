@@ -17,8 +17,7 @@ from pyrit.converter.puzzled.puzzle_builders import (
     build_word_search,
     crossword_symbol_map,
 )
-from pyrit.exceptions import EmptyResponseException
-from pyrit.exceptions.exceptions_helpers import remove_markdown_json
+from pyrit.exceptions import EmptyResponseException, remove_markdown_json
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 

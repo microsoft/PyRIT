@@ -12,7 +12,7 @@ from typing import Any
 from tqdm import tqdm
 
 from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetFilter, SeedDatasetLoadTime, SeedDatasetMetadata
-from pyrit.models.seeds import SeedDataset
+from pyrit.models import SeedDataset
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class SeedDatasetProvider(ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="SeedDatasetProvider")
         if not inspect.isabstract(cls) and getattr(cls, "should_register", True):

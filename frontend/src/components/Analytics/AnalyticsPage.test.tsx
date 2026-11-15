@@ -7,7 +7,7 @@ import { analyticsApi, operationsApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import {
   ANALYTICS_EMPTY_STATISTICS, ANALYTICS_NIGHTLY_ID, ANALYTICS_OPERATION_FILTER, ANALYTICS_OPERATIONS, ANALYTICS_PAGE_TIME,
-  ANALYTICS_PREDICATE_LIMIT_REASON, ANALYTICS_TEST_STATISTICS, ANALYTICS_TEST_TIME, ANALYTICS_VALUE_LIMIT_REASON,
+  ANALYTICS_PREDICATE_LIMIT_REASON, ANALYTICS_TEST_STATISTICS, ANALYTICS_VALUE_LIMIT_REASON,
   makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults, makeAnalyticsRow,
 } from '@/test-utils/analyticsFixtures'
 import type {
@@ -15,10 +15,13 @@ import type {
   AttackAnalyticsValue, AttackAnalyticsViewState, OperationListResponse,
 } from '@/types'
 import {
-  ANALYTICS_ASR_NOTE, ANALYTICS_DEBOUNCE_MS, DEFAULT_ANALYTICS_VIEW, analyticsViewToHash, formatAnalyticsTime,
+  ANALYTICS_ASR_NOTE, ANALYTICS_DEBOUNCE_MS, DEFAULT_ANALYTICS_VIEW, analyticsViewToHash,
 } from '@/utils/attackAnalytics'
 
 import AnalyticsPage from './AnalyticsPage'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   analyticsApi: { query: jest.fn(), results: jest.fn(), facets: jest.fn() },
@@ -94,13 +97,13 @@ function renameNightly(): void {
   }))
 }
 
-/** Waits for the current report, then clicks Reload or switches the runtime generation. */
+/** Starts the next automatic check or replaces the runtime generation. */
 async function changeLabelEpoch(
-  change: LabelEpochChange, user: ReturnType<typeof userEvent.setup>, rerenderPage: () => void,
+  change: LabelEpochChange, rerenderPage: () => void,
 ): Promise<void> {
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled() })
+  await waitFor(() => { expect(screen.getByTestId('analytics-page')).toHaveAttribute('aria-busy', 'false') })
   if (change === 'Reload') {
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
+    await advanceAutoRefresh()
   } else {
     mockRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second-runtime' })
     rerenderPage()
@@ -241,7 +244,7 @@ describe('AnalyticsPage', () => {
     expect(onOpenAttack).toHaveBeenCalledWith('result-1')
   })
 
-  it('should paginate only results, keep report freshness, and reset the table on Reload', async () => {
+  it('should preserve the displayed results page during an automatic report update', async () => {
     const user = userEvent.setup()
     mockQuery.mockResolvedValue(makeAnalyticsReport({
       results: makeAnalyticsResults({ has_more: true, next_cursor: 'opaque-next' }),
@@ -252,23 +255,21 @@ describe('AnalyticsPage', () => {
     }))
     renderPage()
     await screen.findByText('Inspect a saved response')
-    const refreshed = screen.getByText(/Last refreshed:/).textContent
     const results = screen.getByRole('region', { name: 'Matching AttackResults' })
     await user.click(within(results).getByRole('button', { name: 'Next' }))
     expect(await screen.findByText('Second saved result')).toBeInTheDocument()
     expect(within(results).getByText('Page 2')).toBeInTheDocument()
-    expect(screen.getByText(/Last refreshed:/).textContent).toBe(refreshed)
-    expect(within(results).getByText(formatAnalyticsTime(ANALYTICS_PAGE_TIME))).toBeInTheDocument()
+    expect(screen.queryByText(/Last refreshed:|Page read:/)).not.toBeInTheDocument()
     expect(mockResults).toHaveBeenCalledWith({
       filters: { dimensions: [], outcomes: [] }, cursor: 'opaque-next', limit: 25,
     }, expect.any(AbortSignal))
     expect(mockQuery).toHaveBeenCalledTimes(1)
     expect(mockFacets).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
-    expect(await screen.findByText('Inspect a saved response')).toBeInTheDocument()
+    await advanceAutoRefresh()
     await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(2) })
-    expect(within(results).getByText('Page 1')).toBeInTheDocument()
-    expect(mockResults).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(mockResults).toHaveBeenCalledTimes(2))
+    expect(within(results).getByText('Page 2')).toBeInTheDocument()
+    expect(within(results).getByText('Second saved result')).toBeInTheDocument()
   })
 
   it.each([
@@ -301,7 +302,6 @@ describe('AnalyticsPage', () => {
       const results = screen.getByRole('region', { name: 'Matching AttackResults' })
       await user.click(within(results).getByRole('button', { name: 'Next' }))
       expect(await within(results).findByText('Page 2')).toBeInTheDocument()
-      const refreshed = screen.getByText(/Last refreshed:/).textContent
       await user.click(screen.getByRole('button', { name: 'Operation' }))
       await act(async () => { await jest.advanceTimersByTimeAsync(ANALYTICS_DEBOUNCE_MS) })
       await user.click(screen.getByRole('button', { name: 'Next values' }))
@@ -316,8 +316,7 @@ describe('AnalyticsPage', () => {
       expect(mockFacets).toHaveBeenCalledTimes(2)
       expect(within(results).getByText('Page 2')).toBeInTheDocument()
       expect(within(results).getByText('Second saved result')).toBeInTheDocument()
-      expect(within(results).getByText(formatAnalyticsTime(ANALYTICS_PAGE_TIME))).toBeInTheDocument()
-      expect(screen.getByText(/Last refreshed:/).textContent).toBe(refreshed)
+      expect(screen.queryByText(/Last refreshed:|Page read:/)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'First values' })).toBeEnabled()
       if (chart === 'outcomes') expect(screen.getByRole('button', { name: 'First groups' })).toBeEnabled()
     },
@@ -371,9 +370,7 @@ describe('AnalyticsPage', () => {
       }
 
       await user.click(screen.getByRole('button', { name: 'Browser back' }))
-      expect(screen.getByRole('status', {
-        name: interveningReadSettled ? 'Loading analytics for current filters' : 'Reloading saved results',
-      })).toBeInTheDocument()
+      expect(screen.queryByText('Old second page')).not.toBeInTheDocument()
       await act(async () => { await jest.advanceTimersByTimeAsync(ANALYTICS_DEBOUNCE_MS) })
       await act(async () => {
         returnedReport.resolve(makeAnalyticsReport({
@@ -390,20 +387,20 @@ describe('AnalyticsPage', () => {
     },
   )
 
-  it('should keep a failed Reload visibly stale with its original timestamp and support Retry', async () => {
-    const user = userEvent.setup()
+  it('should retain data on an automatic failure and show only the error until recovery', async () => {
     mockQuery.mockResolvedValueOnce(makeAnalyticsReport())
       .mockRejectedValueOnce(new Error('Analytics is busy'))
       .mockResolvedValueOnce(makeAnalyticsReport({ computed_at: ANALYTICS_PAGE_TIME }))
     renderPage()
     await screen.findByText('Inspect a saved response')
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
-    expect(await screen.findByText(/Reload failed.*data may be stale/)).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(await screen.findByText('Analytics is busy')).toBeInTheDocument()
     expect(screen.getByText('Inspect a saved response')).toBeInTheDocument()
-    expect(screen.getByText(/Last refreshed:/)).toHaveTextContent(formatAnalyticsTime(ANALYTICS_TEST_TIME))
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
-    await waitFor(() => { expect(screen.getByText(/Last refreshed:/)).toHaveTextContent(formatAnalyticsTime(ANALYTICS_PAGE_TIME)) })
-    expect(screen.queryByText(/data may be stale/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Last refreshed:|data may be stale/)).not.toBeInTheDocument()
+    await advanceAutoRefresh()
+    await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(3) })
+    await waitFor(() => { expect(screen.queryByText('Analytics is busy')).not.toBeInTheDocument() })
   })
 
   it('should never show old results under changed filters, including when the new cohort fails', async () => {
@@ -417,7 +414,7 @@ describe('AnalyticsPage', () => {
     expect(screen.queryByRole('region', { name: 'Outcome summary' })).not.toBeInTheDocument()
     await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(2) })
     await act(async () => { pending.reject(new Error('Cannot read this cohort')) })
-    expect(await screen.findByText(/Could not load analytics for these filters/)).toBeInTheDocument()
+    expect(await screen.findByText('Cannot read this cohort')).toBeInTheDocument()
     expect(screen.queryByText('Inspect a saved response')).not.toBeInTheDocument()
   })
 
@@ -439,7 +436,7 @@ describe('AnalyticsPage', () => {
     expect(screen.queryByText('Inspect a saved response')).not.toBeInTheDocument()
   })
 
-  it('should abort an in-flight results page on Reload so it cannot replace the refreshed first page', async () => {
+  it('should wait for a pending result page before its next automatic check', async () => {
     const user = userEvent.setup()
     const pending = deferred<ReturnType<typeof makeAnalyticsResults>>()
     mockQuery.mockResolvedValue(makeAnalyticsReport({
@@ -450,14 +447,45 @@ describe('AnalyticsPage', () => {
     await screen.findByText('Inspect a saved response')
     await user.click(within(screen.getByRole('region', { name: 'Matching AttackResults' })).getByRole('button', { name: 'Next' }))
     const signal = mockResults.mock.calls[0][1]
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
-    await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(2) })
-    expect(signal?.aborted).toBe(true)
+    await advanceAutoRefresh()
+    expect(mockQuery).toHaveBeenCalledTimes(1)
+    expect(signal?.aborted).toBe(false)
     await act(async () => {
-      pending.resolve(makeAnalyticsResults({ items: [makeAnalyticsRow({ objective_preview: 'Obsolete page' })] }))
+      pending.resolve(makeAnalyticsResults({ items: [makeAnalyticsRow({ objective_preview: 'Completed page' })] }))
     })
-    expect(screen.queryByText('Obsolete page')).not.toBeInTheDocument()
-    expect(screen.getByText('Page 1')).toBeInTheDocument()
+    expect(screen.getByText('Completed page')).toBeInTheDocument()
+    expect(screen.getByText('Page 2')).toBeInTheDocument()
+    await advanceAutoRefresh()
+    await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(2) })
+    expect(screen.getByText('Page 2')).toBeInTheDocument()
+  })
+
+  it('should preserve a page request started while an automatic report read is pending', async () => {
+    const user = userEvent.setup()
+    const reportRead = deferred<AttackAnalyticsReport>()
+    const pageRead = deferred<ReturnType<typeof makeAnalyticsResults>>()
+    const report = makeAnalyticsReport({
+      results: makeAnalyticsResults({ has_more: true, next_cursor: 'page-2' }),
+    })
+    mockQuery.mockResolvedValueOnce(report).mockReturnValueOnce(reportRead.promise)
+    mockResults.mockReturnValueOnce(pageRead.promise)
+    renderPage()
+    await screen.findByText('Inspect a saved response')
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockQuery).toHaveBeenCalledTimes(2))
+    const results = screen.getByRole('region', { name: 'Matching AttackResults' })
+    await user.click(within(results).getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(mockResults).toHaveBeenCalledTimes(1))
+    const signal = mockResults.mock.calls[0][1]
+    await act(async () => { reportRead.resolve(report) })
+    expect(signal?.aborted).toBe(false)
+    expect(within(results).getByText('Page 1')).toBeInTheDocument()
+    await act(async () => { pageRead.resolve(makeAnalyticsResults({
+      items: [makeAnalyticsRow({ objective_preview: 'The requested second page' })],
+    })) })
+    expect(within(results).getByText('Page 2')).toBeInTheDocument()
+    expect(within(results).getByText('The requested second page')).toBeInTheDocument()
+    expect(mockResults).toHaveBeenCalledTimes(1)
   })
 
   it('should preserve report and current rows on a results-only error, then retry that cursor', async () => {
@@ -610,13 +638,12 @@ describe('AnalyticsPage', () => {
   })
 
   it('should rename a restored Operation chip on Reload, as the report does', async () => {
-    const user = userEvent.setup()
     const { rerenderPage } = renderPage({
       ...DEFAULT_ANALYTICS_VIEW, filters: { ...DEFAULT_ANALYTICS_VIEW.filters, dimensions: [ANALYTICS_OPERATION_FILTER] },
     })
     expect(await screen.findByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
     renameNightly()
-    await changeLabelEpoch('Reload', user, rerenderPage)
+    await changeLabelEpoch('Reload', rerenderPage)
     expect(await screen.findByRole('button', { name: 'Filter to Renamed' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: 'Operation (ANY): Renamed' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Operation (ANY): Nightly' })).not.toBeInTheDocument()
@@ -634,7 +661,7 @@ describe('AnalyticsPage', () => {
       expect(screen.getByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
       await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(1) })
       renameNightly()
-      await changeLabelEpoch(change, user, rerenderPage)
+      await changeLabelEpoch(change, rerenderPage)
       expect(await screen.findByRole('button', { name: 'Operation (ANY): Renamed' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Operation (ANY): Nightly' })).not.toBeInTheDocument()
     },
@@ -649,7 +676,7 @@ describe('AnalyticsPage', () => {
       expect(screen.getByRole('button', { name: 'Operation (ANY): Nightly' })).toBeInTheDocument()
       await waitFor(() => { expect(mockList).toHaveBeenCalledTimes(1) })
       renameNightly()
-      await changeLabelEpoch(change, user, rerenderPage)
+      await changeLabelEpoch(change, rerenderPage)
       expect(await screen.findByRole('button', { name: 'Operation (ANY): Renamed' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Operation (ANY): Nightly' })).not.toBeInTheDocument()
     },
@@ -677,11 +704,11 @@ describe('AnalyticsPage', () => {
       await user.click(screen.getByRole('button', { name: 'Objective target' }))
       await user.click(await screen.findByRole('checkbox', { name: 'Production chat' }))
       await user.click(screen.getByRole('button', { name: 'Apply filter' }))
-      await waitFor(() => { expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled() })
+      await waitFor(() => { expect(screen.getByTestId('analytics-page')).toHaveAttribute('aria-busy', 'false') })
       const reportReads = mockQuery.mock.calls.length
-      await changeLabelEpoch(change, user, rerenderPage)
+      await changeLabelEpoch(change, rerenderPage)
       await waitFor(() => { expect(mockQuery).toHaveBeenCalledTimes(reportReads + 1) })
-      await waitFor(() => { expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled() })
+      await waitFor(() => { expect(screen.getByTestId('analytics-page')).toHaveAttribute('aria-busy', 'false') })
       expect(screen.getByRole('button', { name: 'Scenario run (ANY): Nightly scan (1e4c8a90)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Objective target (ANY): Production chat' })).toBeInTheDocument()
     },
@@ -741,16 +768,16 @@ describe('AnalyticsPage', () => {
     expect(mockResults).not.toHaveBeenCalled()
   })
 
-  it('should reset group pagination on Reload while keeping a failed refresh coherent', async () => {
+  it('should preserve group pagination when an automatic check fails', async () => {
     const user = userEvent.setup()
     mockQuery.mockResolvedValue(makeAnalyticsReport({ has_more_groups: true, next_group_offset: 15 }))
     renderPage()
     await user.click(await screen.findByRole('button', { name: 'Next groups' }))
     await waitFor(() => { expect(screen.getByRole('button', { name: 'First groups' })).toBeEnabled() })
     mockQuery.mockRejectedValueOnce(new Error('Reload deadline exceeded'))
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
-    await screen.findByText(/Reload failed.*data may be stale/)
-    expect(mockQuery).toHaveBeenLastCalledWith(expect.objectContaining({ group_offset: 0 }), expect.any(AbortSignal))
+    await advanceAutoRefresh()
+    await screen.findByText('Reload deadline exceeded')
+    expect(mockQuery).toHaveBeenLastCalledWith(expect.objectContaining({ group_offset: 15 }), expect.any(AbortSignal))
     expect(screen.getByText('Inspect a saved response')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'First groups' })).toBeEnabled()
   })
@@ -772,7 +799,7 @@ describe('AnalyticsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Next groups' }))
     await act(async () => { await jest.advanceTimersByTimeAsync(ANALYTICS_DEBOUNCE_MS) })
     expect(signal?.aborted).toBe(true)
-    expect(screen.getByText(/Reload failed.*data may be stale/)).toBeInTheDocument()
+    expect(screen.getByText('Group page timed out')).toBeInTheDocument()
     expect(within(results).getByText('Page 1')).toBeInTheDocument()
     expect(within(results).queryByText('Loading results page')).not.toBeInTheDocument()
     expect(within(results).getByRole('button', { name: 'Next' })).toBeEnabled()

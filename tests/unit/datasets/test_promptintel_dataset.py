@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.promptintel_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     PromptIntelCategory,
     PromptIntelSeverity,
     _PromptIntelDataset,

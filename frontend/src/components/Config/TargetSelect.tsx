@@ -1,7 +1,8 @@
 import type { ChangeEvent } from 'react'
 
-import { Field, Select, type SelectOnChangeData } from '@fluentui/react-components'
+import { Select, type SelectOnChangeData } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import type { TargetInstance } from '@/types'
 import { targetModelName } from '@/utils/targetIdentity'
 
@@ -13,6 +14,7 @@ interface TargetSelectProps {
   onChange: (target: TargetInstance | null) => void
   label: string
   hint?: string
+  readonly help?: string
   placeholder?: string
   disabled?: boolean
 }
@@ -24,12 +26,13 @@ export default function TargetSelect({
   onChange,
   label,
   hint,
+  help,
   placeholder = 'Select a target',
   disabled = false,
 }: TargetSelectProps) {
   const styles = useTargetSelectStyles()
   return (
-    <Field label={label} hint={hint}>
+    <HelpField label={label} hint={hint} help={help}>
       <Select
         className={styles.select}
         value={value}
@@ -48,6 +51,6 @@ export default function TargetSelect({
           )
         })}
       </Select>
-    </Field>
+    </HelpField>
   )
 }

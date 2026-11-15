@@ -11,12 +11,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.converter import Base64Converter
-from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
-from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackParameters,
+    BargeInAttack,
+    BargeInAttackContext,
+    PrependedConversationConfig,
+)
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
 from pyrit.models import AttackOutcome, MatchesObjective, Message, MessagePiece, ScoringExpectation
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget

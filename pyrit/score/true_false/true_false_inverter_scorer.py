@@ -97,10 +97,10 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Check the child's snapshot while retaining the inverted root result.
+        Validate the wrapped scorer's snapshot without changing the inverted result.
 
         Returns:
-            Candidates with current child evidence.
+            list[Score]: The candidates linked to the wrapped scorer's current snapshot.
         """
         return await self._filter_matching_scores_by_children_async(
             scores=scores,
@@ -157,7 +157,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
                 f"Inverted score from {scorer_type} is undetermined\n{inv_score.score_rationale}"
             )
         else:
-            inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
+            inv_score.set_value(not inv_score.get_value())
             # The wrapped threshold score's float describes the uninverted verdict, and
             # normalize_score_to_float would prefer it over this one.
             if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:

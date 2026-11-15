@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import _ToxicChatDataset
+from pyrit.datasets.seed_datasets.remote import _ToxicChatDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 

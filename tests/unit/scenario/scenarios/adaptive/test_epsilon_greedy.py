@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.analytics.result_analysis import AttackStats
-from pyrit.scenario.scenarios.adaptive.selectors import (
+from pyrit.analytics import AttackStats
+from pyrit.scenario.scenarios.adaptive import (
     EpsilonGreedyTechniqueSelector,
     SelectorScope,
 )

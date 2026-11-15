@@ -143,7 +143,7 @@ def get_default_sink(default: type[Sink] | None = None) -> Sink:
     """
     if default is not None:
         return default()
-    from pyrit.common.notebook_utils import is_in_ipython_session
+    from pyrit.common import is_in_ipython_session
 
     if is_in_ipython_session():
         return IPythonMarkdownSink()

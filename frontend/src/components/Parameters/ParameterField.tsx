@@ -1,11 +1,12 @@
 import {
   Checkbox,
-  Field,
   Input,
   Select,
   Textarea,
 } from '@fluentui/react-components'
+import type { Ref } from 'react'
 
+import HelpField from '@/components/HelpField'
 import type { Parameter } from '@/types'
 
 import { useParameterFieldStyles } from './ParameterField.styles'
@@ -34,6 +35,10 @@ export interface ParameterFieldProps {
   testIdPrefix?: string
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
   extraHint?: string
+  /** Associate a server-side validation error with this field's control. */
+  validationMessage?: string
+  /** Ref for a multiline control when the parent needs to restore focus. */
+  controlRef?: Ref<HTMLTextAreaElement>
 }
 
 /**
@@ -57,6 +62,8 @@ export default function ParameterField({
   showRequiredError = false,
   testIdPrefix = 'param',
   extraHint,
+  validationMessage: externalValidationMessage,
+  controlRef,
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
@@ -69,19 +76,21 @@ export default function ParameterField({
   const defaultHint = showDefaultHint && hasDisplayDefault
     ? `Defaults to ${defaultText}.`
     : null
-  const descriptiveHint = [parameter.description, defaultHint, extraHint]
+  const help = parameter.description?.trim()
+  const descriptiveHint = [defaultHint, extraHint]
     .filter((part): part is string => Boolean(part))
     .join(' ')
-
   if (kind === 'structured') {
     const current = isStructuredParameterFormValue(value) ? value : { type: '', values: {} }
     return (
       <>
-        <Field
+        <HelpField
           label={label}
+          help={help}
           required={parameter.required}
           hint={descriptiveHint || undefined}
-          validationMessage={showRequiredError && !current.type ? 'Required' : undefined}
+          validationMessage={showRequiredError && !current.type ? 'Required' : externalValidationMessage}
+          validationState={showRequiredError && !current.type || externalValidationMessage ? 'error' : 'none'}
         >
           <Select
             className={styles.control}
@@ -98,7 +107,7 @@ export default function ParameterField({
               <option key={type} value={type}>{type}</option>
             ))}
           </Select>
-        </Field>
+        </HelpField>
         {(parameter.variants?.[current.type] ?? []).map((nested) => (
           <ParameterField
             key={nested.name}
@@ -122,13 +131,14 @@ export default function ParameterField({
     const parsed = current.trim()
       ? parseJsonObjectFormValue(current, label.replace(/ \*$/, ''))
       : null
-    const validationMessage = parsed && !parsed.ok ? parsed.error : undefined
+    const validationMessage = parsed && !parsed.ok ? parsed.error : externalValidationMessage
     const jsonHint = [descriptiveHint, 'Enter a JSON object.']
       .filter((part): part is string => Boolean(part))
       .join(' ')
     return (
-      <Field
+      <HelpField
         label={label}
+        help={help}
         required={parameter.required}
         hint={jsonHint}
         validationMessage={validationMessage}
@@ -145,14 +155,21 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         />
-      </Field>
+      </HelpField>
     )
   }
 
   if (kind === 'boolean') {
     const current = value === 'true' || value === 'false' ? value : ''
     return (
-      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Select
           className={styles.control}
           value={current}
@@ -166,14 +183,21 @@ export default function ParameterField({
           <option value="true">True</option>
           <option value="false">False</option>
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   if (kind === 'multiselect') {
     const selected = Array.isArray(value) ? value : []
     return (
-      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <div className={styles.checkboxGroup} role="group" aria-labelledby={`${testId}-group-label`}>
           <span id={`${testId}-group-label`} className={styles.srOnly}>
             {label}
@@ -201,7 +225,7 @@ export default function ParameterField({
             )
           })}
         </div>
-      </Field>
+      </HelpField>
     )
   }
 
@@ -210,7 +234,14 @@ export default function ParameterField({
 
   if (kind === 'select') {
     return (
-      <Field label={label} required={parameter.required} hint={descriptiveHint || undefined}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={descriptiveHint || undefined}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Select
           className={styles.control}
           value={stringValue}
@@ -227,20 +258,28 @@ export default function ParameterField({
             </option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   const placeholder = hasDisplayDefault
     ? showDefaultHint ? `Defaults to ${defaultText}` : defaultText
     : undefined
-  const fallbackHint = kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name
-  const hint = descriptiveHint || fallbackHint
+  const hint = [descriptiveHint, kind === 'list' ? 'Comma-separated list of values.' : undefined]
+    .filter((part): part is string => Boolean(part)).join(' ') || undefined
 
   if (kind === 'multiline') {
     return (
-      <Field label={label} required={parameter.required} hint={hint}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={hint}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Textarea
+          ref={controlRef}
           className={styles.control}
           value={stringValue}
           placeholder={placeholder}
@@ -249,13 +288,20 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         />
-      </Field>
+      </HelpField>
     )
   }
 
   return (
     <>
-      <Field label={label} required={parameter.required} hint={hint}>
+      <HelpField
+        label={label}
+        help={help}
+        required={parameter.required}
+        hint={hint}
+        validationMessage={externalValidationMessage}
+        validationState={externalValidationMessage ? 'error' : 'none'}
+      >
         <Input
           className={styles.control}
           value={stringValue}
@@ -265,7 +311,7 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         />
-      </Field>
+      </HelpField>
       {kind === 'list' && allowEmptyList && (
         <Checkbox
           label={`Use empty list for ${parameter.name}`}

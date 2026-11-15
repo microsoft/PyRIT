@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.promptgen.gcg.config import (
+from pyrit.executor.promptgen.gcg import (
     GCGAlgorithmConfig,
     GCGModelConfig,
     GCGOutputConfig,
@@ -33,7 +33,7 @@ from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
     TrajectoryWorker,
 )
 
-from pyrit.executor.promptgen.gcg.generator import GCGContext, GCGGenerator, GCGResult  # noqa: E402
+from pyrit.executor.promptgen.gcg import GCGContext, GCGGenerator, GCGResult  # noqa: E402
 
 _LLAMA_2 = "meta-llama/Llama-2-7b-chat-hf"
 

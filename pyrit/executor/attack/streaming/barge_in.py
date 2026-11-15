@@ -10,20 +10,20 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.component.conversation_manager import ConversationManager
+from pyrit.executor.attack.core import AttackParamsT
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig
-from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     Message,
 )
-from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

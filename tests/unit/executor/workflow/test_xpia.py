@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_prompt_normalizer
 
-from pyrit.executor.workflow.xpia import (
+from pyrit.executor.workflow import (
     XPIAContext,
     XPIAResult,
     XPIAStatus,
@@ -669,7 +669,7 @@ class TestXPIAGuards:
         self,
     ) -> None:
         """Test that the process_async closure raises RuntimeError when processing_prompt is None."""
-        from pyrit.executor.workflow.xpia import XPIATestWorkflow
+        from pyrit.executor.workflow import XPIATestWorkflow
 
         mock_target = MagicMock(spec=PromptTarget)
         mock_target.get_identifier.return_value = ComponentIdentifier(

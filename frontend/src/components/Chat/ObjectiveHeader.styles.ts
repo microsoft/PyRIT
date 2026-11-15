@@ -4,6 +4,7 @@ import {
   MINIMUM_TOUCH_TARGET_SIZE,
   NARROW_VIEWPORT_QUERY,
   TOUCH_INPUT_QUERY,
+  mobileTouchTarget,
   mobileTouchTargetHeight,
 } from '../../styles/touchTargets'
 
@@ -59,7 +60,7 @@ export const useObjectiveHeaderStyles = makeStyles({
     justifyContent: 'center',
     minWidth: 0,
     padding: 0,
-    ...mobileTouchTargetHeight,
+    ...mobileTouchTarget,
   },
   resultPopover: {
     display: 'flex',

@@ -8,17 +8,60 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
 from enum import Enum
-from math import isclose, isfinite
+from math import isclose, isfinite, nextafter
 from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from pydantic.dataclasses import dataclass as validated_dataclass
 
+from pyrit.common.text_search import validate_text_search
 from pyrit.models.results.attack_result import AttackOutcome
 
 _OutcomeCount = Annotated[int, Field(strict=True, ge=0)]
 _OutcomeRate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+_WILSON_DECIMAL_CONTEXT = Context(
+    prec=50,
+    rounding=ROUND_HALF_EVEN,
+    Emin=MIN_EMIN,
+    Emax=MAX_EMAX,
+    capitals=1,
+    clamp=0,
+    flags=[],
+    traps=[],
+)
+_WILSON_Z_95 = Decimal("1.959963984540054")
+
+
+def compute_wilson_ci(*, successes: int, total: int) -> tuple[float | None, float | None]:
+    """
+    Calculate the 95% Wilson score confidence interval for a proportion.
+
+    Args:
+        successes (int): Number of successful observations.
+        total (int): Total number of decided observations.
+
+    Returns:
+        tuple[float | None, float | None]: The (lower, upper) confidence interval bounds,
+            or (None, None) when total is 0.
+    """
+    if not total:
+        return None, None
+    with localcontext(_WILSON_DECIMAL_CONTEXT):
+        n = Decimal(total)
+        p = Decimal(successes) / n
+        q = Decimal(total - successes) / n
+        z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) / n
+        denom = Decimal(1) + z2_inv_n
+        center = (p + Decimal("0.5") * z2_inv_n) / denom
+        half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
+        lower = 0.0 if successes == 0 else float(max(Decimal(0), center - half_width))
+        upper_decimal = Decimal(1) if successes == total else min(Decimal(1), center + half_width)
+        upper = float(upper_decimal)
+        if upper == 0.0 and upper_decimal > 0:
+            upper = nextafter(0.0, 1.0)
+    return lower, upper
 
 
 @dataclass
@@ -45,6 +88,9 @@ class AttackAnalyticsStatistics(AttackStats):
 
     ``success_rate_decided`` (also available as ``success_rate``) uses successes /
     decided results; errors and undetermined outcomes do not enter that denominator.
+    ``success_rate_ci_lower`` and ``success_rate_ci_upper`` give the 95% Wilson score
+    confidence interval for ``success_rate_decided`` (``None`` when ``total_decided == 0``
+    or when omitted on older payloads).
     ``success_rate_all`` instead includes
     every outcome in its denominator, as do ``decided_share`` and ``outcome_shares``.
     Rates with no applicable denominator are ``None``; shares for an empty cohort
@@ -54,7 +100,8 @@ class AttackAnalyticsStatistics(AttackStats):
     ``total_results`` can therefore describe distinct saved IDs or latest scenario
     units. The model does not select attempts or infer a counting policy.
     Construction and explicit revalidation reject contradictory supplied values.
-    The nullable all-outcome rate preserves older payloads that omit that field.
+    The nullable all-outcome rate and confidence-interval bounds preserve older
+    payloads that omit those fields.
     """
 
     success_rate: _OutcomeRate | None
@@ -67,6 +114,8 @@ class AttackAnalyticsStatistics(AttackStats):
     decided_share: _OutcomeRate | None
     outcome_shares: dict[AttackOutcome, _OutcomeRate]
     success_rate_all: _OutcomeRate | None = field(default=None, kw_only=True)
+    success_rate_ci_lower: _OutcomeRate | None = field(default=None, kw_only=True)
+    success_rate_ci_upper: _OutcomeRate | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         """Validate the supplied statistics without recalculating or replacing fields."""
@@ -104,6 +153,12 @@ class AttackAnalyticsStatistics(AttackStats):
             raise ValueError("total_results must equal the sum of all outcome counts.")
         self._validate_rate(
             name="success_rate", value=self.success_rate, numerator=self.successes, denominator=self.total_decided
+        )
+        self._validate_wilson_ci(
+            lower=self.success_rate_ci_lower,
+            upper=self.success_rate_ci_upper,
+            numerator=self.successes,
+            denominator=self.total_decided,
         )
         self._validate_rate(
             name="decided_share", value=self.decided_share, numerator=self.total_decided, denominator=self.total_results
@@ -162,6 +217,34 @@ class AttackAnalyticsStatistics(AttackStats):
             or (denominator > 0 and not isclose(value, numerator / denominator, rel_tol=1e-12, abs_tol=0.0))
         ):
             raise ValueError(f"{name} must agree with its outcome counts.")
+
+    @staticmethod
+    def _validate_wilson_ci(*, lower: float | None, upper: float | None, numerator: int, denominator: int) -> None:
+        if lower is None and upper is None:
+            return
+        if (
+            denominator == 0
+            or lower is None
+            or upper is None
+            or isinstance(lower, bool)
+            or isinstance(upper, bool)
+            or not isinstance(lower, (int, float))
+            or not isinstance(upper, (int, float))
+            or not isfinite(lower)
+            or not isfinite(upper)
+            or not 0 <= lower <= upper <= 1
+        ):
+            raise ValueError("success_rate confidence interval must agree with its outcome counts.")
+        expected_lower, expected_upper = compute_wilson_ci(successes=numerator, total=denominator)
+        if (
+            expected_lower is None
+            or expected_upper is None
+            or not (
+                isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=0.0)
+                and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=0.0)
+            )
+        ):
+            raise ValueError("success_rate confidence interval must agree with its outcome counts.")
 
 
 # Preserve the existing class/constructor identity while sharing it beyond attack reports.
@@ -493,14 +576,22 @@ class AttackAnalyticsFacetQuery(_AnalyticsModel):
 
     Other dimension predicates and outcome/date restrictions remain active.
     Predicates on this exact dimension are omitted so alternatives remain
-    discoverable. Search narrows option labels, not attack objectives.
+    discoverable. Search is a case-insensitive literal substring of option labels,
+    not attack objectives. ``search_pattern`` supplies a full LIKE pattern instead,
+    with '%' and '_' wildcards and '/' escaping.
     """
 
     filters: AttackAnalyticsFilters = Field(default_factory=AttackAnalyticsFilters)
     dimension: AttackAnalyticsDimension
-    search: str = Field(default="", max_length=128)
+    search: str | None = Field(default=None, max_length=128)
+    search_pattern: str | None = Field(default=None, max_length=128)
     offset: int = Field(default=0, ge=0, le=100_000)
     limit: int = Field(default=50, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def _validate_search(self) -> Self:
+        validate_text_search(value=self.search, pattern=self.search_pattern)
+        return self
 
 
 class AttackAnalyticsOption(_AnalyticsModel):

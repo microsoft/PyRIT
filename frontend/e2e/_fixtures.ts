@@ -22,7 +22,7 @@ export const test = base.extend<{ mockStartup: void }>({
 
 export async function selectChatTarget(page: Page, registryName?: string): Promise<void> {
   await page.goto("/attack/chat");
-  const picker = page.getByRole("combobox", { name: "Chat target", exact: true });
+  const picker = page.getByRole("combobox", { name: "Objective target", exact: true });
   await expect(picker).toBeEnabled();
   await picker.selectOption(registryName ?? { index: 1 });
 }

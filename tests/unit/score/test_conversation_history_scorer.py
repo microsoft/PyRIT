@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,29 +21,31 @@ from pyrit.models import (
     Message,
     MessagePiece,
     OutputMatches,
+    Scorable,
     Score,
     ScorerEvaluationIdentifier,
     ScoringExpectation,
 )
 from pyrit.score import (
     ContentScorable,
+    ConversationScorer,
     FloatScaleThresholdScorer,
+    MessageFloatScaleScorer,
     MessageScorable,
     MessageScorer,
+    MessageTrueFalseScorer,
     OutputMatchesScorer,
     Scorer,
+    ScorerPromptValidator,
     SelfAskGeneralFloatScaleScorer,
     SubStringScorer,
     TrueFalseCompositeScorer,
     TrueFalseFallbackScorer,
     TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
+    TrueFalseScorer,
     create_conversation_scorer,
 )
-from pyrit.score.conversation_scorer import ConversationScorer
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 LINE_BREAKS = ("\n", "\r", "\r\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
 
@@ -120,6 +123,32 @@ async def test_conversation_matching_requires_current_complete_snapshot(patch_ce
         assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
 
 
+async def test_composite_matching_rejects_stale_conversation_snapshot(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+
+    conversation_scorer = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[conversation_scorer, SubStringScorer(substring="default")],
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+
+    appended = MessagePiece(role="user", original_value="A later request", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=appended.to_message())
+
+    assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
+
+
 def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     """Helper to create ComponentIdentifier for tests."""
     return ComponentIdentifier(
@@ -158,22 +187,403 @@ class _UndeterminedTrueFalseScorer(MockTrueFalseScorer):
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             self._build_undetermined_score(
-                rationale="No verdict was reachable.", message_piece_id=message_piece.id, objective=objective
+                rationale="No verdict was reachable.",
+                message_piece_id=message_piece.id,
+                objective=objective,
             )
         ]
 
 
-class _FixedFloatScaleScorer(MockFloatScaleScorer):
+class _SnapshotFreeUndeterminedScorer(TrueFalseScorer):
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return [
+            Score(
+                score_value=None,
+                status="undetermined",
+                score_type="true_false",
+                score_rationale="No verdict was reachable.",
+                scorer_class_identifier=self.get_identifier(),
+                scorable=scorable,
+                objective=expectation.objective if expectation else None,
+            )
+        ]
+
+
+class _FixedFloatScaleScorer(MessageFloatScaleScorer):
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_value="0.8",
+                score_value_description="Fixed result",
                 score_type="float_scale",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="Fixed test score.",
                 scorer_class_identifier=self.get_identifier(),
                 message_piece_id=message_piece.id,
                 objective=objective,
             )
         ]
+
+    def get_scorer_metrics(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("wrapper", ["composite", "nested", "inverter", "threshold"])
+async def test_same_input_wrapper_matches_only_fresh_conversation_snapshot(patch_central_database, wrapper: str):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    scorable = (
+        ConversationScorable(conversation_id=conversation_id)
+        if wrapper in {"inverter", "threshold"}
+        else MessageScorable.from_message(response.to_message())
+    )
+    expectation = ScoringExpectation(objective="Goal")
+
+    if wrapper == "threshold":
+        wrapped = create_conversation_scorer(scorer=_FixedFloatScaleScorer())
+        scorer = FloatScaleThresholdScorer(scorer=wrapped, threshold=0.5)
+    else:
+        wrapped = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+        if wrapper == "composite":
+            scorer = TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.AND,
+                scorers=[wrapped, SubStringScorer(substring="default")],
+            )
+        elif wrapper == "nested":
+            inner = TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.AND,
+                scorers=[wrapped, SubStringScorer(substring="default")],
+            )
+            scorer = TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.OR,
+                scorers=[inner, SubStringScorer(substring="default")],
+            )
+        else:
+            scorer = TrueFalseInverterScorer(scorer=wrapped)
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+
+    assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
+
+
+async def test_composite_matching_requires_each_conversation_branch_snapshot(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+
+    conversation_scorers = [
+        create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+        create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+    ]
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[*conversation_scorers, SubStringScorer(substring="default")],
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+    missing_observation = scores[0].model_copy(update={"observation_ids": []})
+    assert not await scorer.find_matching_scores_async(
+        scores=[missing_observation], scorable=scorable, expectation=expectation
+    )
+    out_of_range_participation = scores[0].model_copy(deep=True)
+    out_of_range_participation._snapshot_participation = {"999": None}
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+    assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
+    assert not await scorer.find_matching_scores_async(
+        scores=[out_of_range_participation], scorable=scorable, expectation=expectation
+    )
+
+    sibling_fresh_scores = await conversation_scorers[0].score_async(scorable=scorable, expectation=expectation)
+    assert sibling_fresh_scores
+    stale_with_sibling_snapshot = scores[0].model_copy(deep=True)
+    stale_with_sibling_snapshot.observation_ids.extend(sibling_fresh_scores[0].observation_ids)
+    assert not await scorer.find_matching_scores_async(
+        scores=[stale_with_sibling_snapshot], scorable=scorable, expectation=expectation
+    )
+
+
+async def test_composite_fallback_siblings_keep_node_scoped_participation(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    unused_conversation_fallback = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    primary_resolved = TrueFalseFallbackScorer(
+        scorer=SubStringScorer(substring="default"),
+        fallback_scorer=unused_conversation_fallback,
+    )
+    fallback_resolved = TrueFalseFallbackScorer(
+        scorer=_UndeterminedTrueFalseScorer(),
+        fallback_scorer=SubStringScorer(substring="default"),
+    )
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[primary_resolved, fallback_resolved],
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+
+
+async def test_nested_fallback_validates_the_participating_conversation_branch(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    inner = TrueFalseFallbackScorer(
+        scorer=_SnapshotFreeUndeterminedScorer(),
+        fallback_scorer=create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+    )
+    scorer = TrueFalseFallbackScorer(scorer=inner, fallback_scorer=_SnapshotFreeUndeterminedScorer())
+    scorable = ConversationScorable(conversation_id=conversation_id)
+    expectation = ScoringExpectation(objective="Goal")
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+    assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
+
+
+async def test_non_applicable_composite_child_does_not_require_a_snapshot(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    conversation_scorer = create_conversation_scorer(scorer=MockTrueFalseScorer())
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[conversation_scorer, SubStringScorer(substring="default")],
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+
+
+async def test_unused_conversation_fallback_does_not_invalidate_fresh_primary(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    fallback = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    scorer = TrueFalseFallbackScorer(
+        scorer=SubStringScorer(substring="default"),
+        fallback_scorer=fallback,
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+
+    with patch.object(fallback._source, "acquire_async", new_callable=AsyncMock) as acquire:
+        scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+        assert scores
+        assert scores[0].score_metadata["resolved_by"] == "primary"
+        await memory.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user", original_value="A later request", conversation_id=conversation_id
+            ).to_message()
+        )
+        assert (
+            await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+        )
+        acquire.assert_not_awaited()
+
+
+async def test_evaluated_conversation_fallback_requires_fresh_primary_and_fallback(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    primary = create_conversation_scorer(scorer=_UndeterminedTrueFalseScorer())
+    fallback = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    scorer = TrueFalseFallbackScorer(scorer=primary, fallback_scorer=fallback)
+    scorable = ConversationScorable(conversation_id=conversation_id)
+    expectation = ScoringExpectation(objective="Goal")
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert scores
+    assert scores[0].score_metadata["resolved_by"] == "fallback"
+    assert scores[0].score_metadata["fallback_status"] == "complete"
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+    assert not await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation)
+
+    fresh_primary_scores = await primary.score_async(scorable=scorable, expectation=expectation)
+    assert fresh_primary_scores
+    stale_with_primary_snapshot = scores[0].model_copy(deep=True)
+    stale_with_primary_snapshot.observation_ids.extend(fresh_primary_scores[0].observation_ids)
+    assert not await scorer.find_matching_scores_async(
+        scores=[stale_with_primary_snapshot], scorable=scorable, expectation=expectation
+    )
+
+
+@pytest.mark.parametrize(
+    ("malformed_key", "nested"),
+    [("00", False), ("\u0660", False), ("00", True)],
+)
+async def test_noncanonical_snapshot_participation_cannot_skip_stale_conversation_branch(
+    patch_central_database, malformed_key: str, nested: bool
+) -> None:
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    conversation_scorer = create_conversation_scorer(scorer=SubStringScorer(substring="default"))
+    inner = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[conversation_scorer, SubStringScorer(substring="default")],
+    )
+    scorer = (
+        TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[inner, SubStringScorer(substring="default")],
+        )
+        if nested
+        else inner
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+
+    scores = await scorer.score_async(scorable=scorable, expectation=expectation)
+    assert scores
+    assert await scorer.find_matching_scores_async(scores=scores, scorable=scorable, expectation=expectation) == scores
+
+    def persist_noncanonical_key(session) -> None:
+        entry = session.get(ScoreEntry, scores[0].id)
+        assert entry is not None and entry.snapshot_participation is not None
+        participation = copy.deepcopy(entry.snapshot_participation)
+        tree = participation["0"] if nested else participation
+        assert isinstance(tree, dict) and "0" in tree
+        tree[malformed_key] = tree.pop("0")
+        entry.snapshot_participation = participation
+        session.commit()
+
+    await run_memory_session_async(memory=memory, operation=persist_noncanonical_key)
+    [malformed_score] = await memory.get_scores_async(score_ids=[str(scores[0].id)])
+    participation = malformed_score._snapshot_participation
+    assert participation is not None
+    tree = participation["0"] if nested else participation
+    assert isinstance(tree, dict) and malformed_key in tree and "0" not in tree
+
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+
+    assert not await scorer.find_matching_scores_async(
+        scores=[malformed_score], scorable=scorable, expectation=expectation
+    )
+
+
+@pytest.mark.parametrize("persisted", [False, True])
+async def test_public_metadata_collision_cannot_authorize_skipping_conversation_branch(
+    patch_central_database, persisted: bool
+) -> None:
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Request", conversation_id=conversation_id)
+    response = MessagePiece(role="assistant", original_value="default", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=request.to_message())
+    await memory.add_message_to_memory_async(request=response.to_message())
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[
+            create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+            SubStringScorer(substring="default"),
+        ],
+    )
+    scorable = MessageScorable.from_message(response.to_message())
+    expectation = ScoringExpectation(objective="Goal")
+    [score] = await scorer.score_async(scorable=scorable, expectation=expectation)
+    if persisted:
+
+        def forge_public_metadata(session) -> None:
+            entry = session.get(ScoreEntry, score.id)
+            assert entry is not None
+            entry.score_metadata = {**entry.score_metadata, "pyrit_internal_snapshot_participation": '{"1": null}'}
+            entry.snapshot_participation = None
+            session.commit()
+            session.expire_all()
+            reloaded = session.get(ScoreEntry, score.id)
+            assert reloaded is not None
+            assert reloaded.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+            assert reloaded.snapshot_participation is None
+
+        await run_memory_session_async(memory=memory, operation=forge_public_metadata)
+        [score] = await memory.get_scores_async(score_ids=[str(score.id)])
+        assert score.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+        assert score._snapshot_participation is None
+    else:
+        score._snapshot_participation = None
+        score.score_metadata["pyrit_internal_snapshot_participation"] = '{"1": null}'
+
+    await memory.add_message_to_memory_async(
+        request=MessagePiece(
+            role="user", original_value="A later request", conversation_id=conversation_id
+        ).to_message()
+    )
+
+    assert not await scorer.find_matching_scores_async(scores=[score], scorable=scorable, expectation=expectation)
 
 
 @pytest.mark.parametrize("wrapper", ["composite", "nested", "inverter", "threshold", "fallback"])
@@ -1237,6 +1647,53 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     assert synthetic_piece.original_value_data_type == "text"
     assert synthetic_piece.response_error == "none"
     assert harmful_text in synthetic_piece.converted_value
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("strict", [False, True])
+def test_render_excludes_configured_data_types_before_validation(strict: bool) -> None:
+    validator = ScorerPromptValidator(supported_data_types=["text"], enforce_all_pieces_valid=strict)
+    scorer = create_conversation_scorer(
+        scorer=SubStringScorer(substring="answer"),
+        validator=validator,
+        excluded_data_types=["reasoning"],
+    )
+    assert isinstance(scorer, ConversationScorer)
+    reasoning = MessagePiece(role="assistant", original_value="internal", original_value_data_type="reasoning")
+    pieces = (
+        reasoning,
+        MessagePiece(role="user", original_value="request"),
+        reasoning.model_copy(update={"id": uuid.uuid4()}),
+        MessagePiece(role="assistant", original_value="answer"),
+    )
+    assert scorer._render_conversation(pieces) == (
+        "[BEGIN USER TURN 0]\n  request\n[END USER TURN 0]\n"
+        "[BEGIN ASSISTANT TURN 1]\n  answer\n[END ASSISTANT TURN 1]\n"
+    )
+
+    unfiltered = create_conversation_scorer(scorer=SubStringScorer(substring="answer"), validator=validator)
+    assert isinstance(unfiltered, ConversationScorer)
+    if strict:
+        with pytest.raises(ValueError, match="data type reasoning is not supported"):
+            unfiltered._render_conversation(pieces)
+    else:
+        assert "internal" in unfiltered._render_conversation(pieces)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_excluded_conversation_data_types_change_identity_without_changing_default_identity() -> None:
+    leaf = SubStringScorer(substring="answer")
+    default = create_conversation_scorer(scorer=leaf)
+    empty = create_conversation_scorer(scorer=leaf, excluded_data_types=[])
+    excluded = create_conversation_scorer(scorer=leaf, excluded_data_types=["reasoning", "tool_call"])
+    equivalent = create_conversation_scorer(scorer=leaf, excluded_data_types=["tool_call", "reasoning", "reasoning"])
+    reasoning_only = create_conversation_scorer(scorer=leaf, excluded_data_types=["reasoning"])
+    assert default.get_identifier() == empty.get_identifier()
+    assert "excluded_data_types" not in default.get_identifier().params
+    assert excluded.get_identifier().params["excluded_data_types"] == ["reasoning", "tool_call"]
+    assert excluded.get_identifier() == equivalent.get_identifier()
+    assert excluded.get_identifier().eval_hash != default.get_identifier().eval_hash
+    assert excluded.get_identifier().eval_hash != reasoning_only.get_identifier().eval_hash
 
 
 @pytest.mark.usefixtures("patch_central_database")

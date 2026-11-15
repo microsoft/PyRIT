@@ -21,10 +21,10 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterable
+
     from pyrit.memory import MemoryInterface
-    from pyrit.models.literals import PromptDataType
-    from pyrit.models.messages.message_piece import MessagePiece
-    from pyrit.models.seeds.seed import Seed
+    from pyrit.models import MessagePiece, PromptDataType, Seed
 
 # Define allowed categories for validation
 AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries", "scorable-content-entries"]
@@ -180,6 +180,19 @@ class DataTypeSerializer(abc.ABC):
         await self._memory.results_storage_io.write_file_async(file_path, data)
         self.value = str(file_path)
 
+    async def save_stream_async(self, chunks: AsyncIterable[bytes]) -> None:
+        """
+        Persist a bounded multipart stream through the configured storage backend.
+
+        Raises:
+            RuntimeError: If results storage is not initialized.
+        """
+        file_path = await self.get_data_filename_async()
+        if self._memory.results_storage_io is None:
+            raise RuntimeError("Storage IO not initialized")
+        await self._memory.results_storage_io.write_stream_async(path=file_path, chunks=chunks)
+        self.value = str(file_path)
+
     async def save_b64_image_async(self, data: str | bytes, output_filename: str | None = None) -> None:
         """
         Save a base64-encoded image to storage.
@@ -218,7 +231,13 @@ class DataTypeSerializer(abc.ABC):
 
         Raises:
             RuntimeError: If storage IO is not initialized.
+            ValueError: If a non-WAV file path was already reserved for this serializer.
         """
+        if self._file_path and Path(str(self._file_path)).suffix.casefold() != ".wav":
+            raise ValueError(
+                f"A file path was already reserved with a non-WAV extension ({self._file_path}); "
+                "formatted audio is always saved as WAV."
+            )
         original_file_extension = self.file_extension
         self.file_extension = "wav"
         if output_filename:
@@ -491,7 +510,7 @@ class URLDataTypeSerializer(DataTypeSerializer):
         self.value = prompt_text
         self.data_sub_directory = f"/{category}/urls"
         self.file_extension = extension if extension else "txt"
-        self.on_disk = not (prompt_text.startswith(("http://", "https://")))
+        self.on_disk = not (prompt_text.lower().startswith(("http://", "https://")))
 
     def data_on_disk(self) -> bool:
         """

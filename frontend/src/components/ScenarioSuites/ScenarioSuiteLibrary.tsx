@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -22,13 +22,13 @@ import {
 } from '@fluentui/react-components'
 import {
   AddRegular,
-  ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import type { ScenarioSuiteResponse } from '@/types'
 
@@ -61,24 +61,36 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
   const [pendingDelete, setPendingDelete] = useState<ScenarioSuiteResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const pending = useRef(false)
+  const mutationEpoch = useRef(0)
+  const [settledLoads, setSettledLoads] = useState(0)
+  const editButtons = useRef(new Map<string, HTMLElement>())
+  const newSuiteButton = useRef<HTMLButtonElement>(null)
+  // A conflict reload can drop the record, so focus waits until the reload settles.
+  const focusAfterReload = useRef<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
+    const epoch = mutationEpoch.current
 
     const loadSuites = async (): Promise<void> => {
       try {
         const response = await scenarioSuitesApi.list(controller.signal)
-        if (cancelled) return
+        if (cancelled || epoch !== mutationEpoch.current) return
         setItems(response.items)
         setSource(response.source)
         setError(null)
+        setSettledLoads((count) => count + 1)
       } catch (err: unknown) {
-        if (cancelled || controller.signal.aborted) return
+        if (cancelled || controller.signal.aborted || epoch !== mutationEpoch.current) return
         setError(toApiError(err).detail)
+        setSettledLoads((count) => count + 1)
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -87,27 +99,47 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
   }, [generation, presetsRevision])
 
   const refresh = useCallback((): void => {
-    setLoading(true)
-    setError(null)
     setGeneration((current) => current + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting)
+
+  useEffect(() => {
+    const name = focusAfterReload.current
+    if (name === null) return
+    focusAfterReload.current = null
+    const editButton = editButtons.current.get(name)
+    if (editButton && !editButton.matches(':disabled')) editButton.focus()
+    else newSuiteButton.current?.focus()
+  }, [settledLoads])
 
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
     }
     setDeleting(true)
+    mutationEpoch.current++
     setActionError(null)
     try {
-      await scenarioSuitesApi.remove(pendingDelete.suite.name)
+      await scenarioSuitesApi.remove(pendingDelete.suite.name, pendingDelete.version ?? undefined)
       setPendingDelete(null)
       refresh()
     } catch (err: unknown) {
-      setActionError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        focusAfterReload.current = pendingDelete.suite.name
+        setPendingDelete(null)
+        refresh()
+        setActionError(
+          `Suite '${pendingDelete.suite.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
     } finally {
       setDeleting(false)
     }
@@ -130,6 +162,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </div>
         <div className={styles.headerActions}>
           <Button
+            ref={newSuiteButton}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
@@ -137,16 +170,6 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
             data-testid="new-suite-btn"
           >
             New suite
-          </Button>
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            disabled={loading}
-            aria-label="Refresh suites"
-          >
-            Refresh
           </Button>
         </div>
       </div>
@@ -163,26 +186,13 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </MessageBar>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading suites..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="suite-error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            data-testid="retry-suites-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : items.length === 0 ? (
+      ) : error && items.length === 0 ? null
+      : items.length === 0 ? (
         <div className={styles.centeredState} data-testid="suite-empty-state">
           <Text size={400}>No suites saved yet</Text>
           <Text size={200}>Create one to keep an ordered set of scenario presets together.</Text>
@@ -265,6 +275,10 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
                     <TableCell>
                       <div className={styles.actions}>
                         <Button
+                          ref={(node) => {
+                            if (node) editButtons.current.set(item.suite.name, node)
+                            else editButtons.current.delete(item.suite.name)
+                          }}
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}

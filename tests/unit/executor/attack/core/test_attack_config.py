@@ -5,16 +5,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.executor.attack.core import AttackScoringConfig
-from pyrit.executor.attack.core.attack_config import (
+from pyrit.executor.attack import (
     AttackAdversarialConfig,
+    AttackScoringConfig,
+)
+from pyrit.executor.attack.core import (
     resolve_adversarial_json_schema,
     resolve_adversarial_system_prompt,
 )
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import Scorer
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score import Scorer, TrueFalseScorer
 
 
 class TestAttackScoringConfig:

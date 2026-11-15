@@ -6,6 +6,7 @@ Migration history must be immutable. This hook enforces that by preventing delet
 
 Checks staged changes (local pre-commit), the full branch diff against origin/main (CI PRs),
 and the previous commit (CI merge-queue / push-to-main).
+First-parent changes may restore existing revisions exactly to a strictly ancestral base.
 
 The two history checks are skipped on release branches, which legitimately diverge from main.
 """
@@ -30,6 +31,33 @@ def _get_violations(diff_spec: list[str]) -> list[str]:
     """Return lines from ``git diff --name-status`` that are not pure additions."""
     output = _git_stdout("diff", "--name-status", *diff_spec, "--", _VERSIONS_PATH)
     return [line for line in output.splitlines() if line and not line.startswith("A")]
+
+
+def _restores_base_revisions(violations: list[str], base: str) -> bool:
+    base_head = _git("rev-parse", "--verify", base)
+    head = _git("rev-parse", "--verify", "HEAD")
+    if (
+        base_head.returncode
+        or head.returncode
+        or not base_head.stdout.strip()
+        or base_head.stdout.strip() == head.stdout.strip()
+        or _git("merge-base", "--is-ancestor", base, "HEAD").returncode
+    ):
+        return False
+    for violation in violations:
+        status, separator, path = violation.partition("\t")
+        if status != "M" or not separator:
+            return False
+        original = _git("rev-parse", "--verify", f"{base}:{path}")
+        restored = _git("rev-parse", "--verify", f"HEAD:{path}")
+        if (
+            original.returncode
+            or restored.returncode
+            or not original.stdout.strip()
+            or original.stdout.strip() != restored.stdout.strip()
+        ):
+            return False
+    return True
 
 
 def _in_ci() -> bool:
@@ -106,7 +134,7 @@ def has_revision_violations() -> bool:
     head_parent = _git("rev-parse", "--verify", "HEAD~1")
     if head_parent.returncode == 0:
         violations = _get_violations(["HEAD~1..HEAD"])
-        if violations:
+        if violations and not (pr_diff.returncode == 0 and _restores_base_revisions(violations, base)):
             _report(violations)
             return True
     elif _fail_ci("HEAD~1 is not available (shallow clone?)"):

@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import ScenarioTechnique
 
 
 class _TypedTechnique(ScenarioTechnique):
@@ -63,8 +63,7 @@ def _reset_registries():
 
     from pyrit.prompt_target import PromptTarget
     from pyrit.registry import TargetRegistry
-    from pyrit.scenario.scenarios.airt.cyber import Cyber
-    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+    from pyrit.scenario.scenarios.airt import Cyber, RapidResponse
     from pyrit.setup.initializers.techniques import build_technique_factories
 
     AttackTechniqueRegistry.reset_registry_singleton()

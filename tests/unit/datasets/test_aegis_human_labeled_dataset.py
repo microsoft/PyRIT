@@ -5,13 +5,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     AegisHarmCategory,
     _AegisContentSafetyDataset,
+)
+from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
     _response_label_to_harm_score,
 )
-from pyrit.score.scorer_evaluation.human_labeled_dataset import HarmHumanLabeledEntry
-from pyrit.score.scorer_evaluation.metrics_type import MetricsType
+from pyrit.score import HarmHumanLabeledEntry, MetricsType
 
 
 @pytest.mark.parametrize(

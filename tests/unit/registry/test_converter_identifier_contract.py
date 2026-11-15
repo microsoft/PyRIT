@@ -24,9 +24,11 @@ import pytest
 
 from pyrit.common import REQUIRED_VALUE
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
-from pyrit.converter import Base64Converter, CodeAttackConverter, PolicyPuppetryTemplate
-from pyrit.converter.text_selection_strategy import (
+from pyrit.converter import (
+    Base64Converter,
+    CodeAttackConverter,
     IndexSelectionStrategy,
+    PolicyPuppetryTemplate,
     TextSelectionStrategy,
     WordIndexSelectionStrategy,
     WordSelectionStrategy,
@@ -34,13 +36,15 @@ from pyrit.converter.text_selection_strategy import (
 from pyrit.datasets import TextJailBreak
 from pyrit.memory import CentralMemory
 from pyrit.models import ComponentType, Parameter, SeedPrompt
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry import ConverterRegistry
 from unit.mocks import MockPromptTarget
 from unit.registry.converter_identifier_samples import (
     ALLOWED_VALUES_NEED,
     BASELINE_SETTINGS,
     KEYWORD_SETTINGS,
     KNOWN_GAPS,
+    LONG_LIST,
+    LONG_TEXT,
     NEUTRAL_SETTINGS,
     SELECTION_STRATEGY_SETTINGS,
     SETTINGS_A_MODE_REPLACES,
@@ -194,12 +198,16 @@ def _generated_values(parameter: Parameter, default: Any) -> tuple[Any, ...] | N
     return first, second
 
 
+def _listed_samples(owner: str, name: str, samples: dict[str, tuple[Any, ...]]) -> tuple[Any, ...] | None:
+    return samples.get(f"{owner}.{name}", samples.get(name))
+
+
 def _sample_values(
     owner: str, parameter: Parameter, default: Any, samples: dict[str, tuple[Any, ...]]
 ) -> tuple[Any, ...] | None:
-    for key in (f"{owner}.{parameter.name}", parameter.name):
-        if key in samples:
-            return samples[key]
+    listed = _listed_samples(owner, parameter.name, samples)
+    if listed is not None:
+        return listed
     values = _generated_values(parameter, default)
     takes_none = type(None) in get_args(parameter.param_type) and (owner, parameter.name) not in NEUTRAL_SETTINGS
     return (*values, None) if values and default is not None and takes_none else values
@@ -261,7 +269,7 @@ def _cases() -> list[Any]:
 
 
 def _setup(
-    converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
+    converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]], *, edges: bool = False
 ) -> tuple[type, dict[str, Any], tuple[Any, ...]]:
     registry = _registry()
     cls = registry.get_class(converter_name)
@@ -289,6 +297,9 @@ def _setup(
         found = None if template is None else (_changed(template), _changed(_changed(template)))
     if found is None:
         pytest.fail(f"{converter_name}.{parameter_name}: add a sample value")
+    if edges and _listed_samples(converter_name, parameter_name, samples) is None:
+        edge_values = _edge_values(annotation, found[0])
+        found = (*found, *(value for value in edge_values if _accepts(cls, {**kwargs, parameter_name: value})))
     changed = _changed_from(kwargs.get(parameter_name, _MISSING), found)
     if not changed:
         pytest.fail(f"{converter_name}.{parameter_name}: add a sample value that differs from the baseline")
@@ -312,6 +323,31 @@ def _changed_from(baseline: Any, values: tuple[Any, ...]) -> tuple[Any, ...]:
         if not any(_same(value, seen) for seen in (baseline, *changed)):
             changed.append(value)
     return tuple(changed)
+
+
+def _edge_values(annotation: Any, first: Any) -> tuple[Any, ...]:
+    if annotation is int and isinstance(first, int):
+        return 0, -first, first + 1000, first + 1001
+    if annotation is float and isinstance(first, (int, float)):
+        return 0.0, -first, first + 0.001, first + 1000, first + 1001
+    if annotation is str and isinstance(first, str):
+        return f"{first}{LONG_TEXT}a", f"{first}{LONG_TEXT}b", first.upper()
+    if isinstance(first, list) and first and all(isinstance(item, str) for item in first):
+        return (
+            [*first, first[-1]],
+            [item.upper() for item in first],
+            [*first, *LONG_LIST, "zzza"],
+            [*first, *LONG_LIST, "zzzb"],
+        )
+    return ()
+
+
+def _accepts(cls: type, kwargs: dict[str, Any]) -> bool:
+    try:
+        cls(**kwargs)
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
 
 
 def _build(cls: type, kwargs: dict[str, Any], parameter_name: str | None = None) -> Any:
@@ -368,14 +404,15 @@ def _hashes(cls: type, kwargs: dict[str, Any], parameter_name: str, values: tupl
 def test_converter_setting_reaches_identifier(
     converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
 ) -> None:
-    cls, kwargs, values = _setup(converter_name, parameter_name, samples)
+    cls, kwargs, values = _setup(converter_name, parameter_name, samples, edges=True)
 
     hashes = _hashes(cls, kwargs, parameter_name, values)
 
     picked = "" if parameter_name in kwargs else ", unless a sample is the value it picks when the setting is left out"
     picked = f"{picked}; if it only matters with another setting, list that in SETTINGS_THAT_NEED_ANOTHER"
+    picked = f"{picked}; if the converter clamps or normalizes a value, give the setting a sample that avoids it"
     assert len(set(hashes)) == len(hashes), (
-        f"{converter_name}.{parameter_name} changes the converter but not its identifier{picked}"
+        f"{converter_name}.{parameter_name}: the baseline and {values} do not all get their own identifier{picked}"
     )
 
 
@@ -542,18 +579,22 @@ def test_settings_reach_identifier_in_every_mode(
 ) -> None:
     registry = _registry()
     cls = registry.get_class(converter_name)
-    mode_value = _setup(converter_name, mode, samples)[2][0]
     replaced = {mode, *SETTINGS_A_MODE_REPLACES.get((converter_name, mode), set())}
+    mode_values = _setup(converter_name, mode, samples)[2]
     for parameter in registry.get_class_metadata(cls).parameters:
         setting = (converter_name, parameter.name)
         if parameter.name in replaced or setting in {*NEUTRAL_SETTINGS, *KNOWN_GAPS, *SINGLE_VALUE_SETTINGS}:
             continue
         _, kwargs, values = _setup(converter_name, parameter.name, samples)
-        in_mode = {**kwargs, mode: mode_value, **SETTINGS_THAT_NEED_ANOTHER.get(setting, {})}
+        for mode_value in mode_values:
+            in_mode = {**kwargs, mode: mode_value, **SETTINGS_THAT_NEED_ANOTHER.get(setting, {})}
 
-        hashes = _hashes(cls, in_mode, parameter.name, values)
+            hashes = _hashes(cls, in_mode, parameter.name, values)
 
-        assert len(set(hashes)) == len(hashes), f"{converter_name}.{parameter.name} is lost when {mode} is {mode_value}"
+            assert len(set(hashes)) == len(hashes), (
+                f"{converter_name}.{parameter.name} is lost when {mode} is {mode_value}; "
+                "if that mode makes the setting irrelevant, list it in SETTINGS_A_MODE_REPLACES"
+            )
 
 
 def _setting_hashes(samples: dict[str, tuple[Any, ...]]) -> dict[tuple[str, str], list[str]]:

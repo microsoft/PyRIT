@@ -168,3 +168,17 @@ async def test_template_segment_converter_invalid_input_type():
     converter = TemplateSegmentConverter()
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="test", input_type="image_path")
+
+
+def test_template_segment_converter_identity_includes_parameter_order():
+    """Test that reversing the ordered parameters produces a different identifier hash.
+
+    The ordered parameter list controls which prompt segment fills which template
+    parameter, so two converters that differ only in that order are behaviorally
+    distinct and must not collide in the registry.
+    """
+    template = "LEFT[{{left}}] RIGHT[{{right}}]"
+    first = TemplateSegmentConverter(prompt_template=SeedPrompt(value=template, parameters=["left", "right"]), seed=7)
+    second = TemplateSegmentConverter(prompt_template=SeedPrompt(value=template, parameters=["right", "left"]), seed=7)
+
+    assert first.get_identifier().hash != second.get_identifier().hash

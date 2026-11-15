@@ -29,7 +29,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pyrit.executor.attack.compound.sequential_attack import (
+from pyrit.executor.attack import (
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialChildAttack,
@@ -45,8 +45,7 @@ from pyrit.scenario.core.technique_requirements import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-    from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+    from pyrit.executor.attack import AttackScoringConfig, AttackStrategy
     from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory

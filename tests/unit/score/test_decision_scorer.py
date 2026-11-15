@@ -4,6 +4,7 @@
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,29 +53,32 @@ def _response(probability: object) -> dict[str, Any]:
 
 @pytest.fixture
 def decision_api() -> Iterator[AsyncMock]:
-    pytest.importorskip("litellm")
-    with (
-        patch("litellm.adecisions", new_callable=AsyncMock) as api,
-        patch("litellm.asystemone", new=api, create=True),
-    ):
+    """
+    Replace the LiteLLM SDK with a fake decision transport.
+
+    The scorer and target code under test does not need LiteLLM itself, so these tests
+    run whether or not the optional ``litellm`` extra is installed. Only
+    ``TestDecisionScorerSDK`` exercises the real SDK and is skipped without it.
+    """
+    api = AsyncMock()
+    sdk = SimpleNamespace(adecisions=api, asystemone=None)
+    with patch.object(LiteLLMDecisionTarget, "_import_litellm", return_value=sdk):
         yield api
 
 
 def _scorer(
     *, responses: list[str], requests: list[dict[str, Any]], decision_question_path: Path | None = None
 ) -> DecisionScorer:
-    import litellm
-    from litellm.types.decisions import DecisionsResponse
-
     async def handle_async(**body: Any) -> MagicMock:
         requests.append(body)
-        response = MagicMock(spec=DecisionsResponse)
+        response = MagicMock(spec=["model_dump_json", "usage", "_hidden_params"])
         response.model_dump_json.return_value = responses[min(len(requests) - 1, len(responses) - 1)]
         response.usage = None
         response._hidden_params = {"response_cost": 0.0}
         return response
 
-    cast("AsyncMock", litellm.adecisions).side_effect = handle_async
+    # The ``decision_api`` fixture patches ``_import_litellm`` to return the fake SDK.
+    cast("AsyncMock", LiteLLMDecisionTarget._import_litellm().adecisions).side_effect = handle_async
     target = LiteLLMDecisionTarget(
         model_name=MODEL,
         endpoint="https://openrouter.ai/api",

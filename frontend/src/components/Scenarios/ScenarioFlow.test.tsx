@@ -230,7 +230,8 @@ describe('Scenario catalog-to-run integration', () => {
       expect.any(AbortSignal),
     ))
     const estimate = screen.getByRole('region', { name: 'Run estimate' })
-    expect(within(estimate).getByText('Total atomic attacks').parentElement).toHaveTextContent('2')
+    expect(within(estimate).getAllByRole('term')[0]).toHaveTextContent('Total atomic attacks')
+    expect(within(estimate).getAllByRole('definition')[0]).toHaveTextContent(/^2$/)
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })

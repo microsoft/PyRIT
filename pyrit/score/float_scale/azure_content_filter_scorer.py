@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Awaitable, Callable  # noqa: TC003 - registry annotation resolution
 from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
@@ -31,8 +32,6 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics

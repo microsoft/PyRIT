@@ -28,6 +28,7 @@ from pyrit.models.catalog.scenario import (
 )
 from pyrit.models.identifiers.class_name_utils import validate_registry_name
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, Identifiable
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_TEXT_LENGTH
 from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 
 PRESET_SCHEMA_VERSION = 1
@@ -58,16 +59,23 @@ class ScenarioPreset(BaseModel, Identifiable):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., description="Unique preset name, used as the storage key and as the reference from scans")
+    name: str = Field(
+        ...,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Unique preset name, used as the storage key and as the reference from scans",
+    )
     # Literal rather than PRESET_SCHEMA_VERSION: a document written before this field existed
     # is a version 1 document, and must keep reading back as one after the constant is bumped.
     # Defaulting to the constant would relabel those documents as the newest version while they
     # still hold the oldest content, so a migration would skip exactly the documents needing it.
     schema_version: int = Field(1, ge=1, description="Shape of this document")
     scenario_name: _RequestName = Field(..., min_length=1, description="Registered scenario this preset configures")
-    description: str | None = Field(None, description="Human-readable summary of what this preset tests")
+    description: str | None = Field(
+        None, max_length=MAX_TEXT_LENGTH, description="Human-readable summary of what this preset tests"
+    )
     author: str | None = Field(
         None,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Who created this preset; descriptive only, never used to authorize a read or a write",
     )
     show_in_scanner: bool = Field(
@@ -164,6 +172,7 @@ class ResolveScenarioPresetRequest(ScenarioLaunchConfiguration):
 
     expected_version: str | None = Field(
         None,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Version the caller resolved against; omit to resolve the current definition",
     )
 

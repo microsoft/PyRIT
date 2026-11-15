@@ -160,6 +160,7 @@ class TestAssertProvider:
                     "group_id",
                     "behavior_category",
                     "dimension_values",
+                    "tester_instructions",
                     "config",
                     "taxonomy",
                     "dimensions",

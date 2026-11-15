@@ -12,7 +12,7 @@ Tests are SKIPPED if azure-ai-evaluation[redteam] is not installed.
 import pytest
 
 from pyrit.prompt_target import PromptTarget
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score import TrueFalseScorer
 
 
 def _azure_ai_evaluation_available() -> bool:

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { Button, Field, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
-import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
+import { Button, Field, MessageBar, MessageBarActions, MessageBarBody, Spinner } from '@fluentui/react-components'
+import { DismissRegular, SaveRegular } from '@fluentui/react-icons'
 
 import { configurationApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import type { EnvironmentFileContent } from '@/types'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
 
 import { useConfigurationStyles } from './Configuration.styles'
@@ -15,16 +17,15 @@ import DotenvEditor from './DotenvEditor'
 interface StatusMessage {
   intent: 'success' | 'error'
   text: string
+  conflictFileId?: string
 }
 
 interface EnvironmentFilesProps {
   onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void
-  onRequestDiscardChanges: (discardChanges: () => void) => void
 }
 
 export default function EnvironmentFiles({
   onUnsavedChangesChange,
-  onRequestDiscardChanges,
 }: EnvironmentFilesProps) {
   const styles = useConfigurationStyles()
   const { generation } = useRuntime()
@@ -33,30 +34,59 @@ export default function EnvironmentFiles({
   const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set())
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [hasLoadedFiles, setHasLoadedFiles] = useState(false)
   const [loadingContent, setLoadingContent] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [recoveryFileId, setRecoveryFileId] = useState<string | null>(null)
+  const recoveryPending = useRef(false)
+  const recoveryEpoch = useRef(0)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [readError, setReadError] = useState<string | null>(null)
   const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
+  const pending = useRef(false)
+  const editRevision = useRef(0)
   const hasUnsavedChanges = files.some((file) =>
     loadedIds.has(file.id) && file.content !== savedContents[file.id],
   )
 
+  useEffect(() => () => { recoveryEpoch.current++ }, [generation, selectedId])
+
   useEffect(() => {
-    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
-    if ((hasUnsavedChanges && !manualReload) || saving) return
+    if (hasUnsavedChanges || saving || recovering) return
     if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
+    pending.current = true
+    const revision = editRevision.current
+    const refreshing = loadedSnapshot.current?.generation === generation
 
     const loadFilesAsync = async (): Promise<void> => {
-      setStatusMessage(null)
       try {
         const response = await configurationApi.listEnvironmentFiles()
-        if (!cancelled) {
+        if (cancelled || editRevision.current !== revision) return
+        const selected = refreshing && selectedId
+          ? await configurationApi.getEnvironmentFile(selectedId) : null
+        if (!cancelled && editRevision.current === revision) {
           loadedSnapshot.current = { generation, reloadCount }
-          setFiles(response.items)
-          setSavedContents({})
-          setLoadedIds(new Set())
+          setHasLoadedFiles(true)
+          setReadError(null)
+          if (refreshing) {
+            setFiles((current) => response.items.map((file) => {
+              if (file.id === selected?.id) return selected
+              const previous = current.find((item) => item.id === file.id)
+              return previous && loadedIds.has(file.id)
+                ? { ...file, content: previous.content, version: previous.version } : file
+            }))
+            if (selected) {
+              setSavedContents((current) => ({ ...current, [selected.id]: selected.content }))
+              setLoadedIds((current) => new Set(current).add(selected.id))
+            }
+          } else {
+            setFiles(response.items)
+            setSavedContents({})
+            setLoadedIds(new Set())
+          }
           setSelectedId((currentId) =>
             response.items.some((file) => file.id === currentId)
               ? currentId
@@ -65,11 +95,12 @@ export default function EnvironmentFiles({
         }
       } catch (error) {
         if (!cancelled) {
-          setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+          setReadError(toApiError(error).detail)
         }
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -77,8 +108,9 @@ export default function EnvironmentFiles({
     void loadFilesAsync()
     return () => {
       cancelled = true
+      pending.current = false
     }
-  }, [reloadCount, generation, hasUnsavedChanges, saving])
+  }, [reloadCount, generation, hasUnsavedChanges, saving, recovering, selectedId, loadedIds])
 
   useEffect(() => {
     if (!selectedId || loadedIds.has(selectedId)) return
@@ -86,10 +118,10 @@ export default function EnvironmentFiles({
 
     const loadContentAsync = async (): Promise<void> => {
       setLoadingContent(true)
-      setStatusMessage(null)
       try {
         const loadedFile = await configurationApi.getEnvironmentFile(selectedId)
         if (!cancelled) {
+          setReadError(null)
           setFiles((currentFiles) =>
             currentFiles.map((file) => file.id === loadedFile.id ? loadedFile : file),
           )
@@ -98,7 +130,7 @@ export default function EnvironmentFiles({
         }
       } catch (error) {
         if (!cancelled) {
-          setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+          setReadError(toApiError(error).detail)
         }
       } finally {
         if (!cancelled) setLoadingContent(false)
@@ -121,21 +153,13 @@ export default function EnvironmentFiles({
     onUnsavedChangesChange(hasUnsavedChanges)
   }, [hasUnsavedChanges, onUnsavedChangesChange])
 
-  const handleReload = (): void => {
-    const reload = (): void => {
-      setLoading(true)
-      setReloadCount((count: number) => count + 1)
-    }
-
-    if (hasUnsavedChanges) {
-      onRequestDiscardChanges(reload)
-      return
-    }
-    reload()
-  }
+  useAutoRefresh(() => {
+    if (!pending.current) setReloadCount((count: number) => count + 1)
+  }, !loading && !loadingContent && !saving && !recovering && !hasUnsavedChanges)
 
   const handleContentChange = (content: string): void => {
     if (!selectedId) return
+    editRevision.current++
     setFiles((currentFiles) =>
       currentFiles.map((file) => file.id === selectedId ? { ...file, content } : file),
     )
@@ -143,6 +167,7 @@ export default function EnvironmentFiles({
 
   const handleSave = async (): Promise<void> => {
     if (!selectedFile?.version) return
+    editRevision.current++
     setSaving(true)
     setStatusMessage(null)
     try {
@@ -159,9 +184,39 @@ export default function EnvironmentFiles({
         text: `${updated.name} saved. Reinitialize PyRIT to apply these changes.`,
       })
     } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+      const failure = toApiError(error)
+      setStatusMessage({
+        intent: 'error',
+        text: failure.detail,
+        conflictFileId: failure.status === 409 ? selectedFile.id : undefined,
+      })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleRecovery = async (): Promise<void> => {
+    if (!recoveryFileId || statusMessage?.conflictFileId !== recoveryFileId || recoveryPending.current) return
+    const fileId = recoveryFileId
+    recoveryPending.current = true
+    setRecoveryFileId(null)
+    setRecovering(true)
+    const revision = ++editRevision.current
+    const epoch = recoveryEpoch.current
+    try {
+      const updated = await configurationApi.getEnvironmentFile(fileId)
+      if (epoch !== recoveryEpoch.current || revision !== editRevision.current) return
+      setFiles((current) => current.map((file) => file.id === fileId ? updated : file))
+      setSavedContents((current) => ({ ...current, [fileId]: updated.content }))
+      setStatusMessage(null)
+      setReadError(null)
+    } catch (error) {
+      if (epoch === recoveryEpoch.current && revision === editRevision.current) {
+        setStatusMessage({ intent: 'error', text: toApiError(error).detail, conflictFileId: fileId })
+      }
+    } finally {
+      recoveryPending.current = false
+      setRecovering(false)
     }
   }
 
@@ -178,6 +233,19 @@ export default function EnvironmentFiles({
       {statusMessage && (
         <MessageBar intent={statusMessage.intent} className={styles.message}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+          <MessageBarActions>
+            {statusMessage.conflictFileId && statusMessage.conflictFileId === selectedId && (
+              <Button className={styles.action} disabled={saving || recovering}
+                onClick={() => setRecoveryFileId(statusMessage.conflictFileId ?? null)}>Reload from disk</Button>
+            )}
+            <Button appearance="subtle" className={styles.noticeDismiss} icon={<DismissRegular />}
+              aria-label="Dismiss notification" disabled={recovering} onClick={() => setStatusMessage(null)} />
+          </MessageBarActions>
+        </MessageBar>
+      )}
+      {readError && (
+        <MessageBar intent="error" className={styles.message}>
+          <MessageBarBody>{readError}</MessageBarBody>
         </MessageBar>
       )}
       {selectedFile?.read_only_reason && (
@@ -186,7 +254,7 @@ export default function EnvironmentFiles({
         </MessageBar>
       )}
 
-      <EditorWorkspace
+      {hasLoadedFiles && <EditorWorkspace
         items={files.map((file) => ({
           id: file.id,
           label: file.name,
@@ -199,19 +267,10 @@ export default function EnvironmentFiles({
         actions={(
           <div className={styles.actions}>
             <Button
-              appearance="subtle"
-              className={styles.action}
-              icon={<ArrowSyncRegular />}
-              disabled={saving || loadingContent}
-              onClick={handleReload}
-            >
-              Reload file
-            </Button>
-            <Button
               appearance="primary"
               className={styles.action}
               icon={<SaveRegular />}
-              disabled={saving || loadingContent || selectedFile?.read_only || !selectedFileHasUnsavedChanges}
+              disabled={saving || recovering || loadingContent || selectedFile?.read_only || !selectedFileHasUnsavedChanges}
               onClick={() => void handleSave()}
             >
               {saving ? 'Saving...' : 'Save'}
@@ -220,7 +279,7 @@ export default function EnvironmentFiles({
         )}
         onSelect={setSelectedId}
       >
-          {selectedFile && !selectedFileIsLoaded && (
+          {selectedFile && !selectedFileIsLoaded && loadingContent && (
             <div className={styles.loadingState}>
               <Spinner label={`Loading ${selectedFile.name}...`} />
             </div>
@@ -233,12 +292,22 @@ export default function EnvironmentFiles({
             >
               <DotenvEditor
                 value={selectedFile.content}
-                disabled={saving || selectedFile.read_only === true}
+                disabled={saving || recovering || selectedFile.read_only === true}
                 onChange={handleContentChange}
               />
             </Field>
           )}
-      </EditorWorkspace>
+      </EditorWorkspace>}
+      <ConfirmDialog
+        open={recoveryFileId !== null}
+        title="Reload from disk?"
+        confirmLabel="Discard and reload"
+        cancelLabel="Keep editing"
+        onConfirm={() => { void handleRecovery() }}
+        onCancel={() => setRecoveryFileId(null)}
+      >
+        Discard unsaved changes in this file and load its current content from disk.
+      </ConfirmDialog>
     </div>
   )
 }

@@ -4,9 +4,12 @@ import {
   Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { AddRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { TechniqueInstance } from '@/types'
@@ -41,15 +44,16 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
 
   const load = useCallback(async (): Promise<void> => {
     const epoch = ++listEpoch.current
-    setLoading(true)
-    setError(null)
     try {
       const entries = await fetchAllPages(
         (cursor: string | undefined) => techniquesApi.listTechniques(200, cursor),
         undefined,
         (item: TechniqueInstance) => item.name,
       )
-      if (mounted.current && epoch === listEpoch.current) setItems(entries)
+      if (mounted.current && epoch === listEpoch.current) {
+        setItems(entries)
+        setError(null)
+      }
     } catch (err) {
       if (mounted.current && epoch === listEpoch.current) setError(toApiError(err).detail)
     } finally {
@@ -62,6 +66,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
     listEpoch.current++
     if (previousRuntime.current !== runtimeKey) {
       previousRuntime.current = runtimeKey
+      setLoading(true)
       setItems([])
       setSearch('')
       setTypeFilter('')
@@ -75,6 +80,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
       mounted.current = false
     }
   }, [load, runtimeKey])
+  useAutoRefresh(load, ready && !loading)
 
   useEffect(() => {
     if (focusRestore) {
@@ -102,19 +108,21 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
     && (!typeFilter || item.attack_type === typeFilter)
     && (!tagFilter || item.tags.includes(tagFilter))
   ))
-  const types = [...new Set(items.map((item) => item.attack_type))].sort()
-  const tags = [...new Set(items.flatMap((item) => item.tags))].sort()
+  const types = [...new Set([...items.map((item) => item.attack_type), ...(typeFilter ? [typeFilter] : [])])].sort()
+  const tags = [...new Set([...items.flatMap((item) => item.tags), ...(tagFilter ? [tagFilter] : [])])].sort()
 
   return (
     <div className={styles.root} ref={pageRoot} tabIndex={-1}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Technique Registry</Text>
+          <Text as="h1" aria-label="Technique Registry" size={600} weight="semibold">
+            <ContextualHelpLabel term="Technique Registry" labelProps={{ weight: 'semibold' }}>
+              {HELP_DEFINITIONS.technique}
+            </ContextualHelpLabel>
+          </Text>
           <Text size={300} className={styles.subtitle}>Named configurations of existing attack techniques</Text>
         </div>
         <div className={styles.headerActions}>
-          <Button className={styles.headerAction} appearance="subtle" icon={<ArrowSyncRegular />}
-            disabled={loading || !ready} onClick={() => { void load() }}>Refresh</Button>
           <Button {...restoreFocusTarget} className={styles.headerAction} ref={newButton} appearance="primary" icon={<AddRegular />} disabled={!ready}
             onClick={() => setCreateOpen(true)}>New technique</Button>
         </div>
@@ -131,15 +139,17 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
         </Select></Field>
       </div>
       {loading && <Spinner label="Loading techniques..." />}
-      {!loading && error && <MessageBar intent="error"><MessageBarBody>{error} <Button onClick={() => { void load() }}>Retry</Button></MessageBarBody></MessageBar>}
+      {!loading && error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {!loading && !error && items.length === 0 && <Text>No techniques registered. Add a technique or run a technique initializer.</Text>}
       {!loading && !error && items.length > 0 && visible.length === 0 && <Text>No techniques match these filters.</Text>}
-      {!loading && !error && visible.length > 0 && (
+      {!loading && visible.length > 0 && (
         <div className={styles.table}>
           <Table className={styles.tableContent} aria-label="Registered techniques">
             <TableHeader className={styles.tableHeader}><TableRow>
-              <TableHeaderCell>Name</TableHeaderCell><TableHeaderCell>Description</TableHeaderCell>
-              <TableHeaderCell>Attack type</TableHeaderCell><TableHeaderCell>Tags</TableHeaderCell>
+              <TableHeaderCell aria-label="Name"><ContextualHelpLabel term="Name">The registry name used to select this technique for a run.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Description"><ContextualHelpLabel term="Description">A short summary of the technique's purpose or setup.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Attack type"><ContextualHelpLabel term="Attack type">The algorithm that manages the attack conversation.</ContextualHelpLabel></TableHeaderCell>
+              <TableHeaderCell aria-label="Tags"><ContextualHelpLabel term="Tags">Labels used to find and group techniques. Tags do not change the attack algorithm.</ContextualHelpLabel></TableHeaderCell>
             </TableRow></TableHeader>
             <TableBody>{visible.map((item) => (
               <RegistryIdentityRow key={item.name} name={item.name} identity={item.identifier} columns={4}

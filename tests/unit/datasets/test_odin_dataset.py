@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.odin_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     ODINSecurityBoundary,
     ODINSeverity,
     ODINTaxonomyCategory,

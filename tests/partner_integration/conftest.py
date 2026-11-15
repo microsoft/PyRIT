@@ -18,8 +18,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import inspect
 
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.sqlite_memory import SQLiteMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 # Limit retries for deterministic testing

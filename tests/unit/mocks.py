@@ -27,7 +27,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario import ScenarioTechnique
 
 T = TypeVar("T")
 

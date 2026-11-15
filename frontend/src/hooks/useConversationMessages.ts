@@ -3,8 +3,8 @@ import type { Dispatch, SetStateAction } from 'react'
 
 import { attacksApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConversationMessagesResponse, Message } from '@/types'
-import { backendMessagesToFrontend } from '@/utils/messageMapper'
+import type { BackendMessage, BackendMessagePiece, BackendScore, ConversationMessagesResponse, Message, PaginationInfo } from '@/types'
+import { backendMessagesToFrontend, mergeBackendMessages } from '@/utils/messageMapper'
 
 export interface ConversationLoadIssue {
   conversationId: string
@@ -13,8 +13,47 @@ export interface ConversationLoadIssue {
 }
 
 interface ConversationLoadRequest {
+  attackResultId: string | null
   conversationId: string
   requestId: number
+}
+
+interface SavedTranscriptPage {
+  attackResultId: string
+  conversationId: string
+  pageSize: number
+  response: ConversationMessagesResponse | null
+  consumedCursors: ReadonlySet<string>
+}
+
+interface LoadedFullTranscript {
+  readonly attackResultId: string | null
+  readonly conversationId: string
+  readonly response: ConversationMessagesResponse
+}
+
+function mergeTranscriptPage(
+  previous: ConversationMessagesResponse | null, incoming: ConversationMessagesResponse, conversationId: string,
+  cursor?: string, consumedCursors?: ReadonlySet<string>,
+): ConversationMessagesResponse {
+  const pagination = incoming.pagination
+  if (incoming.conversation_id !== conversationId || !pagination || typeof pagination.has_more !== 'boolean'
+    || !Number.isInteger(pagination.limit) || pagination.limit < 1 || pagination.limit > 500
+    || (pagination.has_more && (!pagination.next_cursor || pagination.next_cursor === cursor
+      || consumedCursors?.has(pagination.next_cursor)))) {
+    throw new Error('The server returned invalid transcript pagination. Restart transcript loading.')
+  }
+  const messages = mergeBackendMessages(previous?.messages ?? [], incoming.messages)
+  const lastSequence = messages[messages.length - 1]?.turn_number
+  // A continuation's leading partial turn is complete once our prefix reaches a later turn or the end.
+  const partialSequences = pagination.has_more && lastSequence !== undefined
+    && incoming.partial_message_sequences?.includes(lastSequence) ? [lastSequence] : []
+  return {
+    ...incoming,
+    messages,
+    partial_message_sequences: partialSequences,
+    target_response_status: pagination.has_more || partialSequences.length > 0 ? null : incoming.target_response_status,
+  }
 }
 
 export interface UseConversationMessagesOptions {
@@ -25,6 +64,8 @@ export interface UseConversationMessagesOptions {
   conversationId: string | null
   activeConversationId: string | null
   findingEvidenceId?: string | null
+  /** Opts saved evidence into piece-bounded reads; live Chat keeps its existing full reads. */
+  messagePageSize?: number
   /** Conversations with an in-flight send; render-safe state used for the loading derivation. */
   sendingConversations: ReadonlySet<string>
   /** Synchronous send ownership check used by the reload guard. */
@@ -46,7 +87,15 @@ export interface ConversationMessages {
   awaitingConversationLoad: boolean
   conversationLoadIssue: ConversationLoadIssue | null
   isEvidenceUnavailable: boolean
+  messagePagination: PaginationInfo | null
+  loadedPieceCount: number
+  isTranscriptIncomplete: boolean
+  isLoadingMoreMessages: boolean
+  messageContinuationIssue: { detail: string; restartRequired: boolean } | null
+  loadMoreMessages: () => Promise<void>
   loadConversation: (attackResultId: string | null, conversationId: string) => Promise<void>
+  /** Refreshes scores without replacing saved evidence or its paging state. */
+  refreshConversationScores: (attackResultId: string, conversationId: string) => Promise<void>
   /** Lets the next conversation change load even while that conversation is sending. */
   requestForcedLoad: () => void
   markConversationLoaded: (conversationId: string | null) => void
@@ -69,6 +118,7 @@ export function useConversationMessages({
   conversationId,
   activeConversationId,
   findingEvidenceId,
+  messagePageSize,
   sendingConversations,
   isSendInFlight,
   onConversationLoaded,
@@ -77,7 +127,16 @@ export function useConversationMessages({
   const [conversationLoadIssue, setConversationLoadIssue] = useState<ConversationLoadIssue | null>(null)
   const [isLoadingMessages, setIsLoadingMessages] = useState(false)
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
+  const [loadedAttackResultId, setLoadedAttackResultId] = useState<string | null>(null)
+  const [savedTranscriptPage, setSavedTranscriptPage] = useState<SavedTranscriptPage | null>(null)
+  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false)
+  const [messageContinuationIssue, setMessageContinuationIssue] = useState<{ detail: string; restartRequired: boolean } | null>(null)
+  const savedTranscriptPageRef = useRef<SavedTranscriptPage | null>(null)
+  const fullTranscriptRef = useRef<LoadedFullTranscript | null>(null)
+  const loadedAttackResultIdRef = useRef<string | null>(null)
   const loadedConversationIdRef = useRef<string | null>(null)
+  const viewedAttackRef = useRef(attackResultId)
+  const viewRevisionRef = useRef(0)
   const nextReadIdRef = useRef(0)
   const latestReadIdsRef = useRef<Map<string, number>>(new Map())
   const activeLoadRef = useRef<ConversationLoadRequest | null>(null)
@@ -97,7 +156,14 @@ export function useConversationMessages({
 
   const markConversationLoaded = useCallback((loadedId: string | null): void => {
     loadedConversationIdRef.current = loadedId
+    loadedAttackResultIdRef.current = viewedAttackRef.current
     setLoadedConversationId(loadedId)
+    setLoadedAttackResultId(viewedAttackRef.current)
+  }, [])
+
+  const saveTranscriptPage = useCallback((page: SavedTranscriptPage): void => {
+    savedTranscriptPageRef.current = page
+    setSavedTranscriptPage(page)
   }, [])
 
   const invalidateConversationLoads = useCallback((conversationIdToInvalidate: string): void => {
@@ -105,6 +171,7 @@ export function useConversationMessages({
     if (activeLoadRef.current?.conversationId === conversationIdToInvalidate) {
       activeLoadRef.current = null
       setIsLoadingMessages(false)
+      setIsLoadingMoreMessages(false)
     }
   }, [])
 
@@ -130,44 +197,93 @@ export function useConversationMessages({
   // check whether the user navigated away while a request was in-flight.
   const viewedConvRef = useRef(activeConversationId ?? conversationId)
   useLayoutEffect(() => {
-    viewedConvRef.current = activeConversationId ?? conversationId
-    return () => { viewedConvRef.current = null }
-  }, [activeConversationId, conversationId])
+    viewRevisionRef.current += 1
+    viewedAttackRef.current = attackResultId
+    viewedConvRef.current = viewedConversationId
+    return () => {
+      viewRevisionRef.current += 1
+      viewedAttackRef.current = null
+      viewedConvRef.current = null
+    }
+  }, [viewedConversationId, attackResultId, messagePageSize])
 
   const resetConversationMessages = useCallback((): void => {
+    fullTranscriptRef.current = null
     setMessages([])
     setLoadedConversationId(null)
+    setLoadedAttackResultId(null)
+    setSavedTranscriptPage(null)
+    setConversationLoadIssue(null)
+    setMessageContinuationIssue(null)
+    setIsLoadingMessages(false)
+    setIsLoadingMoreMessages(false)
   }, [])
 
   // Load messages for a given conversation
-  const loadConversation = useCallback(async (arId: string | null, convId: string) => {
+  const loadConversation = useCallback(async (arId: string | null, convId: string, rejectOnFailure: boolean = false): Promise<void> => {
     const requestId = claimConversationRead(convId)
-    activeLoadRef.current = { conversationId: convId, requestId }
+    const viewRevision = viewRevisionRef.current
+    activeLoadRef.current = { attackResultId: arId, conversationId: convId, requestId }
     setIsLoadingMessages(true)
+    setIsLoadingMoreMessages(false)
     const isCurrentLoad = (): boolean => isLatestConversationRead(convId, requestId)
+      && viewedAttackRef.current === arId && viewedConvRef.current === convId && viewRevisionRef.current === viewRevision
 
     try {
-      let response: ConversationMessagesResponse
-      if (readConversationById) {
-        response = await readConversationById(convId)
+      let incoming: ConversationMessagesResponse
+      if (messagePageSize !== undefined) {
+        if (!arId) throw new Error('An attack result ID is required to load saved transcript pages.')
+        incoming = await attacksApi.getMessages(arId, convId, { limit: messagePageSize })
+      } else if (readConversationById) {
+        incoming = await readConversationById(convId)
       } else if (arId) {
-        response = await (readConversation ?? attacksApi.getMessages)(arId, convId)
+        incoming = await (readConversation ?? attacksApi.getMessages)(arId, convId)
       } else {
         throw new Error('An attack result ID is required to load this conversation.')
       }
       // Discard superseded loads and responses invalidated by a send.
-      if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
+      if (!isCurrentLoad()) { return }
+      let response = messagePageSize === undefined ? incoming : mergeTranscriptPage(null, incoming, convId)
+      const consumedCursors = new Set<string>()
+      const full = fullTranscriptRef.current
+      if (messagePageSize !== undefined && arId && full?.attackResultId === arId && full.conversationId === convId) {
+        const missing = new Set(full.response.messages.flatMap((message: BackendMessage) => message.message_pieces.map((piece: BackendMessagePiece) => piece.id)))
+        for (const message of response.messages) {
+          for (const piece of message.message_pieces) missing.delete(piece.id)
+        }
+        // Complete the already-visible live window before installing its saved paging state.
+        while (missing.size > 0 && response.pagination?.has_more) {
+          const cursor = response.pagination.next_cursor
+          if (!cursor) throw new Error('The saved transcript continuation is missing. Restart transcript loading.')
+          const next = await attacksApi.getMessages(arId, convId, { limit: messagePageSize, cursor })
+          if (!isCurrentLoad()) return
+          response = mergeTranscriptPage(response, next, convId, cursor, consumedCursors)
+          consumedCursors.add(cursor)
+          for (const message of next.messages) {
+            for (const piece of message.message_pieces) missing.delete(piece.id)
+          }
+        }
+      }
+      setMessageContinuationIssue(null)
+      if (messagePageSize !== undefined && arId) {
+        saveTranscriptPage({ attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response, consumedCursors })
+        fullTranscriptRef.current = null
+      } else {
+        fullTranscriptRef.current = { attackResultId: arId, conversationId: convId, response }
+      }
       setConversationLoadIssue(
-        findingEvidenceId && response.messages.length === 0
+        findingEvidenceId && response.messages.length === 0 && !response.pagination?.has_more
           ? { conversationId: convId, unavailable: true, detail: 'Evidence unavailable' }
           : null,
       )
-      const frontendMessages = backendMessagesToFrontend(response.messages)
+      const frontendMessages = backendMessagesToFrontend(
+        response.messages, messagePageSize === undefined ? undefined : response.partial_message_sequences,
+      )
       const onLoaded = sendCallbacksRef.current.onConversationLoaded
       setMessages(onLoaded ? onLoaded(convId, response, frontendMessages) : frontendMessages)
       markConversationLoaded(convId)
     } catch (cause: unknown) {
-      if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
+      if (!isCurrentLoad()) { return }
       const error = toApiError(cause)
       setConversationLoadIssue({
         conversationId: convId, unavailable: error.status === 404,
@@ -176,23 +292,151 @@ export function useConversationMessages({
       })
       // Initial-load failures must not show another conversation's transcript.
       // Refresh failures keep the already-loaded transcript and recovery aligned.
-      if (loadedConversationIdRef.current !== convId) {
+      if (loadedConversationIdRef.current !== convId || loadedAttackResultIdRef.current !== arId) {
+        setMessageContinuationIssue(null)
         setMessages([])
         markConversationLoaded(convId)
+        if (messagePageSize !== undefined && arId) {
+          saveTranscriptPage({
+            attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response: null, consumedCursors: new Set(),
+          })
+        }
+      }
+      if (rejectOnFailure) {
+        const refreshError = new Error(`Could not refresh conversation scores: ${error.detail}`)
+        Object.defineProperty(refreshError, 'cause', { value: cause })
+        throw refreshError
       }
     } finally {
-      if (isCurrentLoad()) {
+      if (isLatestConversationRead(convId, requestId)) {
         latestReadIdsRef.current.delete(convId)
       }
       if (activeLoadRef.current?.requestId === requestId) {
         activeLoadRef.current = null
-        setIsLoadingMessages(false)
+        if (viewedConvRef.current !== null) {
+          setIsLoadingMessages(false)
+        }
       }
     }
   }, [
     claimConversationRead, isLatestConversationRead, markConversationLoaded,
-    findingEvidenceId, readConversation, readConversationById,
+    findingEvidenceId, messagePageSize, saveTranscriptPage, readConversation, readConversationById,
   ])
+
+  const refreshConversationScores = useCallback(async (arId: string, convId: string): Promise<void> => {
+    if (viewedAttackRef.current !== arId || viewedConvRef.current !== convId) return
+    if (messagePageSize === undefined) {
+      await loadConversation(arId, convId, true)
+      return
+    }
+    if (activeLoadRef.current) throw new Error('Wait for transcript loading to finish before refreshing scores.')
+    const page = savedTranscriptPageRef.current
+    if (!page?.response || page.attackResultId !== arId || page.conversationId !== convId
+      || page.pageSize !== messagePageSize) {
+      throw new Error('Load the conversation before refreshing its scores.')
+    }
+    const response = page.response
+    const pieceIds = new Set(response.messages.flatMap(
+      (message: BackendMessage) => message.message_pieces.map((piece: BackendMessagePiece) => piece.id),
+    ))
+    if (pieceIds.size === 0) return
+    const requestId = claimConversationRead(convId)
+    const viewRevision = viewRevisionRef.current
+    const isCurrentRefresh = (): boolean => isLatestConversationRead(convId, requestId)
+      && viewedAttackRef.current === arId && viewedConvRef.current === convId
+      && viewRevisionRef.current === viewRevision && savedTranscriptPageRef.current === page
+    const scoresByPiece = new Map<string, BackendScore[]>()
+    const consumedCursors = new Set<string>()
+    let cursor: string | undefined
+    try {
+      // Re-read at most the prefix already loaded, using fresh cursors and only retaining scores.
+      for (let remainingPages = page.consumedCursors.size + 1; remainingPages > 0; remainingPages -= 1) {
+        const incoming = await attacksApi.getMessages(
+          arId, convId, cursor === undefined ? { limit: page.pageSize } : { limit: page.pageSize, cursor },
+        )
+        if (!isCurrentRefresh()) return
+        mergeTranscriptPage(null, incoming, convId, cursor, consumedCursors)
+        for (const message of incoming.messages) {
+          for (const piece of message.message_pieces) {
+            if (pieceIds.has(piece.id)) scoresByPiece.set(piece.id, piece.scores)
+          }
+        }
+        if (scoresByPiece.size === pieceIds.size || !incoming.pagination?.has_more) break
+        if (cursor) consumedCursors.add(cursor)
+        cursor = incoming.pagination.next_cursor ?? undefined
+      }
+      if (scoresByPiece.size !== pieceIds.size) {
+        throw new Error('The loaded evidence changed. Restart transcript loading before refreshing scores.')
+      }
+      const refreshed: ConversationMessagesResponse = {
+        ...response,
+        messages: response.messages.map((message: BackendMessage) => ({
+          ...message,
+          message_pieces: message.message_pieces.map((piece: BackendMessagePiece) => ({
+            ...piece, scores: scoresByPiece.get(piece.id) ?? piece.scores,
+          })),
+        })),
+      }
+      setMessages(backendMessagesToFrontend(refreshed.messages, refreshed.partial_message_sequences))
+      saveTranscriptPage({ ...page, response: refreshed })
+    } catch (cause: unknown) {
+      if (!isCurrentRefresh()) return
+      const refreshError = new Error(`Could not refresh conversation scores: ${toApiError(cause).detail}`)
+      Object.defineProperty(refreshError, 'cause', { value: cause })
+      throw refreshError
+    } finally {
+      if (isLatestConversationRead(convId, requestId)) latestReadIdsRef.current.delete(convId)
+    }
+  }, [claimConversationRead, isLatestConversationRead, loadConversation, messagePageSize, saveTranscriptPage])
+
+  const loadMoreMessages = useCallback(async (): Promise<void> => {
+    const page = savedTranscriptPageRef.current
+    const cursor = page?.response?.pagination?.next_cursor
+    if (activeLoadRef.current || messageContinuationIssue?.restartRequired || !page || !cursor || !page.response?.pagination?.has_more
+      || page.attackResultId !== viewedAttackRef.current || page.conversationId !== viewedConvRef.current
+      || page.pageSize !== messagePageSize) return
+    const { attackResultId: arId, conversationId: convId } = page
+    const requestId = claimConversationRead(convId)
+    const viewRevision = viewRevisionRef.current
+    activeLoadRef.current = { attackResultId: arId, conversationId: convId, requestId }
+    setIsLoadingMoreMessages(true)
+    setMessageContinuationIssue(null)
+    const isCurrentLoad = (): boolean => isLatestConversationRead(convId, requestId)
+      && viewedAttackRef.current === arId && viewedConvRef.current === convId
+      && viewRevisionRef.current === viewRevision && savedTranscriptPageRef.current === page
+    let restartRequired = false
+    try {
+      const incoming = await attacksApi.getMessages(arId, convId, { limit: page.pageSize, cursor })
+      if (!isCurrentLoad()) return
+      restartRequired = true
+      const response = mergeTranscriptPage(page.response, incoming, convId, cursor, page.consumedCursors)
+      const frontendMessages = backendMessagesToFrontend(response.messages, response.partial_message_sequences)
+      setConversationLoadIssue(findingEvidenceId && response.messages.length === 0 && !response.pagination?.has_more
+        ? { conversationId: convId, unavailable: true, detail: 'Evidence unavailable' } : null)
+      const onLoaded = sendCallbacksRef.current.onConversationLoaded
+      setMessages(onLoaded ? onLoaded(convId, response, frontendMessages) : frontendMessages)
+      saveTranscriptPage({ ...page, response, consumedCursors: new Set([...page.consumedCursors, cursor]) })
+    } catch (cause: unknown) {
+      if (!isCurrentLoad()) return
+      const error = toApiError(cause)
+      setMessageContinuationIssue({
+        detail: `Could not load more messages: ${error.detail}`, restartRequired: restartRequired || error.status === 400,
+      })
+    } finally {
+      if (isLatestConversationRead(convId, requestId)) latestReadIdsRef.current.delete(convId)
+      if (activeLoadRef.current?.requestId === requestId) {
+        activeLoadRef.current = null
+        if (viewedConvRef.current !== null) setIsLoadingMoreMessages(false)
+      }
+    }
+  }, [claimConversationRead, isLatestConversationRead, messagePageSize, saveTranscriptPage, messageContinuationIssue, findingEvidenceId])
+
+  const currentPage = savedTranscriptPage?.attackResultId === attackResultId
+    && savedTranscriptPage.conversationId === viewedConversationId && savedTranscriptPage.pageSize === messagePageSize
+    ? savedTranscriptPage : null
+  const messagePagination = currentPage?.response?.pagination ?? null
+  const isTranscriptIncomplete = messagePageSize !== undefined && (!messagePagination || messagePagination.has_more)
+  const loadedPieceCount = currentPage?.response?.messages.reduce((count, message) => count + message.message_pieces.length, 0) ?? 0
 
   // Reload when the selected conversation changes or its send releases ownership.
   useEffect(() => {
@@ -201,16 +445,34 @@ export function useConversationMessages({
     // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
-    if (!force && (
+    // A send in flight owns this conversation's optimistic transcript, but only
+    // while the hook still holds it, and #3818 also defers a mount into a
+    // sending conversation until the send ends. Returning after the hook has
+    // loaded another conversation is the one case that must not skip: the
+    // optimistic copy is gone, and keeping the skip would render the held
+    // view under this URL with no loading state. The send pipeline layers its
+    // pending messages on the loaded transcript, so the view stays correct
+    // while the send runs.
+    const holdsAnotherConversation = (
+      loadedConversationIdRef.current !== null
+      && loadedConversationIdRef.current !== activeConversationId
+    )
+    if (!force && !holdsAnotherConversation && (
       isActiveConversationSending
       || sendCallbacksRef.current.isSendInFlight(activeConversationId)
       || (
         loadedConversationIdRef.current === activeConversationId
+        && (loadedAttackResultIdRef.current === null || loadedAttackResultIdRef.current === attackResultId)
+        && (messagePageSize === undefined || (
+          savedTranscriptPageRef.current?.attackResultId === attackResultId
+          && savedTranscriptPageRef.current.conversationId === activeConversationId
+          && savedTranscriptPageRef.current.pageSize === messagePageSize
+        ))
         && activeLoadRef.current === null
       )
     )) { return }
     loadConversation(attackResultId, activeConversationId)
-  }, [activeConversationId, attackResultId, isActiveConversationSending, loadConversation, readConversationById])
+  }, [activeConversationId, attackResultId, isActiveConversationSending, loadConversation, messagePageSize, readConversationById])
 
   useEffect(() => {
     if (!pollIntervalMs || (!attackResultId && !readConversationById) || !activeConversationId) return
@@ -231,10 +493,14 @@ export function useConversationMessages({
   // conversation whose messages we've loaded, we're in a transition gap.
   // This avoids the 1-frame flash between useEffect fire and render.
   // Reads `sendingConversations` (state) rather than a send ref so the
-  // computation stays render-safe.
+  // computation stays render-safe. A sending conversation is only exempt from
+  // the gap flag while the hook holds it: once another conversation is held,
+  // returning to the sending one re-fetches and must show the gap, not the
+  // held transcript unflagged.
   const awaitingConversationLoad = Boolean(
-    activeConversationId && activeConversationId !== loadedConversationId
-    && !sendingConversations.has(activeConversationId)
+    activeConversationId && (activeConversationId !== loadedConversationId
+      || (loadedAttackResultId !== null && loadedAttackResultId !== attackResultId))
+    && (loadedConversationId !== null || !sendingConversations.has(activeConversationId))
   )
 
   const requestForcedLoad = useCallback((): void => { forceLoadRef.current = true }, [])
@@ -250,7 +516,14 @@ export function useConversationMessages({
     awaitingConversationLoad,
     conversationLoadIssue,
     isEvidenceUnavailable,
+    messagePagination,
+    loadedPieceCount,
+    isTranscriptIncomplete,
+    isLoadingMoreMessages,
+    messageContinuationIssue: currentPage ? messageContinuationIssue : null,
+    loadMoreMessages,
     loadConversation,
+    refreshConversationScores,
     requestForcedLoad,
     markConversationLoaded,
     resetConversationMessages,

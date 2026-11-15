@@ -33,6 +33,9 @@ export const useMainLayoutStyles = makeStyles({
       transform: 'translateY(0)',
     },
   },
+  banner: {
+    flexShrink: 0,
+  },
   topBar: {
     minHeight: '60px',
     flexShrink: 0,
@@ -129,6 +132,9 @@ export const useMainLayoutStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      overflowY: 'auto',
+    },
   },
   labelsSection: {
     flexShrink: 0,

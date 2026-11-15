@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import resolve_constructor_defaults
-from pyrit.models.identifiers import AttackIdentifier
+from pyrit.models import AttackIdentifier
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 

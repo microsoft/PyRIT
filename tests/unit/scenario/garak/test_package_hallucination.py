@@ -7,23 +7,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario import BaselineAttackPolicy, DatasetConfiguration
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucination,
     PackageHallucinationTechnique,
     WebInjectionTechnique,
 )
-from pyrit.score import TrueFalseScorer
-from pyrit.score.true_false.regex.package_hallucination_scorer import (
+from pyrit.score import (
     PackageEcosystem,
     PackageHallucinationScorer,
+    TrueFalseScorer,
 )
 
 

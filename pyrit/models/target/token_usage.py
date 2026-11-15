@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 #: Prefix for all token-usage keys stored in a MessagePiece's ``prompt_metadata``. Public because
 #: the targets that report usage reserve the whole prefix for the provider: they clear it before
@@ -96,7 +96,7 @@ class TokenUsage:
     extra: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def from_metadata(cls, metadata: dict[str, Any]) -> TokenUsage | None:
+    def from_metadata(cls, metadata: dict[str, Any]) -> Self | None:
         """
         Reconstruct a ``TokenUsage`` from a ``MessagePiece``'s ``prompt_metadata``.
 
@@ -108,7 +108,7 @@ class TokenUsage:
             metadata (dict[str, Any]): The prompt metadata to read.
 
         Returns:
-            TokenUsage | None: The reconstructed usage, or None if no token-usage keys exist.
+            Self | None: The reconstructed usage, or None if no token-usage keys exist.
         """
         stripped = {
             key[len(TOKEN_USAGE_METADATA_PREFIX) :]: value

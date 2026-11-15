@@ -60,7 +60,7 @@
 # Below is a simplified version of the [`DarkBenchDataset`](../../../pyrit/datasets/seed_datasets/remote/darkbench_dataset.py) loader.
 
 # %%
-from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
+from pyrit.datasets.seed_datasets.remote import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt

@@ -29,7 +29,7 @@ function makeEvent(overrides: Record<string, unknown> = {}) {
 const TOUR_ANCHORS = [
   'sidebar-nav',
   'labels-card',
-  'target-card',
+  'home-workflows',
   'chat-prerequisite',
   'converter-toggle',
   'scanner-catalog',
@@ -88,21 +88,21 @@ describe('useTour', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home', false))
     const steps = result.current.tourProps.steps
 
-    expect(steps[2].content).toContain('Select a target from the Chat dropdown')
-    expect(steps[2].content).toContain('Target Registry')
-    expect(steps[2].content).toContain('adversarial default for your account')
+    expect(steps[2].content).toContain('Use New attack')
+    expect(steps[2].content).toContain('Configure scan')
+    expect(steps[2].content).toContain('Recent work and saved operations')
     expect(steps[3].target).toBe('[data-tour="chat-prerequisite"]')
     expect(steps[3].content).toContain('to enable the message composer')
     expect(steps[3].content).toContain('automatically select their original registered target')
   })
 
-  it('uses the active target card and visible converter control when a target is active', () => {
+  it('uses workflow guidance and the visible converter control when a target is active', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home', true))
     const steps = result.current.tourProps.steps
 
-    expect(steps[2].content).toContain('last-used objective target')
-    expect(steps[2].content).toContain('new chats and scanner runs')
-    expect(steps[2].content).toContain('adversarial default in the Target Registry')
+    expect(steps[2].target).toBe('[data-tour="home-workflows"]')
+    expect(steps[2].content).toContain('Use New attack')
+    expect(steps[2].content).toContain('Configure scan')
     expect(steps[3].target).toBe('[data-tour="converter-toggle"]')
     expect(steps[3].content).toContain('Chat shows the message composer')
     expect(steps[3].content).toContain('Toggle converter panel')
@@ -115,7 +115,7 @@ describe('useTour', () => {
     expect(steps.map((step) => step.target)).toEqual([
       '[data-tour="sidebar-nav"]',
       '[data-tour="labels-card"]',
-      '[data-tour="target-card"]',
+      '[data-tour="home-workflows"]',
       '[data-tour="chat-prerequisite"]',
       '[data-tour="scanner-catalog"]',
       '[data-tour="feature-tabs"]',
@@ -254,11 +254,11 @@ describe('useTour', () => {
     })
 
     rerender({ currentView: 'registry', hasActiveTarget: false })
-    expect(result.current.tourProps.steps[2].content).toContain('Select a target')
+    expect(result.current.tourProps.steps[2].content).toContain('Use New attack')
 
     rerender({ currentView: 'registry', hasActiveTarget: true })
     expect(result.current.tourProps.steps[2].target).toBe('body')
-    expect(result.current.tourProps.steps[2].content).toContain('last-used objective target')
+    expect(result.current.tourProps.steps[2].content).toContain('Use New attack')
     expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')
 
     act(() => {

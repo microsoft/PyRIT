@@ -13,16 +13,15 @@ from pyrit.executor.attack import (
     AttackExecutor,
     AttackParameters,
     AttackScoringConfig,
-    PromptSendingAttack,
-    SingleTurnAttackContext,
-)
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
-from pyrit.executor.attack.multi_turn import simulated_conversation
-from pyrit.executor.attack.multi_turn.multi_prompt_sending import (
     MultiPromptSendingAttack,
     MultiPromptSendingAttackParameters,
+    PromptSendingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
+    SimulatedConversationResult,
+    SingleTurnAttackContext,
 )
-from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
+from pyrit.executor.attack.multi_turn import simulated_conversation
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AnswerMatches,

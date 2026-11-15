@@ -1,8 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 
-import { MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
+import { MessageBar, MessageBarBody } from '@fluentui/react-components'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
@@ -17,6 +18,7 @@ import SaveConverterDialog from './SaveConverterDialog'
 
 interface ConverterChainFieldProps {
   label: string
+  readonly help: string
   converters: ConverterInstance[]
   value: ConverterSelection[]
   disabled?: boolean
@@ -27,7 +29,7 @@ interface ConverterChainFieldProps {
 
 /** Ordered converter references with the same picker and settings form as chat. */
 export default function ConverterChainField({
-  label, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
+  label, help, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
 }: ConverterChainFieldProps) {
   const styles = useConverterChainFieldStyles()
   const { generation } = useRuntime()
@@ -68,15 +70,19 @@ export default function ConverterChainField({
     if (index + delta < 0 || index + delta >= value.length) return
     const next = [...value]
     const [entry] = next.splice(index, 1)
-    next.splice(index + delta, 0, entry)
     const [entryId] = ids.splice(index, 1)
-    ids.splice(index + delta, 0, entryId)
-    setEntryIds(ids)
-    onChange(next)
+    if (entry !== undefined && entryId !== undefined) {
+      next.splice(index + delta, 0, entry)
+      ids.splice(index + delta, 0, entryId)
+      setEntryIds(ids)
+      onChange(next)
+    }
   }
 
   return <section className={styles.root} aria-label={label}>
-    <Text weight="semibold">{label}</Text>
+    <ContextualHelpLabel term={label} labelProps={{ weight: 'semibold' }}>
+      {help}
+    </ContextualHelpLabel>
     <SelectConverterInput
       label={label} disabled={disabled} groupedConverters={groupConverters(converters)}
       onOptionSelect={add} onCreateNew={() => setCreateOpen(true)}
@@ -94,7 +100,7 @@ export default function ConverterChainField({
           } : undefined}
         onReset={() => onChange(value.map((entry, position) => position === index ? name : entry))}
         onSave={allowTemporary && converter && typeof selection !== 'string' ? () => setSaving({
-          entryId: ids[index], source: selection, converterType: converter.identifier.class_name, generation,
+          entryId: ids[index] ?? '', source: selection, converterType: converter.identifier.class_name, generation,
         }) : undefined}
         onMove={(delta) => move(index, delta)}
         onDragStart={(event) => {

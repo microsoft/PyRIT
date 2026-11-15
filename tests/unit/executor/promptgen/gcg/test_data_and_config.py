@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.promptgen.gcg.config import GCGConfig, GCGDataConfig, GCGModelConfig, GCGOutputConfig
+from pyrit.executor.promptgen.gcg import GCGConfig, GCGDataConfig, GCGModelConfig, GCGOutputConfig
 
 attack_manager_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.base.attack_manager",

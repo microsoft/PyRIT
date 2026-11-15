@@ -6,13 +6,13 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults, warn_if_set
 from pyrit.common.random_context import random_execution
-from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
+from pyrit.executor.attack.core import AttackParamsT
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
-from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
