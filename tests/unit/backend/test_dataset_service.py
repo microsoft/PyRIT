@@ -15,7 +15,7 @@ from pyrit.backend.services import DatasetService, get_dataset_service
 from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetMetadata, SeedDatasetProvider
 from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
 from pyrit.datasets.seed_datasets.remote import _HarmBenchDataset
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import SeedDatasetSummary
 
 
@@ -39,6 +39,32 @@ def dataset_service(mock_memory):
 @pytest.mark.usefixtures("patch_central_database")
 class TestListDatasets:
     """Tests for DatasetService.list_datasets_async."""
+
+    async def test_harmbench_declarations_survive_loading_standardized_categories_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = DatasetService()
+        with patch.object(SeedDatasetProvider, "get_all_providers", return_value={"harmbench": _HarmBenchDataset}):
+            before = (await service.list_datasets_async()).items[0]
+            loader = _HarmBenchDataset()
+            with patch.object(
+                loader,
+                "_fetch_from_url",
+                return_value=[
+                    {"Behavior": "Offline category fixture.", "SemanticCategory": "harassment"},
+                    {"Behavior": "Another offline fixture.", "SemanticCategory": "cybercrime"},
+                ],
+            ):
+                dataset = await loader.fetch_dataset_async()
+            await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="test")
+            after = (await service.list_datasets_async()).items[0]
+
+        assert not before.loaded and after.loaded
+        assert before.provider is not None
+        assert {"harassment", "cybercrime"} <= set(before.provider.harm_categories)
+        assert before.provider == after.provider
+        assert set(after.harm_categories) == {"HARASSMENT", "COORDINATION_HARM", "MALWARE"}
+        assert after.logical_examples == 2
 
     @pytest.mark.parametrize("loaded_only", [False, True])
     async def test_malformed_provider_metadata_preserves_stored_browsing_async(

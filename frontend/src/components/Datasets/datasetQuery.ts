@@ -96,9 +96,17 @@ export function normalizeDatasetModality(modality: string): string {
   return kind !== 'file' && modality === `${kind}_path` ? kind : modality
 }
 
-export function datasetModalities(dataset: DatasetInfo): string[] {
-  const values = dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []
+function usesProviderFacets(dataset: DatasetInfo, view: DatasetCatalogQuery['view']): boolean {
+  return view !== 'memory' && view != null && dataset.provider_available
+}
+
+export function datasetModalities(dataset: DatasetInfo, view: DatasetCatalogQuery['view'] = 'memory'): string[] {
+  const values = usesProviderFacets(dataset, view) ? dataset.provider?.modalities ?? [] : dataset.modalities
   return [...new Set(values.map(normalizeDatasetModality))]
+}
+
+export function datasetHarmCategories(dataset: DatasetInfo, view: DatasetCatalogQuery['view'] = 'memory'): string[] {
+  return usesProviderFacets(dataset, view) ? dataset.provider?.harm_categories ?? [] : dataset.harm_categories
 }
 
 function matchesSearch(name: string, search: string): boolean {
@@ -107,18 +115,19 @@ function matchesSearch(name: string, search: string): boolean {
   return name.toLowerCase().includes(query)
 }
 
-function matchesModalities(dataset: DatasetInfo, modalities: readonly string[]): boolean {
-  if (modalities.length === 0) return true
-  const values = datasetModalities(dataset)
-  return modalities.some((modality: string) => values.includes(normalizeDatasetModality(modality)))
+function matchesModalities(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
+  if (query.modalities.length === 0) return true
+  const values = datasetModalities(dataset, query.view)
+  return query.modalities.some((modality: string) => values.includes(normalizeDatasetModality(modality)))
 }
 
 function matchesHarm(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
   const harmSelected = query.harmCategories.length > 0 || query.unlabeled
   if (!harmSelected) return true
-  const categories = dataset.loaded ? dataset.harm_categories : dataset.provider?.harm_categories ?? []
+  const categories = datasetHarmCategories(dataset, query.view)
   const categoryMatch = query.harmCategories.some((category) => categories.includes(category))
-  const unlabeledMatch = query.unlabeled && dataset.has_unlabeled_harm_categories
+  const unlabeledMatch = query.unlabeled && !usesProviderFacets(dataset, query.view)
+    && dataset.has_unlabeled_harm_categories
   return categoryMatch || unlabeledMatch
 }
 
@@ -155,7 +164,7 @@ export function filterDatasets(
   const matched: DatasetInfo[] = []
   for (const dataset of datasetsForView(datasets, query.view)) {
     if (!matchesSearch(dataset.name, query.search)) continue
-    if (!matchesModalities(dataset, query.modalities)) continue
+    if (!matchesModalities(dataset, query)) continue
     if (!matchesHarm(dataset, query)) continue
     matched.push(dataset)
   }

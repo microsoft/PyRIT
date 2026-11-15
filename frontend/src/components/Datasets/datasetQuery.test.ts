@@ -41,7 +41,7 @@ describe('datasetQuery', () => {
       },
     })
     const stored = { ...available, loaded: true, modalities: [storedType, 'text'] }
-    expect(datasetModalities(available)).toEqual([modality, 'text'])
+    expect(datasetModalities(available, 'available')).toEqual([modality, 'text'])
     expect(datasetModalities(stored)).toEqual([modality, 'text'])
     for (const view of ['available', 'all'] as const) {
       for (const filter of [modality, storedType]) {
@@ -63,6 +63,39 @@ describe('datasetQuery', () => {
     expect(datasetModalities(makeDataset({
       name: 'mixed', selection_key: 'dataset:named:mixed', modalities: ['image', 'image_path', 'text'],
     }))).toEqual(['image', 'text'])
+  })
+
+  it('uses one facet vocabulary per dataset in each view without treating unknown metadata as unlabeled', () => {
+    const builtin = makeDataset({
+      name: 'builtin', selection_key: 'dataset:named:builtin', provider_available: true,
+      modalities: ['audio_path'], harm_categories: ['MALWARE'], has_unlabeled_harm_categories: true,
+      provider: {
+        description: null, source_url: null, license_url: null, access_url: null,
+        required_environment_variables: [], modalities: ['text'], harm_categories: ['cybercrime'],
+        size: [], load_time: [], unavailable_reason: null,
+      },
+    })
+    const custom = makeDataset({
+      name: 'custom', selection_key: 'dataset:named:custom',
+      modalities: ['text'], harm_categories: ['cybercrime'], has_unlabeled_harm_categories: true,
+    })
+    const unknown = { ...builtin, name: 'unknown', selection_key: 'dataset:named:unknown', provider: null }
+    const rows = [builtin, custom, unknown]
+    for (const view of ['available', 'all'] as const) {
+      const expected = view === 'available' ? [builtin] : [builtin, custom]
+      expect(filterDatasets(rows, {
+        ...DEFAULT_DATASET_CATALOG_QUERY, view, modalities: ['text'], harmCategories: ['cybercrime'],
+      })).toEqual(expected)
+      expect(filterDatasets(rows, {
+        ...DEFAULT_DATASET_CATALOG_QUERY, view, harmCategories: ['MALWARE'],
+      })).toEqual([])
+      expect(filterDatasets(rows, {
+        ...DEFAULT_DATASET_CATALOG_QUERY, view, unlabeled: true,
+      })).toEqual(view === 'available' ? [] : [custom])
+    }
+    expect(filterDatasets(rows, {
+      ...DEFAULT_DATASET_CATALOG_QUERY, modalities: ['audio'], harmCategories: ['MALWARE'],
+    })).toEqual([builtin, unknown])
   })
 
   it('keeps provider availability independent of stored data and preserves the view in the URL', () => {

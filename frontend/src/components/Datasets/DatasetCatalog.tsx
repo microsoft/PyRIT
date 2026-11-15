@@ -24,6 +24,7 @@ import {
   catalogQueryFromSearchParams,
   catalogQueryIsDefault,
   catalogQueryToSearchParams,
+  datasetHarmCategories,
   datasetModalities,
   datasetsForView,
   DATASET_SORT_LABELS,
@@ -47,15 +48,15 @@ function uniqueLabels(values: readonly string[]): FilterOption[] {
   return options
 }
 
-function modalityOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
+function modalityOptions(datasets: readonly DatasetInfo[], view: DatasetCatalogQuery['view']): FilterOption[] {
   const values: string[] = []
-  for (const dataset of datasets) values.push(...datasetModalities(dataset))
+  for (const dataset of datasets) values.push(...datasetModalities(dataset, view))
   return uniqueLabels(values)
 }
 
-function harmOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
+function harmOptions(datasets: readonly DatasetInfo[], view: DatasetCatalogQuery['view']): FilterOption[] {
   const values: string[] = []
-  for (const dataset of datasets) values.push(...(dataset.loaded ? dataset.harm_categories : dataset.provider?.harm_categories ?? []))
+  for (const dataset of datasets) values.push(...datasetHarmCategories(dataset, view))
   return uniqueLabels(values)
 }
 
@@ -74,8 +75,8 @@ export default function DatasetCatalog() {
   const viewDatasets = useMemo(() => datasetsForView(datasets, view), [datasets, view])
 
   const filtered = useMemo(() => filterDatasets(datasets, query), [datasets, query])
-  const modalities = useMemo(() => modalityOptions(viewDatasets), [viewDatasets])
-  const harms = useMemo(() => harmOptions(viewDatasets), [viewDatasets])
+  const modalities = useMemo(() => modalityOptions(viewDatasets, view), [viewDatasets, view])
+  const harms = useMemo(() => harmOptions(viewDatasets, view), [viewDatasets, view])
   const selectedModalities = [...new Set(query.modalities.map(normalizeDatasetModality))]
   const filtersActive = !catalogQueryIsDefault({ ...query, view: 'memory' })
 
@@ -100,6 +101,12 @@ export default function DatasetCatalog() {
           </Text>
         </div>
       </div>
+
+      <Text size={200}>
+        {view === 'memory'
+          ? 'Filters describe stored seeds. Not labeled means stored seeds without harm categories.'
+          : 'Filters use provider declarations for built-ins and stored values for other datasets. Not labeled applies only to stored values.'}
+      </Text>
 
       <div className={styles.filters}>
         <Select

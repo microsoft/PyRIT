@@ -307,6 +307,41 @@ describe('DatasetCatalog', () => {
     expect(screen.queryByRole('menuitemcheckbox', { name: 'image_path', exact: true })).not.toBeInTheDocument()
   })
 
+  it.each(['available', 'all'])('keeps declared harm filters after loading in the %s view', async (view: string) => {
+    const user = userEvent.setup()
+    const available: DatasetInfo = {
+      ...AVAILABLE, name: 'harmbench', selection_key: 'dataset:named:harmbench',
+      provider: {
+        ...AVAILABLE.provider,
+        description: 'HarmBench', source_url: null, license_url: null, access_url: null,
+        required_environment_variables: [], modalities: ['text'],
+        harm_categories: ['cybercrime', 'harassment'], size: [], load_time: [], unavailable_reason: null,
+      },
+    }
+    mockCatalog([available])
+    render(<Harness initialPath={`/datasets?view=${view}&harm_category=harassment`} />)
+    expect(await screen.findByRole('link', { name: 'harmbench' })).toBeInTheDocument()
+    mockCatalog([{
+      ...available, loaded: true, modalities: ['text'], logical_examples: 2,
+      harm_categories: ['HARASSMENT', 'COORDINATION_HARM', 'MALWARE'],
+    }])
+    await advanceAutoRefresh()
+    expect(await screen.findByRole('link', { name: 'harmbench' })).toBeInTheDocument()
+    expect(currentUrl().searchParams.get('harm_category')).toBe('harassment')
+    await user.click(screen.getByRole('combobox', { name: 'Harm categories' }))
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'harassment', exact: true })).toBeChecked()
+    expect(screen.queryByRole('menuitemcheckbox', { name: 'HARASSMENT', exact: true })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'cybercrime', exact: true }))
+    expect(screen.getByRole('link', { name: 'harmbench' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset view' }), 'memory')
+    expect(screen.queryByRole('link', { name: 'harmbench' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    await user.click(screen.getByRole('combobox', { name: 'Harm categories' }))
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'MALWARE', exact: true }))
+    expect(screen.getByRole('link', { name: 'harmbench' })).toBeInTheDocument()
+  })
+
   it('shows the error text and recovers on the next automatic catalog check', async () => {
     mockGet.mockRejectedValueOnce(new Error('Catalog unavailable'))
     render(<Harness initialPath="/datasets" />)

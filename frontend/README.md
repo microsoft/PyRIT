@@ -205,6 +205,11 @@ credentials still requires permission from the source. Opening an unloaded provi
 its description on the same detail route. The view, search, filters and sort stay in the URL.
 Modality filters match both provider labels (such as `image`) and existing stored-type
 URL values (such as `image_path`). Clearing filters keeps the selected view.
+**In memory** filters stored seed facts. **Available** and **All datasets** filter
+provider declarations for built-ins, even after loading; All uses stored facts for
+datasets without a provider. The category vocabularies remain separate rather than
+equating source labels with standardized stored categories. **Not labeled** matches
+stored seeds without harm categories, not missing provider metadata.
 When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
 Use the same memory as the backend. The visible catalog checks for changes each minute.

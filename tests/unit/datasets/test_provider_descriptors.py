@@ -14,8 +14,12 @@ from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
 from pyrit.datasets.seed_datasets.remote import (
     _HarmBenchDataset,
     _HiXSTestDataset,
+    _JailbreakV28KDataset,
+    _JailbreakVRedteam2KDataset,
+    _JBBBehaviorsDataset,
     _PromptIntelDataset,
     _RemoteDatasetLoader,
+    _SorryBenchDataset,
 )
 from pyrit.models import SeedDataset
 
@@ -50,6 +54,30 @@ async def test_default_descriptions_do_not_fetch_or_reveal_credentials_async(
     assert "secret-hf-value" not in repr(description)
     assert "secret-api-value" not in repr(description)
     fetch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("provider_class", "expected_url"),
+    [
+        (_JailbreakV28KDataset, "https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k"),
+        (_JailbreakVRedteam2KDataset, "https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k"),
+        (_JBBBehaviorsDataset, "https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors"),
+        (_SorryBenchDataset, "https://huggingface.co/datasets/sorry-bench/sorry-bench-202503"),
+    ],
+)
+async def test_huggingface_repository_sources_have_public_descriptor_links_async(
+    provider_class: type[_RemoteDatasetLoader], expected_url: str
+) -> None:
+    with (
+        patch.object(provider_class, "_fetch_dataset_async", side_effect=AssertionError("Dataset fetched")) as fetch,
+        patch.object(_RemoteDatasetLoader, "_fetch_from_huggingface_async", new_callable=AsyncMock) as hub,
+        patch.object(SeedDataset, "from_yaml_file", side_effect=AssertionError("Seeds materialized")) as load,
+    ):
+        description = await provider_class().describe_async()
+    assert description.source_url == expected_url
+    fetch.assert_not_called()
+    hub.assert_not_called()
+    load.assert_not_called()
 
 
 async def test_local_description_does_not_materialize_seeds_async(tmp_path: Path) -> None:
@@ -147,7 +175,7 @@ async def test_catalog_isolates_unsupported_default_provider_async(caplog: pytes
         "/secret/file",
     ],
 )
-@pytest.mark.parametrize("field", ["source", "license_url", "access_url"])
+@pytest.mark.parametrize("field", ["source", "source_url", "license_url", "access_url"])
 async def test_descriptor_omits_private_source_configuration_async(source: str, field: str) -> None:
     provider = _HarmBenchDataset()
     with patch.object(provider, field, source):

@@ -51,50 +51,55 @@ test.describe("dataset examples against the real backend @seeded", () => {
     await waitForBackend(request);
   });
 
-  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-    test(`describes an unloaded local provider without changing memory at ${viewport.width}px @seeded`, async ({ page, request }, testInfo) => {
-      test.setTimeout(90_000);
-      await page.setViewportSize(viewport);
-      const headers = compatibilityHeaders();
-      const before = await request.get("/api/datasets?loaded_only=true", { headers });
-      expect(before.ok(), await before.text()).toBe(true);
-      const beforeCatalog: { items: DatasetInfo[] } = await before.json();
-      expect(beforeCatalog.items.some((item: DatasetInfo) => item.name === "adv_bench")).toBe(false);
+  for (const provider of [
+    { name: "adv_bench", url: "https://github.com/llm-attacks/llm-attacks" },
+    { name: "jbb_behaviors", url: "https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors" },
+  ]) {
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      test(`describes unloaded ${provider.name} without changing memory at ${viewport.width}px @seeded`, async ({ page, request }, testInfo) => {
+        test.setTimeout(90_000);
+        await page.setViewportSize(viewport);
+        const headers = compatibilityHeaders();
+        const before = await request.get("/api/datasets?loaded_only=true", { headers });
+        expect(before.ok(), await before.text()).toBe(true);
+        const beforeCatalog: { items: DatasetInfo[] } = await before.json();
+        expect(beforeCatalog.items.some((item: DatasetInfo) => item.name === provider.name)).toBe(false);
 
-      const unexpectedRequests: string[] = [];
-      page.on("request", (outgoing) => {
-        const path = new URL(outgoing.url()).pathname;
-        if (path.startsWith("/api/datasets") && (
-          outgoing.method() !== "GET" || path.startsWith("/api/datasets/seeds")
-        )) {
-          unexpectedRequests.push(`${outgoing.method()} ${path}`);
-        }
+        const unexpectedRequests: string[] = [];
+        page.on("request", (outgoing) => {
+          const path = new URL(outgoing.url()).pathname;
+          if (path.startsWith("/api/datasets") && (
+            outgoing.method() !== "GET" || path.startsWith("/api/datasets/seeds")
+          )) {
+            unexpectedRequests.push(`${outgoing.method()} ${path}`);
+          }
+        });
+
+        await page.goto(`/datasets?view=available&q=${provider.name}`);
+        await page.getByRole("link", { name: provider.name, exact: true }).click();
+        await expect(page.getByRole("heading", { name: provider.name, exact: true })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Source", exact: true }))
+          .toHaveAttribute("href", provider.url);
+        await expect(page.getByText("This provider's dataset has not been loaded into memory.")).toBeVisible();
+        await expect(page.getByRole("table", { name: "Examples" })).toHaveCount(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+        const metadata = await page.getByRole("region", { name: "Provider metadata" }).evaluate((region) => ({
+          scrollWidth: region.scrollWidth,
+          clientWidth: region.clientWidth,
+        }));
+        expect(metadata.scrollWidth).toBeLessThanOrEqual(metadata.clientWidth + 1);
+        await page.screenshot({ path: testInfo.outputPath("provider-description.png"), fullPage: true });
+
+        await page.getByRole("link", { name: "Back to datasets", exact: true }).click();
+        await expect(page.getByRole("link", { name: provider.name, exact: true })).toBeVisible();
+        await expect(page).toHaveURL((url: URL) => url.searchParams.get("view") === "available"
+          && url.searchParams.get("q") === provider.name);
+        expect(unexpectedRequests).toEqual([]);
+        const after = await request.get("/api/datasets?loaded_only=true", { headers });
+        expect(after.ok(), await after.text()).toBe(true);
+        expect(await after.json()).toEqual(beforeCatalog);
       });
-
-      await page.goto("/datasets?view=available&q=adv_bench");
-      await page.getByRole("link", { name: "adv_bench", exact: true }).click();
-      await expect(page.getByRole("heading", { name: "adv_bench", exact: true })).toBeVisible();
-      await expect(page.getByRole("link", { name: "Source", exact: true }))
-        .toHaveAttribute("href", "https://github.com/llm-attacks/llm-attacks");
-      await expect(page.getByText("This provider's dataset has not been loaded into memory.")).toBeVisible();
-      await expect(page.getByRole("table", { name: "Examples" })).toHaveCount(0);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
-      const metadata = await page.getByRole("region", { name: "Provider metadata" }).evaluate((region) => ({
-        scrollWidth: region.scrollWidth,
-        clientWidth: region.clientWidth,
-      }));
-      expect(metadata.scrollWidth).toBeLessThanOrEqual(metadata.clientWidth + 1);
-      await page.screenshot({ path: testInfo.outputPath("provider-description.png"), fullPage: true });
-
-      await page.getByRole("link", { name: "Back to datasets", exact: true }).click();
-      await expect(page.getByRole("link", { name: "adv_bench", exact: true })).toBeVisible();
-      await expect(page).toHaveURL((url: URL) => url.searchParams.get("view") === "available"
-        && url.searchParams.get("q") === "adv_bench");
-      expect(unexpectedRequests).toEqual([]);
-      const after = await request.get("/api/datasets?loaded_only=true", { headers });
-      expect(after.ok(), await after.text()).toBe(true);
-      expect(await after.json()).toEqual(beforeCatalog);
-    });
+    }
   }
 
   for (const entry of ["chat", "dataset"]) {

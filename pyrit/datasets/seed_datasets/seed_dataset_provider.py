@@ -40,12 +40,16 @@ class SeedDatasetProvider(ABC):
     All subclasses also have a _metadata property that is optional to make
     dataset addition easier, but failing to complete it makes downstream
     analysis more difficult.
+
+    Providers can declare ``source_url`` when their fetch source is a repository ID
+    rather than a public URL. Descriptor links always pass the same public-URL checks.
     """
 
     _registry: dict[str, type["SeedDatasetProvider"]] = {}
     _METADATA_ADAPTER: ClassVar[TypeAdapter[SeedDatasetMetadata]] = TypeAdapter(SeedDatasetMetadata)
     load_time: SeedDatasetLoadTime = SeedDatasetLoadTime.UNINITIALIZED
     description: str | None = None
+    source_url: str | None = None
     license_url: ClassVar[str | None] = None
     access_url: ClassVar[str | None] = None
     required_environment_variables: ClassVar[tuple[str, ...]] = ()
@@ -164,7 +168,7 @@ class SeedDatasetProvider(ABC):
         except Exception as exc:
             unavailable_reason = "Provider metadata is unavailable."
             logger.warning("Could not describe metadata for %s (%s)", type(self).__name__, type(exc).__name__)
-        source = getattr(self, "source", None)
+        source = self.source_url or getattr(self, "source", None)
         if not source and (hub_name := getattr(self, "HF_DATASET_NAME", None)):
             source = f"https://huggingface.co/datasets/{hub_name}"
         urls = []
