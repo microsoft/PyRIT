@@ -623,8 +623,11 @@ async def scoring_chat(
     with (
         patch.object(CentralMemory, "get_memory_instance", return_value=sqlite_instance),
         patch("pyrit.backend.services.message_send_service.get_target_service") as targets,
+        patch("pyrit.backend.services.attack_service.get_target_service") as attack_targets,
     ):
         targets.return_value.get_target_object.return_value = target
+        attack_targets.return_value = targets.return_value
+        targets.return_value.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
         service = MessageSendService(scheduler=ManualSendScheduler())
         try:
             yield service, attack, target, scorer

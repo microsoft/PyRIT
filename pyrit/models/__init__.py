@@ -72,6 +72,12 @@ if TYPE_CHECKING:
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.conversation_summary import ConversationSummary
+    from pyrit.models.decomposition import (
+        DecompositionNode,
+        DecompositionPath,
+        DecompositionTree,
+        validate_own_decomposition,
+    )
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
     from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -217,6 +223,7 @@ if TYPE_CHECKING:
         ScenarioSuiteExecutionStatus,
         ScenarioSuiteExecutionSummary,
         ScenarioSuiteLaunchEntrySnapshot,
+        ScenarioSuiteReadinessRequest,
         ScenarioSuiteSubmissionState,
     )
     from pyrit.models.score import (
@@ -249,6 +256,7 @@ if TYPE_CHECKING:
         ScoreStatus,
         ScoreType,
         ScoringExpectation,
+        StartsWith,
         SurfaceBaseline,
         SurfaceCoverage,
         SurfaceEntry,
@@ -256,6 +264,7 @@ if TYPE_CHECKING:
         SurfaceObservationPayload,
         SurfaceScorable,
         TextMatcher,
+        ToolArgumentRequirement,
         ToolCallRequirement,
         ToolEventsObservationPayload,
         ToolExecution,
@@ -271,6 +280,18 @@ if TYPE_CHECKING:
         UnvalidatedScore,
         scorable_from_dict,
         scoring_expectation_fingerprint,
+    )
+    from pyrit.models.score.assert_judge import (
+        AssertJudgeDimension,
+        AssertJudgePreset,
+    )
+    from pyrit.models.score.assert_judgment import (
+        AssertCategoryJudgment,
+        AssertDimensionResult,
+        AssertNodeJudgment,
+        AssertSampleVote,
+        AssertSampleVotes,
+        AssertSkipReason,
     )
     from pyrit.models.seeds import (
         AdversarialPrompts,
@@ -289,6 +310,7 @@ if TYPE_CHECKING:
         SeedSimulatedConversation,
         SeedUnion,
         SimulatedTargetSystemPromptPaths,
+        build_objective_decomposition_tree,
         group_seeds_into_attack_groups,
         load_next_message_prompt,
         load_simulated_target_prompt,
@@ -323,8 +345,12 @@ if TYPE_CHECKING:
         SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
         TOKEN_USAGE_METADATA_PREFIX,
         CapabilityName,
+        GenerationRange,
         JsonResponseConfig,
         JsonSchemaDefinition,
+        ParameterResolution,
+        RequestGenerationConfig,
+        RequestGenerationInfo,
         TargetCapabilities,
         TokenUsage,
         WebSearchConfig,
@@ -350,6 +376,14 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertGenerationConfig": "pyrit.models.seeds.assert_generation",
     "AssertGenerationProvenance": "pyrit.models.seeds.assert_generation",
     "AssertGroupMetadata": "pyrit.models.seeds.assert_generation",
+    "AssertJudgeDimension": "pyrit.models.score.assert_judge",
+    "AssertJudgePreset": "pyrit.models.score.assert_judge",
+    "AssertCategoryJudgment": "pyrit.models.score.assert_judgment",
+    "AssertDimensionResult": "pyrit.models.score.assert_judgment",
+    "AssertNodeJudgment": "pyrit.models.score.assert_judgment",
+    "AssertSampleVote": "pyrit.models.score.assert_judgment",
+    "AssertSampleVotes": "pyrit.models.score.assert_judgment",
+    "AssertSkipReason": "pyrit.models.score.assert_judgment",
     "AssertPatternRole": "pyrit.models.seeds.assert_generation",
     "AssertReplication": "pyrit.models.seeds.assert_generation",
     "AssertSamplingConfig": "pyrit.models.seeds.assert_generation",
@@ -365,6 +399,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Contains": "pyrit.models.score",
     "Equals": "pyrit.models.score",
     "Regex": "pyrit.models.score",
+    "StartsWith": "pyrit.models.score",
     "TextMatcher": "pyrit.models.score",
     "OutputMatches": "pyrit.models.score",
     "ProgramBehaves": "pyrit.models.score",
@@ -445,6 +480,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationRetryReason": "pyrit.models.messages.conversation_retry",
     "ConversationStats": "pyrit.models.conversation_stats",
     "ConversationSummary": "pyrit.models.conversation_summary",
+    "DecompositionNode": "pyrit.models.decomposition",
+    "DecompositionPath": "pyrit.models.decomposition",
+    "DecompositionTree": "pyrit.models.decomposition",
+    "validate_own_decomposition": "pyrit.models.decomposition",
     "Finding": "pyrit.models.finding",
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
@@ -467,6 +506,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_all_values": "pyrit.models.messages.conversations",
     "group_conversation_message_pieces_by_sequence": "pyrit.models.messages.conversations",
     "group_message_pieces_into_conversations": "pyrit.models.messages.conversations",
+    "build_objective_decomposition_tree": "pyrit.models.seeds",
     "group_seeds_into_attack_groups": "pyrit.models.seeds",
     "HarmDefinition": "pyrit.models.harm_definition",
     "Identifiable": "pyrit.models.identifiers",
@@ -475,7 +515,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "JSONValue": "pyrit.models.identifiers",
     "compute_seed_group_hash": "pyrit.models.identifiers",
     "COMMON_JSON_SCHEMAS": "pyrit.models.target",
+    "GenerationRange": "pyrit.models.target",
     "JsonResponseConfig": "pyrit.models.target",
+    "RequestGenerationConfig": "pyrit.models.target",
+    "RequestGenerationInfo": "pyrit.models.target",
+    "ParameterResolution": "pyrit.models.target",
     "get_common_json_schema": "pyrit.models.target",
     "register_common_json_schema": "pyrit.models.target",
     "unregister_common_json_schema": "pyrit.models.target",
@@ -520,6 +564,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SurfaceMatch": "pyrit.models.score",
     "SurfaceObservationPayload": "pyrit.models.score",
     "SurfaceScorable": "pyrit.models.score",
+    "ToolArgumentRequirement": "pyrit.models.score",
     "ToolCallRequirement": "pyrit.models.score",
     "ToolEventsObservationPayload": "pyrit.models.score",
     "ToolExecution": "pyrit.models.score",
@@ -562,6 +607,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SCENARIO_SUITE_EXECUTION_METADATA_KEY": "pyrit.models.scenario_suite_execution",
     "SCENARIO_SUITE_EXECUTION_METADATA_VERSION": "pyrit.models.scenario_suite_execution",
     "LaunchScenarioSuiteRequest": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteReadinessRequest": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionEntryState": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionEntrySummary": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionMetadata": "pyrit.models.scenario_suite_execution",

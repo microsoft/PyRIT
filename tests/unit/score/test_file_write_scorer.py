@@ -605,7 +605,7 @@ async def test_baseline_is_released_when_the_attempt_fails_async(tmp_path: Path)
         max_attempts_on_failure=0,
     )
 
-    with pytest.raises(Exception):  # noqa: B017, PT011
+    with pytest.raises(Exception):
         await attack.execute_async(
             objective="exfiltrated", expectation=_change_expectation(matcher=Contains(value="exfiltrated"))
         )
@@ -957,7 +957,7 @@ async def test_failure_to_start_observing_records_the_attempts_error_result_asyn
         max_attempts_on_failure=0,
     )
 
-    with pytest.raises(Exception, match="baseline acquisition failed"):  # noqa: PT011
+    with pytest.raises(Exception, match="baseline acquisition failed"):
         await attack.execute_async(
             objective="exfiltrated", expectation=_change_expectation(matcher=Contains(value="exfiltrated"))
         )
@@ -1025,7 +1025,7 @@ async def test_a_failing_stop_does_not_replace_the_attempts_error_async(tmp_path
         max_attempts_on_failure=0,
     )
 
-    with pytest.raises(Exception, match="agent unreachable") as raised:  # noqa: PT011
+    with pytest.raises(Exception, match="agent unreachable") as raised:
         await attack.execute_async(
             objective="exfiltrated", expectation=_change_expectation(matcher=Contains(value="exfiltrated"))
         )

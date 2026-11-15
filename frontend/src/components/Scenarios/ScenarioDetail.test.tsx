@@ -207,6 +207,7 @@ async function advanceTimers(milliseconds: number): Promise<void> {
 }
 
 async function openRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
   await user.click(screen.getByRole('button', { name: 'Launch scan' }))
   const dialog = await screen.findByRole('dialog', { hidden: true }, { timeout: 5_000 })
   expect(within(dialog).getByText('Run preview')).toBeInTheDocument()
@@ -271,6 +272,25 @@ function renderDetail(
 }
 
 describe('ScenarioDetail', () => {
+  it('keeps the existing component selectors without inline creation or readiness fields', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
+    renderDetail('/scanner/launch/foundry.red_team_agent', { scorers: [{
+      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
+    }] })
+    await screen.findByRole('combobox', { name: 'Objective Target' })
+    expect(screen.queryByRole('button', { name: /Create .*target|Create objective scorer/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Scoring Target' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Scan configuration issues')).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Use scenario default' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Objective scorer' }), 'registered:explicit')
+    const dialog = await openRunPreview(user)
+    expect(within(dialog).getByText('explicit')).toBeVisible()
+    expect(within(dialog).getByText('Use server default')).toBeVisible()
+    expect(within(dialog).queryByText('Scoring Target')).not.toBeInTheDocument()
+  })
+
   it('uses the shared scorer picker for estimates and launch without changing the scenario default', async () => {
     const user = userEvent.setup()
     writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: null })
@@ -296,6 +316,56 @@ describe('ScenarioDetail', () => {
     expect(readUserPreferences('local').lastUsedTargets?.objective?.registryName).toBe('target-a')
     expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
   })
+
+  it('uses default ASSERT scoring without a scorer picker or judge settings', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      scenario_name: 'foundry.assert_policy',
+      supports_objective_scorer: true,
+      supported_parameters: [
+        { name: 'max_turns', description: 'Turns.', type_name: 'int', choices: null, default: 6, required: false },
+        { name: 'judge_samples', description: 'Samples.', type_name: 'int', choices: null, default: 1, required: false },
+      ],
+    }))
+    renderDetail('/scanner/launch/foundry.assert_policy', { scorers: [{
+      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
+    }] })
+    expect(await screen.findByRole('spinbutton', { name: /max_turns/i })).toBeInTheDocument()
+    expect(screen.queryByRole('spinbutton', { name: /judge_samples/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Objective scorer' })).not.toBeInTheDocument()
+    const dialog = await openRunPreview(user)
+    expect(within(dialog).queryByText('Objective scorer')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('objective_scorer')
+    expect(mockStartRun.mock.calls[0][0].scenario_params).not.toHaveProperty('judge_samples')
+  })
+
+  it.each(['preset', 'saved run'] as const)(
+    'rejects a %s whose ASSERT scoring target is not the default instead of launching it',
+    async (seed) => {
+      const user = userEvent.setup()
+      const scenarioParams = { scoring_target: 'registered-judge' }
+      mockGetScenario.mockResolvedValue(makeScenario({ scenario_name: 'foundry.assert_policy' }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        scenario_name: 'foundry.assert_policy', scenario_params: scenarioParams,
+      }))
+      renderDetail(
+        '/scanner/launch/foundry.assert_policy' + (seed === 'preset' ? '?preset=spanish_probe' : ''),
+        seed === 'saved run' ? {
+          initialRun: { scenario_name: 'foundry.assert_policy', target_name: 'target-a', scenario_params: scenarioParams },
+        } : {},
+      )
+      await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('has custom judge settings. Use the SDK to preserve them')
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      expect(mockEstimateRun).not.toHaveBeenCalledWith(
+        'foundry.assert_policy', expect.objectContaining({ scenario_params: scenarioParams }), expect.anything(),
+      )
+    },
+  )
 
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
@@ -357,6 +427,20 @@ describe('ScenarioDetail', () => {
       target_name: 'target-b', techniques: ['crescendo'], include_baseline: false, max_concurrency: 3, max_retries: 2,
     }))
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('adversarial_target_name')
+  })
+
+  it('preserves a saved scoring target without adding a launch-form control', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
+      initialRun: {
+        scenario_name: 'foundry.red_team_agent', target_name: 'target-a',
+        scoring_target_name: 'configured-judge', techniques: ['crescendo'],
+      },
+    })
+    await screen.findByRole('combobox', { name: 'Objective Target' })
+    expect(screen.queryByRole('combobox', { name: 'Scoring Target' })).not.toBeInTheDocument()
+    await confirmRunPreview(user)
+    expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({ scoring_target_name: 'configured-judge' }))
   })
 
   it.each(['preset', 'saved run'] as const)(
@@ -653,7 +737,7 @@ describe('ScenarioDetail', () => {
       const launch = await screen.findByRole('button', { name: 'Launch scan' })
       const form = launch.closest('form')
       if (!form) throw new Error('Launch scan must submit the configuration form.')
-      expect(launch).toBeEnabled()
+      await waitFor(() => expect(launch).toBeEnabled())
       await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
       expect(launch).toBeDisabled()
       await user.click(launch)
@@ -851,7 +935,9 @@ describe('ScenarioDetail', () => {
       await user.tab()
     }
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Maximum objectives must be a positive integer')
+    expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes(
+      'Maximum objectives must be a positive integer',
+    ))).toBe(true)
 
     mockGetScenario.mockResolvedValue(makeScenario({
       supported_parameter_names: ['note'],
@@ -947,6 +1033,7 @@ describe('ScenarioDetail', () => {
 
   it('estimates without a target and directs to the registry before launch', async () => {
     jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     const onNavigate = jest.fn()
     mockEstimateRun.mockResolvedValueOnce(makeEstimate(8))
 
@@ -964,7 +1051,10 @@ describe('ScenarioDetail', () => {
       expect.any(AbortSignal),
     )
     expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Configure target to launch' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Select a target.')
+    await user.click(screen.getByRole('button', { name: 'Configure target to launch' }))
     expect(onNavigate).toHaveBeenCalledWith('registry')
   })
 
@@ -1181,11 +1271,12 @@ describe('ScenarioDetail', () => {
     await user.click(launch)
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
+    const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(cancel).toHaveFocus())
     await user.tab()
-    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => expect(confirmLaunch).toHaveFocus())
     await user.tab({ shift: true })
-    expect(cancel).toHaveFocus()
+    await waitFor(() => expect(cancel).toHaveFocus())
     await user.keyboard(' ')
     expect(await screen.findByRole('checkbox', { name: 'default_technique', exact: true })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
@@ -1194,7 +1285,9 @@ describe('ScenarioDetail', () => {
     const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
     await user.tab()
-    expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await waitFor(() => {
+      expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    })
     await user.keyboard(' ')
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
       techniques: ['default_technique'], include_baseline: false,
@@ -1881,6 +1974,23 @@ describe('ScenarioDetail', () => {
       .toHaveTextContent('Baseline identity is available after launch.')
     expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).toBeChecked()
     expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('reveals a recorded technique identity with the shared identity JSON', async () => {
+    const user = userEvent.setup()
+    const identifier = { class_name: 'CrescendoAttack', class_module: 'pyrit.executor.attack', hash: 'crescendo-hash' }
+    mockGetScenario.mockResolvedValue(makeScenario({ technique_summaries: [
+      { name: 'default_technique', description: null, tags: ['default'] },
+      { name: 'crescendo', description: null, tags: ['multi_turn'], identifier },
+    ] }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for crescendo' }))
+
+    const region = screen.getByRole('region', { name: 'Identity for crescendo' })
+    expect(JSON.parse(region.textContent ?? '')).toEqual(identifier)
+    expect(region.scrollIntoView).toHaveBeenCalled()
   })
 
   it('includes the baseline when a shared tag selects or clears its members', async () => {

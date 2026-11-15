@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from pyrit.exceptions.analytics_exception import AnalyticsTimeoutException
 from pyrit.memory import SQLiteMemory, query_control
 from pyrit.memory.attack_analytics import AttackAnalyticsReader
-from pyrit.memory.memory_models import Base
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AttackAnalyticsDimension,
@@ -60,11 +59,10 @@ def _sqlite_error(code: int) -> OperationalError:
 async def file_memory(tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "analytics-retry.sqlite", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "analytics-retry.sqlite", _defer_initialization=True)
     memory.results_path = str(tmp_path)
     try:
-        async with memory._get_async_engine().begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        await memory.initialize_async()
         await memory.add_attack_results_to_memory_async(
             attack_results=[
                 AttackResult(

@@ -27,6 +27,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
+from test_support.text_search import LITERAL_CASES, PATTERN_CASES, TEXTS
 
 URL = "/api/datasets/seeds"
 DATASET = "browse"
@@ -80,11 +81,12 @@ async def test_list_seed_examples_pages_with_a_filter_bound_cursor(client: Async
     assert mismatched.status_code == 400
 
 
+@pytest.mark.parametrize("editable", [False, True])
 async def test_seed_example_pattern_cursor_is_bound_to_mode_and_pattern(
-    *, client: AsyncClient, sqlite_instance: MemoryInterface
+    *, client: AsyncClient, sqlite_instance: MemoryInterface, editable: bool
 ) -> None:
     await _store(sqlite_instance, *(_prompt(f"100{index}") for index in range(3)), _prompt("100%"))
-    params = {"selection_key": NAMED, "limit": 2, "value_pattern": "100%"}
+    params = {"selection_key": NAMED, "limit": 2, "value_pattern": "100%", "editable": editable}
     first_response = await client.get(URL, params=params)
     assert first_response.status_code == 200
     first = first_response.json()
@@ -93,7 +95,9 @@ async def test_seed_example_pattern_cursor_is_bound_to_mode_and_pattern(
     assert first["total"] == second["total"] == 4
     assert len({item["example_id"] for item in first["items"] + second["items"]}) == 4
     for changed in [{"search": "100"}, {"value_pattern": "%100%"}, {"value_pattern": ""}]:
-        response = await client.get(URL, params={"selection_key": NAMED, "cursor": cursor, **changed})
+        response = await client.get(
+            URL, params={"selection_key": NAMED, "cursor": cursor, "editable": editable, **changed}
+        )
         assert response.status_code == 400
     literal = (await client.get(URL, params={"selection_key": NAMED, "search": "100%"})).json()
     assert literal["total"] == 1
@@ -102,18 +106,22 @@ async def test_seed_example_pattern_cursor_is_bound_to_mode_and_pattern(
 @pytest.mark.parametrize(
     "filters", [{"value_pattern": "/"}, {"value_pattern": "%", "search": ""}, {"value_pattern": "%", "search": "x"}]
 )
-async def test_seed_example_routes_reject_invalid_patterns(*, client: AsyncClient, filters: dict[str, str]) -> None:
-    response = await client.get(URL, params={"selection_key": NAMED, **filters})
+@pytest.mark.parametrize("editable", [False, True])
+async def test_seed_example_routes_reject_invalid_patterns(
+    *, client: AsyncClient, filters: dict[str, str], editable: bool
+) -> None:
+    response = await client.get(URL, params={"selection_key": NAMED, "editable": editable, **filters})
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("editable", [False, True])
 async def test_empty_pattern_cursor_continues_only_empty_examples_async(
-    *, client: AsyncClient, sqlite_instance: MemoryInterface
+    *, client: AsyncClient, sqlite_instance: MemoryInterface, editable: bool
 ) -> None:
     empty_seeds = [_prompt(""), _prompt("")]
     nonempty_seed = _prompt("nonempty")
     await _store(sqlite_instance, *empty_seeds, nonempty_seed)
-    params = {"selection_key": NAMED, "limit": 1, "value_pattern": ""}
+    params = {"selection_key": NAMED, "limit": 1, "value_pattern": "", "editable": editable}
 
     first_response = await client.get(URL, params=params)
     assert first_response.status_code == 200
@@ -135,12 +143,41 @@ async def test_empty_pattern_cursor_continues_only_empty_examples_async(
 
     for omitted_pattern in ({}, {"search": ""}):
         response = await client.get(
-            URL, params={"selection_key": NAMED, "limit": 1, "cursor": cursor, **omitted_pattern}
+            URL, params={"selection_key": NAMED, "limit": 1, "cursor": cursor, "editable": editable, **omitted_pattern}
         )
         assert response.status_code == 400
     unfiltered_response = await client.get(URL, params={"selection_key": NAMED})
     assert unfiltered_response.status_code == 200
     assert unfiltered_response.json()["total"] == 3
+
+
+@pytest.mark.parametrize("editable", [False, True])
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [("search", value, expected) for value, expected in LITERAL_CASES]
+    + [("value_pattern", value, expected) for value, expected in PATTERN_CASES],
+)
+async def test_editable_and_ordinary_seed_browsing_share_text_search_async(
+    *,
+    client: AsyncClient,
+    sqlite_instance: MemoryInterface,
+    editable: bool,
+    field: str,
+    value: str | None,
+    expected: set[str],
+) -> None:
+    await _store(sqlite_instance, *(_prompt(text) for text in TEXTS))
+    params: dict[str, Any] = {"selection_key": NAMED, "editable": editable, "limit": 100}
+    if value is not None:
+        params[field] = value
+    response = await client.get(URL, params=params)
+    assert response.status_code == 200
+    result = response.json()
+    assert {item["preview"] for item in result["items"]} == expected
+    assert result["total"] == len(expected)
+    if editable:
+        assert result["version"]
+        assert all(item["editable_seeds"] for item in result["items"])
 
 
 @pytest.mark.parametrize(

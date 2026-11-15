@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from abc import abstractmethod
 from datetime import timedelta
@@ -23,18 +24,28 @@ from pyrit.models import (
 )
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
 from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope_async
+from pyrit.score.tool_argument_matching import describe_tool_requirement, match_tool_requirement
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
+
+    from pydantic import JsonValue
 
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation, ToolExecution
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
 
+logger = logging.getLogger(__name__)
+
 # Versions the shared message-to-trace scope resolution; both trace scorers stamp it on their identifiers.
 _MESSAGE_SCOPE_VERSION = 2
+
+_NO_TRACE_ARGUMENTS_REASON = (
+    "Trace evidence does not retain tool arguments, so it cannot confirm an argument requirement; "
+    "use MessageToolCallScorer to match arguments."
+)
 
 _UNLINKED_REQUESTS_REASON = (
     "One or more requests in this conversation carry no trace link, so tool calls outside the "
@@ -46,17 +57,68 @@ def match_tools_called(
     *, condition: ToolsCalled, payload: ToolEventsObservationPayload, acquisition: Acquisition
 ) -> bool | None:
     """
-    Match execution names without I/O, preserving unknown absence.
+    Match executions without I/O, preserving unknown absence.
+
+    A requirement with argument constraints needs an execution whose retained arguments match.
+    Its absence can still be refuted from complete evidence, because no call means no matching call.
 
     Returns:
-        bool | None: True for observed calls, false for complete absence, otherwise None.
+        bool | None: True for observed calls, false for complete absence, otherwise None. An
+            exhaustive condition is also false when a tool it does not name was observed, and
+            true only when complete evidence rules out every other tool.
     """
-    if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
-        return None
+    return _match_tools_called(condition=condition, payload=payload, acquisition=acquisition)[0]
+
+
+def _match_tools_called(
+    *, condition: ToolsCalled, payload: ToolEventsObservationPayload, acquisition: Acquisition
+) -> tuple[bool | None, bool]:
+    """
+    Match execution names and report whether the verdict rests on the absence of other calls.
+
+    A verdict that rests on absence is only as good as the evidence is complete, so a caller
+    that knows of uncorrelated requests must not keep it. A verdict from an observed call holds.
+
+    Returns:
+        tuple[bool | None, bool]: The verdict, and whether it depends on complete evidence.
+    """
     observed = {event.name for event in payload.events}
-    if all(tool.name in observed for tool in condition.tools):
-        return True
-    return False if acquisition is Acquisition.COMPLETE and payload.coverage.complete else None
+    required = {tool.name for tool in condition.tools}
+    if condition.exhaustive and not observed <= required:
+        return False, False
+    if acquisition in (Acquisition.ERROR, Acquisition.UNAVAILABLE):
+        return None, False
+    calls: dict[str, list[Mapping[str, JsonValue] | None]] = {}
+    for event in payload.events:
+        # Trace events do not retain arguments, so they cannot confirm an argument requirement.
+        calls.setdefault(event.name, []).append(None)
+    verdicts = [match_tool_requirement(requirement=tool, calls=calls.get(tool.name, [])) for tool in condition.tools]
+    complete = acquisition is Acquisition.COMPLETE and payload.coverage.complete
+    if all(verdict is True for verdict in verdicts):
+        if not condition.exhaustive:
+            return True, False
+        return (True, True) if complete else (None, False)
+    return (False, True) if complete and any(verdict is False for verdict in verdicts) else (None, False)
+
+
+def _rationale(*, condition: ToolsCalled, payload: ToolEventsObservationPayload, value: bool | None) -> str:
+    """
+    Explain a tool-call verdict in terms of the evidence that decided it.
+
+    Returns:
+        str: The rationale.
+    """
+    names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+    required = {tool.name for tool in condition.tools}
+    extra = sorted({event.name for event in payload.events} - required)
+    expected = f"exactly the required tools: {names}" if names else "no tool execution"
+    if value is True:
+        return f"Complete trace evidence shows {expected}."
+    if value is False and extra:
+        return f"Observed execution of tools outside the required set: {', '.join(extra)}."
+    if value is False:
+        return f"Complete trace evidence does not contain all required tools: {names}."
+    return f"Trace evidence cannot establish {expected}."
 
 
 def _definitely_precedes(*, first: ToolExecution, second: ToolExecution, tolerance: timedelta) -> bool:
@@ -179,6 +241,24 @@ class _OtelToolEvidenceScorer(TrueFalseScorer):
         expectation: ScoringExpectation | None,
     ) -> list[Score]: ...
 
+    @abstractmethod
+    def _verdict_rests_on_absence(
+        self,
+        *,
+        evidence: ToolEventsObservationPayload,
+        expectation: ScoringExpectation | None,
+        acquisition: Acquisition,
+    ) -> bool:
+        """
+        Report whether this leaf's verdict depends on the absence of further evidence.
+
+        A verdict that rests on absence is only as good as the correlation is complete, so it is
+        downgraded when requests in the conversation carry no trace link.
+
+        Returns:
+            bool: Whether the verdict rests on absence.
+        """
+
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, (MessageScorable, TraceScorable)):
             raise TypeError(f"{type(self).__name__} requires a MessageScorable or an explicit TraceScorable.")
@@ -202,10 +282,13 @@ class _OtelToolEvidenceScorer(TrueFalseScorer):
             raise ValueError("Trace source returned incompatible evidence or scope.")
         _collect_observation(observation)
         scores = self._score_observation(observation=observation, evidence=observation.payload, expectation=expectation)
+        rests_on_absence = self._verdict_rests_on_absence(
+            evidence=observation.payload, expectation=expectation, acquisition=observation.acquisition
+        )
         for score in scores:
             score.scorable = scorable
             score.message_piece_id = self._piece_id_from_scorable(scorable)
-            if not correlation_complete and not score.is_undetermined and score.get_value() is False:
+            if not correlation_complete and rests_on_absence and not score.is_undetermined:
                 score.set_value(None)
                 score.score_rationale = f"{score.score_rationale} {_UNLINKED_REQUESTS_REASON}"
         return scores
@@ -222,6 +305,16 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
             children={"source": self._source.get_identifier()},
         )
 
+    def _verdict_rests_on_absence(
+        self,
+        *,
+        evidence: ToolEventsObservationPayload,
+        expectation: ScoringExpectation | None,
+        acquisition: Acquisition,
+    ) -> bool:
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
+        return _match_tools_called(condition=condition, payload=evidence, acquisition=acquisition)[1]
+
     def _score_observation(
         self,
         *,
@@ -233,14 +326,25 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
             raise NonReplayableObservationError("Tool-call scoring requires a stored tool-event observation.")
         condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
-        names = ", ".join(tool.name for tool in condition.tools)
-        rationale = (
-            f"Observed execution of all required tools: {names}."
-            if value is True
-            else f"Complete trace evidence does not contain all required tools: {names}."
-            if value is False
-            else f"Trace evidence cannot establish invocation of all required tools: {names}."
-        )
+        names = ", ".join(describe_tool_requirement(tool) for tool in condition.tools)
+        constrains_arguments = any(tool.arguments for tool in condition.tools)
+        if constrains_arguments:
+            logger.warning(
+                "OtelToolCallScorer received a requirement with argument constraints, which trace evidence "
+                "cannot confirm. Use MessageToolCallScorer to match arguments."
+            )
+        if condition.exhaustive:
+            rationale = _rationale(condition=condition, payload=evidence, value=value)
+        else:
+            rationale = (
+                f"Observed execution of all required tools: {names}."
+                if value is True
+                else f"Complete trace evidence does not contain all required tools: {names}."
+                if value is False
+                else f"Trace evidence cannot establish invocation of all required tools: {names}."
+            )
+        if value is None and constrains_arguments:
+            rationale = f"{rationale} {_NO_TRACE_ARGUMENTS_REASON}"
         return [
             Score(
                 score_value=None if value is None else str(value).lower(),
@@ -287,6 +391,26 @@ class OtelToolCallOrderScorer(_OtelToolEvidenceScorer):
                 "clock_skew_tolerance_seconds": self._clock_skew_tolerance.total_seconds(),
             },
             children={"source": self._source.get_identifier()},
+        )
+
+    def _verdict_rests_on_absence(
+        self,
+        *,
+        evidence: ToolEventsObservationPayload,
+        expectation: ScoringExpectation | None,
+        acquisition: Acquisition,
+    ) -> bool:
+        # A False order verdict rests on complete coverage: an uncorrelated request could hold an
+        # attempt that rescues the order. An observed order stands on the spans themselves.
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalledInOrder)
+        return (
+            match_tools_called_in_order(
+                condition=condition,
+                payload=evidence,
+                acquisition=acquisition,
+                clock_skew_tolerance=self._clock_skew_tolerance,
+            )
+            is False
         )
 
     def _score_observation(

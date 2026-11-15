@@ -52,6 +52,8 @@ print(f"[output match] {scores[0].get_value()}")
 # searches the candidate text. For literal equality, use
 # `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
 # `Contains` returns false for empty candidate text; `Equals` can match two empty values.
+# `StartsWith` compares a literal prefix using `lower()` for case-insensitive matching, not
+# Unicode regex case equivalence. It strips only candidate edges; the expected prefix is preserved.
 # Blank or invalid regex patterns fail before scoring.
 #
 # By default, `OutputMatchesScorer` matches each supported text piece independently and returns
@@ -59,6 +61,20 @@ print(f"[output match] {scores[0].get_value()}")
 #
 # Existing `SubStringScorer` and `DecodingScorer` behavior is unchanged. Decoding infers candidate
 # text from the paired request; `OutputMatchesScorer` is the explicit expected-output path.
+#
+# ### PhysicsConsistencyScorer
+#
+# `PhysicsConsistencyScorer` checks numeric physical claims locally, without a model or network call.
+# It returns True for detected speed, absolute-zero, negative-mass, or bounded-percentage violations.
+# For example, `await PhysicsConsistencyScorer().score_text_async(text="The probe travels at 1.5 c.")`
+# returns a score whose `get_value()` is True; ordinary text such as `"The car travels at 25 m/s."`
+# scores False. Import the scorer from `pyrit.score`.
+#
+# The default `fail_on="FAIL"` detects impossible claims; `fail_on="WARN"` also flags suspicious
+# free-fall timings and percentage shares above 100%. Metadata records `phm_verdict`,
+# `violation_count`, and `fail_on`. This is a narrow numeric heuristic, not a general physics or
+# factuality judge: context can make a numeric claim ambiguous, and negative energy is not itself
+# impossible. The scoring objective does not change the constructor-configured rules.
 #
 # ### RegexScorer
 #
@@ -386,7 +402,7 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 import uuid
 
 from pyrit.memory import CentralMemory
-from pyrit.models import AssertTaxonomy, ConversationScorable
+from pyrit.models import AssertCategoryJudgment, AssertTaxonomy, ConversationScorable
 from pyrit.score import AssertJudgmentMode, AssertScoringDimension, build_assert_policy_scorer
 
 taxonomy = AssertTaxonomy.model_validate(
@@ -458,20 +474,29 @@ for mode in AssertJudgmentMode:
             )[0]
             assert_scores.append(score)
             print(f"[ASSERT/{mode.value}/{dimension.value}] {case}: {score.get_value()}")
-            if "assert_correction_reason" in score.score_metadata:
-                print(f"  Correction: {score.score_metadata['assert_correction_reason']}")
+            judgment = AssertCategoryJudgment.from_metadata(metadata=score.score_metadata)
+            if judgment is not None and judgment.correction_reason:
+                print(f"  Correction: {judgment.correction_reason}")
 
 # %% [markdown]
 # Each score has its dimension category, rationale, judge metadata, and saved observations.
-# Category-mode metadata also contains `assert_node_judgments` as JSON, `assert_original_score_value`,
-# and any `assert_correction_reason` or `assert_judgment_warnings`. The raw response remains retained.
+# In category mode, `AssertCategoryJudgment.from_metadata(metadata=score.score_metadata)` returns the
+# per-category judgments, the judge's original verdict, and any correction or warnings. The raw response
+# remains retained.
 # `get_assert_failure_criterion(dimension)` exposes the shared failure definition for other consumers.
 #
 # Category validation establishes structural consistency, not whether the model selected the right
 # categories or interpreted the evidence correctly. Verdicts can still conflict with their reasoning.
-# This does not port ASSERT's XML citation resolution or multi-judge aggregation, and it does not
-# establish accuracy parity or calibration. A scenario can configure repeated judgments with
-# `TrueFalseCompositeScorer` without changing this scorer's policy or merging the two dimensions.
+# This does not port ASSERT's XML citation resolution, and it does not establish accuracy parity or
+# calibration.
+#
+# `dimension` also accepts a custom `AssertJudgeDimension`, such as one from ASSERT's judge presets
+# (`list_assert_judge_presets()` or `load_assert_judge_preset()`) or your own preset file
+# (`load_assert_judge_preset_file()`). A dimension with a graded `scale` is a violation at or past
+# its `violation_at` grade, and a not-applicable answer is undetermined. `samples` repeats the judge
+# call and combines the verdicts as ASSERT does: a majority vote with ties counted as failures, leaving
+# out undetermined samples and samples whose judgment is still invalid after retries. See
+# [Foundry scenarios](../../scanner/foundry.ipynb) for the preset file format.
 #
 # %% [markdown]
 # ## External classifier integrations

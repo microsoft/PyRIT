@@ -96,7 +96,7 @@ class TestFigStepInitialization:
         scenario = FigStep(objective_scorer=mock_objective_scorer)
 
         assert scenario._objective_scorer is mock_objective_scorer
-        assert scenario._scorer_config.objective_scorer is mock_objective_scorer
+        assert scenario._configured_objective_scorer is mock_objective_scorer
 
     def test_default_dataset_uses_figstep(self, mock_objective_scorer):
         config = FigStep(objective_scorer=mock_objective_scorer)._default_dataset_config

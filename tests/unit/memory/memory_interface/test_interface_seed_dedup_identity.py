@@ -44,6 +44,30 @@ async def test_add_standalone_seeds_keep_distinct_data_types(sqlite_instance: Me
     assert sorted(seed.data_type for seed in stored) == ["text", "url"]
 
 
+@pytest.mark.parametrize("first_flag", [False, True])
+@pytest.mark.parametrize("singleton", [False, True])
+async def test_add_seeds_keep_distinct_general_technique_flags_async(
+    *, sqlite_instance: MemoryInterface, first_flag: bool, singleton: bool
+) -> None:
+    """Flag-only variants survive sequential imports and deduplicate on reimport."""
+    for flag in (first_flag, not first_flag, first_flag, not first_flag):
+        seed = SeedPrompt(value="same technique", dataset_name=DATASET, is_general_technique=flag)
+        if singleton:
+            await sqlite_instance.add_seed_groups_to_memory_async(
+                prompt_groups=[SeedGroup(seeds=[seed])], added_by="tester"
+            )
+        else:
+            await _add(sqlite_instance, seed)
+
+    stored = await sqlite_instance.get_seeds_async(dataset_name=DATASET)
+    assert len(stored) == 2
+    assert {seed.is_general_technique for seed in stored} == {False, True}
+    for flag in (False, True):
+        filtered = await sqlite_instance.get_seeds_async(dataset_name=DATASET, is_general_technique=flag)
+        assert len(filtered) == 1
+        assert filtered[0].is_general_technique is flag
+
+
 async def test_add_singleton_groups_keep_distinct_response_json_schemas(sqlite_instance: MemoryInterface) -> None:
     """Singleton groups that differ only by response schema are distinct and both must stay."""
     alpha_group = SeedGroup(
