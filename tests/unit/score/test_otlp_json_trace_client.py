@@ -292,6 +292,9 @@ async def test_missing_traces_are_unavailable_not_negative_async() -> None:
         json.dumps(_document(_otlp_span(start="0"))),
         json.dumps(_document(_otlp_span(start=str(_START), end=str(_START - 1_000)))),
         json.dumps(_document(_otlp_span(status={"code": 7}))),
+        # A bool or float must not match an integer status code through equality, as 1.0 == 1.
+        json.dumps(_document(_otlp_span(status={"code": True}))),
+        json.dumps(_document(_otlp_span(status={"code": 1.0}))),
         json.dumps(_document(_otlp_span(), _otlp_span(tool="other"))),
     ],
 )
@@ -332,6 +335,20 @@ async def test_one_failed_trace_leaves_other_evidence_partial_async(outcome: obj
     assert observation.acquisition is Acquisition.PARTIAL
     assert positive.get_value() is True
     assert absent.is_undetermined
+
+
+async def test_an_oversized_response_is_an_unreadable_trace_async() -> None:
+    # The body is abandoned at the limit, so a huge response fails that trace without being held in memory.
+    oversized = _document(_otlp_span(attributes=[{"key": "pad", "value": {"stringValue": "x" * 5_000}}]))
+    client, _ = _client(
+        _serve({_TRACE: oversized, _OTHER_TRACE: _document(_otlp_span(trace_id=_OTHER_TRACE))}),
+        max_response_bytes=1_000,
+    )
+
+    result = await client.get_spans_async(query=_query(_TRACE, _OTHER_TRACE))
+
+    assert [span.trace_id for span in result.spans] == [_OTHER_TRACE]
+    assert "trace_response_invalid" in result.coverage.reasons
 
 
 async def test_a_trace_with_an_unreadable_span_contributes_no_spans_async() -> None:
@@ -430,6 +447,7 @@ def test_identifier_omits_credentials_and_query() -> None:
         "endpoint": "https://traces.example/api/traces/{trace_id}",
         "format": "otlp_json",
         "timeout_seconds": 10,
+        "max_response_bytes": 50_000_000,
     }
     assert "secret" not in identifier.model_dump_json()
     other = OtlpJsonTraceClient(url_template="https://other.example/api/traces/{trace_id}").get_identifier()
@@ -443,8 +461,10 @@ def test_identifier_omits_credentials_and_query() -> None:
         ({"url_template": "https://traces.example/{trace_id}/{trace_id}"}, "placeholder"),
         ({"url_template": "file:///traces/{trace_id}"}, "placeholder"),
         ({"url_template": "https://user:pass@traces.example/{trace_id}"}, "credentials"),
+        ({"url_template": "https://traces.example:port/api/traces/{trace_id}"}, "port"),
         ({"url_template": _TEMPLATE, "timeout_seconds": 0}, "positive"),
         ({"url_template": _TEMPLATE, "timeout_seconds": float("nan")}, "positive"),
+        ({"url_template": _TEMPLATE, "max_response_bytes": 0}, "positive"),
     ],
 )
 def test_invalid_configuration_is_rejected(kwargs: dict[str, Any], match: str) -> None:

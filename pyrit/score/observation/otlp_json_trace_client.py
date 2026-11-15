@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import logging
 import math
 from contextlib import asynccontextmanager
@@ -56,7 +57,8 @@ class OtlpJsonTraceClient:
     complete: an observed tool call stands, and an absent one stays undetermined. A trace the
     backend does not have is unavailable. A failed request, an error status, or a response that
     cannot be read raises ``TraceAcquisitionError`` when no trace was retrieved, and otherwise
-    leaves coverage incomplete.
+    leaves coverage incomplete. A response is read incrementally and abandoned once it exceeds
+    ``max_response_bytes``, so a misbehaving backend cannot exhaust memory.
     """
 
     def __init__(
@@ -65,6 +67,7 @@ class OtlpJsonTraceClient:
         url_template: str,
         headers: Mapping[str, str] | None = None,
         timeout_seconds: float = 10,
+        max_response_bytes: int = 50_000_000,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """
@@ -75,11 +78,13 @@ class OtlpJsonTraceClient:
             headers (Mapping[str, str] | None): Request headers, such as credentials. They are
                 sent with every request and never recorded in the identifier.
             timeout_seconds (float): The timeout for each request.
+            max_response_bytes (int): The most bytes to read of one trace's response; a larger
+                response marks that trace unreadable, like a malformed one.
             http_client (httpx.AsyncClient | None): A caller-owned client to send requests
                 through. Without one, each query opens and closes its own client.
 
         Raises:
-            ValueError: If the template or timeout is invalid.
+            ValueError: If the template, timeout, or response size limit is invalid.
         """
         parsed = urlsplit(url_template)
         if (
@@ -90,11 +95,19 @@ class OtlpJsonTraceClient:
             raise ValueError("url_template must be an http(s) URL with one {trace_id} placeholder.")
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("url_template must not contain credentials; pass them in headers.")
+        try:
+            _ = parsed.port
+        except ValueError as error:
+            # httpx would reject this URL only at the first request; fail at configuration time instead.
+            raise ValueError("url_template must have a valid port.") from error
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive.")
+        if max_response_bytes < 1:
+            raise ValueError("max_response_bytes must be positive.")
         self._url_template = url_template
         self._headers = dict(headers or {})
         self._timeout_seconds = timeout_seconds
+        self._max_response_bytes = max_response_bytes
         self._http_client = http_client
 
     def get_identifier(self) -> ComponentIdentifier:
@@ -102,7 +115,13 @@ class OtlpJsonTraceClient:
         parsed = urlsplit(self._url_template)
         endpoint = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
         return ComponentIdentifier.of(
-            self, params={"endpoint": endpoint, "format": "otlp_json", "timeout_seconds": self._timeout_seconds}
+            self,
+            params={
+                "endpoint": endpoint,
+                "format": "otlp_json",
+                "timeout_seconds": self._timeout_seconds,
+                "max_response_bytes": self._max_response_bytes,
+            },
         )
 
     async def get_spans_async(self, *, query: TraceQuery) -> TraceQueryResult:
@@ -160,18 +179,24 @@ class OtlpJsonTraceClient:
             str | None: None when the trace was retrieved, otherwise why it was not.
         """
         url = self._url_template.replace(_TRACE_ID_PLACEHOLDER, trace_id)
+        body = bytearray()
         try:
-            response = await client.get(url, headers=self._headers, timeout=self._timeout_seconds)
+            async with client.stream("GET", url, headers=self._headers, timeout=self._timeout_seconds) as response:
+                if response.status_code == 404:
+                    return "trace_not_found"
+                if not response.is_success:
+                    logger.warning("Trace backend returned HTTP %d.", response.status_code)
+                    return "trace_query_failed"
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > self._max_response_bytes:
+                        logger.warning("Trace backend response exceeded %d bytes.", self._max_response_bytes)
+                        return "trace_response_invalid"
         except httpx.HTTPError as error:
             logger.warning("Trace request failed (%s).", type(error).__name__)
             return "trace_query_failed"
-        if response.status_code == 404:
-            return "trace_not_found"
-        if not response.is_success:
-            logger.warning("Trace backend returned HTTP %d.", response.status_code)
-            return "trace_query_failed"
         try:
-            trace_spans = _parse_trace_document(response.json(), trace_id=trace_id)
+            trace_spans = _parse_trace_document(json.loads(bytes(body)), trace_id=trace_id)
         except (ValueError, TypeError) as error:
             # The error text can echo span fields, such as tool arguments, so only its type is logged.
             logger.warning("Trace backend response could not be read (%s).", type(error).__name__)
@@ -241,7 +266,8 @@ def _parse_span(raw: Any) -> TraceSpan:
     if not isinstance(status, dict):
         raise TypeError("A span status must be a JSON object.")
     code = status.get("code", 0)
-    if code not in _STATUS_CODES:
+    # The explicit types keep a bool or float from matching an integer key, as 1.0 == 1.
+    if isinstance(code, bool) or not isinstance(code, (int, str)) or code not in _STATUS_CODES:
         raise ValueError("A span has an unknown status code.")
     attributes = raw.get("attributes", [])
     if not isinstance(attributes, list):
