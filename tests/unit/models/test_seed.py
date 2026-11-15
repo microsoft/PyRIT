@@ -581,6 +581,20 @@ def test_deferred_template_keeps_supplied_text_binding(seed_class: type[SeedProm
     assert reloaded.render_template_value(flag=True, prompt="rainbows") == f"{style.upper()} rainbows"
 
 
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_deferred_template_keeps_supplied_binding_when_it_operates_on_a_missing_parameter(
+    seed_class: type[SeedPrompt | SeedObjective],
+) -> None:
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"style": "brief"}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"style": "brief"}),
+    ):
+        template = seed_class(value="{{ style }} {{ prompt.upper() }}", data_type="text", is_jinja_template=True)
+
+    reloaded = seed_class(value=template.value, data_type="text")
+    assert reloaded.render_template_value(prompt="rainbows") == "brief RAINBOWS"
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -594,6 +608,78 @@ def test_partial_render_preserves_unresolved_loop_collection(source: str) -> Non
     template = SeedPrompt(value=source, data_type="text", is_jinja_template=True)
 
     assert template.render_template_value_silent() == source
+
+
+@pytest.mark.parametrize("style", ["brief 'quoted' \\ style", "{{ items }} {% endfor %}"])
+@pytest.mark.parametrize(
+    "items_use",
+    [
+        "{% for item in items %}{{ item }}{% endfor %}",
+        "{% set rows = items %}{% for row in rows %}{{ row }}{% endfor %}",
+        "{{ items.upper() }}",
+        "{{ items[0] }}",
+    ],
+)
+def test_partial_render_keeps_supplied_parameters_when_it_is_deferred(*, items_use: str, style: str) -> None:
+    source = f"{{{{ style }}}}: {items_use}"
+    expected = SandboxedEnvironment(undefined=StrictUndefined).from_string(source).render(style=style, items="ab")
+    template = SeedPrompt(value=source, data_type="text", is_jinja_template=True)
+
+    partial = SeedPrompt(
+        value=template.render_template_value_silent(style=style), data_type="text", is_jinja_template=True
+    )
+
+    assert partial.render_template_value(items="ab") == expected
+
+
+@pytest.mark.parametrize(
+    ("style", "style_use", "expected"),
+    [
+        (pathlib.PurePosixPath("/data/templates"), "{{ style.name }}", "templates"),
+        (3, "{{ style + 1 }}", "4"),
+        (["a", "b"], "{{ style | join('-') }}", "a-b"),
+        (None, "{{ style is none }}", "True"),
+    ],
+)
+def test_partial_render_keeps_the_type_of_supplied_parameters_when_it_is_deferred(
+    *, style: object, style_use: str, expected: str
+) -> None:
+    template = SeedPrompt(
+        value=f"{style_use}: {{% for item in items %}}{{{{ item }}}}{{% endfor %}}",
+        data_type="text",
+        is_jinja_template=True,
+    )
+
+    partial = SeedPrompt(
+        value=template.render_template_value_silent(style=style), data_type="text", is_jinja_template=True
+    )
+
+    assert partial.render_template_value(items="ab") == f"{expected}: ab"
+
+
+@pytest.mark.parametrize("value", [uuid.UUID(int=1), float("inf"), {"a"}])
+def test_partial_render_leaves_a_value_that_is_not_a_jinja_literal_for_the_later_render(value: object) -> None:
+    source = "{{ value }}: {% for item in items %}{{ item }}{% endfor %}"
+    template = SeedPrompt(value=source, data_type="text", is_jinja_template=True)
+
+    partial = template.render_template_value_silent(value=value)
+
+    assert partial == source
+    assert template.render_template_value(value=value, items="ab") == f"{value}: ab"
+
+
+@pytest.mark.parametrize("seed_class", [SeedPrompt, SeedObjective])
+def test_trusted_template_with_an_operation_on_an_unprovided_macro_argument_is_kept_as_is(
+    seed_class: type[SeedPrompt | SeedObjective],
+) -> None:
+    source = "{% macro show(row) %}{{ row.upper() }}{% endmacro %}{{ style }} {{ show() }}"
+    with (
+        patch("pyrit.models.seeds.seed_prompt.PATHS_DICT", {"style": "brief"}),
+        patch("pyrit.models.seeds.seed_objective.PATHS_DICT", {"style": "brief"}),
+    ):
+        template = seed_class(value=source, data_type="text", is_jinja_template=True)
+
+    assert template.value == source
 
 
 def test_render_template_value_silent_decides_conditions_as_before():

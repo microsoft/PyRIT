@@ -342,3 +342,20 @@ def test_get_jailbreak_keeps_extra_kwargs_of_a_template_with_a_prompt_guard():
     )
 
     assert jailbreak.get_jailbreak("Explain rainbows") == "Style: brief. Explain rainbows"
+
+
+@pytest.mark.parametrize(
+    ("prompt_use", "expected"),
+    [
+        ("{% for character in prompt %}{{ character }}-{% endfor %}", "a-b- -c-d-"),
+        ("{% for word in prompt.split() %}[{{ word }}]{% endfor %}", "[ab][cd]"),
+        ("{{ prompt[:2] }}", "ab"),
+    ],
+)
+def test_get_jailbreak_keeps_extra_kwargs_of_a_template_that_needs_the_prompt_to_render(
+    *, prompt_use: str, expected: str
+) -> None:
+    """Extra kwargs supplied at construction survive when the template loops over the prompt or operates on it."""
+    jailbreak = TextJailBreak(string_template=f"Style: {{{{ style }}}}. {prompt_use}", style="brief")
+
+    assert jailbreak.get_jailbreak("ab cd") == f"Style: brief. {expected}"
