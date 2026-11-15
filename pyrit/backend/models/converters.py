@@ -9,13 +9,14 @@ This module defines the Instance models and preview functionality.
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import (
     MAX_IDENTIFIER_LENGTH,
     MAX_ITEMS,
     REGISTRY_INSTANCE_NAME_PATTERN,
     IdentifierStr,
+    RegistrationRequest,
 )
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
 from pyrit.models.component_spec import SourceInstanceSpec
@@ -90,19 +91,14 @@ class ConverterInstanceListResponse(BaseModel):
     items: list[ConverterInstance] = Field(..., description="List of converter instances")
 
 
-class CreateConverterRequest(BaseModel):
+class CreateConverterRequest(RegistrationRequest):
     """Request to create a new converter instance."""
-
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name for the converter instance",
-    )
-    register_instance: bool = Field(
-        True, alias="register", description="Register the object; false returns only its descriptor"
     )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
@@ -111,15 +107,6 @@ class CreateConverterRequest(BaseModel):
         max_length=MAX_ITEMS,
         description="Converter constructor parameters",
     )
-
-    @property
-    def register(self) -> bool:
-        """The registration flag, retained for Python caller compatibility."""
-        return self.register_instance
-
-    @register.setter
-    def register(self, value: bool) -> None:
-        self.register_instance = value
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateConverterRequest":

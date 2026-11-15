@@ -7,9 +7,11 @@ Common models for the PyRIT API.
 Includes pagination, error handling (RFC 7807), shared base models, and request limits.
 """
 
-from typing import Annotated, Any
+from collections.abc import Mapping
+from typing import Annotated, Any, Self, cast
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic.main import IncEx
 
 from pyrit.models.request_limits import (
     MAX_IDENTIFIER_LENGTH,
@@ -62,6 +64,74 @@ def validate_label_filter(value: str) -> str:
 
 
 LabelFilterStr = Annotated[str, AfterValidator(validate_label_filter)]
+
+
+class RegistrationRequest(BaseModel):
+    """A registration flag with compatible wire and Python access."""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    register_instance: bool = Field(
+        True, alias="register", description="Register the object; false returns only its descriptor"
+    )
+
+    @property
+    def register(self) -> bool:
+        """The registration flag, retained for Python caller compatibility."""
+        return self.register_instance
+
+    @register.setter
+    def register(self, value: bool) -> None:
+        self.register_instance = value
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """
+        Copy the request, accepting the public registration key in updates.
+
+        Returns:
+            Self: The copied request.
+        """
+        if update is not None and "register" in update:
+            update = dict(update)
+            register = update.pop("register")
+            if "register_instance" in update and update["register_instance"] != register:
+                raise ValueError("register and register_instance updates must match")
+            update["register_instance"] = register
+        return super().model_copy(update=update, deep=deep)
+
+    def model_dump(
+        self, *, include: IncEx | None = None, exclude: IncEx | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """
+        Serialize the request, accepting registration aliases in field filters.
+
+        Returns:
+            dict[str, Any]: The serialized request.
+        """
+        return super().model_dump(
+            include=self._registration_filter(include), exclude=self._registration_filter(exclude), **kwargs
+        )
+
+    def model_dump_json(self, *, include: IncEx | None = None, exclude: IncEx | None = None, **kwargs: Any) -> str:
+        """
+        Serialize JSON, accepting registration aliases in field filters.
+
+        Returns:
+            str: The serialized request.
+        """
+        return super().model_dump_json(
+            include=self._registration_filter(include), exclude=self._registration_filter(exclude), **kwargs
+        )
+
+    @staticmethod
+    def _registration_filter(fields: IncEx | None) -> IncEx | None:
+        if fields is None or "register" not in fields:
+            return fields
+        if isinstance(fields, set):
+            return (cast("set[str]", fields) - {"register"}) | {"register_instance"}
+        translated = dict(cast("Mapping[str, IncEx | bool]", fields))
+        translated["register_instance"] = translated.pop("register")
+        return translated
 
 
 class PaginationInfo(BaseModel):

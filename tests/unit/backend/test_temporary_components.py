@@ -184,7 +184,6 @@ class TestTemporaryComponents:
             assert response.identifier.class_name == "HuggingFaceChatTarget"
             assert registry.instances.get_names() == (["local-model"] if register else [])
 
-    @pytest.mark.parametrize("register", [None, True, False])
     @pytest.mark.parametrize(
         ("use_cuda", "steps"), [(False, ["import"]), ("false", ["import"]), (True, ["cuda", "import"])]
     )
@@ -243,6 +242,7 @@ class TestTemporaryComponents:
 
         assert "cuda" not in torch.first_threads
 
+    @pytest.mark.parametrize("register", [None, True, False])
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
         [

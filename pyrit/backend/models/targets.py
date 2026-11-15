@@ -8,9 +8,15 @@ The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
-from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
+from pyrit.backend.models.common import (
+    MAX_ITEMS,
+    REGISTRY_INSTANCE_NAME_PATTERN,
+    IdentifierStr,
+    PaginationInfo,
+    RegistrationRequest,
+)
 from pyrit.common import AuthMode
 from pyrit.models import GenerationRange, JSONValue, Parameter, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
@@ -63,10 +69,8 @@ class TargetListResponse(BaseModel):
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
-class CreateTargetRequest(BaseModel):
+class CreateTargetRequest(RegistrationRequest):
     """Request to create a new target instance."""
-
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
     # LEGACY COMPATIBILITY: The current target configuration UI does not send a
     # name. Make this field required after that UI sends explicit registry names.
@@ -75,9 +79,6 @@ class CreateTargetRequest(BaseModel):
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name; omitted only for legacy UI compatibility",
-    )
-    register_instance: bool = Field(
-        True, alias="register", description="Register the object; false returns only its descriptor"
     )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
@@ -95,15 +96,6 @@ class CreateTargetRequest(BaseModel):
             "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
         ),
     )
-
-    @property
-    def register(self) -> bool:
-        """The registration flag, retained for Python caller compatibility."""
-        return self.register_instance
-
-    @register.setter
-    def register(self, value: bool) -> None:
-        self.register_instance = value
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
