@@ -5,18 +5,20 @@ function finished(progress: MessageSendStatus): boolean {
   return ['completed', 'failed', 'interrupted'].includes(progress.state)
 }
 
+export function isMessageSendConversationConfirmed(conversation: MessageSendConversation): boolean {
+  // Older receipts have no invocation flag; interruption alone cannot prove dispatch.
+  const invoked = conversation.target_invoked ?? (
+    ['sending', 'finalizing', 'completed'].includes(conversation.state)
+    || ['sending', 'finalization'].includes(conversation.failure_stage ?? '')
+  )
+  return invoked && conversation.request_turn_number != null
+    && !['queued', 'preparing'].includes(conversation.state)
+    && conversation.failure_stage !== 'preparation'
+}
+
 function confirmed(progress: MessageSendStatus): boolean {
   const conversations = progress.conversations?.length ? progress.conversations : [progress]
-  return conversations.some((conversation: MessageSendConversation) => {
-    // Older receipts have no invocation flag; interruption alone cannot prove dispatch.
-    const invoked = conversation.target_invoked ?? (
-      ['sending', 'finalizing', 'completed'].includes(conversation.state)
-      || ['sending', 'finalization'].includes(conversation.failure_stage ?? '')
-    )
-    return invoked && conversation.request_turn_number != null
-      && !['queued', 'preparing'].includes(conversation.state)
-      && conversation.failure_stage !== 'preparation'
-  })
+  return conversations.some(isMessageSendConversationConfirmed)
 }
 
 /** Share account-owned receipt reads with the abortable chat view. */

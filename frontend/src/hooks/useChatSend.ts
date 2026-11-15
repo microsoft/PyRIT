@@ -70,6 +70,8 @@ export interface ChatSendLocks {
   readonly pendingSends: Map<string, PendingSend>
   readonly loadedUserPieceIds: Map<string, Set<string>>
   readonly loadedBackendMessages: Map<string, BackendMessage[]>
+  /** The most recently started send from this chat; used to tag a preserved draft as that send. */
+  latestSendId: string | null
 }
 
 export interface UseChatSendStateOptions {
@@ -94,6 +96,8 @@ export interface ChatSendTracking {
   ) => Message[]
   readonly getPendingSend: (conversationId: string) => PendingSend | undefined
   readonly getLoadedBackendMessages: (conversationId: string) => BackendMessage[] | undefined
+  /** The most recently started send; a draft is tagged as accepted only when it still matches this id. */
+  readonly getLatestSendId: () => string | null
   readonly rememberBackendMessages: (conversationId: string, messages: BackendMessage[]) => void
   readonly clearUndoableSend: () => void
   /** Drops every recovery when the attack is reset; safe to call while rendering. */
@@ -107,6 +111,7 @@ function createLocks(): ChatSendLocks {
     pendingSends: new Map(),
     loadedUserPieceIds: new Map(),
     loadedBackendMessages: new Map(),
+    latestSendId: null,
   }
 }
 
@@ -180,6 +185,10 @@ export function useChatSendState({
     (conversationId: string): BackendMessage[] | undefined => locksRef.current.loadedBackendMessages.get(conversationId),
     [],
   )
+  const getLatestSendId = useCallback(
+    (): string | null => locksRef.current.latestSendId,
+    [],
+  )
   const rememberBackendMessages = useCallback((conversationId: string, messages: BackendMessage[]): void => {
     locksRef.current.loadedBackendMessages.set(conversationId, messages)
   }, [])
@@ -206,6 +215,7 @@ export function useChatSendState({
     reconcileLoadedConversation,
     getPendingSend,
     getLoadedBackendMessages,
+    getLatestSendId,
     rememberBackendMessages,
     clearUndoableSend,
     clearRecoveries,
@@ -361,7 +371,6 @@ export function useChatSend({
     refreshPanel, onConversationCreated, onCreatedDestination, onAttackCreated, onAttackChange,
   } = callbacks
   const { state, dispatch, locksRef } = tracking
-  const latestSendRef = useRef<string | null>(null)
   const sendIssueConversationId = attackResultId ? viewedConversationId : loadedConversationId ?? viewedConversationId
   const sendIssue = state.issues[sendIssueConversationId ?? PENDING_SEND_CONVERSATION_ID]
 
@@ -473,7 +482,7 @@ export function useChatSend({
       const lastMessage = response.messages.messages[response.messages.messages.length - 1]
       if (
         status === 'sent' && operation.progress?.state === 'completed'
-        && latestSendRef.current === operation.submissionId
+        && locksRef.current.latestSendId === operation.submissionId
         && !operation.repeatGroup && operation.converterSnapshot && operation.attackResultId
         && typeof targetResponseStatus?.request_turn_number === 'number'
         && targetResponseStatus.request_turn_number === operation.progress.request_turn_number
@@ -499,7 +508,7 @@ export function useChatSend({
     }
     return {
       status,
-      clearDraft: status !== 'retryable_failure' && latestSendRef.current === operation.submissionId
+      clearDraft: status !== 'retryable_failure' && locksRef.current.latestSendId === operation.submissionId
         && (!operation.repeatGroup || operation.repeatGroup.source === operation),
     }
   }
@@ -732,7 +741,7 @@ export function useChatSend({
       needsRefresh: false,
     }
     locks.pendingSends.set(initialSendConvId, operation)
-    latestSendRef.current = operation.submissionId
+    locks.latestSendId = operation.submissionId
     const submittedNavigationRevision = getNavigationRevision()
     let submissionAttempted = false
     const textConversion = conversions['text']
