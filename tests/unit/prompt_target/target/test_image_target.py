@@ -9,15 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_audio_message_piece, get_image_message_piece, get_sample_conversations
 
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
 )
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
-from pyrit.prompt_target import OpenAIImageTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import OpenAIImageTarget, TargetCapabilities, TargetConfiguration
 
 
 @pytest.fixture

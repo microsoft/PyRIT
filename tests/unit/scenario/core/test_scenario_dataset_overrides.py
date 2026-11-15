@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
+from pyrit.backend.services import ScenarioService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.cli._cli_args import (
     build_dataset_request_fields,
     parse_run_arguments,
@@ -29,22 +29,31 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario
-from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario import (
+    AtomicAttack,
+    AttackTechnique,
+    DatasetAttackConfiguration,
+    DatasetSource,
+    Scenario,
+    ScenarioTechnique,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.scenarios.garak.api_key import ApiKey
-from pyrit.scenario.scenarios.garak.encoding import Encoding
-from pyrit.scenario.scenarios.garak.figstep import FigStep
-from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination, PackageHallucinationTechnique
-from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectTechnique
-from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
-    DATASET_EXTRACTION_TEMPLATES,
+from pyrit.scenario.scenarios.garak import (
+    ApiKey,
+    Encoding,
+    FigStep,
+    PackageHallucination,
+    PackageHallucinationTechnique,
+    PromptInject,
+    PromptInjectTechnique,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
+    WebInjection,
+    WebInjectionTechnique,
 )
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
+    DATASET_EXTRACTION_TEMPLATES,
+)
 from pyrit.score import SubStringScorer
 
 
@@ -206,6 +215,7 @@ async def test_catalog_dataset_controls_do_not_depend_on_estimates() -> None:
     assert item.dataset_options.mode is DatasetSelectionMode.FIXED
     assert item.dataset_options.per_dataset_limit is False
     assert [source.name for source in item.dataset_defaults.sources] == ApiKey.required_datasets()
+    assert item.default_datasets == ApiKey.required_datasets()
     assert item.dataset_defaults.max_total == 20
 
 

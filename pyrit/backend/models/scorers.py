@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter, ScorerIdentifier
-from pyrit.models.catalog.scorer import ScorerInstance
+from pyrit.models.catalog import ScorerInstance
 
 
 class ScorerTypeEntry(BaseModel):
@@ -16,6 +16,7 @@ class ScorerTypeEntry(BaseModel):
     scorer_type: str = Field(..., description="Scorer class name")
     parameters: list[Parameter] = Field(default_factory=list, description="Constructor parameters from ScorerRegistry")
     is_llm_based: bool = Field(False, description="Whether this scorer references a target")
+    supports_objective_scoring: bool = Field(False, description="Whether this class implements true/false scoring")
     description: str | None = Field(None, description="Short description from the scorer class docstring")
 
 

@@ -1,8 +1,11 @@
-import { expect, test, type Page, type Request, type Response, type TestInfo } from '@playwright/test'
+import { EventEmitter } from 'node:events'
+
+import { expect, test as base, type Page, type Response, type TestInfo } from '@playwright/test'
 
 import type { AttackConversationsResponse, AttackMetadata, BackendMessage, BackendMessagePiece, ConversationMessagesResponse, ConversationSummary } from '@/types'
 import { attackConversationRoutePath, scenarioRunRoutePath } from '../src/utils/routeParams'
 import { compatibilityHeaders } from './_compatibility'
+import { captureSavedReads, SavedReads } from './savedReads'
 
 // Seeded by e2e/fixtures/scenario_hierarchy_backend.py.
 const scenarioResultId = '00000000-0000-0000-0000-000000003602'
@@ -14,6 +17,208 @@ const FIRST_PRUNED_ID = '00000000-0000-0000-0000-00010b000001'
 const OFF_PAGE_ID = '00000000-0000-0000-0000-00010b00006e'
 const SAVED_REQUEST = 'Synthetic request for Step 5. No external model was called.'
 const SAVED_RESPONSE = 'Stored example response for Step 5. This is offline sample data.'
+
+async function provideSavedReads(
+  { page }: { page: Parameters<typeof captureSavedReads>[0] }, provide: (reads: SavedReads) => Promise<void>,
+): Promise<void> {
+  const { reads, dispose } = captureSavedReads(page)
+  const failures: unknown[] = []
+  try {
+    await provide(reads)
+  } catch (error: unknown) {
+    failures.push(error)
+  }
+  try {
+    await dispose()
+  } catch (error: unknown) {
+    failures.push(error)
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, 'Saved metadata fixture and cleanup both failed')
+}
+
+const test = base.extend<{ savedReads: SavedReads }>({ savedReads: provideSavedReads })
+
+test.describe('saved metadata observer ownership', () => {
+  const metadata: AttackMetadata = {
+    attack_result_id: SAVED_ATTACK_ID, conversation_id: SAVED_MAIN_ID, objective: 'Offline observer test',
+    labels: {}, execution_read_only: true, last_response_message_piece_id: null,
+    related_conversation_count: 120, selected_conversation_id: SAVED_MAIN_ID, selected_conversation_valid: true,
+  }
+  const request = (conversationId: string = SAVED_MAIN_ID) => ({
+    method: (): string => 'GET',
+    url: (): string => `http://127.0.0.1/api/attacks/${SAVED_ATTACK_ID}/metadata?conversation_id=${conversationId}`,
+  })
+
+  for (const reverse of [false, true]) {
+    test(`waits for late headers and all bodies in ${reverse ? 'reverse' : 'forward'} order`, async () => {
+      const reads = new SavedReads()
+      const first = request()
+      const second = request(OFF_PAGE_ID)
+      const firstBody = Promise.withResolvers<AttackMetadata>()
+      const secondBody = Promise.withResolvers<AttackMetadata>()
+      let navigations = 0
+      reads.request(first)
+      reads.request(second)
+      reads.response(first, 200, () => firstBody.promise)
+      const transition = reads.beforeNavigation(SAVED_ATTACK_ID, SAVED_MAIN_ID, async (): Promise<void> => {
+        navigations += 1
+      })
+      await Promise.resolve()
+      expect(navigations).toBe(0)
+      expect(reads.pendingCount).toBe(2)
+      reads.response(second, 200, () => secondBody.promise)
+      const bodies = reverse ? [secondBody, firstBody] : [firstBody, secondBody]
+      bodies[0].resolve(metadata)
+      await reads.metadata[reverse ? 1 : 0].outcome
+      expect(navigations).toBe(0)
+      expect(reads.pendingCount).toBe(1)
+      bodies[1].resolve(metadata)
+      await transition
+      expect(navigations).toBe(1)
+      expect(reads.pendingCount).toBe(0)
+      expect(reads.metadata).toHaveLength(2)
+    })
+  }
+
+  test('waits for the expected request and includes requests added while draining', async () => {
+    const reads = new SavedReads()
+    let navigations = 0
+    const navigate = async (): Promise<void> => { navigations += 1 }
+    const transition = reads.beforeNavigation(SAVED_ATTACK_ID, SAVED_MAIN_ID, navigate)
+    await Promise.resolve()
+    expect(navigations).toBe(0)
+    const first = request()
+    const firstBody = Promise.withResolvers<AttackMetadata>()
+    reads.request(first)
+    reads.response(first, 200, () => firstBody.promise)
+    await Promise.resolve()
+    const late = request(OFF_PAGE_ID)
+    reads.request(late)
+    firstBody.resolve(metadata)
+    await reads.metadata[0].outcome
+    expect(navigations).toBe(0)
+    reads.response(late, 200, async (): Promise<AttackMetadata> => metadata)
+    await transition
+    expect(navigations).toBe(1)
+    expect(reads.pendingCount).toBe(0)
+
+    const nextTransition = reads.beforeNavigation(SAVED_ATTACK_ID, SAVED_MAIN_ID, navigate)
+    await Promise.resolve()
+    expect(navigations).toBe(1)
+    const next = request()
+    reads.request(next)
+    reads.response(next, 200, async (): Promise<AttackMetadata> => metadata)
+    await nextTransition
+    expect(navigations).toBe(2)
+    expect(reads.metadata).toHaveLength(3)
+  })
+
+  test('owns immediate body rejections and prevents navigation with the original error and URL', async () => {
+    const reads = new SavedReads()
+    const value = request()
+    const failure = new Error('Original browser body failure')
+    const unhandled: unknown[] = []
+    const onUnhandled = (error: unknown): void => { unhandled.push(error) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      reads.request(value)
+      reads.response(value, 200, () => Promise.reject(failure))
+      await new Promise<void>((resolve): void => { setImmediate(resolve) })
+      expect(unhandled).toEqual([])
+      let navigations = 0
+      await expect(reads.beforeNavigation(SAVED_ATTACK_ID, SAVED_MAIN_ID, async (): Promise<void> => {
+        navigations += 1
+      })).rejects.toMatchObject({ cause: failure, message: expect.stringContaining(value.url()) })
+      expect(navigations).toBe(0)
+      expect(reads.pendingCount).toBe(0)
+      expect(reads.metadata).toHaveLength(1)
+      await expect(reads.drain()).rejects.toMatchObject({ cause: failure })
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  test('reports request failures before headers without losing other body outcomes', async () => {
+    const reads = new SavedReads()
+    const first = request()
+    const second = request(OFF_PAGE_ID)
+    const body = Promise.withResolvers<AttackMetadata>()
+    const failure = new Error('Metadata request failed')
+    reads.request(first)
+    reads.request(second)
+    reads.response(second, 200, () => body.promise)
+    reads.failed(first, failure)
+    const draining = expect(reads.drain()).rejects.toMatchObject({
+      cause: failure, message: expect.stringContaining(first.url()),
+    })
+    expect(reads.pendingCount).toBe(1)
+    body.resolve(metadata)
+    await draining
+    expect(reads.pendingCount).toBe(0)
+    expect(reads.metadata).toHaveLength(2)
+
+    const afterHeaders = request()
+    const failedBody = Promise.withResolvers<AttackMetadata>()
+    const bodyFailure = new Error('Body failed after headers')
+    const separate = new SavedReads()
+    separate.request(afterHeaders)
+    separate.response(afterHeaders, 200, () => failedBody.promise)
+    separate.failed(afterHeaders, new Error('Transport failed after headers'))
+    expect(separate.pendingCount).toBe(1)
+    failedBody.reject(bodyFailure)
+    await expect(separate.drain()).rejects.toMatchObject({ cause: bodyFailure })
+    expect(separate.pendingCount).toBe(0)
+  })
+
+  for (const failureMode of ['none', 'assertion', 'cleanup', 'both'] as const) {
+    test(`settles reads and preserves ${failureMode} failures while removing only owned listeners`, async (): Promise<void> => {
+      const page = new EventEmitter()
+      const events = ['request', 'response', 'requestfailed'] as const
+      for (const event of events) page.on(event, (): void => {})
+      const before = events.map((event): number => page.listenerCount(event))
+      const provided = Promise.withResolvers<SavedReads>()
+      const value = request()
+      const body = Promise.withResolvers<AttackMetadata>()
+      const assertionFailure = new Error('Earlier assertion failed')
+      const bodyFailure = new Error('Body failed during assertion cleanup')
+      const assertionFails = failureMode === 'assertion' || failureMode === 'both'
+      const cleanupFails = failureMode === 'cleanup' || failureMode === 'both'
+      const completion = provideSavedReads({ page }, async (reads: SavedReads): Promise<void> => {
+        provided.resolve(reads)
+        expect(events.map((event): number => page.listenerCount(event)))
+          .toEqual(before.map((count: number): number => count + 1))
+        page.emit('request', value)
+        page.emit('response', {
+          url: value.url, request: () => value, status: (): number => 200, json: () => body.promise,
+        })
+        if (assertionFails) throw assertionFailure
+      })
+      const finished = failureMode === 'both'
+        ? expect(completion).rejects.toMatchObject({
+          name: 'AggregateError', errors: [assertionFailure, { cause: bodyFailure }],
+        })
+        : assertionFails ? expect(completion).rejects.toBe(assertionFailure)
+          : cleanupFails ? expect(completion).rejects.toMatchObject({ cause: bodyFailure })
+            : completion
+      const reads = await provided.promise
+      expect(page.listenerCount('request')).toBe(before[0])
+      expect(reads.pendingCount).toBe(1)
+      const unowned = request(OFF_PAGE_ID)
+      page.emit('request', unowned)
+      page.emit('response', {
+        url: unowned.url, request: () => unowned, status: (): number => 200,
+        json: (): never => { throw new Error('Cleanup must not start an unowned body read') },
+      })
+      if (cleanupFails) body.reject(bodyFailure)
+      else body.resolve(metadata)
+      await finished
+      expect(reads.pendingCount).toBe(0)
+      expect(reads.metadata).toHaveLength(1)
+      expect(events.map((event): number => page.listenerCount(event))).toEqual(before)
+    })
+  }
+})
 
 type SavedReadAction = 'reset' | 'status' | 'fail_messages' | 'fail_references'
   | 'hold_messages' | 'release_messages' | 'hold_references' | 'release_references'
@@ -28,35 +233,8 @@ async function controlSavedRead(
   return response.json()
 }
 
-interface SavedMetadataRead {
-  readonly url: URL
-  readonly status: number
-  readonly body: Promise<AttackMetadata>
-}
-
-interface SavedReads {
-  readonly requests: URL[]
-  readonly metadata: SavedMetadataRead[]
-}
-
-function captureSavedReads(page: Page): SavedReads {
-  const reads: SavedReads = { requests: [], metadata: [] }
-  page.on('request', (request: Request): void => {
-    const url = new URL(request.url())
-    if (request.method() === 'GET' && /\/api\/attacks\/[^/]+(?:\/(?:messages|conversations|metadata))?$/.test(url.pathname)) {
-      reads.requests.push(url)
-    }
-  })
-  page.on('response', (response: Response): void => {
-    const url = new URL(response.url())
-    if (response.request().method() === 'GET' && /\/api\/attacks\/[^/]+\/metadata$/.test(url.pathname)) {
-      reads.metadata.push({ url, status: response.status(), body: response.json() })
-    }
-  })
-  return reads
-}
-
 async function expectBoundedReads(reads: SavedReads): Promise<void> {
+  await reads.drain()
   expect(reads.requests.length).toBeGreaterThan(0)
   for (const url of reads.requests) {
     if (url.pathname.endsWith('/metadata')) continue
@@ -66,7 +244,9 @@ async function expectBoundedReads(reads: SavedReads): Promise<void> {
   expect(reads.metadata.length).toBeGreaterThan(0)
   for (const read of reads.metadata) {
     expect(read.status).toBe(200)
-    const metadata = await read.body
+    const outcome = await read.outcome
+    if (!outcome.ok) throw outcome.error
+    const metadata: AttackMetadata = outcome.body
     expect(metadata).not.toHaveProperty('related_conversations')
     expect(metadata).not.toHaveProperty('related_conversation_ids')
     expect(metadata).not.toHaveProperty('last_response')
@@ -140,7 +320,7 @@ test('browses compound results in the existing attack-group table with stable to
   await expect(table.getByText('Step 1', { exact: true })).toBeVisible()
   await expect(row('#2')).toContainText('Unresolved reference')
   await expect(row('#4')).toContainText('Unresolved reference')
-  await expect(row('Step 5').getByRole('cell').nth(2)).toHaveText('True')
+  await expect(row('Step 5').getByRole('cell', { name: 'Attack outcome', exact: true })).toHaveText('True')
   await expect(section.getByText('Showing 200 of 520 saved child positions')).toBeVisible()
 
   for (const shown of [400, 520]) {
@@ -168,12 +348,13 @@ test('browses compound results in the existing attack-group table with stable to
   await expect(section.getByText('Nested step 2', { exact: true })).toBeVisible()
   expect(await totals.textContent()).toBe(before)
 
-  await section.getByRole('button', { name: 'Open details for #5 sequential: Step 5' }).click()
+  const detailsRow = section.getByRole('row', { name: 'View attack details for #5 sequential: Step 5' })
+  await detailsRow.click()
   const dialog = page.getByRole('dialog', { name: 'sequential' })
   await expect(dialog.getByText('Step 5', { exact: true })).toBeVisible()
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Close attack details', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(section.getByRole('button', { name: 'Open details for #5 sequential: Step 5' })).toBeFocused()
+  await expect(detailsRow).toBeFocused()
 
   await page.getByRole('heading', { name: 'Atomic attack groups', exact: true }).evaluate((heading) =>
     heading.scrollIntoView({ block: 'start' }),
@@ -182,8 +363,7 @@ test('browses compound results in the existing attack-group table with stable to
   expect(errors).toEqual([])
 })
 
-test('opens an actual saved child chat and retains the existing scenario breadcrumb after a reload', async ({ page }, testInfo) => {
-  const reads = captureSavedReads(page)
+test('opens an actual saved child chat and retains the existing scenario breadcrumb after a reload', async ({ page, savedReads: reads }, testInfo) => {
   const historyPath = '/scanner/history?status=COMPLETED'
   await page.goto(historyPath)
   await expect(page.getByRole('combobox', { name: 'Run status', exact: true })).toHaveValue('COMPLETED')
@@ -192,8 +372,8 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   const section = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
   await expect(section.getByRole('button', { name: 'Collapse attacks in Sequential' })).toHaveAttribute('aria-expanded', 'true')
   await section.getByRole('button', { name: 'Expand children of sequential: Sequential parent' }).click()
-  const row = section.getByRole('row', { name: 'View conversation for #5 sequential: Step 5' })
-  const chatLink = row.getByRole('link', { name: 'Step 5', exact: true })
+  const row = section.getByRole('row', { name: 'View attack details for #5 sequential: Step 5' })
+  const chatLink = row.getByRole('link', { name: 'Conversation', exact: true })
   await expect(chatLink).toHaveAttribute('href', new RegExp(`\\?scenarioResultId=${scenarioResultId}$`))
   await chatLink.click()
 
@@ -214,7 +394,8 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
     name: `Select conversation ${FIRST_PRUNED_ID}`, exact: true,
   }).click()
   await expect(page).toHaveURL(attackConversationRoutePath(SAVED_ATTACK_ID, FIRST_PRUNED_ID, scenarioResultId))
-  await page.reload()
+  // In-app selection reuses metadata from the initial main-conversation load.
+  await reads.beforeNavigation(SAVED_ATTACK_ID, SAVED_MAIN_ID, () => page.reload())
   await expect(page.getByText(`Saved pruned user for ${FIRST_PRUNED_ID}. Offline evidence.`, { exact: true })).toBeVisible()
   await expect(breadcrumb).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('scenario-saved-chat-breadcrumb.png'), animations: 'disabled' })
@@ -223,7 +404,7 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await expect(page).toHaveURL(run)
   const groups = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
   await expect(groups.getByText('2 groups, 524 executions', { exact: true })).toBeVisible()
-  const single = groups.getByRole('row', { name: 'View conversation for single: Single-turn attempt' })
+  const single = groups.getByRole('row', { name: 'View attack details for single: Single-turn attempt' })
   const collapseSingle = groups.getByRole('button', { name: 'Collapse attacks in Single turn' })
   await expect(collapseSingle).toHaveAttribute('aria-expanded', 'true')
   await expect(single).toBeVisible()
@@ -232,6 +413,9 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await groups.getByRole('button', { name: 'Expand attacks in Single turn' }).click()
   await single.focus()
   await page.keyboard.press('Enter')
+  const singleDetails = page.getByRole('dialog', { name: 'single' })
+  await expect(singleDetails).toBeVisible()
+  await singleDetails.getByRole('link', { name: 'Open conversation' }).click()
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Back to scan', exact: true }).click()
   await expect(page).toHaveURL(run)
@@ -242,9 +426,8 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
 })
 
 test('merges bounded piece pages and preserves the complete transcript when adding and removing a human score', async (
-  { page }: { page: Page }, testInfo: TestInfo,
+  { page, savedReads: reads }: { page: Page; savedReads: SavedReads }, testInfo: TestInfo,
 ): Promise<void> => {
-  const reads = captureSavedReads(page)
   const first = await openSaved(page)
   const firstPieces = messagePieces(first)
   expect(first.messages.map((message: BackendMessage): number => message.turn_number)).toEqual([-1, 0, 1])
@@ -382,9 +565,8 @@ test('merges bounded piece pages and preserves the complete transcript when addi
 })
 
 test('retains loaded evidence through continuation errors and a failed bounded restart', async (
-  { page }: { page: Page }, testInfo: TestInfo,
+  { page, savedReads: reads }: { page: Page; savedReads: SavedReads }, testInfo: TestInfo,
 ): Promise<void> => {
-  const reads = captureSavedReads(page)
   await openSaved(page)
   const controls = page.getByRole('region', { name: 'Saved transcript paging' })
   await controlSavedRead(page, 'fail_messages')
@@ -421,9 +603,8 @@ test('retains loaded evidence through continuation errors and a failed bounded r
 })
 
 test('pages references independently and retains rows through retry and restart failures', async (
-  { page }: { page: Page }, testInfo: TestInfo,
+  { page, savedReads: reads }: { page: Page; savedReads: SavedReads }, testInfo: TestInfo,
 ): Promise<void> => {
-  const reads = captureSavedReads(page)
   const firstRead = waitForSavedRead(page, 'conversations', false)
   const transcript = await openSaved(page)
   const first: AttackConversationsResponse = await (await firstRead).json()
@@ -482,9 +663,8 @@ test('pages references independently and retains rows through retry and restart 
 })
 
 test('owns pending continuations across rapid selection, attack navigation and unmount', async (
-  { page }: { page: Page },
+  { page, savedReads: reads }: { page: Page; savedReads: SavedReads },
 ): Promise<void> => {
-  const reads = captureSavedReads(page)
   await openSaved(page)
   const panel = page.getByTestId('conversation-panel')
   for (const count of [100, 121]) {
@@ -532,8 +712,11 @@ test('owns pending continuations across rapid selection, attack navigation and u
   await expect(page).toHaveURL(run)
   const groups = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
   await expect(groups.getByRole('button', { name: 'Collapse attacks in Single turn' })).toHaveAttribute('aria-expanded', 'true')
-  await groups.getByRole('row', { name: 'View conversation for single: Single-turn attempt' }).focus()
+  await groups.getByRole('row', { name: 'View attack details for single: Single-turn attempt' }).focus()
   await page.keyboard.press('Enter')
+  const details = page.getByRole('dialog', { name: 'single' })
+  await expect(details).toBeVisible()
+  await details.getByRole('link', { name: 'Open conversation', exact: true }).click()
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()
   await controlSavedRead(page, 'release_messages')
   expect((await unmounted).status()).toBe(200)
@@ -568,10 +751,9 @@ test.describe('on a narrow touch screen', () => {
   })
 
   test('pages the selector by keyboard and reloads a conversation outside its first page', async (
-    { page }: { page: Page }, testInfo: TestInfo,
+    { page, savedReads: reads }: { page: Page; savedReads: SavedReads }, testInfo: TestInfo,
   ): Promise<void> => {
     await page.setViewportSize({ width: 390, height: 844 })
-    const reads = captureSavedReads(page)
     const first = await openSaved(page)
     const transcriptPaging = page.getByRole('region', { name: 'Saved transcript paging' })
     const transcriptStatus = transcriptPaging.getByRole('status')
@@ -650,14 +832,16 @@ test.describe('on a narrow touch screen', () => {
     await expect(page.getByText(`Saved pruned user for ${OFF_PAGE_ID}. Offline evidence.`, { exact: true }))
       .toBeInViewport({ ratio: 0.5 })
     await page.screenshot({ path: testInfo.outputPath('scenario-saved-pruned-mobile.png'), animations: 'disabled' })
-    await page.reload()
+    // In-app selection reuses metadata from the initial main-conversation load.
+    await reads.beforeNavigation(SAVED_ATTACK_ID, SAVED_MAIN_ID, () => page.reload())
     await expect(page.getByText(`Saved pruned user for ${OFF_PAGE_ID}. Offline evidence.`, { exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: 'Back to scan', exact: true })).toBeVisible()
     const outsidePageId = !firstReferenceIds.has(OFF_PAGE_ID) ? OFF_PAGE_ID
       : loadedReferences.find((reference: ConversationSummary): boolean => !firstReferenceIds.has(reference.conversation_id))?.conversation_id
     if (!outsidePageId) throw new Error('The saved fixture has no conversation outside its initial reference page.')
-    await page.goto(attackConversationRoutePath(SAVED_ATTACK_ID, outsidePageId, scenarioResultId))
-    await page.reload()
+    await reads.beforeNavigation(SAVED_ATTACK_ID, OFF_PAGE_ID, () =>
+      page.goto(attackConversationRoutePath(SAVED_ATTACK_ID, outsidePageId, scenarioResultId)))
+    await reads.beforeNavigation(SAVED_ATTACK_ID, outsidePageId, () => page.reload())
     await expect(page.getByText(`Saved pruned user for ${outsidePageId}. Offline evidence.`, { exact: true })).toBeVisible()
     await toggle.focus()
     await page.keyboard.press('Enter')
@@ -668,7 +852,8 @@ test.describe('on a narrow touch screen', () => {
     await page.screenshot({ path: testInfo.outputPath('scenario-saved-off-page-mobile.png'), animations: 'disabled' })
     await panel.getByRole('button', { name: 'Close panel', exact: true }).click()
 
-    await page.goto(attackConversationRoutePath(SAVED_ATTACK_ID, OFF_PAGE_ID))
+    await reads.beforeNavigation(SAVED_ATTACK_ID, outsidePageId, () =>
+      page.goto(attackConversationRoutePath(SAVED_ATTACK_ID, OFF_PAGE_ID)))
     await expect(page.getByText(`Saved pruned user for ${OFF_PAGE_ID}. Offline evidence.`, { exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Saved transcript paging' })).toContainText('End of saved transcript. 2 message pieces loaded.')
     await expect(page.getByRole('link', { name: 'Back to scan', exact: true })).toHaveCount(0)

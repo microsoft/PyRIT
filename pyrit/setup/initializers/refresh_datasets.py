@@ -16,8 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import SeedDataset
-from pyrit.models.parameter import Parameter
+from pyrit.models import Parameter, SeedDataset
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -118,7 +117,7 @@ class RefreshDatasets(PyRITInitializer):
             try:
                 await self._refresh_dataset_async(memory=memory, dataset_name=name)
                 refreshed.append(name)
-            except Exception as exc:  # noqa: BLE001 - isolate one dataset's failure from the rest
+            except Exception as exc:  # isolate one dataset's failure from the rest
                 logger.warning(f"Skipping refresh for dataset '{name}': {exc}")
                 failed.append(name)
 

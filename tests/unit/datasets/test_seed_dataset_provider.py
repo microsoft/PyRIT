@@ -12,20 +12,22 @@ import pytest
 import yaml
 
 import pyrit.datasets.seed_datasets.remote  # noqa: F401  triggers loader registration
-from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
-from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
-    _AgentThreatRulesDataset,
-)
-from pyrit.datasets.seed_datasets.remote.darkbench_dataset import _DarkBenchDataset
-from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
-from pyrit.datasets.seed_datasets.remote.promptintel_dataset import _PromptIntelDataset
-from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
-from pyrit.datasets.seed_datasets.seed_metadata import (
-    RECOMMENDED_TAGS,
+from pyrit.datasets import (
     SeedDatasetFilter,
     SeedDatasetLoadTime,
     SeedDatasetMetadata,
+    SeedDatasetProvider,
+)
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote import (
+    _AgentThreatRulesDataset,
+    _DarkBenchDataset,
+    _HarmBenchDataset,
+    _PromptIntelDataset,
+    _RemoteDatasetLoader,
+)
+from pyrit.datasets.seed_datasets.seed_metadata import (
+    RECOMMENDED_TAGS,
     SeedDatasetSizeCategory,
 )
 from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt

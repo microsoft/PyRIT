@@ -2,7 +2,25 @@
 # Licensed under the MIT license.
 
 import re
-from typing import IO, Any, TypeGuard
+from typing import IO, Any, TypeGuard, cast
+
+import regex
+
+
+def graphemes(text: str) -> list[str]:
+    """
+    Split text into user-perceived characters (extended grapheme clusters).
+
+    Multi-code-point sequences such as emoji ZWJ families, flag pairs, skin-tone
+    modifiers, keycaps, and combining marks stay together as single elements.
+
+    Args:
+        text (str): The text to split.
+
+    Returns:
+        list[str]: The extended grapheme clusters in source order.
+    """
+    return cast("list[str]", regex.findall(r"\X", text))
 
 
 def is_non_empty_string(value: object) -> TypeGuard[str]:

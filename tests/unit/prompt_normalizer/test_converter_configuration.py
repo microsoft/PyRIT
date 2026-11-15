@@ -4,7 +4,7 @@
 from unittest.mock import MagicMock
 
 from pyrit.converter import Converter
-from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 
 
 def _make_mock_converter(name: str = "MockConverter") -> MagicMock:

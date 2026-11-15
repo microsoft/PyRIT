@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from unit.mocks import get_image_message_piece, store_message_async
 
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import MessagePiece
 from pyrit.score import (
     MessageScorable,
@@ -48,8 +47,7 @@ async def test_substring_scorer_score(patch_central_database, sub_string: str):
 
     assert len(score) == 1
 
-    # score_value should be the opposite of substring scorer since results are inverted
-    assert score[0].score_value != str(sub_string in full_text)
+    assert score[0].get_value() is (sub_string not in full_text)
     assert score[0].score_type == "true_false"
     assert score[0].score_category == ["new_category"]
     assert score[0].message_piece_id is None

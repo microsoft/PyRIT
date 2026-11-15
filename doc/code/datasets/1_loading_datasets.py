@@ -80,13 +80,16 @@
 # `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
 # the API-key service-to-pattern map (`garak_api_key_service_patterns`),
 # ProPILE PII records and prompt templates (`garak_propile_pii`, `garak_propile_templates`),
+# leak-replay cloze passages that are downloaded at run time rather than bundled
+# (`garak_leak_replay_literature`, `garak_leak_replay_potter`, `garak_leak_replay_nyt`,
+# `garak_leak_replay_guardian`) [@chang2023speak],
 # an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
-from pyrit.setup.initialization import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await SeedDatasetProvider.get_all_dataset_names_async()
 

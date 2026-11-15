@@ -7,17 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
-from pyrit.executor.attack.core.attack_parameters import (
+from pyrit.executor.attack import (
     AttackParameters,
+    PromptSendingAttackParameters,
+    SimulatedConversationResult,
 )
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
-from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttackParameters
 from pyrit.models import (
     AttackSeedGroup,
+    ChatMessageRole,
     ConversationReference,
     ConversationType,
     Message,
@@ -26,7 +27,6 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
-from pyrit.models.literals import ChatMessageRole
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:

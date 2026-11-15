@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.diacritic_converter import DiacriticConverter
+from pyrit.converter import ConverterResult, DiacriticConverter
 
 
 async def test_convert_async_default_target_chars():

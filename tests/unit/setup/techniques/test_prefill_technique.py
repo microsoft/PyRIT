@@ -14,8 +14,7 @@ from pydantic import ValidationError
 from unit.mocks import openai_chat_response_json_dict, openai_response_json_dict
 
 from pyrit.converter import Base64Converter, QRCodeConverter
-from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack import AttackConverterConfig, AttackParameters, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -40,9 +39,7 @@ from pyrit.prompt_target import (
     TargetCapabilities,
     TargetConfiguration,
 )
-from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError
+from pyrit.scenario import AtomicAttack, AttackTechniqueFactory, IncompatibleTechniqueError
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import core, extra
 
@@ -135,6 +132,15 @@ def test_prefill_rejects_additional_dataset_history_without_mutation() -> None:
     with pytest.raises(ValueError, match="objective-only"):
         seed_group.with_technique(technique=factory.seed_technique)
     assert len(seed_group.prompts) == 1
+
+
+def test_prefill_rejects_appending_a_user_prompt_after_the_assistant_prefix() -> None:
+    with pytest.raises(ValidationError, match="append_objective_prompt=False"):
+        AttackTechniqueSeedGroup(
+            seeds=[SeedPrompt(value=PREFIX, role="assistant", data_type="text", is_general_technique=True)],
+            continue_final_assistant_message=True,
+            append_objective_prompt=True,
+        )
 
 
 def _atomic_with_group(factory: AttackTechniqueFactory, group: AttackSeedGroup) -> AtomicAttack:

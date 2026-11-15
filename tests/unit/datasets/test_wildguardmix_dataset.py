@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.wildguardmix_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     WildGuardMixAdversarial,
     WildGuardMixPromptHarmLabel,
     WildGuardMixSplit,

@@ -15,8 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from pyrit.backend.main import app
 from pyrit.backend.models.operations import EvidenceAvailability, FindingEvidenceCreateRequest
 from pyrit.backend.services.operation_service import FindingNotFoundError, OperationNotFoundError, OperationService
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, Base, PromptMemoryEntry
+from pyrit.memory import AttackResultEntry, CentralMemory, PromptMemoryEntry, SQLiteMemory
+from pyrit.memory.memory_models import Base
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -645,14 +645,30 @@ async def test_finding_search_is_literal_case_insensitive_async(sqlite_instance:
     assert page.items[0].evidence_count == 0
 
 
+@pytest.mark.usefixtures("patch_central_database")
+def test_findings_route_forwards_patterns_and_rejects_conflicts(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Pattern search"}).json()
+    path = f"/api/operations/{operation['id']}/findings"
+    for title in ("100%_Proof", "100XXProof", "other"):
+        assert client.post(path, json={"title": title, "severity": "low"}).status_code == 201
+    page = client.get(path, params={"title_pattern": "100%proof"})
+    assert page.status_code == 200
+    assert {item["title"] for item in page.json()["items"]} == {"100%_Proof", "100XXProof"}
+    literal = client.get(path, params={"title": "%_proof"})
+    assert [item["title"] for item in literal.json()["items"]] == ["100%_Proof"]
+    for params in ({"title_pattern": "/"}, {"title": "", "title_pattern": "%"}):
+        assert client.get(path, params=params).status_code == 400
+
+
 async def test_concurrent_attach_preserves_one_association_async(
     tmp_path: Path,
 ) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "evidence.db", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "evidence.db", _defer_initialization=True)
     try:
-        await asyncio.to_thread(Base.metadata.create_all, memory.engine)
+        await memory.initialize_async()
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             operation, finding, attack = await _store_evidence_source_async(memory)
             request = FindingEvidenceCreateRequest(attack_result_id=attack.attack_result_id)

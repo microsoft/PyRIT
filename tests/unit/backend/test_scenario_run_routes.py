@@ -17,8 +17,7 @@ from fastapi.testclient import TestClient
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit import _compatibility
 from pyrit.backend.main import app
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.models import PaginationInfo, ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.memory import MemoryInterface
@@ -31,11 +30,12 @@ from pyrit.models import (
     ScenarioProgressSummary,
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
+    ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunProgress,
     ScenarioRunState,
 )
-from pyrit.models.catalog.scenario import ScenarioRunListItem, ScenarioRunSummary
+from pyrit.models.catalog import ScenarioRunSummary
 from unit.mocks import make_scenario_result
 
 OPERATION_ID = UUID(int=7)

@@ -14,8 +14,8 @@ from typing import Any
 
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackResult, ScenarioResult
+from pyrit.output import FileSink
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
-from pyrit.output.sink import FileSink
 from pyrit.setup import SQLITE, initialize_pyrit_async
 
 

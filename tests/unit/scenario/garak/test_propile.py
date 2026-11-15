@@ -26,12 +26,14 @@ from pyrit.models import (
     SeedDataset,
     SeedPrompt,
 )
-from pyrit.scenario.core.dataset_configuration import (
+from pyrit.scenario import (
+    BaselineAttackPolicy,
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
 )
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ProPILE,
     ProPILEDatasetConfiguration,

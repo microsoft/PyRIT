@@ -10,7 +10,7 @@ import typing
 from enum import Enum
 from typing import Any, Union
 
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig
 
 logger = logging.getLogger(__name__)
 

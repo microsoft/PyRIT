@@ -89,8 +89,16 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
     let ignore = false
     const loadAllPages = async (): Promise<void> => {
       const loaded = new Map<string, FindingListItem>()
+      const seenOffsets = new Set<number>()
       let offset: number | null = 0
       while (offset !== null) {
+        // A repeated offset means the server is not advancing the page, and
+        // fetching it again would loop forever, so stop with an error the
+        // same way the shared pagination helper treats a cyclic cursor.
+        if (seenOffsets.has(offset)) {
+          throw new Error('The findings page offset did not advance.')
+        }
+        seenOffsets.add(offset)
         const page = await operationsApi.listFindings(operation.id, { limit: PAGE_SIZE, offset })
         if (ignore) return
         // A finding created while pages load shifts later pages, so a page can repeat an earlier row.

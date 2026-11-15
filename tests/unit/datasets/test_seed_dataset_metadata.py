@@ -7,7 +7,7 @@ Tests for metadata components related to SeedDatasetProvider.
 
 import pytest
 
-from pyrit.datasets.seed_datasets.seed_metadata import (
+from pyrit.datasets import (
     SeedDatasetFilter,
     SeedDatasetLoadTime,
     SeedDatasetMetadata,

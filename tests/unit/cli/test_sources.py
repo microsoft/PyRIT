@@ -5,7 +5,7 @@
 
 import uuid
 
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.cli._sources import RestApiConversationSource
 from pyrit.models import ComponentIdentifier, Message, Score
 

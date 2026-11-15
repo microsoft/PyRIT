@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from pyrit.converter.leetspeak_converter import LeetspeakConverter
+from pyrit.converter import LeetspeakConverter
 
 
 # Test for deterministic mode

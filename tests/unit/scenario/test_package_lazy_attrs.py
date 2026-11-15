@@ -11,10 +11,8 @@ import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import Registry, TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
+from pyrit.scenario import AttackTechniqueFactory, ScenarioTechnique
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique

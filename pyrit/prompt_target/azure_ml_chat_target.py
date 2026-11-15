@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from types import MappingProxyType
 from typing import Any, ClassVar, cast
 
 from httpx import HTTPStatusError
@@ -12,8 +13,7 @@ from pyrit.auth import (
     get_azure_async_token_provider,
     is_azure_ml_endpoint,
 )
-from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, net_utility, print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
@@ -52,6 +52,8 @@ class AzureMLChatTarget(PromptTarget):
     # AML managed online endpoints can authenticate with a Microsoft Entra ID
     # token scoped to AML, so this target supports both auth modes.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
 
     # Entra ID token scope for Azure Machine Learning managed online endpoints.
     _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"

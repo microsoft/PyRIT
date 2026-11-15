@@ -10,11 +10,17 @@ import pytest
 from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
-from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
-from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialChildAttack
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack import (
+    AttackContext,
+    AttackExecutor,
+    AttackParameters,
+    AttackStrategy,
+    PromptSendingAttack,
+    SequenceCompletionPolicy,
+    SequentialAttack,
+    SequentialChildAttack,
+)
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
-from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     AttackResult,

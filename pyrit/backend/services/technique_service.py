@@ -7,7 +7,7 @@ import asyncio
 from functools import lru_cache
 
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import PaginationInfo
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueInstance,
@@ -15,7 +15,7 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
-from pyrit.registry.components import AttackRegistry, AttackTechniqueRegistry
+from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
 
 
 class TechniqueService:

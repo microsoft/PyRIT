@@ -207,7 +207,8 @@ async def test_public_follow_up_rejects_unsupported_image_history_async(adapter:
     provider.assert_not_awaited()
 
 
-async def test_responses_does_not_exempt_unstructured_error_history_async() -> None:
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_responses_replays_unstructured_blocked_history_as_text_async(wrapped: bool) -> None:
     conversation_id = str(uuid.uuid4())
     await CentralMemory.get_memory_instance().add_message_to_memory_async(
         request=Message(
@@ -216,25 +217,29 @@ async def test_responses_does_not_exempt_unstructured_error_history_async() -> N
                     role="assistant",
                     conversation_id=conversation_id,
                     sequence=0,
-                    original_value="Not a structured refusal",
+                    original_value="Content filtered",
                     original_value_data_type="error",
                     response_error="blocked",
                 )
             ]
         )
     )
-    provider = AsyncMock()
+    provider = AsyncMock(return_value=_responses_response())
     with ExitStack() as stack:
         target = _target(adapter="responses", provider=provider, stack=stack)
-        with pytest.raises(ValueError, match="Received: error"):
-            await target.send_prompt_async(
-                message=Message(
-                    message_pieces=[
-                        MessagePiece(role="user", conversation_id=conversation_id, original_value="Follow up")
-                    ]
-                )
+        if wrapped:
+            target = RoundRobinTarget(targets=[target, _target(adapter="responses", provider=provider, stack=stack)])
+        response = await target.send_prompt_async(
+            message=Message(
+                message_pieces=[MessagePiece(role="user", conversation_id=conversation_id, original_value="Follow up")]
             )
-    provider.assert_not_awaited()
+        )
+    assert response[0].get_value() == "Answer"
+    provider.assert_awaited_once()
+    assert provider.await_args.kwargs["input"][0] == {
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Content filtered"}],
+    }
 
 
 @pytest.mark.parametrize("adapter", ["chat", "litellm", "responses"])

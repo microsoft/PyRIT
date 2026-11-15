@@ -19,12 +19,12 @@ from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import (
     AttackExecutor,
+    AttackExecutorResult,
     AttackParameters,
     AttackStrategy,
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
-from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackIdentifier,

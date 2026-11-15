@@ -13,9 +13,7 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import Registry
-from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, ScenarioTechnique
 from pyrit.scenario.garak import Doctor, DoctorTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.garak.doctor import DOCTOR_FACTORIES

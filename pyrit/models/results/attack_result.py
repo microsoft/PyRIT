@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from typing_extensions import TypeVar
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.models.component_spec import RegisteredComponentReference  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType

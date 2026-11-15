@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core._technique_resolution import (
+from pyrit.scenario import AttackTechniqueFactory
+from pyrit.scenario.core import (
     TechniqueResolutionError,
     resolve_technique_factories,
     resolve_technique_factories_for_techniques,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario_context import ScenarioContext
 
 

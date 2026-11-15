@@ -12,7 +12,7 @@ from typing import Any
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)

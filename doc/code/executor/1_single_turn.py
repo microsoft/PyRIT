@@ -124,7 +124,7 @@ from pyrit.models import AttackSeedGroup, SeedObjective
 from pyrit.prompt_target import HuggingFaceChatTarget
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import AtomicAttack
-from pyrit.setup.initializers.techniques import TechniqueInitializer
+from pyrit.setup.initializers import TechniqueInitializer
 
 technique_initializer = TechniqueInitializer()
 technique_initializer.set_params_from_args(args={"tags": ["extra"]})

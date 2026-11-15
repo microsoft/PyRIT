@@ -9,14 +9,16 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     CreateAttackRequest,
     MessagePieceRequest,
+)
+from pyrit.backend.models.attacks import (
     SaveConversationRequest,
 )
 from pyrit.models import PromptDataType
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest
 
 
 @pytest.mark.parametrize("objective", [None, "", "Evaluate the response"])

@@ -54,6 +54,14 @@ class AttackTechniqueSeedGroup(SeedGroup):
         ),
     )
 
+    append_objective_prompt: bool = Field(
+        default=False,
+        description=(
+            "Append the objective as a separate final user prompt after merged static prompts "
+            "and reserved simulated-conversation sequences."
+        ),
+    )
+
     @classmethod
     def from_system_prompt(cls, system_prompt: str, *, insertion_index: int | None = None) -> Self:
         """
@@ -142,9 +150,11 @@ class AttackTechniqueSeedGroup(SeedGroup):
             or self.prompts[0].data_type != "text"
             or not self.prompts[0].value.strip()
             or self.prompt_placement != "preserve"
+            or self.append_objective_prompt
         ):
             raise ValueError(
-                "Assistant continuation requires one non-empty text assistant prefix with prompt_placement='preserve'."
+                "Assistant continuation requires one non-empty text assistant prefix with "
+                "prompt_placement='preserve' and append_objective_prompt=False."
             )
 
     @property

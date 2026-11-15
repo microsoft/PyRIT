@@ -14,8 +14,8 @@ from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, get_global_default_values
-from pyrit.models.parameter import Parameter
+from pyrit.common import REQUIRED_VALUE, get_global_default_values
+from pyrit.models import Parameter
 
 
 class PyRITInitializer(ABC):
@@ -86,7 +86,7 @@ class PyRITInitializer(ABC):
         Returns:
             str: A description of the configuration changes this initializer makes.
         """
-        from pyrit.registry.registry_metadata import RegistryMetadata
+        from pyrit.registry import RegistryMetadata
 
         return RegistryMetadata.description_from_docstring(self.__class__, fallback=type(self).__name__)
 
