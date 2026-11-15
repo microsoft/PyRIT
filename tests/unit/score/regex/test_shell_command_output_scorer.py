@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 import re
+from collections.abc import Callable
+from inspect import Parameter, signature
 from time import perf_counter
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +11,24 @@ import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.score import ShellCommandOutputScorer
-from pyrit.score.true_false.regex.shell_command_output_scorer import _SUBSTITUTION_COMMANDS, _normalize_substitution
+from pyrit.score.true_false.regex.shell_command_output_scorer import (
+    _SUBSTITUTION_COMMANDS,
+    _curl_mode_then,
+    _curl_number_option,
+    _curl_option,
+    _download_command,
+    _normalize_substitution,
+    _quoted_option,
+    _shell_options,
+)
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [_curl_mode_then, _curl_number_option, _curl_option, _download_command, _quoted_option, _shell_options],
+)
+def test_pattern_helpers_are_keyword_only(helper: Callable[..., str]) -> None:
+    assert all(parameter.kind is Parameter.KEYWORD_ONLY for parameter in signature(helper).parameters.values())
 
 
 async def test_pipe_to_shell_detected(patch_central_database):
