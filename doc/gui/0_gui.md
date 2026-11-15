@@ -99,6 +99,16 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
+### Temperature
+
+On supported targets, use the thermometer below **Send** to adjust temperature
+for subsequent messages. **Use target default** clears the override; shared
+defaults and saved messages are unchanged. Select a message's temperature footer
+to inspect its saved settings.
+
+See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
+for SDK usage.
+
 ## Scanner
 
 Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
@@ -119,14 +129,14 @@ Groups and objectives show success rates and completion counts separately.
 Completed scans offer an optional **Compare baseline and attack** disclosure
 below the objective results. It stays collapsed while you review individual attacks.
 
-**Watch live conversation** opens saved messages while an attack runs. This view
-is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
-stops remaining scan work and keeps saved results. Ordinary manual chats do not
-have scan cancellation controls.
-After cancellation, saved messages remain available in the read-only chat.
-Saving these conversation links does not add attack outcomes or change success rates.
+**Watch live conversation** opens a running attack in Chat. While the scan runs it,
+Chat is read-only, shows **Attack in progress** in place of the prompt bar, and
+refreshes its messages and conversations; when the attack finishes, Chat shows its
+saved result on the same page. **Cancel** stops remaining scan work and keeps saved
+results; saved messages remain available in the read-only chat. Opening these
+conversations does not add attack outcomes or change success rates.
 
-**Rerun** opens the scenario launch page with saved settings filled in. It does
+**Rerun with changes** opens the scenario launch page with saved settings filled in. It does
 not start work or change the original run. Review or edit the settings before
 launching. Recorded target/scorer identities and the scenario version are checked.
 Settings that cannot be restored, including older records without a required identity,
@@ -203,6 +213,15 @@ Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
+Use **Auto-detect capabilities** to select targets and run live checks. Results
+apply automatically for the current backend session. Checks can incur provider
+charges. Existing manual chats retain their saved capabilities, including chats
+using the default temperature. Legacy chats without a snapshot retain the source's
+pre-detection capabilities for this backend session. New chats use the detected
+capabilities.
+See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
+for shared behavior.
+
 ![Registry page with registered targets and component tabs](images/registry.png)
 
 ## Datasets
@@ -254,8 +273,7 @@ the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
 is a separate setting in `technique.execute`.
 
-Compound-attack hierarchy browsing is a separate GUI follow-up. The
-[backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
+The [backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
 provides paged roots and ordered child expansion without clipping run statistics.
 Conversation reads expose main and pruned conversations only; adversarial and
 preparation contexts remain internal. Transcript bodies load only for a selected

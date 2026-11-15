@@ -40,7 +40,7 @@ from pyrit.memory.analytics_sql import (
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, Base, TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -258,6 +258,32 @@ async def test_non_ascii_case_variants_share_group_filter_and_facet_keys(sqlite_
         assert connection.execute(select(UnicodeLower(literal("\u00c9COLE")))).scalar_one() == "\u00e9cole"
     async with sqlite_instance._get_async_engine().connect() as connection:
         assert (await connection.execute(select(UnicodeLower(literal("\u00c9COLE"))))).scalar_one() == "\u00e9cole"
+
+
+@pytest.mark.parametrize("search", ["\u0391\u03a3", "\u039f\u03a3"])
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        AttackAnalyticsDimension(name="label", label_key="case"),
+        AttackAnalyticsDimension(name="targeted_harm_category"),
+        AttackAnalyticsDimension(name="attack_type"),
+    ],
+    ids=["label", "category", "attack_type"],
+)
+async def test_facet_search_matches_greek_sigma_verbatim(
+    *, sqlite_instance: SQLiteMemory, dimension: AttackAnalyticsDimension, search: str
+) -> None:
+    """Facet search folds per character, so final sigma never hides an exact match."""
+    astros = "\u0391\u03a3\u03a4\u03a1\u039f\u03a3"
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            make_result(labels={"case": astros}, categories=[astros], attack_class_name=astros),
+            make_result(index=2, labels={"case": "other"}, categories=["other"], attack_class_name="Other"),
+        ]
+    )
+    query = AttackAnalyticsFacetQuery(dimension=dimension, search=search)
+    facet = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert [item.label.casefold() for item in facet.items] == [astros.casefold()]
 
 
 @pytest.mark.parametrize(
@@ -2234,12 +2260,12 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(
 ) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", _defer_initialization=True)
     try:
         engine = memory._get_async_engine()
         async with engine.connect() as connection:
             assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
-            await connection.run_sync(Base.metadata.create_all)
+        await memory.initialize_async()
         await add_legacy_attack_results_async(memory, attack_results=[make_result(), make_result(index=2)])
         inserted = False
 

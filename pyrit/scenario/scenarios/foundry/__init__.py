@@ -9,12 +9,11 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
-    from pyrit.scenario.scenarios.foundry.assert_policy import AssertPolicy, AssertTechnique
+    from pyrit.scenario.scenarios.foundry.assert_policy import AssertPolicy
     from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite, FoundryTechnique, RedTeamAgent
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertPolicy": "pyrit.scenario.scenarios.foundry.assert_policy",
-    "AssertTechnique": "pyrit.scenario.scenarios.foundry.assert_policy",
     "FoundryComposite": "pyrit.scenario.scenarios.foundry.red_team_agent",
     "FoundryTechnique": "pyrit.scenario.scenarios.foundry.red_team_agent",
     "RedTeamAgent": "pyrit.scenario.scenarios.foundry.red_team_agent",

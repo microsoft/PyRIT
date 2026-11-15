@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         ProgramBehaves,
         ProgramCase,
         ProgramResult,
+        ToolArgumentRequirement,
         ToolCallRequirement,
         ToolsCalled,
     )
@@ -63,7 +64,7 @@ if TYPE_CHECKING:
         UnvalidatedScore,
     )
     from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
-    from pyrit.models.score.text_matcher import Contains, Equals, Regex, TextMatcher
+    from pyrit.models.score.text_matcher import Contains, Equals, Regex, StartsWith, TextMatcher
     from pyrit.models.score.trace import (
         ToolExecution,
         TraceCoverage,
@@ -84,6 +85,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Contains": "pyrit.models.score.text_matcher",
     "Equals": "pyrit.models.score.text_matcher",
     "Regex": "pyrit.models.score.text_matcher",
+    "StartsWith": "pyrit.models.score.text_matcher",
     "TextMatcher": "pyrit.models.score.text_matcher",
     "OutputMatches": "pyrit.models.score.condition",
     "Acquisition": "pyrit.models.score.observation",
@@ -111,6 +113,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SurfaceMatch": "pyrit.models.score.surface",
     "SurfaceObservationPayload": "pyrit.models.score.observation",
     "SurfaceScorable": "pyrit.models.score.scorable",
+    "ToolArgumentRequirement": "pyrit.models.score.condition",
     "ToolCallRequirement": "pyrit.models.score.condition",
     "ToolEventsObservationPayload": "pyrit.models.score.observation",
     "ToolExecution": "pyrit.models.score.trace",

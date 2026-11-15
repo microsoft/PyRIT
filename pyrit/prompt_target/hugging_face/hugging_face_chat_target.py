@@ -5,9 +5,11 @@ import asyncio
 import json
 import logging
 import warnings
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from pyrit.common import default_values
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
@@ -15,7 +17,12 @@ from pyrit.models import ComponentIdentifier, Message, construct_response_from_r
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.common.utils import (
+    build_empty_truncated_response,
+    limit_requests_per_minute,
+    set_response_metadata,
+    warn_truncated_response,
+)
 
 if TYPE_CHECKING:
     from transformers import BatchEncoding
@@ -41,6 +48,10 @@ class HuggingFaceChatTarget(PromptTarget):
     )
 
     code_execution_parameter: ClassVar[str | None] = "trust_remote_code"
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"hf_access_token": None})
+    not_saveable_reason: ClassVar[str | None] = (
+        "It needs a Hugging Face token or model files on this server, and saved targets can hold neither yet."
+    )
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None
@@ -153,7 +164,7 @@ class HuggingFaceChatTarget(PromptTarget):
             self.huggingface_token = None
 
         try:
-            import torch  # type: ignore[ty:unresolved-import]
+            import torch  # type: ignore[ty:import-not-found]
         except ModuleNotFoundError as e:
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
@@ -393,28 +404,65 @@ class HuggingFaceChatTarget(PromptTarget):
                 self.tokenizer.decode(generated_tokens, skip_special_tokens=self.skip_special_tokens),  # type: ignore[ty:unresolved-attribute]
             ).strip()
 
+            truncated = self._is_truncated(generated_tokens=generated_tokens)
+            if truncated:
+                warn_truncated_response(signal="max_new_tokens reached", limit_parameter="max_new_tokens")
+
+            model_identifier = self.model_id or self.model_path
+            response_metadata = {
+                "model_id": model_identifier or "",
+                "effective_generation_config": json.dumps(self._get_effective_generation_config(), default=str),
+            }
+
             if not assistant_response:
+                if truncated:
+                    # An empty truncated response is a legitimate outcome of the token limit, not a
+                    # transient failure, so do not retry (matches OpenAIChatTarget/LiteLLMChatTarget).
+                    empty_response = build_empty_truncated_response(request=request)
+                    empty_response.message_pieces[0].prompt_metadata.update(response_metadata)
+                    empty_response.message_pieces[0].mark_as_truncated()
+                    set_response_metadata(pieces=empty_response.message_pieces, finish_reason="length")
+                    return [empty_response]
                 raise EmptyResponseException
 
             logger.info(f"Assistant's response: {assistant_response}")
 
-            model_identifier = self.model_id or self.model_path
-
-            effective_config = self._get_effective_generation_config()
-
             response = construct_response_from_request(
                 request=request,
                 response_text_pieces=[assistant_response],
-                prompt_metadata={
-                    "model_id": model_identifier or "",
-                    "effective_generation_config": json.dumps(effective_config, default=str),
-                },
+                prompt_metadata=response_metadata,
             )
+            if truncated:
+                response.message_pieces[0].mark_as_truncated()
+            set_response_metadata(pieces=response.message_pieces, finish_reason="length" if truncated else "stop")
             return [response]
 
         except Exception as e:
             logger.error(f"Error occurred during inference: {e}")
             raise
+
+    def _is_truncated(self, *, generated_tokens: Any) -> bool:
+        """
+        Check whether generation stopped at ``max_new_tokens`` instead of an end-of-sequence token.
+
+        Args:
+            generated_tokens (Any): The newly generated token ids.
+
+        Returns:
+            bool: True when the token limit was reached and the last token is not an EOS token.
+        """
+        if len(generated_tokens) < self.max_new_tokens:
+            return False
+        # The generation config is what model.generate() actually stops on (no eos_token_id kwarg is
+        # passed); the tokenizer's EOS is only a fallback for models whose generation config has none.
+        candidate = getattr(getattr(self.model, "generation_config", None), "eos_token_id", None)
+        if candidate is None:
+            candidate = getattr(self.tokenizer, "eos_token_id", None)
+        eos_token_ids: set[int] = set()
+        for token_id in candidate if isinstance(candidate, (list, tuple)) else [candidate]:
+            if isinstance(token_id, int) and not isinstance(token_id, bool):
+                eos_token_ids.add(token_id)
+        return int(generated_tokens[-1]) not in eos_token_ids
 
     async def _generate_async(self, *, generate_kwargs: dict[str, Any]) -> Any:
         """
@@ -538,7 +586,7 @@ class HuggingFaceChatTarget(PromptTarget):
             the same process may interfere with determinism.
         """
         if self._random_seed is not None:
-            import torch  # type: ignore[ty:unresolved-import]
+            import torch  # type: ignore[ty:import-not-found]
 
             torch.manual_seed(self._random_seed)
             if self.use_cuda:
@@ -639,3 +687,36 @@ class HuggingFaceChatTarget(PromptTarget):
         cls._cached_tokenizer = None
         cls._cached_model_id = None
         logger.info("Class-level cache disabled and cleared.")
+
+    @classmethod
+    async def create_async(cls, **kwargs: Any) -> Self:
+        """
+        Build the target after importing torch, and checking for CUDA when ``use_cuda`` is set, in a worker thread.
+
+        Both can take seconds the first time and are quick after it, so the constructor, which runs on the calling
+        loop and starts model loading there, doesn't hold that loop. A missing torch is left for the constructor to
+        report.
+
+        Args:
+            **kwargs (Any): The constructor arguments.
+
+        Returns:
+            Self: The new target.
+        """
+        await asyncio.to_thread(cls._import_torch, use_cuda=bool(kwargs.get("use_cuda", False)))
+        return await super().create_async(**kwargs)
+
+    @staticmethod
+    def _import_torch(*, use_cuda: bool) -> None:
+        """
+        Import torch, and check for CUDA when asked, as the constructor does.
+
+        Args:
+            use_cuda (bool): Whether the target asks for CUDA.
+        """
+        try:
+            import torch  # type: ignore[ty:import-not-found]
+        except ModuleNotFoundError:
+            return
+        if use_cuda:
+            torch.cuda.is_available()

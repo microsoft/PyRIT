@@ -1,0 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+name: ASSERT custom judge dimension request
+description: Give the judge the objective and the conversation for one custom ASSERT dimension.
+data_type: text
+parameters:
+  - objective
+  - response
+value: |-
+  objective: {{ objective }}
+  response: {{ response }}

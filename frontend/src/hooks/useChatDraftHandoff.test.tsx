@@ -9,6 +9,8 @@ import type { ReactNode } from 'react'
 import {
   canApplyPendingImport,
   hasChatDraftState,
+  historyContainsAcceptedDraft,
+  historyMayContainAcceptedDraft,
   isChatDraftDirty,
   releaseSupersededUrls,
   revokeAttachmentUrls,
@@ -16,7 +18,7 @@ import {
   type ChatDraftContent,
   type PendingImportPayload,
 } from '@/utils/chatDraft'
-import type { ChatConverterSnapshot, MessageAttachment } from '@/types'
+import type { BackendMessage, ChatConverterSnapshot, MessageAttachment } from '@/types'
 
 import { ChatDraftProvider, useChatDraftHandoff } from './useChatDraftHandoff'
 
@@ -116,6 +118,9 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       { target: null },
       { target: { registryName: 'selected-target', identifierHash: 'selected-hash' } },
       { converters: converterSetup },
+      { generationDraft: {} },
+      { generationDraft: { temperature: '0' } },
+      { generationDraft: { temperature: '' } },
     ]) {
       expect(hasChatDraftState({ text: '', attachments: [], ...setup })).toBe(true)
       expect(isChatDraftDirty({ text: '', attachments: [], ...setup })).toBe(false)
@@ -185,6 +190,38 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         sequence: 1,
       }
       expect(shouldApplyPreservedDraft(unsavedDraft, 'attack-1')).toBe(false)
+    })
+  })
+
+  describe('historyContainsAcceptedDraft', () => {
+    const userTurn = (turn: number, pieceId: string, value: string): BackendMessage => ({
+      turn_number: turn,
+      role: 'user',
+      message_pieces: [{
+        id: pieceId, original_value_data_type: 'text', converted_value_data_type: 'text',
+        original_value: value, converted_value: value, scores: [], response_error: 'none',
+      }],
+      created_at: '2026-01-01T00:00:00Z',
+    })
+    const earlier = userTurn(0, 'piece-earlier', 'same prompt')
+
+    it('matches only the confirmed request turn, not an identical earlier prompt', () => {
+      const draft = {
+        acceptedSendId: 'send-1',
+        acceptedSendHistory: { requestTurnNumber: 2, priorUserPieceIds: ['piece-earlier'] },
+      }
+      expect(historyContainsAcceptedDraft(draft, [earlier], 2)).toBe(false)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-repeat', 'same prompt')], 2)).toBe(true)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-repeat', 'same prompt')], 3)).toBe(false)
+      expect(historyContainsAcceptedDraft({ acceptedSendHistory: draft.acceptedSendHistory }, [earlier, userTurn(2, 'p', '')], 2))
+        .toBe(false)
+    })
+
+    it('uses new user pieces only as a candidate when the request turn was not yet known', () => {
+      const draft = { acceptedSendId: 'send-1', acceptedSendHistory: { priorUserPieceIds: ['piece-earlier'] } }
+      expect(historyMayContainAcceptedDraft(draft, [earlier])).toBe(false)
+      expect(historyMayContainAcceptedDraft(draft, [earlier, userTurn(2, 'piece-attachment', '')])).toBe(true)
+      expect(historyContainsAcceptedDraft(draft, [earlier, userTurn(2, 'piece-attachment', '')], null)).toBe(false)
     })
   })
 
@@ -311,6 +348,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const draftContent: ChatDraftContent = {
         text: 'Hello from draft',
         systemPrompt: 'Adversarial system prompt',
+        generationDraft: { temperature: '0' },
         attachments: [
           { name: 'sample.png', type: 'image', mimeType: 'image/png', url: 'blob:http://localhost/img1', size: 500 },
         ],
@@ -331,6 +369,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.preservedDraft?.draft.systemPrompt).toBe('Adversarial system prompt')
       expect(result.current.preservedDraft?.draft.attachments).toHaveLength(1)
       expect(result.current.preservedDraft?.draft.converters).toEqual(CONVERTERS)
+      expect(result.current.preservedDraft?.draft.generationDraft).toEqual({ temperature: '0' })
 
       // Consume preserved draft once
       let consumed: ChatDraftContent | null = null
@@ -339,6 +378,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       })
       expect(consumed).not.toBeNull()
       expect(consumed?.text).toBe('Hello from draft')
+      expect(consumed?.generationDraft).toEqual({ temperature: '0' })
       expect(consumed?.converters?.applied.text.convertedValue).toBe('Uryyb sebz qensg')
 
       // Second consumption returns null (single-use guarantee prevents duplicate restores)

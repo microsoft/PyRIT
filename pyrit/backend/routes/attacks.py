@@ -35,6 +35,7 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
 from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
+from pyrit.backend.models.operations import AttackFindingListResponse
 from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_attack_service
@@ -43,6 +44,7 @@ from pyrit.backend.services.chat_scoring_service import ChatScoringError, get_ch
 from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
+from pyrit.backend.services.operation_service import OperationService
 from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
@@ -379,6 +381,20 @@ async def get_attack_metadata_async(
     if metadata is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Attack '{attack_result_id}' not found")
     return metadata
+
+
+@router.get("/{attack_result_id}/findings", response_model=AttackFindingListResponse)
+async def get_attack_findings_async(attack_result_id: uuid.UUID) -> AttackFindingListResponse:
+    """
+    List the findings that link this attack as evidence, across all Operations.
+
+    An attack with no linked findings, including a running scan attack that is not saved yet,
+    returns an empty list rather than 404.
+
+    Returns:
+        AttackFindingListResponse: The linked findings with their Operation names and evidence links.
+    """
+    return await OperationService().list_attack_findings_async(attack_result_id)
 
 
 @router.patch(
