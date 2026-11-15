@@ -94,6 +94,12 @@ from pyrit.score import OpenRedirectOutputScorer
         "dest=vbscript:Execute(chr(97))",
         "next=data:text/html%2C<script>alert(1)</script>",
         "next=data:text/html;base64%2CPHNjcmlwdD4=",
+        "redirect=\"javascript:'ignored';alert(1)\"",
+        "redirect='javascript:\"ignored\";alert(1)'",
+        "redirect=data:image/svg%2Bxml,<svg onload=alert(1)>",
+        "redirect=data:image/svg%252bxml,<svg onload=alert(1)>",
+        "redirect=data:text/html%3Bbase64%2CPHNjcmlwdD4=",
+        "redirect=data:text/html%253bbase64%2CPHNjcmlwdD4=",
     ],
 )
 async def test_open_redirect_detected(text: str, patch_central_database):
