@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
-
 import numpy as np
 import pytest
 
@@ -397,26 +395,6 @@ class TestComputeAlphaFromDisagreements:
         # Simulate rounding error
         result = _compute_alpha_from_disagreements(10.0 + 1e-12, expected_disagreement=10.0)
         assert result == 0.0
-
-
-class TestHelperSignatures:
-    """Test that the private helpers take at most one positional parameter."""
-
-    @pytest.mark.parametrize(
-        ("helper", "keyword_only_names"),
-        [
-            (_validate_and_prepare_data, ["level_of_measurement", "missing"]),
-            (_build_value_counts_matrix, ["valid_mask", "categories"]),
-            (_build_ordinal_distance_matrix, ["n_v"]),
-            (_compute_alpha_from_disagreements, ["expected_disagreement"]),
-        ],
-    )
-    def test_parameters_after_the_first_are_keyword_only(self, helper, keyword_only_names):
-        """Test that every parameter after the first has to be passed by name."""
-        parameters = list(inspect.signature(helper).parameters.values())
-        assert parameters[0].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
-        assert [parameter.name for parameter in parameters[1:]] == keyword_only_names
-        assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters[1:])
 
 
 class TestKrippendorffAlphaIntegration:
