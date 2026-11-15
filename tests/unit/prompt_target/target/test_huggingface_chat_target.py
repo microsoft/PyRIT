@@ -1080,14 +1080,17 @@ _EOS_TOKEN_ID = 2
 _PROMPT_TOKEN_IDS = [5, 6, 7]
 
 
-async def _target_generating(*, new_token_ids: list[int], decoded_text: str) -> HuggingFaceChatTarget:
+async def _target_generating(
+    *, new_token_ids: list[int], decoded_text: str, tokenizer_eos_token_id: int = _EOS_TOKEN_ID
+) -> HuggingFaceChatTarget:
     """Build a target whose model returns the prompt followed by ``new_token_ids``."""
     import torch  # type: ignore[ty:unresolved-import]
 
     target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
     await target.load_model_and_tokenizer_async()
     target.model.generation_config.eos_token_id = _EOS_TOKEN_ID
-    target.tokenizer.eos_token_id = _EOS_TOKEN_ID
+    target.model.generation_config.to_dict.return_value = {"eos_token_id": _EOS_TOKEN_ID}
+    target.tokenizer.eos_token_id = tokenizer_eos_token_id
     target.tokenizer.apply_chat_template.return_value.to.return_value = {
         "input_ids": torch.tensor([_PROMPT_TOKEN_IDS]),
         "attention_mask": torch.ones(1, len(_PROMPT_TOKEN_IDS), dtype=torch.long),
@@ -1120,7 +1123,25 @@ async def test_response_records_why_generation_stopped(
     piece = response[0].message_pieces[0]
     assert piece.original_value == "partial answer"
     assert piece.prompt_metadata["finish_reason"] == finish_reason
+    assert piece.is_truncated is (finish_reason == "length")
     assert any("max_new_tokens" in record.message for record in caplog.records) is (finish_reason == "length")
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_generation_config_eos_takes_precedence_over_tokenizer_eos() -> None:
+    """A final token matching only the tokenizer's EOS is not a stopping token for generate()."""
+    target = await _target_generating(
+        new_token_ids=[101, 102, 99],
+        decoded_text="partial answer",
+        tokenizer_eos_token_id=99,
+    )
+
+    response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    piece = response[0].message_pieces[0]
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.is_truncated is True
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
@@ -1134,6 +1155,10 @@ async def test_empty_truncated_response_is_returned_without_retry() -> None:
     assert piece.original_value == ""
     assert piece.response_error == "empty"
     assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["model_id"] == "test_model"
+    effective_config = json.loads(str(piece.prompt_metadata["effective_generation_config"]))
+    assert effective_config["eos_token_id"] == _EOS_TOKEN_ID
     target.model.generate.assert_called_once()
 
 
