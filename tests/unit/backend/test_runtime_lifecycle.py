@@ -31,7 +31,6 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
-from pyrit.datasets import TextJailBreak
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioPreset, ScenarioRunState, ScenarioSuite
 from pyrit.models.catalog import RunScenarioRequest
@@ -47,7 +46,6 @@ from pyrit.registry import (
 )
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
-from pyrit.scenario.scenarios.airt import Multilingual
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -391,18 +389,13 @@ async def test_stale_version_and_invalid_preflight_do_not_mutate(runtime: Runtim
     lifecycle_module.close_services_async.assert_not_awaited()
 
 
-async def test_invalid_suite_technique_keeps_live_runtime_async(runtime: RuntimeLifecycle) -> None:
+async def test_invalid_suite_configuration_keeps_live_runtime_async(runtime: RuntimeLifecycle) -> None:
     config = ConfigurationLoader(
         memory_db_type="in_memory",
         env_files=[],
         initialization_scripts=[],
         enable_live_reinitialization=True,
-        initializers=[
-            {
-                "name": "scenario_suite",
-                "args": {"suite_args": {"horizontal_techniques": {"encoding_techniques": ["not_a_real_encoding"]}}},
-            }
-        ],
+        initializers=[{"name": "scenario_suite", "args": {"tags": ["default"]}}],
     )
     with patch.dict(Registry._singletons, {}, clear=True):
         presets = ScenarioPresetRegistry.get_registry_singleton()
@@ -419,10 +412,6 @@ async def test_invalid_suite_technique_keeps_live_runtime_async(runtime: Runtime
                 "apply_prepared_reinitialization_async",
                 AsyncMock(side_effect=AssertionError("must not replace the runtime")),
             ) as replace_runtime,
-            patch.object(TextJailBreak, "get_jailbreak_templates", return_value=[f"t{i}.yaml" for i in range(5)]),
-            patch.object(
-                Multilingual, "get_default_languages", return_value=["French", "Spanish", "Japanese", "Korean"]
-            ),
         ):
             await apply_async(runtime)
 
@@ -452,8 +441,8 @@ async def test_live_apply_configures_storage_before_initializers_async(
     )
     expected_presets = config.scenario_presets_source or str(tmp_path / "defaults" / "scenario_presets")
     expected_suites = config.scenario_suites_source or str(tmp_path / "defaults" / "scenario_suites")
-    original_preset_version = ScenarioPresetRegistry.get_preset_version
-    original_suite_version = ScenarioSuiteRegistry.get_suite_version
+    original_preset_version = ScenarioPresetRegistry._stored_version
+    original_suite_version = ScenarioSuiteRegistry._stored_version
     loop_thread = current_thread()
 
     def check_preset_source(registry: ScenarioPresetRegistry, *, name: str) -> str | None:
@@ -473,20 +462,18 @@ async def test_live_apply_configures_storage_before_initializers_async(
         patch.object(runtime, "_management_async", wraps=RuntimeLifecycle._management_async.__get__(runtime)),
         patch.object(runtime, "_restore_saved_entries_async", AsyncMock(return_value=True)),
         patch.object(
-            ScenarioPresetRegistry, "get_preset_version", autospec=True, side_effect=check_preset_source
+            ScenarioPresetRegistry, "_stored_version", autospec=True, side_effect=check_preset_source
         ) as check_presets,
         patch.object(
-            ScenarioSuiteRegistry, "get_suite_version", autospec=True, side_effect=check_suite_source
+            ScenarioSuiteRegistry, "_stored_version", autospec=True, side_effect=check_suite_source
         ) as check_suites,
-        patch.object(TextJailBreak, "get_jailbreak_templates", return_value=[f"t{i}.yaml" for i in range(5)]),
-        patch.object(Multilingual, "get_default_languages", return_value=["French", "Spanish", "Japanese", "Korean"]),
     ):
         ScenarioPresetRegistry.get_registry_singleton().configure_source(str(tmp_path / "old_presets"))
         ScenarioSuiteRegistry.get_registry_singleton().configure_source(str(tmp_path / "old_suites"))
         await apply_async(runtime)
         assert runtime.state == "ready"
         assert runtime.outcome == "success"
-        assert check_presets.call_count == 4
+        assert check_presets.call_count == 3
         check_suites.assert_called_once()
         assert ScenarioPresetRegistry.get_registry_singleton().source == expected_presets
         assert ScenarioSuiteRegistry.get_registry_singleton().source == expected_suites

@@ -156,10 +156,10 @@ Full preload can take several minutes and may require network access, provider c
 
 #### Optional Scenario Suites
 
-The `scenario_suite` initializer registers read-only suites and their presets from
-a configurable catalog. The default `horizontal_techniques` suite applies jailbreak
-templates, translation, encodings, and obfuscations to the same `airt_harms`
-text objectives, with one baseline. Launch it under **Scenario suites** in the GUI Scanner.
+The `scenario_suite` initializer registers read-only suites with fixed presets. The
+default `horizontal_techniques` suite applies 50 jailbreak templates, translation into
+10 languages, and 10 encodings and obfuscations to the same `airt_harms` text
+objectives, with one baseline. Launch it under **Scenario suites** in the GUI Scanner.
 
 ```yaml
 initializers:
@@ -167,22 +167,13 @@ initializers:
   - name: scorer
   - name: technique
   - name: scenario_suite
-    args:
-      tags:
-        - default
-      suite_args:
-        horizontal_techniques:
-          num_jailbreaks: 5
-          languages: [French, Spanish]
-          encoding_techniques: [all]
-          num_obfuscations: 4
-          selection_seed: 42
 ```
 
-`suite_args` supplies validated per-suite constructor overrides without modifying the catalog. Lists replace the defaults; `null` restores them. Technique names and sample counts are mutually exclusive per family. This suite is text-only and uses the existing scenario scoring behavior.
+Presets list their templates, languages, and techniques explicitly, so results stay
+comparable across runs. This suite is text-only and uses the existing scenario scoring behavior.
 
-See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for selector options,
-validation, text-objective selection, and running a suite.
+See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for the suite contents
+and running a suite.
 
 ### `custom_initializers_source`
 

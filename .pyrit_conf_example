@@ -34,8 +34,8 @@ memory_db_type: sqlite
 # - A simple string (name only)
 # - A dictionary with 'name' and optional 'args' for parameters
 #
-# Parameters use the initializer's declared types; suite_args is a nested YAML mapping.
-# Use the CLI command `pyrit_scan list-initializers` to see available parameters.
+# Parameters are lists of strings. Use the CLI command
+# `pyrit_scan list-initializers` to see available parameters.
 #
 # Example:
 # initializers:
@@ -61,18 +61,8 @@ initializers:
   # If intentional preload exceeds backend startup time, increase
   # server.startup_timeout below.
   # - name: load_default_datasets
-  # Optional one-click suites, listed in the GUI Scanner.
+  # Optional one-click suites with fixed presets, listed in the GUI Scanner.
   # - name: scenario_suite
-  #   args:
-  #     tags:
-  #       - default
-  #     suite_args:
-  #       horizontal_techniques:
-  #         num_jailbreaks: 5
-  #         languages: [French, Spanish]
-  #         encoding_techniques: [all]
-  #         num_obfuscations: 4
-  #         selection_seed: 42
 
   # Operator and Operation Defaults
 # -------------------------------

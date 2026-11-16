@@ -14,8 +14,8 @@
 # A **preset** describes a scenario's techniques, objectives, and parameters.
 # A **suite** is an ordered collection of preset references.
 # One launch runs those presets against a selected target through the ordinary scenario
-# execution path. The `scenario_suite` initializer registers a configurable catalog of
-# read-only suites and presets, similar to the target and converter initializers.
+# execution path. The `scenario_suite` initializer registers read-only suites whose presets
+# are fixed snapshots, similar to how the target and converter initializers register components.
 #
 # This notebook runs the text-only horizontal suite against the default `openai_chat`
 # target. Like the other scenario guides, it loads the shared Scanner configuration and
@@ -35,57 +35,36 @@ preset_registry = ScenarioPresetRegistry.get_registry_singleton()
 suite_registry = ScenarioSuiteRegistry.get_registry_singleton()
 
 # %% [markdown]
-# ## Configure the horizontal suite
+# ## The horizontal suite
 #
-# `HorizontalTechniquesSuite` evaluates text with four families: inline jailbreak templates,
-# multilingual translation, encodings, and character obfuscation. All families run
-# the same objectives (by default the `airt_harms` dataset). Only the jailbreak
-# preset includes a baseline. Family-only presets are hidden from the individual Scanner list.
-# Translation uses complete objectives, and encoding/obfuscation use the disjoint
-# Foundry technique catalogs. Scoring follows the existing scenario defaults.
+# `HorizontalTechniquesSuite` evaluates text with three presets that run the same
+# objectives (the `airt_harms` dataset):
 #
-# `dataset_names` can select other text-objective datasets. `dataset_fetch` defaults
-# to `if_missing`; `never` requires provisioned data. `always` is rejected because each
-# preset prepares the shared datasets on its own and would replace them once per family.
-# To refresh them, run the `refresh_datasets` initializer once before launch.
-#
-# ### Preset configuration
-#
-# | Family | Explicit names or `["all"]` | Sample count |
+# | Preset | Scenario | Fixed contents |
 # | --- | --- | --- |
-# | Jailbreaks | `jailbreak_names` | `num_jailbreaks` |
-# | Languages | `languages` | `num_languages` |
-# | Encodings | `encoding_techniques` | `num_encodings` |
-# | Obfuscations | `obfuscation_techniques` | `num_obfuscations` |
+# | `horizontal_techniques_jailbreaks` | `airt.jailbreak` | 50 templates spanning persona, developer-mode, fiction, nesting, authority, model-specific, and in-the-wild jailbreaks, plus the baseline |
+# | `horizontal_techniques_multilingual` | `airt.multilingual` | Translation into 10 languages across distinct scripts, including low-resource Amharic and Swahili |
+# | `horizontal_techniques_encoding_obfuscation` | `foundry.red_team_agent` | 10 encodings and character obfuscations, one per distinct mechanism |
 #
-# Choose names or a count, not both. Names preserve order after normalization and
-# deduplication; `["all"]` expands the eligible catalog. Empty lists, unknown technique
-# names, mixed `all`/name lists, and invalid counts are rejected.
-# Automatic language selection excludes English; explicit languages may be outside the lexicon.
+# Every list is explicit, so results stay comparable across runs and PyRIT releases.
+# Only the jailbreak preset includes a baseline, and these presets are hidden from the
+# individual Scanner list. Scoring follows the existing scenario defaults.
 #
-# These examples use `selection_seed=42`. Each family has an independent stream, unaffected
-# by suite names, objective datasets, targets, or scorers. Catalog changes can
-# change samples, so use explicit lists to pin members.
+# The presets fetch `airt_harms` only if it is missing from memory. To refresh it,
+# run the `refresh_datasets` initializer once before launch.
 
 # %%
-suite_args = {
-    "num_jailbreaks": 5,
-    "languages": ["French", "Spanish"],
-    "encoding_techniques": ["all"],
-    "num_obfuscations": 4,
-    "selection_seed": 42,
-}
-initializer = ScenarioSuiteInitializer()
-initializer.set_params_from_args(args={"suite_args": {"horizontal_techniques": suite_args}})
-await initializer.initialize_async()  # type: ignore
+await ScenarioSuiteInitializer().initialize_async()  # type: ignore
 
 suite = suite_registry.get_suite(name="horizontal_techniques").suite
 for entry in suite.entries:
     preset = preset_registry.get_preset(name=entry.preset_name).preset
     print(f"{preset.name}: {preset.scenario_name}, techniques={preset.techniques}, baseline={preset.include_baseline}")
+    for key, value in (preset.scenario_params or {}).items():
+        print(f"  {key} ({len(value)}): {', '.join(value)}")
 
 # %% [markdown]
-# ## Configure the catalog from YAML
+# ## Register suites from YAML
 #
 # ```yaml
 # initializers:
@@ -93,28 +72,10 @@ for entry in suite.entries:
 #   - name: scorer
 #   - name: technique
 #   - name: scenario_suite
-#     args:
-#       tags:
-#         - default
-#       suite_args:
-#         horizontal_techniques:
-#           num_jailbreaks: 5
-#           languages: [French, Spanish]
-#           encoding_techniques: [all]
-#           num_obfuscations: 4
-#           selection_seed: 42
 # ```
 #
-# `tags` defaults to `["default"]`. Ordinary tags select their union in catalog order;
-# `["all"]` selects every entry, including untagged ones, and cannot be mixed with other
-# tags. Unknown and empty selections fail.
-#
-# `suite_args` is a YAML/Python mapping keyed by selected catalog entry names. Overrides
-# replace constructor arguments; lists replace rather than append. `null` restores the
-# constructor default. For example, clear a catalog's explicit `num_jailbreaks` with `null`
-# before supplying `jailbreak_names`. Unknown arguments, even null-valued ones, and
-# overrides for unselected suites are errors. Counts use native numbers, not strings or
-# booleans. Nested GUI/CLI editing forms are not generated by this API.
+# The initializer takes no parameters. A stored document with the same name as a
+# registered suite or preset takes precedence over it.
 
 # %% [markdown]
 # ## Run the suite

@@ -1,244 +1,194 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Configurable horizontal techniques for text evaluations."""
+"""Fixed horizontal techniques suite for text evaluations."""
 
-from dataclasses import dataclass, fields
 from typing import ClassVar
+from uuid import NAMESPACE_URL, uuid5
 
-from pyrit.common.random_context import get_random_generator
-from pyrit.models import DatasetFetchPolicy, DatasetSourceInput, ScenarioDatasetRequest, ScenarioPreset
-from pyrit.setup.initializers.scenario_suites._suite_recipe import _resolve_suite_arguments
+from pyrit.models import (
+    DatasetFetchPolicy,
+    DatasetSourceInput,
+    ScenarioDatasetRequest,
+    ScenarioPreset,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
+)
 
 
-@dataclass(kw_only=True)
 class HorizontalTechniquesSuite:
     """
-    Build jailbreak, multilingual, encoding, and obfuscation presets over shared objectives.
+    A fixed snapshot of jailbreak, multilingual, and encoding/obfuscation presets over shared objectives.
 
-    Each family accepts explicit names, ``["all"]``, or a seeded sample count. The
-    baseline runs once with the jailbreak family. Datasets are resolved at launch,
-    and scoring follows the existing scenario defaults.
+    Every preset lists its templates, languages, or techniques explicitly, so results stay
+    comparable across runs and PyRIT releases. Only the jailbreak preset runs the baseline.
     """
 
+    NAME: ClassVar[str] = "horizontal_techniques"
     DESCRIPTION: ClassVar[str] = (
-        "Runs configurable jailbreak templates, multilingual translation, encodings, and character "
-        "obfuscation against the same objectives."
+        "Runs a fixed set of jailbreak templates, translations, encodings, and character obfuscations "
+        "against the same objectives."
     )
-    DATASET_NAMES: ClassVar[tuple[str, ...]] = ("airt_harms",)
-    SAMPLING_NAMESPACE: ClassVar[str] = "horizontal_techniques"
-    _SELECTIONS: ClassVar[dict[str, tuple[str, int]]] = {
-        "jailbreak_names": ("num_jailbreaks", 5),
-        "languages": ("num_languages", 4),
-        "encoding_techniques": ("num_encodings", 4),
-        "obfuscation_techniques": ("num_obfuscations", 4),
-    }
+    DATASET_NAME: ClassVar[str] = "airt_harms"
 
-    jailbreak_names: list[str] | None = None
-    num_jailbreaks: int | None = None
-    languages: list[str] | None = None
-    num_languages: int | None = None
-    encoding_techniques: list[str] | None = None
-    num_encodings: int | None = None
-    obfuscation_techniques: list[str] | None = None
-    num_obfuscations: int | None = None
-    dataset_names: list[str] | None = None
-    dataset_fetch: DatasetFetchPolicy = DatasetFetchPolicy.IF_MISSING
-    selection_seed: int = 0
+    # Representative templates across the catalog's families: persona/DAN, developer mode,
+    # fiction and simulation, competing objectives, nesting, authority framing, the
+    # Arth Singh collection, model-specific Pliny prompts, and in-the-wild prompts.
+    JAILBREAK_NAMES: ClassVar[tuple[str, ...]] = (
+        "aim.yaml",
+        "anti_gpt.yaml",
+        "based_gpt_1.yaml",
+        "better_dan.yaml",
+        "cosmos_dan.yaml",
+        "dan_11.yaml",
+        "dude_1.yaml",
+        "evil_confidant.yaml",
+        "maximum.yaml",
+        "omega.yaml",
+        "superior_dan.yaml",
+        "ucar.yaml",
+        "dev_mode_2.yaml",
+        "dev_mode_ranti.yaml",
+        "gpt_4_simulator.yaml",
+        "hypothetical_response.yaml",
+        "plinys_roleplay_emoji.yaml",
+        "role_play.yaml",
+        "three_liner.yaml",
+        "wikipedia_with_title.yaml",
+        "cipher_chat.yaml",
+        "prefix_injection.yaml",
+        "refusal_suppression.yaml",
+        "style_injection.yaml",
+        "code_nesting.yaml",
+        "table_nesting.yaml",
+        "text_continuation.yaml",
+        "text_continuation_nesting.yaml",
+        "jedi_mind_trick.yaml",
+        "security_researcher.yaml",
+        "alignment_researcher_memo.yaml",
+        "authority_override.yaml",
+        "cognitive_overload.yaml",
+        "context_hijack.yaml",
+        "fewshot_escalation.yaml",
+        "pentest_authorization.yaml",
+        "safety_benchmark_eval.yaml",
+        "system_prompt_injection.yaml",
+        "token_manipulation.yaml",
+        "trolley_problem.yaml",
+        "claude_3_5_sonnet_20241022.yaml",
+        "deepseek.yaml",
+        "gemini_2_0_pro_experimental.yaml",
+        "gpt_4o.yaml",
+        "llama_3_3_70b.yaml",
+        "qwen_2_5_max.yaml",
+        "trustairlab_684121605c10c908.yaml",
+        "trustairlab_c9808e47b63ca63d.yaml",
+        "trustairlab_e141dc8d4f6ce4d3.yaml",
+        "trustairlab_ece693fa908ab4ef.yaml",
+    )
 
-    def __post_init__(self) -> None:
+    # One language per script family, plus low-resource Amharic and Swahili.
+    LANGUAGES: ClassVar[tuple[str, ...]] = (
+        "French",
+        "Russian",
+        "Modern Standard Arabic",
+        "Hindi",
+        "Mandarin Chinese",
+        "Japanese",
+        "Korean",
+        "Thai",
+        "Amharic",
+        "Swahili",
+    )
+
+    # One converter per distinct mechanism; near-duplicates such as caesar/atbash (covered by
+    # rot13) and string_join (covered by character spacing) are omitted.
+    CONVERTER_TECHNIQUES: ClassVar[tuple[str, ...]] = (
+        "base64",
+        "binary",
+        "morse",
+        "rot13",
+        "ascii_smuggler",
+        "leetspeak",
+        "char_swap",
+        "unicode_confusable",
+        "diacritic",
+        "flip",
+    )
+
+    @classmethod
+    def build(cls) -> tuple[ScenarioSuite, list[ScenarioPreset]]:
         """
-        Validate constructor types and domain constraints without loading catalogs.
-
-        Raises:
-            ValueError: If selectors conflict, counts are invalid, or dataset settings are invalid.
-        """
-        resolved = _resolve_suite_arguments(
-            suite_class=type(self), args={field.name: getattr(self, field.name) for field in fields(self)}
-        )
-        for name, value in resolved.items():
-            setattr(self, name, value)
-        for name, (count_name, _) in self._SELECTIONS.items():
-            names, count = getattr(self, name), getattr(self, count_name)
-            if names is not None and count is not None:
-                raise ValueError(f"Provide only one of {name} and {count_name}.")
-            if count is not None and count < 1:
-                raise ValueError(f"{count_name} must be positive.")
-            if names is not None:
-                self._validate_selection_shape(name=name, names=names)
-        self._validate_datasets()
-
-    def validate_catalogs(self) -> None:
-        """
-        Check selections against packaged catalogs without building presets or changing live state.
-
-        Raises:
-            ValueError: If a name is incompatible or a requested sample exceeds its catalog.
-        """
-        self._resolve_selections()
-
-    def build_presets(self, *, suite_name: str) -> list[ScenarioPreset]:
-        """
-        Resolve family selections and build one preset per family.
-
-        Args:
-            suite_name (str): Registry name used to prefix each preset name.
+        Build fresh copies of the suite and the presets its entries reference.
 
         Returns:
-            list[ScenarioPreset]: Ordered presets with shared text objectives.
+            tuple[ScenarioSuite, list[ScenarioPreset]]: The suite and its presets in launch order.
         """
-        selections = self._resolve_selections()
+        presets = cls._build_presets()
+        suite = ScenarioSuite(
+            name=cls.NAME,
+            description=cls.DESCRIPTION,
+            entries=[
+                ScenarioSuiteEntry(
+                    entry_id=uuid5(NAMESPACE_URL, f"pyrit:scenario_suite:{cls.NAME}:{preset.name}"),
+                    preset_name=preset.name,
+                )
+                for preset in presets
+            ],
+        )
+        return suite, presets
+
+    @classmethod
+    def _build_presets(cls) -> list[ScenarioPreset]:
+        """
+        Build the jailbreak, multilingual, and encoding/obfuscation presets.
+
+        Returns:
+            list[ScenarioPreset]: The presets in launch order.
+        """
         return [
             ScenarioPreset(
-                name=f"{suite_name}_jailbreaks",
+                name=f"{cls.NAME}_jailbreaks",
                 scenario_name="airt.jailbreak",
                 show_in_scanner=False,
                 techniques=["prompt_sending"],
-                datasets=self._shared_datasets(),
+                datasets=cls._shared_datasets(),
                 include_baseline=True,
-                scenario_params={"jailbreak_names": selections["jailbreak_names"]},
+                scenario_params={"jailbreak_names": list(cls.JAILBREAK_NAMES)},
             ),
             ScenarioPreset(
-                name=f"{suite_name}_multilingual",
+                name=f"{cls.NAME}_multilingual",
                 scenario_name="airt.multilingual",
                 show_in_scanner=False,
                 techniques=["prompt_sending"],
-                datasets=self._shared_datasets(),
+                datasets=cls._shared_datasets(),
                 include_baseline=False,
-                scenario_params={
-                    "languages": selections["languages"],
-                    "translation_strategies": ["translation"],
-                },
+                scenario_params={"languages": list(cls.LANGUAGES), "translation_strategies": ["translation"]},
             ),
             ScenarioPreset(
-                name=f"{suite_name}_encoding",
+                name=f"{cls.NAME}_encoding_obfuscation",
                 scenario_name="foundry.red_team_agent",
                 show_in_scanner=False,
-                techniques=selections["encoding_techniques"],
-                datasets=self._shared_datasets(),
-                include_baseline=False,
-            ),
-            ScenarioPreset(
-                name=f"{suite_name}_obfuscation",
-                scenario_name="foundry.red_team_agent",
-                show_in_scanner=False,
-                techniques=selections["obfuscation_techniques"],
-                datasets=self._shared_datasets(),
+                techniques=list(cls.CONVERTER_TECHNIQUES),
+                datasets=cls._shared_datasets(),
                 include_baseline=False,
             ),
         ]
 
-    def _resolve_selections(self) -> dict[str, list[str]]:
+    @classmethod
+    def _shared_datasets(cls) -> ScenarioDatasetRequest:
         """
-        Resolve family selections using the same catalogs for preflight and initialization.
+        Build the shared objective request without refreshing it per preset.
+
+        ``always`` would replace the shared dataset once per preset, so presets could run
+        different objectives; refresh datasets once before launch instead.
 
         Returns:
-            dict[str, list[str]]: Concrete selections keyed by family parameter.
-
-        Raises:
-            ValueError: If a name is incompatible or the requested sample cannot be drawn.
+            ScenarioDatasetRequest: An independent request over every shared objective.
         """
-        from pyrit.datasets import TextJailBreak
-        from pyrit.scenario.airt import Multilingual  # type: ignore[ty:unresolved-import]
-        from pyrit.scenario.foundry import FoundryTechnique  # type: ignore[ty:unresolved-import]
-
-        return {
-            "jailbreak_names": self._select(name="jailbreak_names", candidates=TextJailBreak.get_jailbreak_templates()),
-            "languages": self._select(
-                name="languages",
-                candidates=[name for name in Multilingual.get_default_languages() if name.casefold() != "english"],
-            ),
-            "encoding_techniques": self._select(
-                name="encoding_techniques",
-                candidates=[technique.value for technique in FoundryTechnique.get_techniques_by_tag("encoding")],
-            ),
-            "obfuscation_techniques": self._select(
-                name="obfuscation_techniques",
-                candidates=[technique.value for technique in FoundryTechnique.get_techniques_by_tag("obfuscation")],
-            ),
-        }
-
-    def _select(self, *, name: str, candidates: list[str]) -> list[str]:
-        """
-        Select explicit names or a stable sample without sharing mutable random state.
-
-        Returns:
-            list[str]: Concrete technique or language names.
-
-        Raises:
-            ValueError: If a name is incompatible or the requested sample cannot be drawn.
-        """
-        from pyrit.scenario.scenarios.airt.multilingual import normalize_languages
-
-        count_name, default_count = self._SELECTIONS[name]
-        pool = sorted(set(candidates))
-        names: list[str] | None = getattr(self, name)
-        if names is not None:
-            selected = (
-                normalize_languages(names)
-                if name == "languages"
-                else list(dict.fromkeys(item.strip() for item in names))
-            )
-            if selected[0].casefold() == "all":
-                if not pool:
-                    raise ValueError(f"{name} has no eligible catalog members.")
-                return pool
-            unknown = set(selected) - set(pool)
-            if name != "languages" and unknown:
-                raise ValueError(f"Unknown or incompatible {name}: {', '.join(sorted(unknown))}.")
-            return selected
-        if not pool:
-            raise ValueError(f"{name} has no eligible catalog members.")
-        size = getattr(self, count_name)
-        size = default_count if size is None else size
-        if size > len(pool):
-            raise ValueError(f"{count_name} cannot exceed {len(pool)} eligible members.")
-        generator = get_random_generator(stream=name, namespace=self.SAMPLING_NAMESPACE, seed=self.selection_seed)
-        return sorted(generator.sample(pool, k=size))
-
-    def _validate_datasets(self) -> None:
-        """
-        Validate the shared dataset request without loading datasets.
-
-        Every preset prepares the shared datasets independently, so ``always`` would
-        replace them once per preset and the families could run different objectives.
-
-        Raises:
-            ValueError: If the dataset request is invalid or the fetch policy is ``always``.
-        """
-        if self.dataset_names is not None and (
-            not self.dataset_names or any(not name.strip() for name in self.dataset_names)
-        ):
-            raise ValueError("dataset_names must contain at least one non-empty name.")
-        if self.dataset_fetch == DatasetFetchPolicy.ALWAYS:
-            raise ValueError(
-                "dataset_fetch 'always' would refresh the shared datasets once per preset. Refresh them once "
-                "before launch, for example with the refresh_datasets initializer, and use 'if_missing' or 'never'."
-            )
-        self._shared_datasets()
-
-    def _shared_datasets(self) -> ScenarioDatasetRequest:
-        """Return an independent dataset request over the full common objective population."""
         return ScenarioDatasetRequest(
-            sources=[DatasetSourceInput(name=name) for name in self.dataset_names or self.DATASET_NAMES],
-            fetch=self.dataset_fetch,
+            sources=[DatasetSourceInput(name=cls.DATASET_NAME)],
+            fetch=DatasetFetchPolicy.IF_MISSING,
             max_per_dataset="all",
             max_total="all",
         )
-
-    @staticmethod
-    def _validate_selection_shape(*, name: str, names: list[str]) -> None:
-        """
-        Validate selectors before accessing local catalogs.
-
-        Raises:
-            ValueError: If names are empty or mix ``all`` with explicit members.
-        """
-        normalized = {
-            " ".join(item.replace("_", " ").split()).casefold() if name == "languages" else item.strip().casefold()
-            for item in names
-        }
-        if not normalized or "" in normalized:
-            raise ValueError(f"{name} must contain at least one non-empty name.")
-        if "all" in normalized and len(normalized) != 1:
-            raise ValueError(f"{name}: 'all' must be the only selection.")
