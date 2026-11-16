@@ -83,25 +83,27 @@ async def test_stores_share_the_lock_across_processes_async(tmp_path: Path, oper
             else:
                 store._cleanup_expired()
     """)
-    with FileLock(lock_path):
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-c",
-            script,
-            str(tmp_path),
-            operation,
-            str(value),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        assert process.stdout is not None
-        try:
+    process = None
+    try:
+        with FileLock(lock_path):
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                script,
+                str(tmp_path),
+                operation,
+                str(value),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            assert process.stdout is not None
             attempted = await asyncio.wait_for(process.stdout.readline(), timeout=TEST_WATCHDOG_SECONDS)
-        except BaseException:
-            process.kill()
+        _, stderr = await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
+    finally:
+        if process is not None:
+            if process.returncode is None:
+                process.kill()
             await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
-            raise
-    _, stderr = await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
     assert Path(os.fsdecode(attempted.rstrip())) == lock_path, stderr.decode(errors="replace")
     assert process.returncode == 0, stderr.decode(errors="replace")
     if operation == "cleanup":
