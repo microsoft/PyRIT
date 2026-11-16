@@ -1125,7 +1125,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
                       label={isCallerKey ? 'Your key (optional)' : 'API Key'}
-                      hint={apiKeyParameter?.description || undefined}
+                      hint={isCallerKey
+                        ? 'Used only for your requests. Others set their own key.'
+                        : apiKeyParameter?.description || undefined}
                       required={apiKeyRequired}
                       validationMessage={fieldErrors.apiKey}
                       validationState={fieldErrors.apiKey ? 'error' : 'none'}

@@ -2331,6 +2331,8 @@ describe("CreateTargetDialog", () => {
       expect(keyField()).toHaveAccessibleName("Your key (optional)");
       expect(keyField()).toHaveAttribute("type", "password");
       expect(keyField()).not.toBeRequired();
+      expect(screen.getByText("Used only for your requests. Others set their own key.")).toBeInTheDocument();
+      expect(screen.queryByText(/target-specific API key environment variable/)).not.toBeInTheDocument();
       fireEvent.change(keyField(), { target: { value: "sk-mine" } });
       await user.click(screen.getByText("Create Target"));
 
