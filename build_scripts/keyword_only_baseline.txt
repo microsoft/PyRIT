@@ -66,7 +66,6 @@ pyrit.cli._banner:_build_static_banner.<locals>.add
 pyrit.cli._banner:_get_color
 pyrit.cli._banner:_render_frame
 pyrit.cli._banner:_render_line_with_segments
-pyrit.cli._sources:_only_known
 pyrit.common.csv_helper:write_csv
 pyrit.common.download_hf_model:download_specific_files_async
 pyrit.common.json_helper:write_json
