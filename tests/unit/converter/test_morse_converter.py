@@ -30,6 +30,12 @@ async def test_morse_converter_uppercase():
     assert result.output_type == "text"
 
 
+async def test_morse_converter_percent_sign_is_zero_slash_zero():
+    converter = MorseConverter()
+    result = await converter.convert_async(prompt="50%", input_type="text")
+    assert result.output_text == "..... ----- ----- -..-. -----"
+
+
 async def test_morse_converter_with_description():
     converter = MorseConverter(append_description=True)
     result = await converter.convert_async(prompt="hi", input_type="text")
