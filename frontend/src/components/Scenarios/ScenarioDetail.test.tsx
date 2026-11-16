@@ -15,6 +15,7 @@ import {
   techniquesApi,
 } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import type {
   AddMessageResponse,
   RegisteredScenario,
@@ -803,6 +804,41 @@ describe('ScenarioDetail', () => {
       expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
     })
 
+    it('protects Scanner conversation edits when browser Forward returns to Datasets', async () => {
+      jest.useFakeTimers()
+      const restoreRequest = installRouterTestRequest()
+      try {
+        const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+        const router = createMemoryRouter([
+          { path: '/scanner/launch/:scenarioName', element: <ScenarioDetail
+            targets={[makeTarget('target-a')]} defaultObjectiveTarget={makeTarget('target-a')}
+            defaultAdversarialTarget={null} labels={{ operator: 'roakey' }}
+            defaultsReady onNavigate={jest.fn()} /> },
+          { path: '/datasets', element: <h1>Datasets</h1> },
+        ], {
+          initialEntries: ['/scanner/launch/technique.execute?prepended_conversation_id=history-conversation', '/datasets'],
+          initialIndex: 0,
+        })
+        render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+          <RouterProvider router={router} />
+        </UserPreferencesProvider></FluentProvider>)
+        await user.click(await screen.findByRole('button', { name: 'Edit conversation' }))
+        await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
+        await act(async () => { await router.navigate(1) })
+        expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeVisible()
+        await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+        expect(screen.getByDisplayValue('Saved context changed')).toBeVisible()
+        expect(router.state.location.pathname).toBe('/scanner/launch/technique.execute')
+        await act(async () => { await router.navigate(1) })
+        await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+        await advanceTimers(300)
+        expect(await screen.findByRole('heading', { name: 'Datasets' })).toBeVisible()
+        expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      } finally {
+        restoreRequest()
+      }
+    })
+
     it('should report a missing conversation without opening an empty editor or changing the field', async () => {
       mockAttacks.getConversation.mockRejectedValue(new Error('Saved chat conversation not found'))
       const user = userEvent.setup()
@@ -1273,6 +1309,8 @@ describe('ScenarioDetail', () => {
     const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
     const confirmLaunch = within(preview).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(cancel).toHaveFocus())
+    // A disabled button is not tabbable, so wait out the async checks that gate the confirm button.
+    await waitFor(() => expect(confirmLaunch).toBeEnabled())
     await user.tab()
     await waitFor(() => expect(confirmLaunch).toHaveFocus())
     await user.tab({ shift: true })
@@ -1283,11 +1321,11 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(launch).toHaveFocus())
     await user.keyboard('{Enter}')
     const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
+    const reopenedConfirm = within(reopened).getByRole('button', { name: 'Launch scan', exact: true })
     await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
+    await waitFor(() => expect(reopenedConfirm).toBeEnabled())
     await user.tab()
-    await waitFor(() => {
-      expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
-    })
+    await waitFor(() => expect(reopenedConfirm).toHaveFocus())
     await user.keyboard(' ')
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
       techniques: ['default_technique'], include_baseline: false,

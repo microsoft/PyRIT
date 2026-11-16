@@ -129,12 +129,13 @@ test('creates a unique operation and records findings within it @seeded', async 
   await expect(page.getByRole('button', { name: 'New finding' })).toBeFocused()
   await page.setViewportSize({ width: 390, height: 300 })
   const confirmation = page.locator('[aria-live="polite"]').filter({ hasText: 'Finding saved:' })
-  const confirmationBox = await confirmation.boundingBox()
-  const findingBox = await page.getByRole('heading', { level: 2, name: title }).boundingBox()
-  expect(confirmationBox).not.toBeNull()
-  expect(findingBox).not.toBeNull()
-  expect(await confirmation.evaluate(element => element.scrollHeight <= element.clientHeight)).toBeTruthy()
-  expect(confirmationBox!.y + confirmationBox!.height).toBeLessThanOrEqual(findingBox!.y)
+  const findingHeading = page.getByRole('heading', { level: 2, name: title })
+  await expect(confirmation).toBeVisible()
+  await expect.poll(async () => confirmation.evaluate((element, heading) => {
+    if (!heading) throw new Error('The saved finding heading is missing')
+    return element.getBoundingClientRect().bottom <= heading.getBoundingClientRect().top
+      && element.scrollHeight <= element.clientHeight
+  }, await findingHeading.elementHandle())).toBe(true)
   await page.setViewportSize({ width: 1280, height: 720 })
   await page.reload()
   await expect(page.getByRole('heading', { level: 2, name: title })).toBeVisible()
