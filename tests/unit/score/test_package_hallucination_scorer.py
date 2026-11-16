@@ -603,6 +603,11 @@ class TestPackageHallucinationScorerScoring:
         assert score.get_value() is True
         assert score.score_metadata["hallucinated_packages"] == "j_s_o_n, review_ghost"
 
+    def test_resolve_ruby_feature_to_gem_keyword_only(self):
+        scorer = PackageHallucinationScorer(known_packages={"rails"}, ecosystem=PackageEcosystem.RUBY)
+        gem = scorer._resolve_ruby_feature_to_gem(feature="rails/all", declared_gems=set())
+        assert gem == "rails"
+
     async def test_ruby_scores_deep_subpath_owning_gem_correctly_async(self):
         """Deep subpaths with 6+ segments resolve to their owning gem if registered."""
         code = "require 'google/cloud/spanner/v1/spanner/client'\n"

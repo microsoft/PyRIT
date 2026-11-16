@@ -346,3 +346,17 @@ def test_raise_on_empty_aggregator_accepts_generators():
     values = [True, False, True]
     res = TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY(_mk_score(v, prr_id="1") for v in values)
     assert res.value is True
+
+
+def test_create_binary_aggregator_keyword_only() -> None:
+    from pyrit.score.true_false.true_false_score_aggregator import _create_binary_aggregator
+
+    agg = _create_binary_aggregator(
+        name="CUSTOM_AND",
+        op=lambda left, right: (left and right) if left is not None and right is not None else None,
+        true_msg="Custom true",
+        false_msg="Custom false",
+    )
+    scores = [_mk_score(True, prr_id="1")]
+    res = agg(scores)
+    assert res.value is True

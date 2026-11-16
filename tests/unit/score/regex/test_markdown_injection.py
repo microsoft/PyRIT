@@ -328,3 +328,10 @@ async def test_md_injection_adds_to_memory():
         await scorer.score_text_async(text="string")
 
         memory.add_scores_to_memory_async.assert_called_once()
+
+
+def test_has_on_one_line_keyword_only() -> None:
+    from pyrit.score.true_false.regex.markdown_injection import _has_on_one_line
+
+    assert _has_on_one_line("![test](http://example.com)", opener="![", middle="](", closer=")") is True
+    assert _has_on_one_line("![test](http://example.com)", opener="<", middle=">", closer="</>") is False
