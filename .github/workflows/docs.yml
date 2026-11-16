@@ -43,6 +43,10 @@ on:
 permissions:
   contents: read
 
+# Manual and PR builds may restore caches, but only repository-controlled
+# pushes can save them. GitHub enforces this through scoped cache tokens.
+cache-mode: ${{ github.event_name == 'push' && 'write' || 'read' }}
+
 # Serialize the entire production pipeline, not just deployment, so a slow older
 # build cannot overwrite a newer site. PRs and release validation never join it.
 concurrency:

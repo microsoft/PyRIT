@@ -198,6 +198,7 @@ def test_only_main_push_or_dispatch_can_publish_with_write_permissions() -> None
     workflow = _workflow()
     assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["cache-mode"] == "${{ github.event_name == 'push' && 'write' || 'read' }}"
     jobs = workflow["jobs"]
     for name in ("versions", "build", "compose"):
         assert jobs[name].get("permissions", workflow["permissions"]) == {"contents": "read"}
