@@ -43,9 +43,9 @@ on:
 permissions:
   contents: read
 
-# Manual and PR builds may restore caches, but only repository-controlled
-# pushes can save them. GitHub enforces this through scoped cache tokens.
-cache-mode: ${{ github.event_name == 'push' && 'write' || 'read' }}
+# Builds may restore caches but cannot save them after executing checked-out
+# source. A separate push-only job seeds successful build artifacts below.
+cache-mode: read
 
 # Serialize the entire production pipeline, not just deployment, so a slow older
 # build cannot overwrite a newer site. PRs and release validation never join it.
@@ -238,7 +238,45 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------
-  # 3. Exercise composition on full matrices without deployment permissions.
+  # 3. Seed rendered-site caches only from repository-controlled pushes.
+  # ------------------------------------------------------------------
+  seed-cache:
+    name: Seed cache ${{ matrix.slug }}
+    needs: [versions, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    cache-mode: write-only
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.versions.outputs.matrix) }}
+    steps:
+      - name: Resolve source commit
+        id: sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ matrix.ref }}
+        run: |
+          sha=$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits" \
+            -f sha="$SOURCE_REF" \
+            -f per_page=1 \
+            --jq '.[0].sha')
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download built site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-${{ matrix.slug }}
+          path: doc/_build/html
+
+      - name: Save built site to cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: doc/_build/html
+          key: docs-${{ needs.versions.outputs.workflow_hash }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}
+
+  # ------------------------------------------------------------------
+  # 4. Exercise composition on full matrices without deployment permissions.
   # ------------------------------------------------------------------
   compose:
     name: Compose site
@@ -299,7 +337,7 @@ jobs:
           path: dist
 
   # ------------------------------------------------------------------
-  # 4. Only main push/manual runs can publish the complete composed site.
+  # 5. Only main push/manual runs can publish the complete composed site.
   # ------------------------------------------------------------------
   deploy:
     name: Deploy
