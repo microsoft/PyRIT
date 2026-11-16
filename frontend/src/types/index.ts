@@ -122,6 +122,9 @@ export interface PendingComposerDraft {
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
+  converters?: ChatConverterSnapshot
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
@@ -143,6 +146,17 @@ export interface ChatDraftContent {
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Backend send ID for status verification before reconciling this snapshot with history. */
+  acceptedSendId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {
@@ -479,6 +493,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
   supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
@@ -757,6 +772,8 @@ export interface Parameter {
   multiline?: boolean
   /** Whether the value must be omitted when identity-based authentication is selected. */
   identity_conflicting?: boolean
+  /** Whether a private copy keeps its source's value, because it sets where requests go or how they sign in. */
+  copy_locked?: boolean
   description?: string | null
 }
 
@@ -1122,6 +1139,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  initialConverters?: ChatConverterSnapshot
   sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
@@ -1131,6 +1149,7 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
   unsavedImport?: boolean
   pendingPromptId?: string
 }
@@ -1249,13 +1268,9 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
-/**
- * The fields a score popover shows, independent of where the score was recorded,
- * so scan results do not need to fabricate a message-piece score.
- */
+/** Message-score fields displayed by ScoreDetails. */
 export interface ScoreSummary {
   scorer: string
-  scoreType: string
   value?: string | null
   status?: string
   rationale?: string | null
@@ -2529,6 +2544,25 @@ export interface RuntimeReadiness {
   ready: boolean
   state: string
   generation: string
+  /** How many saved entries couldn't be restored; administrators see why in the runtime status. */
+  restore_failures?: number
+}
+
+export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniques'
+
+export interface SavedEntryRef {
+  kind: RegistryRecipeKind
+  name: string
+}
+
+/** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */
+export interface RestoreFailure {
+  kind: RegistryRecipeKind
+  name: string | null
+  reason: string
+  message: string
+  version: string | null
+  dependency: SavedEntryRef | null
 }
 
 export interface RuntimeStatus {
@@ -2539,6 +2573,8 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
+  /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
+  restore_failures?: RestoreFailure[]
 }
 export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 

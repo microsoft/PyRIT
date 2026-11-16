@@ -12,7 +12,7 @@ function TestWrapper({ children }: { readonly children: ReactNode }) {
 describe('ScoreDetails', () => {
   it('should show the value, scorer, role, categories, and rationale', () => {
     render(<TestWrapper><ScoreDetails testId="details" score={{
-      scorer: 'SelfAskRefusalScorer', scoreType: 'true_false', value: 'true', status: 'complete',
+      scorer: 'SelfAskRefusalScorer', value: 'true', status: 'complete',
       rationale: 'The target complied.', categories: ['jailbreak', '', 'harm'], isObjective: true,
     }} /></TestWrapper>)
 
@@ -26,7 +26,7 @@ describe('ScoreDetails', () => {
   })
 
   it('should name an undetermined score by its status and omit empty sections', () => {
-    render(<TestWrapper><ScoreDetails score={{ scorer: 'Judge', scoreType: 'float_scale', status: 'undetermined' }} /></TestWrapper>)
+    render(<TestWrapper><ScoreDetails score={{ scorer: 'Judge', status: 'undetermined' }} /></TestWrapper>)
 
     expect(screen.getByText('undetermined')).toBeInTheDocument()
     expect(screen.getByText('Supporting score')).toBeInTheDocument()

@@ -115,6 +115,8 @@ class ConfigurationLoader(YamlLoadable):
             followed by a blob prefix, used to persist scenario presets.
         scenario_suites_source: Local directory or Azure Blob container URI, optionally
             followed by a blob prefix, used to persist scenario suites.
+        registry_recipes_source: Local directory or Azure Blob container URI, optionally
+            followed by a blob prefix, used to persist saved targets, converters, scorers, and techniques.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -170,6 +172,7 @@ class ConfigurationLoader(YamlLoadable):
     custom_initializers_source: str | None = None
     scenario_presets_source: str | None = None
     scenario_suites_source: str | None = None
+    registry_recipes_source: str | None = None
     target_upload_directory: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -199,6 +202,7 @@ class ConfigurationLoader(YamlLoadable):
         self._validate_custom_initializers_source()
         self._validate_scenario_presets_source()
         self._validate_scenario_suites_source()
+        self._validate_registry_recipes_source()
         self._validate_target_upload_directory()
         self._normalize_server()
 
@@ -238,6 +242,15 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If the source is not a non-empty string.
         """
         self._validate_document_source(name="scenario_suites_source", value=self.scenario_suites_source)
+
+    def _validate_registry_recipes_source(self) -> None:
+        """
+        Validate the optional storage source for saved registry entries.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        self._validate_document_source(name="registry_recipes_source", value=self.registry_recipes_source)
 
     @staticmethod
     def _validate_document_source(*, name: str, value: Any) -> None:

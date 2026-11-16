@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Avoid errors for users who don't have playwright installed
 if TYPE_CHECKING:
-    from playwright.async_api import Page  # type: ignore[ty:unresolved-import]
+    from playwright.async_api import Page  # type: ignore[ty:import-not-found]
 else:
     Page = None
 

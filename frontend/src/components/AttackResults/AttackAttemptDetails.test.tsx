@@ -41,6 +41,7 @@ describe('AttackAttemptDetails', () => {
     expect(dialog).toHaveTextContent('Quality of the recorded scorer configuration')
     expect(within(dialog).getByRole('group', { name: 'Accuracy' })).toHaveTextContent('0.00%')
     expect(within(dialog).getByRole('group', { name: 'Num responses' })).toHaveTextContent('100')
+    expect(within(dialog).getByRole('group', { name: 'Recall' })).toHaveTextContent('0.00%')
     await user.keyboard('{Escape}')
     rendered.rerender(<TestWrapper><AttackAttemptDetails attempt={attempt} objective="Recorded objective"
       objectiveScorer={{ ...recordedScorer, component_name: 'renamed or unregistered judge' }} conversationPath="/saved" /></TestWrapper>)

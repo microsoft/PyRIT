@@ -183,6 +183,20 @@ class MessagePiece(BaseModel):
         """
         return self.response_error == "blocked"
 
+    def is_blocked_error(self) -> bool:
+        """
+        Return ``True`` when this is an error piece for a content-filtered response.
+
+        A blocked turn is a real provider round trip that stays in conversation history
+        (``filter_non_replayable_messages`` keeps it), so targets replay it as a text
+        part when rebuilding provider payloads. Error pieces with any other
+        ``response_error`` represent failed exchanges and are never replayed.
+
+        Returns:
+            ``True`` if the piece is an ``error`` piece with ``response_error == "blocked"``.
+        """
+        return self.converted_value_data_type == "error" and self.is_blocked()
+
     def mark_as_structured_refusal(self, *, refusal: str) -> None:
         """
         Record an SDK-provided model refusal on this blocked response piece.

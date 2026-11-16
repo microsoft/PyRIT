@@ -332,7 +332,7 @@ class AssertCoverage(_AssertModel):
 
 
 class AssertGroupMetadata(_AssertModel):
-    """Policy, coverage assignment, and bounded provenance for one generated group."""
+    """Policy, tester task, coverage assignment, and provenance for one ASSERT group."""
 
     METADATA_KEY: ClassVar[str] = "assert_generation"
     SOURCE_REVISION: ClassVar[str] = "04b713fe73879208369750b3bd5ad53544f3eecc"
@@ -342,6 +342,7 @@ class AssertGroupMetadata(_AssertModel):
     group_id: _Text
     behavior_category: _Name
     dimension_values: dict[_Name, _Name] = Field(default_factory=dict)
+    tester_instructions: _Text | None = None
     config: AssertGenerationConfig
     taxonomy: AssertTaxonomy
     dimensions: tuple[AssertDimension, ...]
