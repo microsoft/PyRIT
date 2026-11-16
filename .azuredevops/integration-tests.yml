@@ -23,6 +23,7 @@ jobs:
     # Run each group in a fresh pytest process to release memory between groups.
     testBatches:
       - tests/integration/ai_recruiter
+      - tests/integration/backend
       - tests/integration/cli
       - tests/integration/converter
       - tests/integration/datasets
