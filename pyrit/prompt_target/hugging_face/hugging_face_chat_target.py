@@ -44,6 +44,7 @@ class HuggingFaceChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_editable_history=True,
             supports_system_prompt=True,
+            supports_prefill=True,
         )
     )
 
@@ -164,7 +165,7 @@ class HuggingFaceChatTarget(PromptTarget):
             self.huggingface_token = None
 
         try:
-            import torch  # type: ignore[ty:unresolved-import]
+            import torch  # type: ignore[ty:import-not-found]
         except ModuleNotFoundError as e:
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
@@ -586,7 +587,7 @@ class HuggingFaceChatTarget(PromptTarget):
             the same process may interfere with determinism.
         """
         if self._random_seed is not None:
-            import torch  # type: ignore[ty:unresolved-import]
+            import torch  # type: ignore[ty:import-not-found]
 
             torch.manual_seed(self._random_seed)
             if self.use_cuda:
@@ -633,6 +634,9 @@ class HuggingFaceChatTarget(PromptTarget):
         """
         Apply the chat template to the input messages and tokenize them.
 
+        A trailing assistant message is treated as a prefill and continued. Templates that rewrite
+        assistant content (for example by dropping reasoning blocks) may reject this.
+
         Args:
             messages: The input messages to apply the chat template to.
 
@@ -646,13 +650,17 @@ class HuggingFaceChatTarget(PromptTarget):
         if hasattr(self.tokenizer, "chat_template") and self.tokenizer.chat_template is not None:
             logger.info("Tokenizer has a chat template. Applying it to the input messages.")
 
+            # A trailing assistant message is a prefill: the model must continue it rather than open a new turn.
+            continue_final_message = bool(messages) and messages[-1]["role"] == "assistant"
+
             # Apply the chat template to format and tokenize the messages
             return cast(
                 "BatchEncoding",
                 self.tokenizer.apply_chat_template(
                     messages,
                     tokenize=True,
-                    add_generation_prompt=True,
+                    add_generation_prompt=not continue_final_message,
+                    continue_final_message=continue_final_message,
                     return_tensors=self.tensor_format,
                     return_dict=True,
                 ),
@@ -715,7 +723,7 @@ class HuggingFaceChatTarget(PromptTarget):
             use_cuda (bool): Whether the target asks for CUDA.
         """
         try:
-            import torch  # type: ignore[ty:unresolved-import]
+            import torch  # type: ignore[ty:import-not-found]
         except ModuleNotFoundError:
             return
         if use_cuda:
