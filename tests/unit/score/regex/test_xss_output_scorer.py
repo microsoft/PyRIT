@@ -365,6 +365,9 @@ async def test_xss_javascript_uri_near_miss_does_not_backtrack(
         '<video src="x"onloadstart="alert(1)">',
         "<svg/onbegin=alert(1)>",
         "<IMG SRC=x ONPAGESHOW = 'alert(1)'>",
+        '<audio title="a > b" onplay=alert(1) src=x autoplay></audio>',
+        "<audio title='a < b' onplay=alert(1)></audio>",
+        '<audio data-x=a" onplay=alert(1)>',
     ],
 )
 async def test_xss_event_handler_attribute_in_tag_detected(text: str, patch_central_database: MagicMock) -> None:
@@ -381,6 +384,12 @@ async def test_xss_event_handler_attribute_in_tag_detected(text: str, patch_cent
         'Use <button type="submit"> and assign worker.onmessage = render.',
         '<a href="/docs/online-help">online help</a>',
         "<p>Turn the lights on = bright.</p>",
+        '<div data-state="online=true">Connected</div>',
+        "<div title='onplay=example'>Docs</div>",
+        '<a href="/online=help">Help</a>',
+        "<audio data-x=a'onplay=example>",
+        "<audio data-x=a/onplay=example>",
+        "<audio data-x= onplay=example>",
     ],
 )
 async def test_xss_on_text_outside_event_handler_attribute_not_detected(
@@ -390,8 +399,11 @@ async def test_xss_on_text_outside_event_handler_attribute_not_detected(
     assert score.get_value() is False
 
 
-async def test_xss_event_handler_attribute_near_miss_does_not_backtrack(patch_central_database: MagicMock) -> None:
-    text = "<a b" * 20_000
+@pytest.mark.parametrize("fragment", ["<a b", '<a title="a < b > c"', "<a x=\"'"])
+async def test_xss_event_handler_attribute_near_miss_does_not_backtrack(
+    *, fragment: str, patch_central_database: MagicMock
+) -> None:
+    text = fragment * 20_000
     scorer = XSSOutputScorer()
     start = perf_counter()
     matched = scorer._compiled["Event Handler Attribute"].search(text)
