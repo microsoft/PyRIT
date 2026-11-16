@@ -23,21 +23,22 @@ import pyrit.backend.services.runtime_lifecycle as lifecycle_module
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health
-from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
+from pyrit.backend.routes import configuration, health, initializers
+from pyrit.backend.services import InitializerService, ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
-from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.models import ScenarioPreset, ScenarioRunState, ScenarioSuite
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import (
     AttackTechniqueRegistry,
     ConverterRegistry,
+    InitializerRegistry,
     Registry,
     ScenarioPresetRegistry,
     ScenarioSuiteRegistry,
@@ -180,25 +181,61 @@ async def test_failed_startup_keeps_liveness_and_configuration_recovery_async(ru
     assert saved_configuration.status_code == 200
 
 
-async def test_management_does_not_reconfigure_initialized_storage_async(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("memory_db_type: in_memory\n", encoding="utf-8")
-    source = ConfigurationFileService(config_file_value=str(config_path))
-    lifecycle = RuntimeLifecycle(app=FastAPI(), source=source)
-    suite_source = str(tmp_path / "scenario_suites")
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("failure_phase", ["environment", "memory"])
+async def test_failed_startup_keeps_configured_initializer_storage_async(
+    *, runtime: RuntimeLifecycle, tmp_path: Path, failure_phase: str
+) -> None:
     config = ConfigurationLoader(
         memory_db_type="in_memory",
         env_files=[],
-        scenario_suites_source=suite_source,
+        initialization_scripts=[],
+        initializers=["scenario_suite"],
+        allow_custom_initializers=True,
+        custom_initializers_source=str(tmp_path / "requested_initializers"),
+        scenario_presets_source=str(tmp_path / "requested_presets"),
+        scenario_suites_source=str(tmp_path / "requested_suites"),
     )
-    with patch.dict(Registry._singletons, {}, clear=True):
-        preset_registry = ScenarioPresetRegistry.get_registry_singleton()
-        suite_registry = ScenarioSuiteRegistry.get_registry_singleton()
-        preset_registry.configure_source(str(tmp_path / "initialized_presets"))
-        suite_registry.configure_source(str(tmp_path / "initialized_suites"))
-        await lifecycle._management_async(config)
-        assert preset_registry.source == str(tmp_path / "initialized_presets")
-        assert suite_registry.source == str(tmp_path / "initialized_suites")
+    runtime.app.include_router(initializers.router, prefix="/api")
+    loop_thread = current_thread()
+    configure_sources = config._configure_registry_sources
+
+    def bind_sources() -> None:
+        assert current_thread() is not loop_thread
+        configure_sources()
+
+    with (
+        patch.dict(Registry._singletons, {}, clear=True),
+        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
+        patch.object(runtime, "_load_async", AsyncMock(return_value=config)),
+        patch.object(runtime, "_management_async", wraps=RuntimeLifecycle._management_async.__get__(runtime)),
+        patch.object(config, "_configure_registry_sources", side_effect=bind_sources) as configure,
+        patch(
+            "pyrit.setup.initialization.load_environment_async",
+            AsyncMock(side_effect=RuntimeError("environment unavailable") if failure_phase == "environment" else None),
+        ) as load_environment,
+        patch.object(
+            SQLiteMemory, "initialize_async", AsyncMock(side_effect=RuntimeError("memory unavailable"))
+        ) as memory,
+        patch.object(InitializerRegistry, "register_stored_initializers") as load_scripts,
+        patch.object(initializers, "get_initializer_service", side_effect=InitializerService),
+    ):
+        await runtime.startup_async()
+        assert runtime.state == "restart-required"
+        assert runtime.outcome == "initialization-failed"
+        load_environment.assert_awaited_once()
+        if failure_phase == "memory":
+            memory.assert_awaited_once()
+        else:
+            memory.assert_not_awaited()
+        load_scripts.assert_not_called()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+            response = await client.get("/api/initializers/custom")
+        assert response.status_code == 200
+        assert response.json()["source"] == config.custom_initializers_source
+        assert ScenarioPresetRegistry.get_registry_singleton().source == config.scenario_presets_source
+        assert ScenarioSuiteRegistry.get_registry_singleton().source == config.scenario_suites_source
+        configure.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -799,7 +836,11 @@ async def test_management_publishes_target_upload_directory(tmp_path: Path) -> N
         service = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=None))
     config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=str(tmp_path))
 
-    await service._management_async(config)
+    with (
+        patch.dict(Registry._singletons, {}, clear=True),
+        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
+    ):
+        await service._management_async(config)
 
     assert app.state.target_upload_directory == str(tmp_path)
 

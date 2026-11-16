@@ -37,13 +37,17 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
-from pyrit.registry import InitializerRegistry
+from pyrit.registry import InitializerRegistry, Registry
 from pyrit.setup import ConfigurationLoader
 
 
 @pytest.fixture(autouse=True)
 def isolated_staged_media(tmp_path: Path) -> Iterator[None]:
-    with patch.object(staged_media_store, "_directory", tmp_path / "uploads"):
+    with (
+        patch.object(staged_media_store, "_directory", tmp_path / "uploads"),
+        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
+        patch.dict(Registry._singletons, {}, clear=True),
+    ):
         yield
 
 
@@ -384,7 +388,7 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-        registry.configure_custom_scripts_source.assert_called_once_with(source)
+        registry.configure_custom_scripts_source.assert_called_with(source)
         registry.register_stored_initializers.assert_not_called()
 
     async def test_lifespan_registers_stored_initializers_when_enabled(

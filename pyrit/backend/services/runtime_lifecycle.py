@@ -91,6 +91,8 @@ class RuntimeLifecycle:
             return await asyncio.to_thread(ConfigurationLoader.load_with_overrides, config_file=file, strict=True)
 
     async def _management_async(self, config: ConfigurationLoader) -> None:
+        # Recovery routes must use the configured storage even if environment or memory setup fails.
+        await asyncio.to_thread(config._configure_registry_sources)
         resolved = config.resolve_env_files()
         read_only = {}
         if os.getenv("PYRIT_ENV_CONTENTS"):
