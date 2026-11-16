@@ -104,7 +104,7 @@ def _normalize(words: list[str]) -> list[list[str]]:
     return cleaned
 
 
-def build_anagram(words: list[str], rng: random.Random) -> str:
+def build_anagram(words: list[str], *, rng: random.Random | None = None) -> str:
     """
     Concatenate the masked words and shuffle their letter units into one sequence.
 
@@ -113,7 +113,8 @@ def build_anagram(words: list[str], rng: random.Random) -> str:
 
     Args:
         words (list[str]): The masked keywords to encode.
-        rng (random.Random): Randomness source (injected for reproducibility).
+        rng (random.Random | None, optional): Randomness source (injected for reproducibility).
+            Defaults to None (uses a new random.Random() instance).
 
     Returns:
         str: A single scrambled, uppercased letter sequence.
@@ -121,6 +122,8 @@ def build_anagram(words: list[str], rng: random.Random) -> str:
     Raises:
         ValueError: If ``words`` is empty or any word has no letters after cleaning.
     """
+    if rng is None:
+        rng = random.Random()
     letters = [letter for word in _normalize(words) for letter in word]
     source = "".join(letters)
     if len(letters) <= 1 or len(set(letters)) == 1:
@@ -211,6 +214,7 @@ def _grid_size(words: list[list[str]]) -> int:
 
 def _try_place(
     grid: list[list[str]],
+    *,
     word: list[str],
     rng: random.Random,
 ) -> bool:
@@ -253,7 +257,7 @@ def _try_place(
     return False
 
 
-def build_word_search(words: list[str], rng: random.Random) -> str:
+def build_word_search(words: list[str], *, rng: random.Random | None = None) -> str:
     """
     Hide the masked words in a square grid, then fill the gaps with random letters.
 
@@ -263,7 +267,8 @@ def build_word_search(words: list[str], rng: random.Random) -> str:
 
     Args:
         words (list[str]): The masked keywords to encode.
-        rng (random.Random): Randomness source (injected for reproducibility).
+        rng (random.Random | None, optional): Randomness source (injected for reproducibility).
+            Defaults to None (uses a new random.Random() instance).
 
     Returns:
         str: The grid, one row per line with letter units separated by spaces. A cell may
@@ -273,6 +278,8 @@ def build_word_search(words: list[str], rng: random.Random) -> str:
         ValueError: If ``words`` is empty, any word has no letters after cleaning, or the
             words still cannot be placed after the grid has grown the maximum number of times.
     """
+    if rng is None:
+        rng = random.Random()
     normalized = _normalize(words)
     size = _grid_size(normalized)
     # Longest words first: they are the hardest to fit, so place them while the grid is
@@ -281,7 +288,7 @@ def build_word_search(words: list[str], rng: random.Random) -> str:
 
     for _ in range(_MAX_GRID_GROWTHS + 1):
         grid = [["" for _ in range(size)] for _ in range(size)]
-        if all(_try_place(grid, word, rng) for word in by_length):
+        if all(_try_place(grid, word=word, rng=rng) for word in by_length):
             break
         size += 1
     else:

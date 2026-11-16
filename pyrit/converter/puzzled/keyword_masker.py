@@ -277,8 +277,9 @@ def _pos_lookup(prompt: str) -> dict[str, str]:
 
 def _rank_candidates(
     prompt: str,
+    *,
     pos_lookup: dict[str, str],
-    essential_words: list[str] | None,
+    essential_words: list[str] | None = None,
 ) -> list[str]:
     """
     Order candidate words for masking by priority.
@@ -293,7 +294,7 @@ def _rank_candidates(
     Args:
         prompt (str): The prompt being masked.
         pos_lookup (dict[str, str]): Noun/verb tags from ``_pos_lookup``.
-        essential_words (list[str] | None): Sensitive words to prefer, if any.
+        essential_words (list[str] | None, optional): Sensitive words to prefer, if any. Defaults to None.
 
     Returns:
         list[str]: Distinct candidate words (as they appear in the prompt) in priority order.
@@ -352,7 +353,7 @@ def mask_prompt(
     target = num_to_mask if num_to_mask is not None else mask_count_for_length(token_count)
 
     pos_lookup = _pos_lookup(prompt)
-    ranked = _rank_candidates(prompt, pos_lookup, essential_words)
+    ranked = _rank_candidates(prompt, pos_lookup=pos_lookup, essential_words=essential_words)
     if not ranked:
         raise ValueError("The prompt has no maskable words.")
 

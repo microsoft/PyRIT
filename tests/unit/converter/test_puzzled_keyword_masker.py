@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import sys
 import threading
 import types
@@ -564,3 +565,34 @@ def test_get_nlp_waits_for_concurrent_initialization():
         assert first.result(timeout=5) is sentinel
         assert second.result(timeout=5) is sentinel
     assert load_count == 1
+
+
+# --- helper signature and ranking tests ------------------------------------
+
+
+def test_rank_candidates_keyword_only():
+    sig = inspect.signature(keyword_masker._rank_candidates)
+    assert sig.parameters["pos_lookup"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["essential_words"].kind is inspect.Parameter.KEYWORD_ONLY
+    prompt = "how to hack the vault quickly"
+    with pytest.raises(TypeError):
+        keyword_masker._rank_candidates(prompt, {})  # type: ignore[misc]
+
+
+def test_rank_candidates_prioritizes_essential_words():
+    prompt = "how to hack the vault quickly"
+    ranked = keyword_masker._rank_candidates(
+        prompt,
+        pos_lookup={},
+        essential_words=["vault"],
+    )
+    assert ranked[0] == "vault"
+
+
+def test_rank_candidates_optional_essential_words():
+    prompt = "how to hack the vault quickly"
+    # When essential_words is omitted or None, candidates are still ranked normally.
+    ranked_default = keyword_masker._rank_candidates(prompt, pos_lookup={})
+    ranked_none = keyword_masker._rank_candidates(prompt, pos_lookup={}, essential_words=None)
+    assert ranked_default == ranked_none
+    assert len(ranked_default) > 0
