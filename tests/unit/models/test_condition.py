@@ -8,12 +8,16 @@ from pydantic import ValidationError
 
 from pyrit.models import (
     Condition,
+    Contains,
     DivergesFromRepetition,
+    Equals,
     MatchesObjective,
     ScoringExpectation,
+    ToolArgumentRequirement,
     ToolCall,
     ToolCallRequirement,
     ToolsCalled,
+    ToolsCalledInOrder,
     scoring_expectation_fingerprint,
 )
 from pyrit.models import ToolCall as MessageToolCall
@@ -145,10 +149,144 @@ def test_tools_called_requires_nonempty_unique_names(names: list[str]) -> None:
         ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names))
 
 
-@pytest.mark.parametrize("field", ["arguments", "count", "order", "success"])
+def test_subset_tools_called_keeps_its_stored_form_and_fingerprint() -> None:
+    expectation = ScoringExpectation(
+        objective="x", conditions=(ToolsCalled(tools=(ToolCallRequirement(name="lookup"),)), MatchesObjective())
+    )
+
+    assert expectation.conditions[0].model_dump(mode="json") == {
+        "condition_type": "tools_called",
+        "tools": [{"name": "lookup"}],
+    }
+    # Computed on main before ``exhaustive`` existed: stored subset expectations must still match.
+    assert scoring_expectation_fingerprint(expectation) == (
+        "09c38ed6d8ab39e973e8ffa1c30690079eaee0acd4df463665eaf3f62d8d482c"
+    )
+
+
+@pytest.mark.parametrize("names", [(), ("lookup",), ("lookup", "send")])
+def test_exhaustive_tools_called_round_trips(names: tuple[str, ...]) -> None:
+    condition = ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names), exhaustive=True)
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert condition.model_dump(mode="json")["exhaustive"] is True
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
+    assert scoring_expectation_fingerprint(expectation) != scoring_expectation_fingerprint(
+        ScoringExpectation(conditions=(condition.model_copy(update={"exhaustive": False}),))
+    )
+
+
+@pytest.mark.parametrize("value", [1, "true", "yes", None])
+def test_exhaustive_flag_is_strict(value: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolsCalled.model_validate({"tools": [{"name": "lookup"}], "exhaustive": value})
+
+
+def test_explicit_false_exhaustive_flag_loads_as_a_subset_match() -> None:
+    condition = Condition.model_validate(
+        {"condition_type": "tools_called", "tools": [{"name": "lookup"}], "exhaustive": False}
+    )
+
+    assert condition == ToolsCalled(tools=(ToolCallRequirement(name="lookup"),))
+
+
+@pytest.mark.parametrize("field", ["count", "order", "success"])
 def test_tool_call_requirement_rejects_unsupported_matching_fields(field: str) -> None:
     with pytest.raises(ValidationError, match="Extra inputs"):
         ToolCallRequirement.model_validate({"name": "lookup", field: True})
+
+
+def test_name_only_tool_requirements_keep_their_stored_form_and_fingerprint() -> None:
+    expectation = ScoringExpectation(
+        conditions=(ToolsCalled(tools=(ToolCallRequirement(name="send_email"), ToolCallRequirement(name="lookup"))),)
+    )
+
+    assert expectation.conditions[0].model_dump(mode="json") == {
+        "condition_type": "tools_called",
+        "tools": [{"name": "send_email"}, {"name": "lookup"}],
+    }
+    # Computed on main before ``arguments`` existed: stored name-only expectations must still match.
+    assert scoring_expectation_fingerprint(expectation) == (
+        "2f8d57c5e555a94728407772ef10e245c81902a4849d5576e7b0e9ddae4daab6"
+    )
+
+
+def test_explicit_empty_arguments_load_as_a_name_only_requirement() -> None:
+    condition = Condition.model_validate(
+        {"condition_type": "tools_called", "tools": [{"name": "lookup", "arguments": []}]}
+    )
+
+    assert condition == ToolsCalled(tools=(ToolCallRequirement(name="lookup"),))
+
+
+def test_argument_requirements_round_trip_through_persistence() -> None:
+    requirement = ToolCallRequirement(
+        name="send_email",
+        arguments=(
+            ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),
+            ToolArgumentRequirement(name="body", matcher=Contains(value="invoice", case_sensitive=True)),
+        ),
+    )
+    condition = ToolsCalled(tools=(requirement,))
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert condition.model_dump(mode="json")["tools"][0]["arguments"] == [
+        {
+            "name": "to",
+            "matcher": {
+                "value": "a@example.com",
+                "case_sensitive": False,
+                "ignore_whitespace": True,
+                "matcher_type": "equals",
+            },
+        },
+        {
+            "name": "body",
+            "matcher": {
+                "value": "invoice",
+                "case_sensitive": True,
+                "ignore_whitespace": True,
+                "matcher_type": "contains",
+            },
+        },
+    ]
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
+    assert scoring_expectation_fingerprint(expectation) != scoring_expectation_fingerprint(
+        ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name="send_email"),)),))
+    )
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        {"name": "", "matcher": {"matcher_type": "equals", "value": "x"}},
+        {"name": 3, "matcher": {"matcher_type": "equals", "value": "x"}},
+        {"name": "to"},
+        {"name": "to", "matcher": {"matcher_type": "glob", "value": "x"}},
+        {"name": "to", "matcher": {"matcher_type": "equals", "value": "x"}, "redacted": True},
+    ],
+)
+def test_tool_argument_requirement_rejects_invalid_input(argument: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        ToolCallRequirement.model_validate({"name": "send_email", "arguments": [argument]})
+
+
+@pytest.mark.parametrize("arguments", [True, "to", {"to": "a@example.com"}])
+def test_tool_call_requirement_rejects_unstructured_arguments(arguments: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolCallRequirement.model_validate({"name": "lookup", "arguments": arguments})
+
+
+def test_tools_called_schema_describes_argument_requirements() -> None:
+    definitions = ScoringExpectation.model_json_schema()["$defs"]
+
+    assert definitions["ToolCallRequirement"]["required"] == ["name"]
+    assert definitions["ToolCallRequirement"]["properties"]["arguments"]["items"] == {
+        "$ref": "#/$defs/ToolArgumentRequirement"
+    }
+    assert set(definitions["ToolArgumentRequirement"]["required"]) == {"name", "matcher"}
 
 
 def test_tool_conditions_are_immutable() -> None:
@@ -197,3 +335,20 @@ def test_diverges_from_repetition_registered_without_scorer_import() -> None:
 def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         DivergesFromRepetition.model_validate(value)
+
+
+def test_tools_called_in_order_round_trip_retains_order() -> None:
+    condition = ToolsCalledInOrder(tools=(ToolCallRequirement(name="send"), ToolCallRequirement(name="read")))
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
+    assert [tool.name for tool in condition.tools] == ["send", "read"]
+    assert _CONDITION_TYPES["tools_called_in_order"] is ToolsCalledInOrder
+    assert condition != ToolsCalledInOrder(tools=tuple(reversed(condition.tools)))
+
+
+@pytest.mark.parametrize("names", [[], ["lookup"], ["lookup", "send", "lookup"]])
+def test_tools_called_in_order_requires_two_unique_names(names: list[str]) -> None:
+    with pytest.raises(ValidationError, match="at least two tools|each tool name once"):
+        ToolsCalledInOrder(tools=tuple(ToolCallRequirement(name=name) for name in names))
