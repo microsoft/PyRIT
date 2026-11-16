@@ -89,6 +89,23 @@ test.describe("dataset examples against the real backend @seeded", () => {
           clientWidth: region.clientWidth,
         }));
         expect(metadata.scrollWidth).toBeLessThanOrEqual(metadata.clientWidth + 1);
+        const sourceLabel = page.getByText("Source:", { exact: true });
+        const labelBox = await sourceLabel.boundingBox();
+        const valueBox = await sourceLink.boundingBox();
+        const nextLabelBox = await page.getByText("License:", { exact: true }).boundingBox();
+        if (!labelBox || !valueBox || !nextLabelBox) throw new Error("Expected visible metadata labels and values");
+        expect(await sourceLabel.evaluate((label) => Number(getComputedStyle(label).fontWeight)))
+          .toBeGreaterThan(await sourceLink.evaluate((link) => Number(getComputedStyle(link).fontWeight)));
+        if (viewport.width === 390) {
+          expect(valueBox.y).toBeGreaterThanOrEqual(labelBox.y + labelBox.height);
+          expect(valueBox.x).toBeGreaterThan(labelBox.x);
+        } else {
+          expect(valueBox.x).toBeGreaterThanOrEqual(labelBox.x + labelBox.width);
+          expect(valueBox.y).toBeLessThan(labelBox.y + labelBox.height);
+        }
+        expect(nextLabelBox.y).toBeGreaterThan(valueBox.y + valueBox.height);
+        await page.getByRole("region", { name: "Provider metadata" })
+          .screenshot({ path: testInfo.outputPath("provider-metadata.png") });
         await page.screenshot({ path: testInfo.outputPath("provider-description.png"), fullPage: true });
 
         await page.getByRole("link", { name: "Back to datasets", exact: true }).click();

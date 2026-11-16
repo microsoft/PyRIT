@@ -79,25 +79,25 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
         {dataset.loaded && <Badge appearance="outline">In memory</Badge>}
         {dataset.provider_available && <Badge appearance="outline">Available</Badge>}
       </div>
-      {dataset.provider && <section aria-label="Provider metadata">
+      {dataset.provider && <section className={styles.providerMetadata} aria-label="Provider metadata">
         <Text weight="semibold">Default provider</Text>
         <p>{dataset.provider.description ?? 'Description unknown.'}</p>
         {dataset.provider.unavailable_reason && <p>{dataset.provider.unavailable_reason}</p>}
-        <dl>
+        <dl className={styles.providerFields}>
           {([
             ['Source', dataset.provider.source_url],
             ['License', dataset.provider.license_url],
             ['Access', dataset.provider.access_url],
           ] as const).map(([label, url]) => <div key={label}>
-            <dt>{label}</dt>
+            <dt>{label}:</dt>
             <dd>{url && /^https:\/\//.test(url)
               ? <a href={url} aria-label={`${label}: ${url}`} target="_blank" rel="noopener noreferrer">{url}</a>
               : UNKNOWN_LABEL}</dd>
           </div>)}
-          <div><dt>Declared modalities</dt><dd>{dataset.provider.modalities.join(', ') || UNKNOWN_LABEL}</dd></div>
-          <div><dt>Declared harm categories</dt><dd>{dataset.provider.harm_categories.join(', ') || UNKNOWN_LABEL}</dd></div>
-          <div><dt>Approximate size</dt><dd>{dataset.provider.size.join(', ') || UNKNOWN_LABEL}</dd></div>
-          <div><dt>Estimated load time</dt><dd>{dataset.provider.load_time.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Declared modalities:</dt><dd>{dataset.provider.modalities.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Declared harm categories:</dt><dd>{dataset.provider.harm_categories.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Approximate size:</dt><dd>{dataset.provider.size.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Estimated load time:</dt><dd>{dataset.provider.load_time.join(', ') || UNKNOWN_LABEL}</dd></div>
         </dl>
         {dataset.provider.required_environment_variables.length > 0 && <p>
           Access may require {dataset.provider.required_environment_variables.join(', ')}.

@@ -60,6 +60,40 @@ export const useDatasetCardStyles = makeStyles({
       textAlign: 'start',
     },
   },
+  providerMetadata: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+    minWidth: 0,
+    '& p': { margin: 0 },
+  },
+  providerFields: {
+    margin: 0,
+    '& > div': {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)',
+      columnGap: tokens.spacingHorizontalM,
+      rowGap: tokens.spacingVerticalXXS,
+      paddingTop: tokens.spacingVerticalS,
+      paddingBottom: tokens.spacingVerticalS,
+      borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+      [NARROW_VIEWPORT_QUERY]: {
+        gridTemplateColumns: 'minmax(0, 1fr)',
+      },
+    },
+    '& dt': {
+      fontWeight: tokens.fontWeightSemibold,
+      color: tokens.colorNeutralForeground2,
+    },
+    '& dd': {
+      margin: 0,
+      minWidth: 0,
+      overflowWrap: 'anywhere',
+      [NARROW_VIEWPORT_QUERY]: {
+        paddingLeft: tokens.spacingHorizontalM,
+      },
+    },
+  },
   counts: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
