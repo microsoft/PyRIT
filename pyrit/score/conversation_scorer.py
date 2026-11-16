@@ -505,14 +505,13 @@ def create_conversation_scorer(
         trace_source (ObservationSource[TraceScorable] | None): Execution evidence source. When
             set, the traces linked to the conversation's outbound requests are acquired, saved
             as an observation, and rendered after the turns they produced, with step IDs such as
-            ``[T3]`` that the judge can cite. See ``ConversationTraceEvidence``. Defaults to None.
+            ``[T3]`` that the judge can cite. Defaults to None.
         trace_requirement (TraceEvidenceRequirement): Evidence required before the judge is
             called. An unmet requirement returns an undetermined score marked with
             ``ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY``, without a judge call. Defaults to NONE.
-        max_rendered_trace_chars (int): Character budget for rendered execution steps. Each
-            content value is previewed up to ``ConversationTraceEvidence.MAX_RENDERED_CONTENT_CHARS``;
-            past the budget, content is dropped first, then steps. The saved evidence stays
-            complete. Defaults to 60000.
+        max_rendered_trace_chars (int): Character budget for rendered execution steps, used with a
+            trace source. Each content value is previewed up to 4,000 characters; past the budget,
+            content is dropped first, then steps. The saved evidence stays complete. Defaults to 60000.
 
     Returns:
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.
@@ -520,7 +519,7 @@ def create_conversation_scorer(
     Raises:
         TypeError: If the dynamic scorer does not inherit from ``Scorer``.
         ValueError: If the scorer is outside the true/false and float-scale families, a trace
-            requirement has no trace source, or the rendering budget is not positive.
+            requirement has no trace source, or a trace source's rendering budget is not positive.
 
     Example:
         >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
@@ -531,8 +530,6 @@ def create_conversation_scorer(
     requirement = TraceEvidenceRequirement(trace_requirement)
     if trace_source is None and requirement is not TraceEvidenceRequirement.NONE:
         raise ValueError("A trace requirement needs a trace_source to acquire execution evidence.")
-    if max_rendered_trace_chars < 1:
-        raise ValueError("max_rendered_trace_chars must be positive.")
     trace_evidence = (
         ConversationTraceEvidence(
             source=trace_source, requirement=requirement, max_rendered_chars=max_rendered_trace_chars
