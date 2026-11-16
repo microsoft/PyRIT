@@ -5,11 +5,10 @@ import hashlib
 import logging
 import uuid
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
 from dataclasses import fields, is_dataclass
 from inspect import isroutine
 from pathlib import PurePath
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_none
 
@@ -34,181 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _reproducible_order(items: Iterable[Any]) -> list[Any]:
-    """
-    Sort set items in an order that does not depend on ``PYTHONHASHSEED``.
-
-    Args:
-        items (Iterable[Any]): The items of a set.
-
-    Returns:
-        list[Any]: Strings or integers sorted by value, and any other items sorted by their description.
-    """
-    items = list(items)
-    if all(type(item) is str for item in items) or all(type(item) is int for item in items):
-        return sorted(items)
-    return sorted(items, key=_describe_template_value)
-
-
-class _ReproducibleOrder:
-    """
-    Iterate in a reproducible order, and keep that order in the sets that set operations return.
-
-    Mixed into ``set`` and ``frozenset`` subclasses. Their inherited operations would otherwise return
-    plain sets, which a template could render in an order that depends on ``PYTHONHASHSEED``.
-    """
-
-    __slots__ = ()
-    # The built-in set type that the class extends.
-    _set_type: ClassVar[Any]
-
-    def _keep_order(self, result: Any) -> Any:
-        ordered_type: Any = type(self)
-        return result if result is NotImplemented else ordered_type(result)
-
-    def __iter__(self) -> Iterator[Any]:
-        return iter(_reproducible_order(self._set_type.__iter__(self)))
-
-    def copy(self) -> Any:
-        return self._keep_order(self._set_type.copy(self))
-
-    def union(self, *others: Iterable[Any]) -> Any:
-        return self._keep_order(self._set_type.union(self, *others))
-
-    def intersection(self, *others: Iterable[Any]) -> Any:
-        return self._keep_order(self._set_type.intersection(self, *others))
-
-    def difference(self, *others: Iterable[Any]) -> Any:
-        return self._keep_order(self._set_type.difference(self, *others))
-
-    def symmetric_difference(self, other: Iterable[Any]) -> Any:
-        return self._keep_order(self._set_type.symmetric_difference(self, other))
-
-    def __or__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__or__(self, other))
-
-    def __ror__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__ror__(self, other))
-
-    def __and__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__and__(self, other))
-
-    def __rand__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__rand__(self, other))
-
-    def __sub__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__sub__(self, other))
-
-    def __rsub__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__rsub__(self, other))
-
-    def __xor__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__xor__(self, other))
-
-    def __rxor__(self, other: Any) -> Any:
-        return self._keep_order(self._set_type.__rxor__(self, other))
-
-
-class _OrderedSet(_ReproducibleOrder, set):
-    """A ``set`` that iterates, and so renders, in a reproducible order."""
-
-    __slots__ = ()
-    _set_type = set
-
-    def __repr__(self) -> str:
-        return f"{{{', '.join(map(repr, self))}}}" if self else "set()"
-
-
-class _OrderedFrozenSet(_ReproducibleOrder, frozenset):
-    """A ``frozenset`` that iterates, and so renders, in a reproducible order."""
-
-    __slots__ = ()
-    _set_type = frozenset
-
-    def __repr__(self) -> str:
-        return f"frozenset({{{', '.join(map(repr, self))}}})" if self else "frozenset()"
-
-
-def _holds_set(value: Any, *, seen: set[int]) -> bool:
-    """
-    Check whether a value holds a set or frozenset, directly or through lists, tuples and dictionaries.
-
-    Args:
-        value (Any): The template parameter value.
-        seen (set[int]): Ids of the containers already checked, to stop at self-references.
-
-    Returns:
-        bool: Whether the value is or holds a set or frozenset.
-    """
-    if type(value) in (set, frozenset):
-        return True
-    if type(value) not in (list, tuple, dict) or id(value) in seen:
-        return False
-    seen.add(id(value))
-    items = [*value.keys(), *value.values()] if type(value) is dict else value
-    return any(_holds_set(item, seen=seen) for item in items)
-
-
-def _copy_with_ordered_sets(value: Any, *, copies: dict[int, Any]) -> Any:
-    """
-    Copy a value, replacing its sets with sets that iterate in a reproducible order.
-
-    Lists, tuples and dictionaries are copied, so that the sets they hold can be replaced. Each
-    container is copied once, so self-references and shared references point to the copies, as
-    they pointed to the originals.
-
-    Args:
-        value (Any): The template parameter value.
-        copies (dict[int, Any]): Copies made so far, by the id of the original.
-
-    Returns:
-        Any: The copied value.
-    """
-    if id(value) in copies:
-        return copies[id(value)]
-
-    def copy(item: Any) -> Any:
-        return _copy_with_ordered_sets(item, copies=copies)
-
-    if type(value) is set:
-        return copies.setdefault(id(value), _OrderedSet(map(copy, value)))
-    if type(value) is frozenset:
-        return copies.setdefault(id(value), _OrderedFrozenSet(map(copy, value)))
-    if type(value) is list:
-        # Register the copy before filling it, so that references back to the list find it.
-        copied_list: list[Any] = copies.setdefault(id(value), [])
-        copied_list.extend(map(copy, value))
-        return copied_list
-    if type(value) is dict:
-        copied_dict: dict[Any, Any] = copies.setdefault(id(value), {})
-        copied_dict.update((copy(key), copy(item)) for key, item in value.items())
-        return copied_dict
-    if type(value) is tuple:
-        items = tuple(map(copy, value))
-        # A reference back to this tuple through one of its items may already have copied it.
-        return copies.setdefault(id(value), items)
-    return value
-
-
-def _order_template_sets(value: Any) -> Any:
-    """
-    Replace sets with copies that iterate in a reproducible order.
-
-    Set iteration order depends on ``PYTHONHASHSEED``, so a template that prints or loops over a set
-    would otherwise render a different prompt, and get a different identifier, in each process.
-    Sets nested in lists, tuples and dictionaries are replaced too, by copying the containers that
-    hold them. Other values, including subclasses of these types, are returned unchanged.
-
-    Args:
-        value (Any): The template parameter value.
-
-    Returns:
-        Any: The value with its sets ordered, or the value itself if it holds no sets.
-    """
-    return _copy_with_ordered_sets(value, copies={}) if _holds_set(value, seen=set()) else value
-
-
-def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
+def _describe_template_value(value: Any, *, parameter_name: str, enclosing: frozenset[int] = frozenset()) -> str:
     """
     Describe a template parameter value so that values which render differently are told apart.
 
@@ -218,18 +43,29 @@ def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozense
 
     Args:
         value (Any): The template parameter value.
+        parameter_name (str): The name of the template parameter that holds the value.
         enclosing (frozenset[int]): Ids of the containers being described, to stop at self-references.
 
     Returns:
         str: A description of the value's rendering-relevant state, tagged with its type.
+
+    Raises:
+        ValueError: If the value is or holds a set or frozenset.
     """
+    if isinstance(value, (set, frozenset)):
+        # Set iteration order can change between processes, and so would the prompt and identifier.
+        raise ValueError(
+            f"Template parameter {parameter_name!r} contains a {type(value).__name__}, whose iteration order "
+            "can change between Python processes. Pass an ordered list prepared before constructing the "
+            "converter instead, such as sorted(values) or sorted(values.difference(exclusions))."
+        )
     type_name = f"{type(value).__module__}.{type(value).__qualname__}"
     if id(value) in enclosing:
         return f"{type_name}(<recursive>)"
     nested = enclosing | {id(value)}
 
     def describe(item: Any) -> str:
-        return _describe_template_value(item, enclosing=nested)
+        return _describe_template_value(item, parameter_name=parameter_name, enclosing=nested)
 
     attributes = getattr(value, "__dict__", None)
     state = f"(attributes={describe(attributes)})" if isinstance(attributes, dict) else ""
@@ -240,7 +76,7 @@ def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozense
         entries = ", ".join(f"{describe(key)}: {describe(item)}" for key, item in value.items())
         factory = f"(default_factory={describe(value.default_factory)})" if isinstance(value, defaultdict) else ""
         return f"{type_name}{state}{factory}{{{entries}}}"
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple)):
         return f"{type_name}{state}[{', '.join(describe(item) for item in value)}]"
     if isinstance(value, PurePath):
         return f"{type_name}({str(value)!r})"
@@ -258,12 +94,16 @@ def _hash_template_parameters(parameters: dict[str, Any]) -> str | None:
 
     Returns:
         str | None: The first 16 hex characters of the SHA-256 digest, or ``None`` if there are no parameters.
+
+    Raises:
+        ValueError: If a parameter value is or holds a set or frozenset.
     """
     if not parameters:
         return None
     # Keyword argument order does not change the rendered prompt, so sort by parameter name.
     description = ", ".join(
-        f"{name!r}: {_describe_template_value(value)}" for name, value in sorted(parameters.items())
+        f"{name!r}: {_describe_template_value(value, parameter_name=name)}"
+        for name, value in sorted(parameters.items())
     )
     return hashlib.sha256(description.encode("utf-8", errors="backslashreplace")).hexdigest()[:16]
 
@@ -324,19 +164,19 @@ class LLMGenericTextConverter(Converter):
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
                 during rendering. Their constructor-time state contributes to the identifier, including
                 container iteration order, path flavor and object fields. Parameters should remain static
-                after construction. Sets and frozensets, including those nested in lists, tuples and
-                dictionaries, are rendered in a reproducible order so that the prompt and identifier do not
-                change between processes. The incoming prompt supplies ``objective`` at render time.
+                after construction. Sets and frozensets are rejected, including inside other parameters,
+                because their iteration order can change between processes. Pass an ordered list instead,
+                such as ``sorted(values)``. The incoming prompt supplies ``objective`` at render time.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If ``user_prompt_template_with_objective`` does not declare an ``objective``
                 parameter.
+            ValueError: If a template parameter is or holds a set or frozenset.
         """
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
-        kwargs = {name: _order_template_sets(value) for name, value in kwargs.items()}
         self._prompt_kwargs = kwargs
         # Some subclasses add per-call values (such as the current prompt) to ``_prompt_kwargs``
         # before converting, so the identifier is based on the parameters given here only.
