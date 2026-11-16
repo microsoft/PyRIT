@@ -17,12 +17,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from pyrit.auth import (
-    CallerCredentialRequiredError,
-    CallerCredentialStore,
-    caller_principal_scope,
-    create_caller_credential_provider,
-)
+from pyrit.auth import CallerCredentialRequiredError, caller_principal_scope
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -1232,10 +1227,7 @@ async def test_resolve_api_key_async_callable(patch_central_database, litellm_st
 
 
 async def test_send_prompt_uses_each_callers_own_credential(patch_central_database, litellm_stub):
-    store = CallerCredentialStore()
-    store.set_credential(principal="alice", credential_id="shared", credential="alice-key")
-    provider = create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
-    t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=provider)
+    t = _caller_target(key="alice-key")
     litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
 
     with caller_principal_scope("alice"):
@@ -1248,17 +1240,31 @@ async def test_send_prompt_uses_each_callers_own_credential(patch_central_databa
     assert litellm_stub.acompletion.call_args.kwargs["api_key"] == "alice-key"
 
 
-def _caller_provider(key: str = "caller-key") -> Callable[[], Any]:
-    """Build the provider the backend gives a personal target, holding ``key`` for caller ``alice``."""
-    store = CallerCredentialStore()
-    store.set_credential(principal="alice", credential_id="shared", credential=key)
-    return create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
+def _caller_target(*, key: str = "caller-key", **kwargs: Any) -> LiteLLMChatTarget:
+    """Build a target that uses each caller's own key, holding ``key`` for caller ``alice``."""
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller", **kwargs)
+    assert target.caller_credential is not None
+    target.caller_credential.set_credential(principal="alice", credential=key)
+    return target
 
 
 @pytest.mark.parametrize("model", ["vertex_ai/gemini-2.5-flash", "bedrock/model", "azure/model", "gpt-4o"])
-def test_token_provider_rejects_ambient_provider(patch_central_database, litellm_stub, model: str) -> None:
+def test_caller_mode_rejects_ambient_provider(patch_central_database, litellm_stub, model: str) -> None:
     with pytest.raises(ValueError, match="openai/"):
-        LiteLLMChatTarget(model_name=model, api_key=_caller_provider())
+        LiteLLMChatTarget(model_name=model, auth_mode="caller")
+
+
+def test_caller_mode_rejects_an_explicit_key(patch_central_database, litellm_stub) -> None:
+    with pytest.raises(ValueError, match="cannot be combined with an explicit api_key"):
+        LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller", api_key="static-key")
+
+
+def test_caller_mode_ignores_the_environment_key(patch_central_database, litellm_stub) -> None:
+    with patch.dict("os.environ", {"LITELLM_API_KEY": "server-key"}):
+        target = LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller")
+
+    assert target.caller_credential is not None
+    assert target._api_key == target.caller_credential.get_credential_async
 
 
 @pytest.mark.parametrize(
@@ -1293,9 +1299,7 @@ async def test_direct_token_provider_keeps_litellm_routing_async(
 async def test_token_provider_key_wins_over_passthrough_async(
     patch_central_database, litellm_stub, override: str | None
 ) -> None:
-    target = LiteLLMChatTarget(
-        model_name="openai/gpt-4o", api_key=_caller_provider(), extra_body_parameters={"api_key": override}
-    )
+    target = _caller_target(extra_body_parameters={"api_key": override})
     litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
     with caller_principal_scope("alice"):
         await target.send_prompt_async(message=_user_message())
@@ -1320,17 +1324,17 @@ async def test_direct_token_provider_key_wins_over_passthrough_async(
     assert "custom_llm_provider" not in kwargs
 
 
-def test_caller_credential_provider_refuses_server_header_variables(patch_central_database, litellm_stub) -> None:
+def test_caller_mode_refuses_server_header_variables(patch_central_database, litellm_stub) -> None:
     with patch.dict("os.environ", {"OPENAI_CUSTOM_HEADERS": "Authorization: Bearer server-key"}):
         with pytest.raises(ValueError, match="OPENAI_CUSTOM_HEADERS"):
-            LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=_caller_provider())
+            LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller")
         direct = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=lambda: "direct-key")
 
     assert callable(direct._api_key)
 
 
-def test_caller_credential_provider_is_part_of_the_identity(patch_central_database, litellm_stub) -> None:
-    personal = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=_caller_provider())
+def test_caller_mode_is_part_of_the_identity(patch_central_database, litellm_stub) -> None:
+    personal = LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller")
     direct = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=lambda: "direct-key")
     shared = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="server-key")
 
@@ -1338,6 +1342,16 @@ def test_caller_credential_provider_is_part_of_the_identity(patch_central_databa
     assert direct.get_identifier().attributes == {}
     assert direct.get_identifier().hash == shared.get_identifier().hash
     assert personal.get_identifier().hash != shared.get_identifier().hash
+
+
+def test_reconstruction_shares_the_callers_keys(patch_central_database, litellm_stub) -> None:
+    source = _caller_target()
+    copy = TargetRegistry.get_registry_singleton().recreate_instance(
+        source=source, params={"temperature": 0.2}, external_input=True
+    )
+
+    assert isinstance(copy, LiteLLMChatTarget)
+    assert copy.caller_credential is source.caller_credential
 
 
 def test_reconstruction_rejects_temperature_override_when_passthrough_sets_temperature(
@@ -1404,9 +1418,7 @@ async def test_token_provider_rejects_authentication_overrides_async(
 ) -> None:
     litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
     with caller_principal_scope("alice"), pytest.raises(ValueError, match="token provider"):
-        target = LiteLLMChatTarget(
-            model_name="openai/gpt-4o", api_key=_caller_provider(), extra_body_parameters=passthrough
-        )
+        target = _caller_target(extra_body_parameters=passthrough)
         await target.send_prompt_async(message=_user_message())
     litellm_stub.acompletion.assert_not_awaited()
 
@@ -1432,7 +1444,7 @@ async def test_token_provider_rejects_empty_key_without_fallback_async(
 async def test_token_provider_rejects_global_authentication_overrides_async(
     patch_central_database, litellm_stub, name: str, value: object
 ) -> None:
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=_caller_provider())
+    target = _caller_target()
     with patch.object(litellm_stub, name, value, create=True), caller_principal_scope("alice"):
         with pytest.raises(ValueError, match="token provider"):
             await target.send_prompt_async(message=_user_message())

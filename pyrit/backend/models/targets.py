@@ -89,20 +89,29 @@ class CreateTargetRequest(BaseModel):
             "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
             "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
             "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
-            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
+            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets. "
+            "'caller' registers a shared target that uses each caller's own key: it keeps no key, and every "
+            "caller sets their own before using it; requires register=true and is supported by OpenAI-family "
+            "targets (except RealtimeTarget) and LiteLLMChatTarget with an explicit openai/ model."
         ),
     )
-    requires_caller_credential: bool = Field(
-        False,
+    credential: SecretStr | None = Field(
+        None,
+        min_length=1,
+        max_length=16384,
         description=(
-            "Opt in to per-caller credentials. The registered target keeps no key: a submitted api_key is "
-            "stored only for the creating caller, and every caller must set their own credential before using "
-            "the target. Requires register=true and auth_mode 'api_key'; supported by OpenAI-family targets "
-            "(except RealtimeTarget) and LiteLLMChatTarget. With source, registers a personal copy of an "
-            "existing target, such as one an initializer configured, that keeps its settings but never its "
-            "credential. Defaults to a shared target."
+            "With auth_mode 'caller', the creating caller's own key, stored only for them. Other callers set "
+            "their own. It is never returned."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_caller_auth(self) -> "CreateTargetRequest":
+        if self.credential is not None and self.auth_mode != "caller":
+            raise ValueError("credential applies only to auth_mode 'caller'; send other keys in params.api_key")
+        if self.auth_mode == "caller" and not self.register:
+            raise ValueError("auth_mode 'caller' applies only to registered targets")
+        return self
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
@@ -129,7 +138,7 @@ class UnregisteredTarget(BaseModel):
 
 
 class SetTargetCredentialRequest(BaseModel):
-    """Request to set or replace the caller's own credential for a target."""
+    """Request to set or replace the caller's own key for a target that uses each caller's own key."""
 
     model_config = ConfigDict(extra="forbid")
 

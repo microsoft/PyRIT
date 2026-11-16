@@ -6,7 +6,6 @@
 import asyncio
 from typing import TYPE_CHECKING
 
-from starlette._utils import get_route_path
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -27,7 +26,7 @@ class RuntimeAdmissionMiddleware:
             await self.app(scope, receive, send)
             return
         runtime: RuntimeLifecycle | None = getattr(scope["app"].state, "runtime_lifecycle", None)
-        path = get_route_path(scope)
+        path = scope["path"]
         if (
             runtime is None
             or not path.startswith("/api/")
@@ -46,14 +45,6 @@ class RuntimeAdmissionMiddleware:
         management = path == "/api/config" or path.startswith(("/api/config/", "/api/initializers"))
         apply_route = path.startswith("/api/config/runtime")
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route
-        if runtime.target_cleanup_active and not runtime.is_stopping:
-            # A deletion closes one target's clients; the runtime itself stays ready.
-            await JSONResponse(
-                {"detail": "A target deletion is in progress; retry shortly."},
-                status_code=503,
-                headers={"Retry-After": "1"},
-            )(scope, receive, send)
-            return
         if (
             runtime.is_stopping
             or (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
@@ -70,14 +61,6 @@ class RuntimeAdmissionMiddleware:
             await self.app(scope, receive, send)
             return
 
-        target_delete = scope["method"] == "DELETE" and path.startswith("/api/targets/") and path.count("/") == 3
-        if target_delete and not runtime.begin_target_cleanup():
-            await JSONResponse(
-                {"detail": "Targets cannot be deleted while runtime work is active. Wait for it to finish and retry."},
-                status_code=409,
-            )(scope, receive, send)
-            return
-
         async def execute_async() -> None:
             try:
                 if write:
@@ -88,8 +71,6 @@ class RuntimeAdmissionMiddleware:
             finally:
                 runtime.operations.discard(task)
                 runtime.management_operations.discard(task)
-                if target_delete:
-                    runtime.target_cleanup_active = False
 
         task = asyncio.create_task(execute_async())
         task.add_done_callback(lambda completed: completed.exception() if not completed.cancelled() else None)

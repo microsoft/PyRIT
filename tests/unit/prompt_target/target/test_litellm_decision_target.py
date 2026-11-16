@@ -208,7 +208,7 @@ class TestLiteLLMDecisionTarget:
 
     @pytest.mark.parametrize("header", ["Authorization", "aPi-KeY", "X-API-Key"])
     async def test_direct_token_provider_keeps_static_headers_async(self, decision_sdk: MagicMock, header: str) -> None:
-        # The caller-credential rules belong to personal chat targets; a direct token provider is unchanged.
+        # The caller-key rules belong to chat targets with auth_mode "caller"; a direct token provider is unchanged.
         target = LiteLLMDecisionTarget(
             model_name=MODEL,
             api_key=AsyncMock(return_value="current-test-key"),
@@ -220,8 +220,8 @@ class TestLiteLLMDecisionTarget:
         assert kwargs["api_key"] == "current-test-key"
         assert kwargs["extra_headers"] == {header: "static-key"}
 
-    def test_decision_api_does_not_inherit_chat_personal_credentials(self) -> None:
-        assert LiteLLMDecisionTarget.caller_credential_parameter is None
+    def test_decision_api_does_not_support_caller_keys(self) -> None:
+        assert "caller" not in LiteLLMDecisionTarget.supported_auth_modes
 
     async def test_concurrent_requests_keep_separate_state_async(
         self, *, target: LiteLLMDecisionTarget, decision_sdk: MagicMock

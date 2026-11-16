@@ -2,36 +2,37 @@
 # Licensed under the MIT license.
 
 """
-Credentials that callers supply for a shared component and that resolve per call.
+Keys that each caller sets for a shared target, resolved before every request.
 
-A shared component (such as a registered prompt target) holds a provider instead of a
-secret. Each time the provider runs, it reads the caller principal from an explicitly
-scoped context variable and returns only that caller's credential. A missing caller or
-credential raises ``CallerCredentialRequiredError``; the provider never returns an empty
-value that could make a client fall back to environment or ambient credentials.
+A target created with ``auth_mode="caller"`` holds a ``CallerCredential`` instead of a key. Each
+caller sets their own key in it. Before every request, the target asks it for the key of the caller
+in scope. A missing caller or key raises ``CallerCredentialRequiredError``; the target never falls
+back to an environment key, a managed identity, or another caller's key.
 
-Credentials live only in process memory. Hosts that run work on behalf of a caller set
-the principal with ``caller_principal_scope``; work started from another caller's
-context must be given its own principal with ``caller_principal_context``.
+Keys live only in process memory, in the ``CallerCredential`` of the target they were set for. Hosts
+set the caller with ``caller_principal_scope``. Work started from another caller's context must be
+given its own caller with ``caller_principal_context``.
 """
 
 import contextvars
 import threading
-import weakref
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from typing import NoReturn
 
 _caller_principal: contextvars.ContextVar[str | None] = contextvars.ContextVar("pyrit_caller_principal", default=None)
 
-# Providers made by ``create_caller_credential_provider``. They stay plain coroutine functions, so
-# ``ensure_async_token_provider`` returns them unchanged and this membership survives.
-_caller_credential_providers: "weakref.WeakSet[Callable[[], Awaitable[str]]]" = weakref.WeakSet()
+_STATIC_AUTHENTICATION_HEADERS = frozenset(
+    {"authorization", "proxy-authorization", "api-key", "x-api-key", "x-goog-api-key"}
+)
 
 
 def validate_token_provider_headers(headers: Mapping[str, object] | None) -> None:
     """
-    Reject static authentication that could replace a token provider's credential.
+    Reject static authentication headers that could replace a caller's own key.
+
+    Args:
+        headers (Mapping[str, object] | None): Headers sent with every request.
 
     Raises:
         ValueError: If headers are invalid or contain static authentication.
@@ -40,146 +41,178 @@ def validate_token_provider_headers(headers: Mapping[str, object] | None) -> Non
         return
     if not isinstance(headers, Mapping):
         raise ValueError("Headers used with a token provider must be a mapping.")
-    if any(
-        name.lower() in {"authorization", "proxy-authorization", "api-key", "x-api-key", "x-goog-api-key"}
-        for name in headers
-    ):
+    if any(name.lower() in _STATIC_AUTHENTICATION_HEADERS for name in headers):
         raise ValueError("Static authentication headers cannot be combined with a token provider.")
 
 
 class CallerCredentialRequiredError(RuntimeError):
-    """A component needs the current caller's own credential, and none is available."""
+    """A target needs the current caller's own key, and none is available."""
 
 
-class CallerCredentialStore:
+class CallerCredential:
     """
-    Process-memory credentials keyed by caller principal and credential ID.
+    The keys that callers set for one target, each used only for that caller's requests.
 
-    The store is a shared live dependency: copying returns the same store, and it cannot
-    be pickled, so credentials are never duplicated into serialized state.
+    A target holds one instance. Copies of the target, such as one a chat makes to change the
+    temperature, share it, so a caller's key works for every copy. Copying returns the same
+    instance, and it cannot be pickled, so keys are never duplicated into serialized state.
     """
 
     def __init__(self) -> None:
-        """Initialize an empty store."""
+        """Initialize a credential that no caller has set."""
         self._lock = threading.Lock()
-        self._credentials: dict[tuple[str, str], str] = {}
+        self._credentials: dict[str, str] = {}
 
-    def set_credential(self, *, principal: str, credential_id: str, credential: str) -> None:
+    async def get_credential_async(self) -> str:
         """
-        Set or replace one caller's credential.
+        Return the key of the caller in scope.
 
-        Args:
-            principal (str): Stable key of the caller that owns the credential.
-            credential_id (str): ID of the credential slot, such as one registered target.
-            credential (str): The credential value.
+        Targets pass this method as their token provider. It completes without suspending, so a client
+        that stores the resolved key and then builds the request cannot interleave two callers' keys.
+
+        Returns:
+            str: The current caller's key.
 
         Raises:
-            ValueError: If the principal, credential ID, or credential is empty.
+            CallerCredentialRequiredError: If no caller is in scope, or the caller has not set a key.
         """
-        if not principal or not credential_id:
-            raise ValueError("A caller principal and credential ID are required.")
+        principal = _caller_principal.get()
+        if principal is None:
+            raise CallerCredentialRequiredError(
+                "This target uses each caller's own key, but this operation has no signed-in caller. "
+                "Run it from an authenticated request."
+            )
+        with self._lock:
+            credential = self._credentials.get(principal)
+        if credential is None:
+            raise CallerCredentialRequiredError(
+                "This target uses each caller's own key, and you have not set yours. "
+                "Set your key for it, then try again."
+            )
+        return credential
+
+    def set_credential(self, *, principal: str, credential: str) -> None:
+        """
+        Set or replace one caller's key.
+
+        Args:
+            principal (str): Stable key of the caller that owns the key.
+            credential (str): The key.
+
+        Raises:
+            ValueError: If the principal or key is empty.
+        """
+        if not principal:
+            raise ValueError("A caller principal is required.")
         if not isinstance(credential, str) or not credential.strip():
             raise ValueError("A credential must be a nonempty string.")
         with self._lock:
-            self._credentials[(principal, credential_id)] = credential
+            self._credentials[principal] = credential
 
-    def get_credential(self, *, principal: str, credential_id: str) -> str | None:
+    def has_credential(self, *, principal: str) -> bool:
         """
-        Read one caller's credential.
+        Check whether a caller has set a key.
 
         Args:
             principal (str): Stable key of the caller.
-            credential_id (str): ID of the credential slot.
 
         Returns:
-            str | None: The credential, or None when the caller has not set one.
+            bool: True if the caller has set a key.
         """
         with self._lock:
-            return self._credentials.get((principal, credential_id))
+            return principal in self._credentials
 
-    def has_credential(self, *, principal: str, credential_id: str) -> bool:
+    def remove_credential(self, *, principal: str) -> bool:
         """
-        Check whether a caller has set a credential.
+        Remove one caller's key.
 
         Args:
             principal (str): Stable key of the caller.
-            credential_id (str): ID of the credential slot.
 
         Returns:
-            bool: True if the caller has a credential for the slot.
+            bool: True if a key was removed.
         """
-        return self.get_credential(principal=principal, credential_id=credential_id) is not None
+        with self._lock:
+            return self._credentials.pop(principal, None) is not None
 
-    def remove_credential(self, *, principal: str, credential_id: str) -> bool:
+    def is_missing_for_current_caller(self) -> bool:
         """
-        Remove one caller's credential.
-
-        Args:
-            principal (str): Stable key of the caller.
-            credential_id (str): ID of the credential slot.
+        Check whether the caller in scope must set a key before using the target.
 
         Returns:
-            bool: True if a credential was removed.
+            bool: True if a caller is in scope and has not set a key. False if they have, or if no
+                caller is in scope, such as shared work that acts for no caller.
         """
-        with self._lock:
-            return self._credentials.pop((principal, credential_id), None) is not None
-
-    def remove_credential_id(self, credential_id: str) -> None:
-        """Remove every caller's credential for one slot."""
-        with self._lock:
-            for key in [key for key in self._credentials if key[1] == credential_id]:
-                del self._credentials[key]
-
-    def clear(self) -> None:
-        """Remove all credentials."""
-        with self._lock:
-            self._credentials.clear()
-
-    def __len__(self) -> int:
-        """
-        Count stored credentials.
-
-        Returns:
-            int: The number of stored credentials.
-        """
-        with self._lock:
-            return len(self._credentials)
+        principal = _caller_principal.get()
+        return principal is not None and not self.has_credential(principal=principal)
 
     def __repr__(self) -> str:
         """
-        Describe the store without revealing credentials.
+        Describe the credential without revealing keys.
 
         Returns:
-            str: A description containing only the credential count.
+            str: A description containing only the number of callers with a key.
         """
-        return f"{type(self).__name__}(credentials={len(self)})"
+        with self._lock:
+            count = len(self._credentials)
+        return f"{type(self).__name__}(callers={count})"
 
-    def __copy__(self) -> "CallerCredentialStore":
+    def __copy__(self) -> "CallerCredential":
         """
-        Share the store rather than copying credentials.
+        Share the credential rather than copying keys.
 
         Returns:
-            CallerCredentialStore: This store.
+            CallerCredential: This credential.
         """
         return self
 
-    def __deepcopy__(self, memo: dict[int, object]) -> "CallerCredentialStore":
+    def __deepcopy__(self, memo: dict[int, object]) -> "CallerCredential":
         """
-        Share the store rather than copying credentials.
+        Share the credential rather than copying keys.
 
         Returns:
-            CallerCredentialStore: This store.
+            CallerCredential: This credential.
         """
         return self
 
     def __reduce__(self) -> NoReturn:
         """
-        Refuse serialization so credentials never leave process memory.
+        Refuse serialization so keys never leave process memory.
 
         Raises:
             TypeError: Always.
         """
         raise TypeError(f"{type(self).__name__} cannot be serialized.")
+
+
+def resolve_caller_credential(*, auth_mode: str, api_key: object) -> CallerCredential | None:
+    """
+    Return the credential a target uses for each caller's own key, or None for other auth modes.
+
+    Args:
+        auth_mode (str): The target's auth mode.
+        api_key (object): The target's ``api_key`` argument. With ``auth_mode="caller"`` it is None
+            for a new target, or the ``CallerCredential`` of the target being copied.
+
+    Returns:
+        CallerCredential | None: The credential for ``auth_mode="caller"``, otherwise None.
+
+    Raises:
+        ValueError: If ``auth_mode="caller"`` is combined with a key, or a ``CallerCredential`` is
+            passed with another auth mode.
+    """
+    if auth_mode != "caller":
+        if isinstance(api_key, CallerCredential):
+            raise ValueError('A CallerCredential requires auth_mode="caller".')
+        return None
+    if api_key is None:
+        return CallerCredential()
+    if isinstance(api_key, CallerCredential):
+        return api_key
+    raise ValueError(
+        'auth_mode="caller" uses each caller\'s own key, so it cannot be combined with an explicit api_key. '
+        "Omit api_key; each caller sets their own key."
+    )
 
 
 def get_caller_principal() -> str | None:
@@ -203,7 +236,7 @@ def caller_principal_scope(principal: str | None) -> Generator[None, None, None]
         principal (str | None): Stable key of the caller.
 
     Yields:
-        None: The scope in which providers resolve this caller's credentials.
+        None: The scope in which targets resolve this caller's keys.
     """
     token = _caller_principal.set(principal)
     try:
@@ -228,57 +261,3 @@ def caller_principal_context(principal: str | None) -> contextvars.Context:
     context = contextvars.copy_context()
     context.run(_caller_principal.set, principal)
     return context
-
-
-def create_caller_credential_provider(
-    *, store: CallerCredentialStore, credential_id: str, component_name: str
-) -> Callable[[], Awaitable[str]]:
-    """
-    Create a token provider that returns the current caller's credential on every call.
-
-    The provider completes without suspending. Clients that store the resolved value and then
-    build the request without an intervening await, such as the OpenAI SDK, therefore cannot
-    interleave two callers' credentials on a shared client.
-
-    Args:
-        store (CallerCredentialStore): The store that holds callers' credentials.
-        credential_id (str): ID of the credential slot the provider reads.
-        component_name (str): Name shown in errors, such as the registered target name.
-
-    Returns:
-        Callable[[], Awaitable[str]]: An async token provider for targets that accept one.
-    """
-
-    async def resolve_caller_credential_async() -> str:
-        principal = _caller_principal.get()
-        if principal is None:
-            raise CallerCredentialRequiredError(
-                f"'{component_name}' uses caller-supplied credentials, but this operation has no caller "
-                "identity. Run it from an authenticated request."
-            )
-        credential = store.get_credential(principal=principal, credential_id=credential_id)
-        if credential is None:
-            raise CallerCredentialRequiredError(
-                f"You have not set a credential for '{component_name}'. Set your own credential for it before use."
-            )
-        return credential
-
-    _caller_credential_providers.add(resolve_caller_credential_async)
-    return resolve_caller_credential_async
-
-
-def is_caller_credential_provider(value: object) -> bool:
-    """
-    Check whether a value is a provider made by ``create_caller_credential_provider``.
-
-    Components apply the caller-credential contract, such as refusing settings that could replace
-    the caller's credential, only to these providers. A token provider a user passes directly keeps
-    the component's ordinary token-provider behavior.
-
-    Args:
-        value (object): A credential parameter value, such as a target's ``api_key``.
-
-    Returns:
-        bool: True if the value resolves each caller's own credential.
-    """
-    return value in _caller_credential_providers

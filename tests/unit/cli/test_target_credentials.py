@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Personal-target credential commands in the thin CLI."""
+"""Caller-key commands in the thin CLI."""
 
 import asyncio
 import json
@@ -28,12 +28,12 @@ _SECRET = "fake-secret-marker"
 _ANT = CredentialSource(kind=CredentialSourceKind.ANT, ant_profile="copyrit")
 
 
-def _target(*, name: str = "shared", personal: bool = False, configured: bool = False) -> TargetInstance:
+def _target(*, name: str = "shared", caller_auth: bool = False, configured: bool | None = None) -> TargetInstance:
     return TargetInstance(
         target_registry_name=name,
         identifier=TargetIdentifier(class_name="OpenAIChatTarget", class_module="pyrit.prompt_target"),
         capabilities=TargetCapabilities(),
-        requires_caller_credential=personal,
+        requires_caller_credential=caller_auth,
         caller_credential_configured=configured,
     )
 
@@ -208,7 +208,7 @@ async def _with_transport_async(
 
 async def test_client_sets_credential_in_the_request_body() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_target(name="my/target", personal=True).model_dump(mode="json"))
+        return httpx.Response(200, json=_target(name="my/target", caller_auth=True).model_dump(mode="json"))
 
     requests, result = await _with_transport_async(
         base_url="http://localhost:8000",
@@ -236,41 +236,7 @@ async def test_client_refuses_to_send_credentials_to_a_remote_http_backend() -> 
                 target_registry_name="mine", credential=_SECRET
             ),
         )
-    with pytest.raises(CliAuthenticationError, match="non-HTTPS"):
-        await _with_transport_async(
-            base_url="http://remote.example:8000",
-            handler=handler,
-            operation=lambda client: client.create_personal_target_async(
-                name="mine", source=_target(), credential=_SECRET
-            ),
-        )
     handler.assert_not_called()
-
-
-async def test_client_creates_a_personal_copy_of_a_source_target() -> None:
-    source = _target(name="claude_shared")
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(201, json=_target(name="mine", personal=True).model_dump(mode="json"))
-
-    requests, _ = await _with_transport_async(
-        base_url="https://pyrit.example",
-        handler=handler,
-        operation=lambda client: client.create_personal_target_async(
-            name="mine", source=source, params={"temperature": "0.3"}, credential=_SECRET
-        ),
-    )
-
-    assert json.loads(requests[0].content) == {
-        "name": "mine",
-        "type": "OpenAIChatTarget",
-        "requires_caller_credential": True,
-        "source": {
-            "source_name": "claude_shared",
-            "source_hash": source.identifier.hash,
-            "params": {"temperature": "0.3", "api_key": _SECRET},
-        },
-    }
 
 
 async def test_client_reports_missing_targets_and_removes_credentials() -> None:
@@ -306,7 +272,6 @@ def _cli_client(*, target: TargetInstance | None) -> MagicMock:
     client.get_target_async = AsyncMock(return_value=target)
     client.set_target_credential_async = AsyncMock(return_value=target)
     client.remove_target_credential_async = AsyncMock()
-    client.create_personal_target_async = AsyncMock(return_value=_target(name="mine", personal=True))
     return client
 
 
@@ -320,8 +285,6 @@ def test_parser_registers_credential_verbs() -> None:
         True,
     )
     assert parsed.refresh_minutes == pyrit_scan._DEFAULT_REFRESH_MINUTES
-    parsed = _parse("add-personal-target", "mine", "--from", "shared", "--set", "temperature=0.3")
-    assert (parsed.source_target, parsed.target_overrides) == ("shared", [("temperature", "0.3")])
     assert _parse("remove-target-credential", "mine").command == "remove-target-credential"
 
 
@@ -330,9 +293,8 @@ def test_parser_registers_credential_verbs() -> None:
     [
         ("set-target-credential", "mine"),
         ("set-target-credential", "mine", "--prompt", "--from-env", "MY_KEY"),
-        ("add-personal-target", "mine", "--from", "shared", "--set", "api_key=value"),
-        ("add-personal-target", "mine", "--from", "shared", "--set", "missing-separator"),
-        ("add-personal-target", "mine"),
+        # Personal copies were removed; targets that use each caller's own key are created with auth_mode "caller".
+        ("add-personal-target", "mine", "--from", "shared"),
     ],
 )
 def test_parser_rejects_invalid_credential_arguments(argv: tuple[str, ...]) -> None:
@@ -350,7 +312,7 @@ def test_parser_rejects_invalid_credential_arguments(argv: tuple[str, ...]) -> N
 async def test_set_credential_rejects_options_for_another_source(
     argv: tuple[str, ...], match: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    client = _cli_client(target=_target(personal=True))
+    client = _cli_client(target=_target(caller_auth=True))
 
     exit_code = await pyrit_scan._dispatch_with_client_async(
         client=client, parsed_args=_parse("set-target-credential", "mine", *argv)
@@ -362,7 +324,7 @@ async def test_set_credential_rejects_options_for_another_source(
 
 
 async def test_set_credential_sends_the_sources_value(capsys: pytest.CaptureFixture[str]) -> None:
-    client = _cli_client(target=_target(name="mine", personal=True))
+    client = _cli_client(target=_target(name="mine", caller_auth=True))
 
     with patch.dict("os.environ", {"MY_KEY": _SECRET}):
         exit_code = await pyrit_scan._dispatch_with_client_async(
@@ -379,8 +341,10 @@ async def test_set_credential_sends_the_sources_value(capsys: pytest.CaptureFixt
     assert _SECRET not in output
 
 
-@pytest.mark.parametrize(("target", "message"), [(None, "not found"), (_target(name="mine"), "add-personal-target")])
-async def test_set_credential_requires_a_personal_target(
+@pytest.mark.parametrize(
+    ("target", "message"), [(None, "not found"), (_target(name="mine"), "uses shared credentials")]
+)
+async def test_set_credential_requires_a_caller_key_target(
     target: TargetInstance | None, message: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client = _cli_client(target=target)
@@ -396,7 +360,7 @@ async def test_set_credential_requires_a_personal_target(
 
 
 async def test_keep_fresh_resends_until_stopped_and_survives_failures(capsys: pytest.CaptureFixture[str]) -> None:
-    client = _cli_client(target=_target(name="mine", personal=True))
+    client = _cli_client(target=_target(name="mine", caller_auth=True))
     client.set_target_credential_async = AsyncMock(
         side_effect=[None, httpx.ConnectError("backend restarting"), None, None]
     )
@@ -443,7 +407,7 @@ async def _keep_fresh_async(client: MagicMock, *, sleeps: AsyncMock) -> int:
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 404, 422])
 async def test_keep_fresh_stops_on_a_permanent_error(capsys: pytest.CaptureFixture[str], status_code: int) -> None:
-    client = _cli_client(target=_target(name="mine", personal=True))
+    client = _cli_client(target=_target(name="mine", caller_auth=True))
     client.set_target_credential_async = AsyncMock(side_effect=[None, _status_error(status_code)])
     sleeps = AsyncMock(side_effect=[None, None, asyncio.CancelledError])
 
@@ -454,13 +418,13 @@ async def test_keep_fresh_stops_on_a_permanent_error(capsys: pytest.CaptureFixtu
     assert sleeps.await_count == 1
     captured = capsys.readouterr()
     assert "server detail" in captured.err
-    assert ("add-personal-target mine" in captured.err) is (status_code == 404)
+    assert ("set-target-credential mine" in captured.err) is (status_code == 404)
     assert _SECRET not in captured.out + captured.err
 
 
 @pytest.mark.parametrize("status_code", [429, 500, 503])
 async def test_keep_fresh_retries_a_temporary_error(capsys: pytest.CaptureFixture[str], status_code: int) -> None:
-    client = _cli_client(target=_target(name="mine", personal=True))
+    client = _cli_client(target=_target(name="mine", caller_auth=True))
     client.set_target_credential_async = AsyncMock(side_effect=[None, _status_error(status_code), None])
     sleeps = AsyncMock(side_effect=[None, None, asyncio.CancelledError])
 
@@ -490,8 +454,8 @@ async def test_keep_fresh_retries_a_temporary_error(capsys: pytest.CaptureFixtur
 async def test_keep_fresh_stops_when_the_target_is_gone_or_replaced(
     capsys: pytest.CaptureFixture[str], current: TargetInstance | None
 ) -> None:
-    client = _cli_client(target=_target(name="mine", personal=True))
-    client.get_target_async = AsyncMock(side_effect=[_target(name="mine", personal=True), current])
+    client = _cli_client(target=_target(name="mine", caller_auth=True))
+    client.get_target_async = AsyncMock(side_effect=[_target(name="mine", caller_auth=True), current])
     sleeps = AsyncMock(side_effect=[None, asyncio.CancelledError])
 
     exit_code = await _keep_fresh_async(client, sleeps=sleeps)
@@ -501,72 +465,8 @@ async def test_keep_fresh_stops_when_the_target_is_gone_or_replaced(
     assert "no longer the target you set your credential for" in capsys.readouterr().err
 
 
-async def test_add_personal_target_copies_the_source_with_overrides_and_credential(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    source = _target(name="claude_shared")
-    client = _cli_client(target=source)
-
-    with patch("pyrit.cli._target_credentials.read_target_credential_async", AsyncMock(return_value=_SECRET)) as read:
-        exit_code = await pyrit_scan._dispatch_with_client_async(
-            client=client,
-            parsed_args=_parse(
-                "add-personal-target",
-                "mine",
-                "--from",
-                "claude_shared",
-                "--set",
-                "temperature=0.3",
-                "--from-ant",
-                "--ant-profile",
-                "copyrit",
-            ),
-        )
-
-    assert exit_code == 0
-    assert read.call_args.kwargs["source"] == _ANT
-    assert client.create_personal_target_async.call_args.kwargs == {
-        "name": "mine",
-        "source": source,
-        "params": {"temperature": "0.3"},
-        "credential": _SECRET,
-    }
-    output = capsys.readouterr().out
-    assert "Registered personal target 'mine'" in output
-    assert _SECRET not in output
-
-
-async def test_add_personal_target_without_a_source_explains_how_to_set_one(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    client = _cli_client(target=_target(name="shared"))
-
-    exit_code = await pyrit_scan._dispatch_with_client_async(
-        client=client, parsed_args=_parse("add-personal-target", "mine", "--from", "shared")
-    )
-
-    assert exit_code == 0
-    assert client.create_personal_target_async.call_args.kwargs["credential"] is None
-    assert "set-target-credential mine" in capsys.readouterr().out
-
-
-async def test_add_personal_target_rejects_duplicate_overrides(capsys: pytest.CaptureFixture[str]) -> None:
-    client = _cli_client(target=_target(name="shared"))
-
-    exit_code = await pyrit_scan._dispatch_with_client_async(
-        client=client,
-        parsed_args=_parse(
-            "add-personal-target", "mine", "--from", "shared", "--set", "temperature=1", "temperature=2"
-        ),
-    )
-
-    assert exit_code == 1
-    assert "more than once" in capsys.readouterr().out
-    client.create_personal_target_async.assert_not_awaited()
-
-
 async def test_remove_credential_calls_the_backend() -> None:
-    client = _cli_client(target=_target(name="mine", personal=True))
+    client = _cli_client(target=_target(name="mine", caller_auth=True))
 
     exit_code = await pyrit_scan._dispatch_with_client_async(
         client=client, parsed_args=_parse("remove-target-credential", "mine")
@@ -574,3 +474,21 @@ async def test_remove_credential_calls_the_backend() -> None:
 
     assert exit_code == 0
     client.remove_target_credential_async.assert_awaited_once_with(target_registry_name="mine")
+
+
+@pytest.mark.parametrize(
+    ("caller_auth", "configured", "expected"),
+    [
+        (False, None, "Account: Shared"),
+        (True, True, "Account: Yours (your key is set)"),
+        (True, False, "Account: Yours (needs your key; run 'pyrit_scan set-target-credential mine')"),
+    ],
+)
+def test_list_targets_shows_whose_account_each_target_uses(
+    capsys: pytest.CaptureFixture[str], caller_auth: bool, configured: bool | None, expected: str
+) -> None:
+    from pyrit.cli._output import print_target_list
+
+    print_target_list(items=[_target(name="mine", caller_auth=caller_auth, configured=configured)])
+
+    assert expected in capsys.readouterr().out

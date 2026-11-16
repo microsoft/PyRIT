@@ -296,7 +296,7 @@ class PyRITApiClient:
 
     async def set_target_credential_async(self, *, target_registry_name: str, credential: str) -> TargetInstance:
         """
-        Set or replace this caller's own credential for a personal target.
+        Set or replace this caller's own key for a target that uses each caller's own key.
 
         Args:
             target_registry_name: The registry name of the target.
@@ -317,55 +317,9 @@ class PyRITApiClient:
         return TargetInstance.model_validate(resp.json())
 
     async def remove_target_credential_async(self, *, target_registry_name: str) -> None:
-        """Remove this caller's own credential for a personal target."""
+        """Remove this caller's own key for a target that uses each caller's own key."""
         resp = await self._send_async(method="DELETE", path=f"{self._target_path(target_registry_name)}/credentials")
         self._raise_for_status(resp)
-
-    async def create_personal_target_async(
-        self,
-        *,
-        name: str,
-        source: TargetInstance,
-        params: dict[str, Any] | None = None,
-        credential: str | None = None,
-    ) -> TargetInstance:
-        """
-        Register a personal copy of a target that uses each caller's own credential.
-
-        The copy keeps the source's configuration, such as settings an initializer made, but never its
-        credential.
-
-        Args:
-            name: Registry name for the copy.
-            source: The registered target to copy.
-            params: Constructor overrides for the copy. Defaults to None.
-            credential: This caller's credential for the copy. Defaults to None, which leaves it unset.
-
-        Returns:
-            TargetInstance: The copy as seen by this caller.
-        """
-        from pyrit.models.catalog import TargetInstance
-
-        overrides = dict(params or {})
-        if credential is not None:
-            self._require_secure_credential_transport()
-            overrides["api_key"] = credential
-        resp = await self._send_async(
-            method="POST",
-            path="/api/targets",
-            json={
-                "name": name,
-                "type": source.identifier.class_name,
-                "requires_caller_credential": True,
-                "source": {
-                    "source_name": source.target_registry_name,
-                    "source_hash": source.identifier.hash,
-                    "params": overrides,
-                },
-            },
-        )
-        self._raise_for_status(resp)
-        return TargetInstance.model_validate(resp.json())
 
     # ------------------------------------------------------------------
     # Datasets

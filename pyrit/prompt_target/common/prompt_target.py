@@ -8,7 +8,7 @@ from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
-from typing import Any, ClassVar, Self, final
+from typing import TYPE_CHECKING, Any, ClassVar, Self, final
 
 from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
@@ -40,6 +40,9 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, target_trace_context
+
+if TYPE_CHECKING:
+    from pyrit.auth import CallerCredential
 
 logger = logging.getLogger(__name__)
 
@@ -123,20 +126,12 @@ class PromptTarget(Identifiable):
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
 
-    # Targets that resolve a token-provider callable before every request, and send its value
-    # exactly as they would send the same value passed as a string, name that constructor
-    # parameter (e.g. ``"api_key"``). The backend then stores a credential submitted at
-    # creation for its caller and gives the registered target a provider that returns each
-    # caller's own credential, so a shared target never carries one user's secret. Direct
-    # Python use is unaffected.
-    caller_credential_parameter: ClassVar[str | None] = None
-
     # Credential parameters that, left empty, let the target fall back to a credential from this
     # server (an environment variable, or the server's Azure identity), each mapped to the value
-    # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
-    # parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls back
-    # to this server's credentials, so a saved entry that would is refused. Choosing ``"identity"``
-    # isn't a fallback.
+    # that turns that off, or None when only an auth mode does: ``"identity"`` and ``"caller"`` don't
+    # read a parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls
+    # back to this server's credentials, so a saved entry that would is refused. Choosing
+    # ``"identity"`` isn't a fallback.
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
 
     # Parameters that say where the target sends requests (a URL, or a path the target adds to
@@ -911,9 +906,9 @@ class PromptTarget(Identifiable):
         return TargetIdentifier.of(
             self,
             params=params,
-            # Not a credential: it records that each caller's own credential is used, so a personal
-            # target never shares an identity with a target that authenticates as the server.
-            attributes={"caller_credential": True} if self._holds_caller_credential_provider() else None,
+            # Not a credential: it records that each caller's own key is used, so a target that uses
+            # callers' keys never shares an identity with one that authenticates as the server.
+            attributes={"caller_credential": True} if self.caller_credential is not None else None,
             endpoint=self._endpoint,
             model_name=self._model_name or "",
             underlying_model_name=self._underlying_model or "",
@@ -921,35 +916,35 @@ class PromptTarget(Identifiable):
             targets=targets,
         )
 
-    def _holds_caller_credential_provider(self) -> bool:
+    @property
+    def caller_credential(self) -> "CallerCredential | None":
         """
-        Return whether this target's ``caller_credential_parameter`` holds a caller-credential provider.
+        The credential that holds each caller's own key, or None when the target uses shared credentials.
 
-        Targets that name a ``caller_credential_parameter`` override this to check the value they hold.
+        Targets that support ``auth_mode="caller"`` return the credential they were built with.
 
         Returns:
-            bool: True if the target resolves each caller's own credential per request.
+            CallerCredential | None: The credential for ``auth_mode="caller"``, otherwise None.
         """
-        return False
+        return None
 
     def _validate_caller_credential_environment(self) -> None:
         """
-        Refuse a caller-credential provider while this server sets headers the target's client adds itself.
+        Refuse caller keys while this server sets headers the target's client adds itself.
 
-        Those headers are sent with every request, so one could replace each caller's own credential.
+        Those headers are sent with every request, so one could replace each caller's own key.
 
         Raises:
-            ValueError: If the target holds a caller-credential provider and one of its
-                ``server_header_variables`` is set.
+            ValueError: If the target uses callers' keys and one of its ``server_header_variables`` is set.
         """
-        if not self._holds_caller_credential_provider():
+        if self.caller_credential is None:
             return
         for variable in type(self).server_header_variables:
             if os.environ.get(variable):
                 raise ValueError(
                     f"This server sets {variable}, whose headers {type(self).__name__} would send with every "
-                    "request and which could replace each caller's own credential. A target that uses caller "
-                    "credentials isn't built while it is set."
+                    "request and which could replace each caller's own key. A target that uses callers' keys "
+                    "isn't built while it is set."
                 )
 
     @property

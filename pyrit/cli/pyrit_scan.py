@@ -117,9 +117,9 @@ or connect to an existing server with --server-url.
 
 Global options (--server-url, --config-file, --log-level) are listed below and
 work before or after the verb. Backend commands (run, list-*, add-initializer,
-scenario-results, scenario-history, set-target-credential, remove-target-credential,
-add-personal-target) also accept --start-server, --startup-timeout, and
---request-timeout; run 'pyrit_scan <command> --help' to see them.
+scenario-results, scenario-history, set-target-credential, remove-target-credential)
+also accept --start-server, --startup-timeout, and --request-timeout; run
+'pyrit_scan <command> --help' to see them.
 
 Examples:
   # Start the backend server
@@ -152,12 +152,12 @@ Examples:
   # Register a custom initializer from a Python script
   pyrit_scan add-initializer ./my_custom_init.py
 
-  # Make a personal copy of a shared target that uses your own token, read from an
+  # Set your own token for a target that uses each caller's own key, read from an
   # 'ant auth login --profile copyrit' session and re-sent until Ctrl+C
-  pyrit_scan add-personal-target my-claude --from claude_shared --from-ant --ant-profile copyrit --keep-fresh
+  pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
 
-  # Set or replace your own key for a personal target from an environment variable
-  pyrit_scan set-target-credential my-claude --from-env ANTHROPIC_API_KEY
+  # Or set your own key from an environment variable
+  pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
 
   # Connect to a remote server
   pyrit_scan list-scenarios --server-url http://remote:8000
@@ -457,45 +457,21 @@ _DEFAULT_REFRESH_MINUTES = 15
 
 
 def _add_target_credential_parsers(*, subparsers: Any, client_parents: list[ArgumentParser]) -> None:
-    """Register the verbs that manage the caller's own credentials for personal targets."""
+    """Register the verbs that manage the caller's own key for targets that use each caller's own key."""
     set_parser = subparsers.add_parser(
         "set-target-credential",
         parents=client_parents,
-        help="Set or replace your own credential for a personal target",
+        help="Set or replace your own key for a target that uses each caller's own key",
     )
-    set_parser.add_argument("target", type=str, help="Registry name of the personal target")
+    set_parser.add_argument("target", type=str, help="Registry name of the target")
     _add_credential_source_arguments(parser=set_parser, required=True)
 
     remove_parser = subparsers.add_parser(
         "remove-target-credential",
         parents=client_parents,
-        help="Remove your own credential for a personal target",
+        help="Remove your own key for a target that uses each caller's own key",
     )
-    remove_parser.add_argument("target", type=str, help="Registry name of the personal target")
-
-    personal_parser = subparsers.add_parser(
-        "add-personal-target",
-        parents=client_parents,
-        help="Register a personal copy of a target that uses your own credential",
-    )
-    personal_parser.add_argument("name", type=str, help="Registry name for your copy")
-    personal_parser.add_argument(
-        "--from",
-        dest="source_target",
-        required=True,
-        metavar="TARGET",
-        help="Registered target to copy, including settings an initializer made; its credential is never copied",
-    )
-    personal_parser.add_argument(
-        "--set",
-        dest="target_overrides",
-        type=_parse_target_override,
-        nargs="+",
-        default=[],
-        metavar="KEY=VALUE",
-        help="Constructor overrides for the copy, such as temperature=0.3. Credentials are not accepted here.",
-    )
-    _add_credential_source_arguments(parser=personal_parser, required=False)
+    remove_parser.add_argument("target", type=str, help="Registry name of the target")
 
 
 def _add_credential_source_arguments(*, parser: ArgumentParser, required: bool) -> None:
@@ -521,27 +497,6 @@ def _add_credential_source_arguments(*, parser: ArgumentParser, required: bool) 
         metavar="N",
         help=f"Minutes between --keep-fresh refreshes (default: {_DEFAULT_REFRESH_MINUTES})",
     )
-
-
-def _parse_target_override(arg: str) -> tuple[str, str]:
-    """
-    Parse one ``KEY=VALUE`` constructor override for a personal target.
-
-    Returns:
-        tuple[str, str]: The parameter name and its raw value, which the backend coerces.
-
-    Raises:
-        argparse.ArgumentTypeError: If the override is malformed or names a credential.
-    """
-    key, separator, value = arg.partition("=")
-    key = key.strip()
-    if not separator or not key:
-        raise argparse.ArgumentTypeError(f"Expected KEY=VALUE, got {arg!r}")
-    if key.lower() == "api_key":
-        raise argparse.ArgumentTypeError(
-            "Credentials are never accepted on the command line. Use --prompt, --from-env, or --from-ant."
-        )
-    return key, value
 
 
 def _discover_verbs() -> frozenset[str]:
@@ -1315,7 +1270,7 @@ def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource 
 
 
 async def _send_target_credential_async(*, client: Any, target_name: str, source: CredentialSource) -> None:
-    """Read the caller's credential from its source and set it on a personal target."""
+    """Read the caller's key from its source and set it on a target that uses each caller's own key."""
     from pyrit.cli._target_credentials import read_target_credential_async
 
     credential = await read_target_credential_async(source=source, target_name=target_name)
@@ -1330,12 +1285,12 @@ async def _keep_target_credential_fresh_async(
 
     Temporary failures (an unavailable credential source, sign-in, or backend, a timeout, a 429 or a 5xx
     response) are reported and retried at the next interval. The command stops when the target is gone
-    or is no longer the one the credential was set for, such as after the backend restarts, which removes
-    personal targets, or when the backend rejects the credential.
+    or is no longer the one the credential was set for, such as after the backend restarts and removes a
+    target created through the API, or when the backend rejects the credential.
 
     Args:
         client: The open API client.
-        target_name: The personal target's registry name.
+        target_name: The target's registry name.
         target_hash: The identifier hash of the target the credential was first set for.
         source: Where to re-read the credential.
         refresh_minutes: Minutes between refreshes.
@@ -1350,8 +1305,8 @@ async def _keep_target_credential_fresh_async(
     from pyrit.cli.api_client import ServerNotAvailableError
 
     recreate_hint = (
-        f"Personal targets are removed when the backend restarts or reinitializes. Run 'pyrit_scan "
-        f"add-personal-target {target_name} ...' again, then set your credential."
+        "Targets created through the API are removed when the backend restarts or reinitializes. Create "
+        f"'{target_name}' again if you need it, then run 'pyrit_scan set-target-credential {target_name} ...'."
     )
     print(f"Keeping your credential for '{target_name}' fresh every {refresh_minutes} minute(s). Press Ctrl+C to stop.")
     try:
@@ -1387,7 +1342,7 @@ async def _keep_target_credential_fresh_async(
 
 async def _handle_set_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
     """
-    Handle ``set-target-credential``: send the caller's own credential for a personal target.
+    Handle ``set-target-credential``: send the caller's own key for a target that uses each caller's own key.
 
     Returns:
         int: Exit code (``0`` on success, ``1`` on failure).
@@ -1409,8 +1364,8 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
         return 1
     if not target.requires_caller_credential:
         print(
-            f"Error: Target '{target_name}' is shared and does not take your own credential. "
-            f"Make a personal copy with 'pyrit_scan add-personal-target <name> --from {target_name}'."
+            f"Error: Target '{target_name}' uses shared credentials and does not take your own key. "
+            "Only targets created with auth_mode 'caller' do."
         )
         return 1
     try:
@@ -1432,7 +1387,7 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
 
 async def _handle_remove_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
     """
-    Handle ``remove-target-credential``: forget the caller's own credential for a personal target.
+    Handle ``remove-target-credential``: forget the caller's own key for a target that uses each caller's own key.
 
     Returns:
         int: Exit code (``0`` on success).
@@ -1440,55 +1395,6 @@ async def _handle_remove_target_credential_async(*, client: Any, parsed_args: Na
     await client.remove_target_credential_async(target_registry_name=parsed_args.target)
     print(f"Removed your credential for '{parsed_args.target}'.")
     return 0
-
-
-async def _handle_add_personal_target_async(*, client: Any, parsed_args: Namespace) -> int:
-    """
-    Handle ``add-personal-target``: register a personal copy of a target, optionally with the caller's credential.
-
-    Returns:
-        int: Exit code (``0`` on success, ``1`` on failure).
-    """
-    from pyrit.cli._target_credentials import TargetCredentialError, read_target_credential_async
-
-    name = parsed_args.name
-    overrides: dict[str, str] = {}
-    for key, value in parsed_args.target_overrides:
-        if key in overrides:
-            print(f"Error: --set {key} was given more than once.")
-            return 1
-        overrides[key] = value
-    try:
-        source = _credential_source_from_args(parsed_args=parsed_args)
-    except ValueError as exc:
-        print(f"Error: {exc}")
-        return 1
-    source_target = await client.get_target_async(target_registry_name=parsed_args.source_target)
-    if source_target is None:
-        print(f"Error: Target '{parsed_args.source_target}' not found on server.")
-        return 1
-    try:
-        credential = await read_target_credential_async(source=source, target_name=name) if source is not None else None
-    except TargetCredentialError as exc:
-        print(f"Error: {exc}")
-        return 1
-    created = await client.create_personal_target_async(
-        name=name, source=source_target, params=overrides, credential=credential
-    )
-    print(f"Registered personal target '{name}' from '{parsed_args.source_target}'.")
-    if source is None:
-        print(f"Set your credential with 'pyrit_scan set-target-credential {name} --prompt' before using it.")
-        return 0
-    print(f"Set your credential for '{name}' from {source.description}.")
-    if not parsed_args.keep_fresh:
-        return 0
-    return await _keep_target_credential_fresh_async(
-        client=client,
-        target_name=name,
-        target_hash=created.identifier.hash,
-        source=source,
-        refresh_minutes=parsed_args.refresh_minutes,
-    )
 
 
 #: Post-client verbs, each a uniform ``(*, client, parsed_args) -> int`` handler. Reached
@@ -1501,7 +1407,6 @@ _CLIENT_HANDLERS: dict[str, Callable[..., Any]] = {
     "scenario-history": _handle_scenario_history_async,
     "set-target-credential": _handle_set_target_credential_async,
     "remove-target-credential": _handle_remove_target_credential_async,
-    "add-personal-target": _handle_add_personal_target_async,
     **dict.fromkeys(_LIST_VERBS, _handle_list_commands_async),
 }
 

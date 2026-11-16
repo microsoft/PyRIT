@@ -25,7 +25,12 @@ from openai._exceptions import (
 )
 from pydantic import TypeAdapter
 
-from pyrit.auth import is_caller_credential_provider, resolve_openai_auth, validate_token_provider_headers
+from pyrit.auth import (
+    CallerCredential,
+    resolve_caller_credential,
+    resolve_openai_auth,
+    validate_token_provider_headers,
+)
 from pyrit.common import default_values
 from pyrit.exceptions import (
     RateLimitException,
@@ -158,8 +163,9 @@ class OpenAITarget(PromptTarget):
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
     # endpoint (see ``is_azure_openai_endpoint``), and OpenAI-compatible servers
-    # such as Ollama or vLLM may need no key at all.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
+    # such as Ollama or vLLM may need no key at all. The OpenAI SDK resolves a
+    # token provider before every request, so they can also send each caller's own key.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none", "caller")
     # Empty headers read ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` unless the mode is "none"; "{}" sends none.
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType(
         {"api_key": None, "headers": "{}"}
@@ -177,6 +183,7 @@ class OpenAITarget(PromptTarget):
     api_key_environment_variable: str
 
     _async_client: AsyncOpenAI | None = None
+    _caller_credential: CallerCredential | None = None
     _reconstruction_parameters: dict[str, object] = {}
 
     def __init_subclass__(cls, **kwargs: object) -> None:
@@ -233,7 +240,10 @@ class OpenAITarget(PromptTarget):
                 endpoints that need no key: it reads neither the API key nor the
                 ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable, rejects an explicit
                 ``api_key``, and sends the non-secret placeholder ``not-needed`` because the OpenAI
-                SDK requires a key. Defaults to ``"api_key"``, which resolves the key as described above.
+                SDK requires a key. ``"caller"`` is for a shared target that uses each caller's own key: it
+                reads no key, rejects an explicit ``api_key``, and sends the key of the caller in scope with
+                every request (see ``pyrit.auth.CallerCredential``). Defaults to ``"api_key"``, which
+                resolves the key as described above.
             headers (str, Optional): Extra headers of the endpoint (JSON). Defaults to the
                 ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable unless ``auth_mode`` is ``"none"``.
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
@@ -253,11 +263,11 @@ class OpenAITarget(PromptTarget):
                 Does not enable unsupported options or model modes, or change configured defaults.
 
         Raises:
-            ValueError: If identity auth is requested for an endpoint that is not a recognized
-                Azure OpenAI / AI Foundry endpoint, if identity or no-key auth is requested with an
-                explicit ``api_key``, if ``"api_key"`` auth is requested and no key is available
-                via parameter or environment variable, or if ``api_key`` is a caller-credential
-                provider while ``OPENAI_CUSTOM_HEADERS`` is set.
+            ValueError: If the target type doesn't support ``auth_mode``, if identity auth is requested
+                for an endpoint that is not a recognized Azure OpenAI / AI Foundry endpoint, if identity,
+                no-key, or caller auth is requested with an explicit ``api_key``, if ``"api_key"`` auth is
+                requested and no key is available via parameter or environment variable, or if caller auth
+                is requested while ``OPENAI_CUSTOM_HEADERS`` is set or with static authentication headers.
         """
         self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
@@ -306,11 +316,17 @@ class OpenAITarget(PromptTarget):
             custom_configuration=custom_configuration,
         )
 
-        self._api_key = resolve_openai_auth(
-            endpoint=endpoint_value,
-            api_key=api_key,
-            api_key_environment_variable=self.api_key_environment_variable,
-            auth_mode=auth_mode,
+        self._validate_auth_mode(auth_mode)
+        self._caller_credential = resolve_caller_credential(auth_mode=auth_mode, api_key=api_key)
+        self._api_key = (
+            self._caller_credential.get_credential_async
+            if self._caller_credential is not None
+            else resolve_openai_auth(
+                endpoint=endpoint_value,
+                api_key=api_key,
+                api_key_environment_variable=self.api_key_environment_variable,
+                auth_mode=auth_mode,
+            )
         )
         self._validate_caller_credential_environment()
 
@@ -480,9 +496,9 @@ class OpenAITarget(PromptTarget):
             "model_name": self._model_name,
             "endpoint": self._endpoint,
             # Reuse the resolved key or token provider, not the original credential-selection mode. A no-key
-            # target stays no-key, so a copy that overrides api_key or headers can't pick up a server value.
-            "api_key": None if self._auth_mode == "none" else self._api_key,
-            "auth_mode": "none" if self._auth_mode == "none" else "api_key",
+            # target stays no-key, so a copy that overrides api_key or headers can't pick up a server value,
+            # and a copy of a caller-key target shares its credential, so each caller's key still applies.
+            **self._reconstruction_auth_parameters(),
             "headers": json.dumps(self._headers),
             "max_requests_per_minute": self._max_requests_per_minute,
             "httpx_client_kwargs": dict(self._httpx_client_kwargs),
@@ -516,6 +532,19 @@ class OpenAITarget(PromptTarget):
             dict[str, object]: Constructor parameters that enforce the mode.
         """
         return {"auth_mode": auth_mode}
+
+    def _reconstruction_auth_parameters(self) -> dict[str, object]:
+        """
+        Return the authentication a copy of this target uses.
+
+        Returns:
+            dict[str, object]: The copy's ``api_key`` and ``auth_mode``.
+        """
+        if self._caller_credential is not None:
+            return {"api_key": self._caller_credential, "auth_mode": "caller"}
+        if self._auth_mode == "none":
+            return {"api_key": None, "auth_mode": "none"}
+        return {"api_key": self._api_key, "auth_mode": "api_key"}
 
     @staticmethod
     def _parse_request_headers(value: object) -> dict[str, str]:
@@ -730,7 +759,7 @@ class OpenAITarget(PromptTarget):
         httpx_kwargs = self._httpx_client_kwargs.copy()
         if self._headers:
             httpx_kwargs.setdefault("default_headers", {}).update(self._headers)
-        if callable(self._api_key):
+        if self._caller_credential is not None:
             validate_token_provider_headers(httpx_kwargs.get("default_headers"))
 
         # Determine if this is Azure OpenAI based on the endpoint
@@ -767,17 +796,24 @@ class OpenAITarget(PromptTarget):
             **httpx_kwargs,
         )
 
-    def _holds_caller_credential_provider(self) -> bool:
-        return is_caller_credential_provider(self._api_key)
+    @property
+    def caller_credential(self) -> CallerCredential | None:
+        """
+        The credential that holds each caller's own key, or None when the target uses shared credentials.
+
+        Returns:
+            CallerCredential | None: The credential for ``auth_mode="caller"``, otherwise None.
+        """
+        return self._caller_credential
 
     def _validate_request_headers(self, *, body: Mapping[str, Any]) -> None:
         """
         Validate SDK request options after request-body passthrough merging.
 
         Raises:
-            ValueError: If static authentication could override a token provider.
+            ValueError: If static authentication could replace a caller's own key.
         """
-        if callable(self._api_key):
+        if self._caller_credential is not None:
             validate_token_provider_headers(body.get("extra_headers"))
 
     async def _handle_openai_request_async(

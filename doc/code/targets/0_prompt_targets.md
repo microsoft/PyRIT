@@ -108,22 +108,22 @@ Here are some examples:
 
 ## Target authentication
 
-Targets are shared by default, including their configured authentication. In CoPyRIT, a
-**personal target** shares its configuration but uses each caller's own provider credential.
-Create one with `requires_caller_credential: true`, either from scratch or as a personal copy
-of an existing target. Copying replaces the source's authentication without changing the source.
+Targets are shared by default: every caller's requests use the target's configured key or
+identity. A target created with `auth_mode="caller"` instead uses each caller's own key. It keeps
+no key; in CoPyRIT, everyone can see and use it, and each caller sets their own key first. The GUI
+marks these targets "Yours" and shared ones "Shared".
 
-![Personal target credential flow: each caller submits a token to a process-memory store keyed by caller and target. Before every provider request, the target resolves only the current caller's token. A missing token stops the request without falling back to another user or server credentials.](../../assets/caller-credential-flow.svg)
+```python
+target = OpenAIChatTarget(endpoint="https://api.anthropic.com/v1", model_name="<model>", auth_mode="caller")
+```
 
-The backend's authenticated caller identity and the model provider's credential are separate.
-Each caller sets their provider token with `pyrit_scan set-target-credential` or
-`PUT /api/targets/{id}/credentials`. Background work and queued scenarios retain the caller
-who started them; the target resolves that caller's current token before every provider request.
-Other callers can see the target but must set their own token before using it.
+![Caller key flow: each caller sets their own key for a target, kept in process memory. Before every provider request, the target uses only the current caller's key. A missing key stops the request without falling back to another user or server credentials.](../../assets/caller-credential-flow.svg)
 
-See [personal targets with caller credentials](../../../pyrit/backend/README.md#personal-targets-with-caller-credentials)
-for the supported targets, API examples, and limits, such as what a backend restart removes, and
-[the scanner guide](../../scanner/1_pyrit_scan.ipynb) for CLI usage.
+Each caller sets their key with `pyrit_scan set-target-credential`, the GUI's target list, or
+`PUT /api/targets/{id}/credentials`. Background work and queued scenarios keep the caller who
+started them. See [targets that use each caller's own key](../../../pyrit/backend/README.md#targets-that-use-each-callers-own-key)
+for the supported targets and limits, and [the scanner guide](../../scanner/1_pyrit_scan.ipynb)
+for CLI usage.
 
 ## OpenAI SDK compatibility
 

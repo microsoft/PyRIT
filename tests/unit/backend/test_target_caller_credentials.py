@@ -1,34 +1,26 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Opt-in caller credentials for registered targets: service and REST contract."""
+"""Targets that use each caller's own key: service and REST contract."""
 
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import Request, status
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from pyrit.auth import CallerCredentialRequiredError, caller_principal_scope
+from pyrit.auth import CallerCredential, CallerCredentialRequiredError, caller_principal_scope
 from pyrit.backend.main import app
-from pyrit.backend.models import CreateScorerRequest, CreateTargetRequest
+from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
-from pyrit.backend.services.scorer_service import ScorerService
-from pyrit.backend.services.service_lifecycle import close_services_async
-from pyrit.backend.services.target_service import (
-    TargetInUseError,
-    clear_caller_credentials,
-    get_caller_credential_store,
-)
-from pyrit.converter import Converter
-from pyrit.models import ComponentIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import TargetRegistry
 
 _ALICE = "entra:tenant:alice"
 _BOB = "entra:tenant:bob"
@@ -39,15 +31,11 @@ _TARGET_PARAMS = {"model_name": "test-model", "endpoint": "https://example.test/
 
 @pytest.fixture(autouse=True)
 def isolated_targets() -> Iterator[None]:
-    for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry):
-        registry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     get_target_service.cache_clear()
-    clear_caller_credentials()
     yield
-    for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry):
-        registry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
     get_target_service.cache_clear()
-    clear_caller_credentials()
 
 
 @pytest.fixture
@@ -59,21 +47,29 @@ async def _create_async(
     service: TargetService,
     *,
     caller: str | None,
-    name: str = "personal",
-    api_key: str | None = _ALICE_KEY,
-    requires_caller_credential: bool = True,
+    name: str = "caller",
+    credential: str | None = _ALICE_KEY,
 ) -> TargetInstance:
-    params: dict[str, object] = {**_TARGET_PARAMS}
-    if api_key is not None:
-        params["api_key"] = api_key
     created = await service.create_target_async(
         request=CreateTargetRequest(
             name=name,
             type="OpenAIChatTarget",
-            params=params,
-            requires_caller_credential=requires_caller_credential,
+            params=_TARGET_PARAMS,
+            auth_mode="caller",
+            credential=credential,
         ),
         caller=caller,
+    )
+    assert isinstance(created, TargetInstance)
+    return created
+
+
+async def _create_shared_async(service: TargetService, *, name: str = "shared") -> TargetInstance:
+    created = await service.create_target_async(
+        request=CreateTargetRequest(
+            name=name, type="OpenAIChatTarget", params={**_TARGET_PARAMS, "api_key": _ALICE_KEY}
+        ),
+        caller=_ALICE,
     )
     assert isinstance(created, TargetInstance)
     return created
@@ -85,45 +81,40 @@ async def _resolve_as_async(target: PromptTarget, *, caller: str | None) -> str:
         return await target._client._refresh_api_key()
 
 
-@pytest.mark.parametrize("caller", [_ALICE, None])
-async def test_targets_are_shared_by_default_async(service: TargetService, caller: str | None) -> None:
-    created = await _create_async(service, caller=caller, name="shared", requires_caller_credential=False)
+async def test_targets_are_shared_by_default_async(service: TargetService) -> None:
+    created = await _create_shared_async(service)
 
     target = service.get_target_object(target_registry_name="shared")
-    assert target._api_key == _ALICE_KEY
+    assert target.caller_credential is None
     assert not created.requires_caller_credential
+    assert created.caller_credential_configured is None
     assert _ALICE_KEY not in created.model_dump_json()
-    assert len(get_caller_credential_store()) == 0
     assert await _resolve_as_async(target, caller=_BOB) == _ALICE_KEY
 
 
-async def test_personal_target_keeps_no_secret_async(service: TargetService) -> None:
+async def test_caller_target_keeps_no_key_async(service: TargetService) -> None:
     created = await _create_async(service, caller=_ALICE)
 
-    target = service.get_target_object(target_registry_name="personal")
-    entry = service._registry.instances.get_entry("personal")
-    assert callable(target._api_key)
+    target = service.get_target_object(target_registry_name="caller")
+    assert isinstance(target.caller_credential, CallerCredential)
     assert _ALICE_KEY not in created.model_dump_json()
     assert _ALICE_KEY not in str(target.get_identifier())
-    assert _ALICE_KEY not in str(entry.metadata)
-    assert entry.metadata[TargetService.CREATED_BY_METADATA_KEY] == _ALICE
+    assert _ALICE_KEY not in repr(target.caller_credential)
     assert created.requires_caller_credential
-    assert created.caller_credential_configured
-    assert created.can_delete
+    assert created.caller_credential_configured is True
     assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
 
 
-async def test_other_caller_sees_personal_target_but_cannot_use_its_key_async(service: TargetService) -> None:
+async def test_other_caller_sees_caller_target_but_cannot_use_its_key_async(service: TargetService) -> None:
     await _create_async(service, caller=_ALICE)
-    target = service.get_target_object(target_registry_name="personal")
+    target = service.get_target_object(target_registry_name="caller")
 
-    as_bob = await service.get_target_async(target_registry_name="personal", caller=_BOB)
+    as_bob = await service.get_target_async(target_registry_name="caller", caller=_BOB)
     listed = await service.list_targets_async(caller=_BOB)
 
     assert as_bob is not None
     assert as_bob.requires_caller_credential
-    assert not as_bob.caller_credential_configured
-    assert not as_bob.can_delete
+    assert as_bob.caller_credential_configured is False
     assert listed.items == [as_bob]
     with pytest.raises(CallerCredentialRequiredError):
         await _resolve_as_async(target, caller=_BOB)
@@ -131,35 +122,51 @@ async def test_other_caller_sees_personal_target_but_cannot_use_its_key_async(se
         await _resolve_as_async(target, caller=None)
 
 
-async def test_personal_target_can_be_created_before_any_key_is_set_async(service: TargetService) -> None:
-    created = await _create_async(service, caller=_ALICE, api_key=None)
-    target = service.get_target_object(target_registry_name="personal")
+async def test_caller_status_is_unknown_without_a_caller_async(service: TargetService) -> None:
+    await _create_async(service, caller=_ALICE)
+
+    anonymous = await service.get_target_async(target_registry_name="caller", caller=None)
+
+    assert anonymous is not None
+    assert anonymous.requires_caller_credential
+    assert anonymous.caller_credential_configured is None
+
+
+async def test_caller_target_can_be_created_before_any_key_is_set_async(service: TargetService) -> None:
+    created = await _create_async(service, caller=_ALICE, credential=None)
+    target = service.get_target_object(target_registry_name="caller")
 
     assert created.requires_caller_credential
-    assert not created.caller_credential_configured
+    assert created.caller_credential_configured is False
     with patch.dict("os.environ", {"OPENAI_CHAT_KEY": "environment-key"}), pytest.raises(CallerCredentialRequiredError):
         await _resolve_as_async(target, caller=_ALICE)
 
-    await service.set_caller_credential_async(target_registry_name="personal", caller=_ALICE, credential=_ALICE_KEY)
+    await service.set_caller_credential_async(target_registry_name="caller", caller=_ALICE, credential=_ALICE_KEY)
 
     assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
+
+
+async def test_caller_target_without_a_key_needs_no_caller_async(service: TargetService) -> None:
+    # A saved entry is restored as the server, with no caller, so it can't carry anyone's key.
+    created = await _create_async(service, caller=None, credential=None)
+
+    assert created.requires_caller_credential
+    assert created.caller_credential_configured is None
 
 
 async def test_set_and_remove_caller_credential_affect_only_that_caller_async(service: TargetService) -> None:
     await _create_async(service, caller=_ALICE)
-    target = service.get_target_object(target_registry_name="personal")
+    target = service.get_target_object(target_registry_name="caller")
 
-    updated = await service.set_caller_credential_async(
-        target_registry_name="personal", caller=_BOB, credential=_BOB_KEY
-    )
+    updated = await service.set_caller_credential_async(target_registry_name="caller", caller=_BOB, credential=_BOB_KEY)
 
     assert updated is not None
-    assert updated.caller_credential_configured
+    assert updated.caller_credential_configured is True
     assert _BOB_KEY not in updated.model_dump_json()
     assert await _resolve_as_async(target, caller=_BOB) == _BOB_KEY
     assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
 
-    assert await service.remove_caller_credential_async(target_registry_name="personal", caller=_BOB)
+    assert await service.remove_caller_credential_async(target_registry_name="caller", caller=_BOB)
 
     with pytest.raises(CallerCredentialRequiredError):
         await _resolve_as_async(target, caller=_BOB)
@@ -168,9 +175,9 @@ async def test_set_and_remove_caller_credential_affect_only_that_caller_async(se
 
 async def test_replaced_credential_keeps_target_identity_async(service: TargetService) -> None:
     created = await _create_async(service, caller=_ALICE)
-    target = service.get_target_object(target_registry_name="personal")
+    target = service.get_target_object(target_registry_name="caller")
 
-    await service.set_caller_credential_async(target_registry_name="personal", caller=_ALICE, credential="replacement")
+    await service.set_caller_credential_async(target_registry_name="caller", caller=_ALICE, credential="replacement")
 
     assert target.get_identifier().hash == created.identifier.hash
     assert await _resolve_as_async(target, caller=_ALICE) == "replacement"
@@ -179,7 +186,7 @@ async def test_replaced_credential_keeps_target_identity_async(service: TargetSe
 async def test_saved_binding_copy_resolves_the_current_caller_async(service: TargetService) -> None:
     created = await _create_async(service, caller=_ALICE)
     copy = await service.build_from_source_async(
-        SourceInstanceSpec(source_name="personal", source_hash=created.identifier.hash, params={"temperature": 0.3})
+        SourceInstanceSpec(source_name="caller", source_hash=created.identifier.hash, params={"temperature": 0.3})
     )
     try:
         assert await _resolve_as_async(copy, caller=_ALICE) == _ALICE_KEY
@@ -189,51 +196,81 @@ async def test_saved_binding_copy_resolves_the_current_caller_async(service: Tar
         await copy.cleanup_target_async()
 
 
+async def test_initializer_caller_target_takes_each_callers_key_async(service: TargetService) -> None:
+    service._registry.instances.register(OpenAIChatTarget(**_TARGET_PARAMS, auth_mode="caller"), name="configured")
+
+    before = await service.get_target_async(target_registry_name="configured", caller=_ALICE)
+    after = await service.set_caller_credential_async(
+        target_registry_name="configured", caller=_ALICE, credential=_ALICE_KEY
+    )
+
+    assert before is not None and before.requires_caller_credential
+    assert before.caller_credential_configured is False
+    assert after is not None and after.caller_credential_configured is True
+
+
 @pytest.mark.parametrize(
-    ("request_kwargs", "error", "match"),
+    ("request_kwargs", "match"),
     [
-        ({"type": "TextTarget", "params": {}}, ValueError, "does not support requires_caller_credential"),
+        ({"type": "TextTarget", "params": {}}, "does not support each caller's own key"),
         (
             {"type": "RealtimeTarget", "params": {**_TARGET_PARAMS, "endpoint": "wss://example.test/v1"}},
-            ValueError,
-            "does not support requires_caller_credential",
+            "does not support each caller's own key",
         ),
-        ({"auth_mode": "none", "params": _TARGET_PARAMS}, ValueError, "auth_mode 'api_key'"),
-        ({"register": False, "name": None}, ValueError, "only to registered targets"),
-        ({"params": {**_TARGET_PARAMS, "api_key": "  "}}, ValueError, "nonempty string"),
+        (
+            {"type": "LiteLLMDecisionTarget", "params": {"model_name": "openrouter/microsoft/microsoft-decision-1"}},
+            "does not support each caller's own key",
+        ),
+        ({"params": {**_TARGET_PARAMS, "api_key": _BOB_KEY}}, "keeps no key"),
+        ({"credential": "  "}, "nonempty string"),
     ],
 )
-async def test_requires_caller_credential_rejects_unsupported_requests_async(
-    service: TargetService, request_kwargs: dict[str, object], error: type[Exception], match: str
+async def test_caller_auth_rejects_unsupported_requests_async(
+    service: TargetService, request_kwargs: dict[str, object], match: str
 ) -> None:
     payload: dict[str, object] = {
-        "name": "personal",
+        "name": "caller",
         "type": "OpenAIChatTarget",
-        "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY},
-        "requires_caller_credential": True,
+        "params": _TARGET_PARAMS,
+        "auth_mode": "caller",
+        "credential": _ALICE_KEY,
         **request_kwargs,
     }
 
-    with pytest.raises(error, match=match):
+    with pytest.raises(ValueError, match=match) as exc:
         await service.create_target_async(request=CreateTargetRequest(**payload), caller=_ALICE)
 
-    assert service.get_target_object(target_registry_name="personal") is None
-    assert len(get_caller_credential_store()) == 0
+    assert _BOB_KEY not in str(exc.value)
+    assert service.get_target_object(target_registry_name="caller") is None
 
 
-async def test_requires_caller_credential_requires_a_caller_async(service: TargetService) -> None:
+@pytest.mark.parametrize(
+    ("request_kwargs", "match"),
+    [
+        ({"auth_mode": "caller", "register": False}, "only to registered targets"),
+        ({"auth_mode": "api_key", "credential": _ALICE_KEY}, "applies only to auth_mode 'caller'"),
+    ],
+)
+def test_create_request_validates_caller_auth(request_kwargs: dict[str, object], match: str) -> None:
+    with pytest.raises(ValidationError, match=match) as exc:
+        CreateTargetRequest(name="caller", type="OpenAIChatTarget", params=_TARGET_PARAMS, **request_kwargs)
+
+    assert _ALICE_KEY not in str(exc.value)
+
+
+async def test_credential_requires_a_caller_async(service: TargetService) -> None:
     with pytest.raises(PermissionError, match="verified caller identity"):
         await _create_async(service, caller=None)
 
-    assert service.get_target_object(target_registry_name="personal") is None
+    assert service.get_target_object(target_registry_name="caller") is None
 
 
 async def test_caller_credential_operations_reject_shared_targets_async(service: TargetService) -> None:
-    await _create_async(service, caller=_ALICE, name="shared", requires_caller_credential=False)
+    await _create_shared_async(service)
 
-    with pytest.raises(ValueError, match="is shared"):
+    with pytest.raises(ValueError, match="uses shared credentials"):
         await service.set_caller_credential_async(target_registry_name="shared", caller=_ALICE, credential="key")
-    with pytest.raises(ValueError, match="is shared"):
+    with pytest.raises(ValueError, match="uses shared credentials"):
         await service.remove_caller_credential_async(target_registry_name="shared", caller=_ALICE)
 
 
@@ -241,9 +278,9 @@ async def test_caller_credential_operations_require_a_caller_async(service: Targ
     await _create_async(service, caller=_ALICE)
 
     with pytest.raises(PermissionError, match="verified caller identity"):
-        await service.set_caller_credential_async(target_registry_name="personal", caller=None, credential="key")
+        await service.set_caller_credential_async(target_registry_name="caller", caller=None, credential="key")
     with pytest.raises(PermissionError, match="verified caller identity"):
-        await service.remove_caller_credential_async(target_registry_name="personal", caller=None)
+        await service.remove_caller_credential_async(target_registry_name="caller", caller=None)
 
 
 async def test_caller_credential_operations_report_missing_targets_async(service: TargetService) -> None:
@@ -251,114 +288,13 @@ async def test_caller_credential_operations_report_missing_targets_async(service
         await service.set_caller_credential_async(target_registry_name="missing", caller=_ALICE, credential="k") is None
     )
     assert not await service.remove_caller_credential_async(target_registry_name="missing", caller=_ALICE)
-    assert not await service.delete_target_async(target_registry_name="missing", caller=_ALICE)
 
 
 async def test_set_caller_credential_rejects_blank_value_async(service: TargetService) -> None:
     await _create_async(service, caller=_ALICE)
 
     with pytest.raises(ValueError, match="nonempty string"):
-        await service.set_caller_credential_async(target_registry_name="personal", caller=_BOB, credential="  ")
-
-
-async def test_delete_target_requires_its_creator_and_forgets_all_credentials_async(service: TargetService) -> None:
-    await _create_async(service, caller=_ALICE)
-    target = service.get_target_object(target_registry_name="personal")
-    await service.set_caller_credential_async(target_registry_name="personal", caller=_BOB, credential=_BOB_KEY)
-
-    with pytest.raises(PermissionError, match="Only the caller who created"):
-        await service.delete_target_async(target_registry_name="personal", caller=_BOB)
-    assert await service.delete_target_async(target_registry_name="personal", caller=_ALICE)
-
-    assert service.get_target_object(target_registry_name="personal") is None
-    assert len(get_caller_credential_store()) == 0
-    with pytest.raises(CallerCredentialRequiredError):
-        await _resolve_as_async(target, caller=_ALICE)
-
-
-async def test_creator_can_delete_shared_target_async(service: TargetService) -> None:
-    await _create_async(service, caller=_ALICE, name="shared", requires_caller_credential=False)
-
-    with pytest.raises(PermissionError):
-        await service.delete_target_async(target_registry_name="shared", caller=_BOB)
-    assert await service.delete_target_async(target_registry_name="shared", caller=_ALICE)
-
-
-async def test_recreated_name_never_inherits_old_credentials_async(service: TargetService) -> None:
-    await _create_async(service, caller=_ALICE)
-    old_target = service.get_target_object(target_registry_name="personal")
-    await service.delete_target_async(target_registry_name="personal", caller=_ALICE)
-
-    await _create_async(service, caller=_BOB, api_key=_BOB_KEY)
-    new_target = service.get_target_object(target_registry_name="personal")
-
-    with pytest.raises(CallerCredentialRequiredError):
-        await _resolve_as_async(new_target, caller=_ALICE)
-    with pytest.raises(CallerCredentialRequiredError):
-        await _resolve_as_async(old_target, caller=_BOB)
-
-
-async def _register_refusal_scorer_async(*, chat_target: str) -> None:
-    await ScorerService().create_scorer_async(
-        request=CreateScorerRequest(
-            name="refusal", type="SelfAskRefusalScorer", params={"chat_target": chat_target}, register=True
-        )
-    )
-
-
-@pytest.mark.parametrize("requires_caller_credential", [True, False])
-async def test_delete_target_rejects_registered_dependents_async(
-    service: TargetService, requires_caller_credential: bool
-) -> None:
-    await _create_async(service, caller=_ALICE, requires_caller_credential=requires_caller_credential)
-    target = service.get_target_object(target_registry_name="personal")
-    await _register_refusal_scorer_async(chat_target="personal")
-
-    with pytest.raises(TargetInUseError, match="scorer 'refusal'"):
-        await service.delete_target_async(target_registry_name="personal", caller=_ALICE)
-
-    assert service.get_target_object(target_registry_name="personal") is target
-    assert not target._async_client.is_closed()
-    assert ScorerRegistry.get_registry_singleton().instances.get("refusal") is not None
-    if requires_caller_credential:
-        assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
-
-
-async def test_delete_target_rejects_components_that_record_its_hash_async(service: TargetService) -> None:
-    created = await _create_async(service, caller=_ALICE)
-    holder = MagicMock(spec=Converter)
-    holder.get_identifier.return_value = ComponentIdentifier(
-        class_name="TechniqueLike",
-        class_module="tests",
-        params={"kwargs": {"adversarial_chat": created.identifier.hash}},
-    )
-    ConverterRegistry.get_registry_singleton().instances.register(holder, name="holder")
-
-    with pytest.raises(TargetInUseError, match="converter 'holder'"):
-        await service.delete_target_async(target_registry_name="personal", caller=_ALICE)
-
-
-async def test_delete_target_releases_owned_resources_async(service: TargetService) -> None:
-    await _create_async(service, caller=_ALICE, name="shared")
-    target = service.get_target_object(target_registry_name="shared")
-    with patch.object(target, "cleanup_target_async", new_callable=AsyncMock) as cleanup:
-        assert await service.delete_target_async(target_registry_name="shared", caller=_ALICE)
-    cleanup.assert_awaited_once()
-
-
-async def test_decision_target_rejects_unsupported_personal_opt_in_async(service: TargetService) -> None:
-    with pytest.raises(ValueError, match="does not support requires_caller_credential"):
-        await service.create_target_async(
-            request=CreateTargetRequest(
-                name="decision",
-                type="LiteLLMDecisionTarget",
-                requires_caller_credential=True,
-                params={"model_name": "openrouter/microsoft/microsoft-decision-1", "api_key": _ALICE_KEY},
-            ),
-            caller=_ALICE,
-        )
-    assert service.get_target_object(target_registry_name="decision") is None
-    assert len(get_caller_credential_store()) == 0
+        await service.set_caller_credential_async(target_registry_name="caller", caller=_BOB, credential="  ")
 
 
 async def test_decision_target_keeps_shared_api_key_behavior_async(service: TargetService) -> None:
@@ -375,49 +311,14 @@ async def test_decision_target_keeps_shared_api_key_behavior_async(service: Targ
     assert service.get_target_object(target_registry_name="decision")._api_key == _ALICE_KEY
 
 
-async def test_delete_target_retains_ownership_when_cleanup_fails_async(service: TargetService) -> None:
-    await _create_async(service, caller=_ALICE, name="shared")
-    target = service.get_target_object(target_registry_name="shared")
-    with patch.object(
-        target, "cleanup_target_async", new_callable=AsyncMock, side_effect=RuntimeError("cleanup failed")
-    ):
-        with pytest.raises(RuntimeError, match="cleanup failed"):
-            await service.delete_target_async(target_registry_name="shared", caller=_ALICE)
-    assert service.get_target_object(target_registry_name="shared") is target
-    assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
-
-
-async def test_initializer_targets_cannot_be_deleted_through_the_api_async(service: TargetService) -> None:
-    service._registry.instances.register(OpenAIChatTarget(**_TARGET_PARAMS, api_key="server-key"), name="configured")
-
-    with pytest.raises(PermissionError):
-        await service.delete_target_async(target_registry_name="configured", caller=_ALICE)
-
-    configured = await service.get_target_async(target_registry_name="configured", caller=_ALICE)
-    assert configured is not None
-    assert not configured.requires_caller_credential
-    assert not configured.can_delete
-
-
-async def test_failed_registration_stores_no_credential_async(service: TargetService) -> None:
+async def test_failed_registration_leaves_no_target_async(service: TargetService) -> None:
     with (
         patch.object(service._registry.instances, "register", side_effect=ValueError("taken")),
         pytest.raises(ValueError, match="taken"),
     ):
         await _create_async(service, caller=_ALICE)
 
-    assert len(get_caller_credential_store()) == 0
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_service_closure_forgets_caller_credentials_async() -> None:
-    store = get_caller_credential_store()
-    store.set_credential(principal=_ALICE, credential_id="personal", credential=_ALICE_KEY)
-
-    await close_services_async()
-
-    assert get_caller_credential_store() is store
-    assert len(store) == 0
+    assert service.get_target_object(target_registry_name="caller") is None
 
 
 # ============================================================================
@@ -446,48 +347,51 @@ def client(compatibility_headers: dict[str, str], patch_central_database: object
     return TestClient(app, headers=compatibility_headers)
 
 
-def _create_through_api(client: TestClient, *, requires_caller_credential: bool = True) -> TargetInstance:
-    response = client.post(
-        "/api/targets",
-        json={
-            "name": "personal",
+def _create_through_api(client: TestClient, *, caller_auth: bool = True) -> TargetInstance:
+    body: dict[str, object] = (
+        {
+            "name": "caller",
             "type": "OpenAIChatTarget",
-            "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY},
-            "requires_caller_credential": requires_caller_credential,
-        },
+            "params": _TARGET_PARAMS,
+            "auth_mode": "caller",
+            "credential": _ALICE_KEY,
+        }
+        if caller_auth
+        else {"name": "caller", "type": "OpenAIChatTarget", "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY}}
     )
+    response = client.post("/api/targets", json=body)
     assert response.status_code == status.HTTP_201_CREATED
     assert _ALICE_KEY not in response.text
     return TargetInstance.model_validate(response.json())
 
 
-@pytest.mark.parametrize("requires_caller_credential", [True, False])
+@pytest.mark.parametrize(("caller_auth", "configured"), [(True, True), (False, None)])
 def test_rest_create_reports_caller_credential_state(
-    client: TestClient, caller: _Caller, requires_caller_credential: bool
+    client: TestClient, caller: _Caller, caller_auth: bool, configured: bool | None
 ) -> None:
-    created = _create_through_api(client, requires_caller_credential=requires_caller_credential)
+    created = _create_through_api(client, caller_auth=caller_auth)
 
-    assert created.requires_caller_credential is requires_caller_credential
-    assert created.caller_credential_configured is requires_caller_credential
-    assert created.can_delete
+    assert created.requires_caller_credential is caller_auth
+    assert created.caller_credential_configured is configured
 
 
 def test_rest_other_caller_sets_and_removes_own_credential(client: TestClient, caller: _Caller) -> None:
     _create_through_api(client)
     caller.principal = _BOB
 
-    before = client.get("/api/targets/personal").json()
-    updated = client.put("/api/targets/personal/credentials", json={"credential": _BOB_KEY})
-    removed = client.delete("/api/targets/personal/credentials")
-    after = client.get("/api/targets/personal").json()
+    before = client.get("/api/targets/caller").json()
+    updated = client.put("/api/targets/caller/credentials", json={"credential": _BOB_KEY})
+    removed = client.delete("/api/targets/caller/credentials")
+    after = client.get("/api/targets/caller").json()
+    listed = client.get("/api/targets").json()["items"]
 
     assert before["caller_credential_configured"] is False
-    assert before["can_delete"] is False
     assert updated.status_code == status.HTTP_200_OK
     assert updated.json()["caller_credential_configured"] is True
     assert _BOB_KEY not in updated.text
     assert removed.status_code == status.HTTP_204_NO_CONTENT
     assert after["caller_credential_configured"] is False
+    assert [item["caller_credential_configured"] for item in listed] == [False]
 
 
 @pytest.mark.parametrize(
@@ -503,7 +407,7 @@ def test_rest_set_credential_rejects_invalid_bodies_without_echoing_them(
 ) -> None:
     _create_through_api(client)
 
-    response = client.put("/api/targets/personal/credentials", json=body)
+    response = client.put("/api/targets/caller/credentials", json=body)
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert _BOB_KEY not in response.text
@@ -511,8 +415,8 @@ def test_rest_set_credential_rejects_invalid_bodies_without_echoing_them(
 
 def test_rest_credential_routes_report_missing_and_shared_targets(client: TestClient, caller: _Caller) -> None:
     missing = client.put("/api/targets/missing/credentials", json={"credential": _BOB_KEY})
-    _create_through_api(client, requires_caller_credential=False)
-    shared = client.put("/api/targets/personal/credentials", json={"credential": _BOB_KEY})
+    _create_through_api(client, caller_auth=False)
+    shared = client.put("/api/targets/caller/credentials", json={"credential": _BOB_KEY})
     missing_delete = client.delete("/api/targets/missing/credentials")
 
     assert missing.status_code == status.HTTP_404_NOT_FOUND
@@ -521,60 +425,87 @@ def test_rest_credential_routes_report_missing_and_shared_targets(client: TestCl
     assert missing_delete.status_code == status.HTTP_404_NOT_FOUND
 
 
-def test_rest_create_rejects_unsupported_personal_target(client: TestClient, caller: _Caller) -> None:
-    response = client.post(
-        "/api/targets", json={"name": "text", "type": "TextTarget", "requires_caller_credential": True}
-    )
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"name": "text", "type": "TextTarget", "auth_mode": "caller"},
+        {
+            "name": "caller",
+            "type": "OpenAIChatTarget",
+            "auth_mode": "caller",
+            "params": {**_TARGET_PARAMS, "api_key": _BOB_KEY},
+        },
+    ],
+)
+def test_rest_create_rejects_unsupported_caller_targets(
+    client: TestClient, caller: _Caller, body: dict[str, object]
+) -> None:
+    response = client.post("/api/targets", json=body)
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert _BOB_KEY not in response.text
+
+
+def test_rest_create_rejects_a_credential_for_a_shared_target_without_echoing_it(
+    client: TestClient, caller: _Caller
+) -> None:
+    response = client.post(
+        "/api/targets",
+        json={"name": "shared", "type": "OpenAIChatTarget", "params": _TARGET_PARAMS, "credential": _BOB_KEY},
+    )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert _BOB_KEY not in response.text
 
 
 def test_rest_credential_routes_require_a_verified_caller(client: TestClient, caller: _Caller) -> None:
     _create_through_api(client)
     caller.principal = None
 
-    response = client.put("/api/targets/personal/credentials", json={"credential": _BOB_KEY})
+    response = client.put("/api/targets/caller/credentials", json={"credential": _BOB_KEY})
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
-def test_rest_set_credential_requires_one_backend_process(client: TestClient, caller: _Caller) -> None:
+def test_rest_target_deletion_is_not_offered(client: TestClient, caller: _Caller) -> None:
     _create_through_api(client)
-    runtime = SimpleNamespace(
+
+    response = client.delete("/api/targets/caller")
+
+    assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+    assert client.get("/api/targets/caller").status_code == status.HTTP_200_OK
+
+
+def _single_process_unsupported_runtime() -> SimpleNamespace:
+    return SimpleNamespace(
         is_stopping=False,
         state="ready",
         topology_supported=False,
-        target_cleanup_active=False,
         operations=set(),
         management_operations=set(),
         apply_task=None,
     )
 
-    with patch.object(app.state, "runtime_lifecycle", runtime, create=True):
-        response = client.put("/api/targets/personal/credentials", json={"credential": _BOB_KEY})
+
+def test_rest_set_credential_requires_one_backend_process(client: TestClient, caller: _Caller) -> None:
+    _create_through_api(client)
+
+    with patch.object(app.state, "runtime_lifecycle", _single_process_unsupported_runtime(), create=True):
+        response = client.put("/api/targets/caller/credentials", json={"credential": _BOB_KEY})
 
     assert response.status_code == status.HTTP_409_CONFLICT
 
 
-def test_rest_create_personal_target_requires_one_backend_process(client: TestClient, caller: _Caller) -> None:
-    runtime = SimpleNamespace(
-        is_stopping=False,
-        state="ready",
-        topology_supported=False,
-        target_cleanup_active=False,
-        operations=set(),
-        management_operations=set(),
-        apply_task=None,
-    )
-
-    with patch.object(app.state, "runtime_lifecycle", runtime, create=True):
-        personal = client.post(
+def test_rest_create_caller_target_requires_one_backend_process(client: TestClient, caller: _Caller) -> None:
+    with patch.object(app.state, "runtime_lifecycle", _single_process_unsupported_runtime(), create=True):
+        caller_target = client.post(
             "/api/targets",
             json={
-                "name": "personal",
+                "name": "caller",
                 "type": "OpenAIChatTarget",
-                "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY},
-                "requires_caller_credential": True,
+                "params": _TARGET_PARAMS,
+                "auth_mode": "caller",
+                "credential": _ALICE_KEY,
             },
         )
         shared = client.post(
@@ -582,43 +513,7 @@ def test_rest_create_personal_target_requires_one_backend_process(client: TestCl
             json={"name": "shared", "type": "OpenAIChatTarget", "params": {**_TARGET_PARAMS, "api_key": _ALICE_KEY}},
         )
 
-    assert personal.status_code == status.HTTP_409_CONFLICT
-    assert _ALICE_KEY not in personal.text
+    assert caller_target.status_code == status.HTTP_409_CONFLICT
+    assert _ALICE_KEY not in caller_target.text
     assert shared.status_code == status.HTTP_201_CREATED
-    assert get_target_service().get_target_object(target_registry_name="personal") is None
-    assert len(get_caller_credential_store()) == 0
-
-
-def test_rest_delete_target_in_use_returns_conflict(client: TestClient, caller: _Caller) -> None:
-    _create_through_api(client)
-    scorer = client.post(
-        "/api/scorers",
-        json={
-            "name": "refusal",
-            "type": "SelfAskRefusalScorer",
-            "params": {"chat_target": "personal"},
-            "register": True,
-        },
-    )
-    assert scorer.status_code == status.HTTP_201_CREATED
-
-    response = client.delete("/api/targets/personal")
-
-    assert response.status_code == status.HTTP_409_CONFLICT
-    assert "scorer 'refusal'" in response.json()["detail"]
-    assert client.get("/api/targets/personal").status_code == status.HTTP_200_OK
-
-
-def test_rest_delete_target_is_limited_to_its_creator(client: TestClient, caller: _Caller) -> None:
-    _create_through_api(client)
-
-    caller.principal = _BOB
-    forbidden = client.delete("/api/targets/personal")
-    caller.principal = _ALICE
-    deleted = client.delete("/api/targets/personal")
-    missing = client.get("/api/targets/personal")
-
-    assert forbidden.status_code == status.HTTP_403_FORBIDDEN
-    assert deleted.status_code == status.HTTP_204_NO_CONTENT
-    assert missing.status_code == status.HTTP_404_NOT_FOUND
-    assert client.delete("/api/targets/personal").status_code == status.HTTP_404_NOT_FOUND
+    assert get_target_service().get_target_object(target_registry_name="caller") is None

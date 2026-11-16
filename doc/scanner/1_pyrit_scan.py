@@ -313,23 +313,23 @@ MyCustomScenario()
 # ```
 
 # %% [markdown]
-# ## Using Your Own Token for a Target
+# ## Using Your Own Key for a Target
 #
-# Most targets are shared and use the server's credentials, such as its managed identity. When a provider requires a personal token, make a personal copy of a target. The copy keeps the original's configuration, including settings an initializer made, but uses only your own credential, and nobody else can send requests with it. The credential comes from a hidden prompt (`--prompt`), an environment variable (`--from-env VAR`), or the Anthropic `ant` CLI (`--from-ant`); it is never a command-line value.
+# Most targets are shared and use the server's credentials, such as its managed identity. A target created with `auth_mode` `caller` uses each person's own key instead: `list-targets` shows it as `Account: Yours`, and you set your key before using it. The key comes from a hidden prompt (`--prompt`), an environment variable (`--from-env VAR`), or the Anthropic `ant` CLI (`--from-ant`); it is never a command-line value.
 #
 # ```shell
 # # One-time sign-in to the Claude Console for a workspace
 # ant auth login --profile copyrit --workspace-id <workspace_id>
 #
-# # Copy a shared target, set your token, and re-send a fresh one every 15 minutes until Ctrl+C
-# pyrit_scan add-personal-target my-claude --from claude_shared --from-ant --ant-profile copyrit --keep-fresh
+# # Set your token for a target, and re-send a fresh one every 15 minutes until Ctrl+C
+# pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
 #
-# # Or set an API key on an existing personal target, and remove it again
-# pyrit_scan set-target-credential my-claude --from-env ANTHROPIC_API_KEY
-# pyrit_scan remove-target-credential my-claude
+# # Or set an API key, and remove it again
+# pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
+# pyrit_scan remove-target-credential claude
 # ```
 #
-# `--set KEY=VALUE` overrides constructor settings on the copy, such as `--set temperature=0.3`; only an administrator can change where the copy sends requests, such as its `endpoint`. `list-targets` shows which targets are personal and whether you have set your credential. A personal target and its credentials live only in the backend's memory, so a backend restart or reinitialization removes them: run `add-personal-target` again afterward. `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone.
+# Keys live only in the backend's memory, so a backend restart or reinitialization removes them; set yours again afterward. `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone.
 
 # %% [markdown]
 # ## Stopping the Backend Server

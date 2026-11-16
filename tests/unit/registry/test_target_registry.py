@@ -365,7 +365,12 @@ class TestClassMetadata:
 
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
         # Identity-capable targets expose their modes; api-key-only targets expose one.
-        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity", "none")
+        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == (
+            "api_key",
+            "identity",
+            "none",
+            "caller",
+        )
         assert self._metadata_for(registry, "GitHubCopilotTarget").supported_auth_modes == ("api_key",)
 
     def test_metadata_supported_auth_modes_empty_for_credential_free_target(self, registry: TargetRegistry):
@@ -376,7 +381,7 @@ class TestClassMetadata:
         # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.
         meta = self._metadata_for(registry, "OpenAIChatTarget")
         assert "supported_auth_modes" in meta.class_attributes
-        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity", "none")
+        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity", "none", "caller")
 
     @pytest.mark.usefixtures("patch_central_database")
     def test_instance_registration_does_not_invalidate_class_metadata(self, registry: TargetRegistry) -> None:

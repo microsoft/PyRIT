@@ -9,84 +9,58 @@ import pickle
 import pytest
 
 from pyrit.auth import (
+    CallerCredential,
     CallerCredentialRequiredError,
-    CallerCredentialStore,
     caller_principal_context,
     caller_principal_scope,
-    create_caller_credential_provider,
     ensure_async_token_provider,
     get_caller_principal,
-    is_caller_credential_provider,
+    resolve_caller_credential,
+    validate_token_provider_headers,
 )
 
 _SECRET = "fake-secret-marker"
 
 
-@pytest.fixture
-def store() -> CallerCredentialStore:
-    return CallerCredentialStore()
+def test_set_replace_and_check_one_callers_key() -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential="first")
+    credential.set_credential(principal="alice", credential="second")
+
+    assert credential.has_credential(principal="alice")
+    assert not credential.has_credential(principal="bob")
 
 
-def test_store_set_get_and_replace(store: CallerCredentialStore) -> None:
-    store.set_credential(principal="alice", credential_id="target", credential="first")
-    store.set_credential(principal="alice", credential_id="target", credential="second")
-
-    assert store.get_credential(principal="alice", credential_id="target") == "second"
-    assert store.has_credential(principal="alice", credential_id="target")
-    assert not store.has_credential(principal="bob", credential_id="target")
-    assert len(store) == 1
-
-
-@pytest.mark.parametrize("credential", ["", "   ", None, 123])
-def test_store_rejects_blank_or_non_string_credentials(store: CallerCredentialStore, credential: object) -> None:
+@pytest.mark.parametrize("value", ["", "   ", None, 123])
+def test_set_credential_rejects_blank_or_non_string_keys(value: object) -> None:
     with pytest.raises(ValueError, match="nonempty string"):
-        store.set_credential(principal="alice", credential_id="target", credential=credential)  # type: ignore[arg-type]
+        CallerCredential().set_credential(principal="alice", credential=value)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(("principal", "credential_id"), [("", "target"), ("alice", "")])
-def test_store_requires_principal_and_credential_id(
-    store: CallerCredentialStore, principal: str, credential_id: str
-) -> None:
-    with pytest.raises(ValueError, match="principal and credential ID"):
-        store.set_credential(principal=principal, credential_id=credential_id, credential="value")
+def test_set_credential_requires_a_principal() -> None:
+    with pytest.raises(ValueError, match="principal is required"):
+        CallerCredential().set_credential(principal="", credential="value")
 
 
-def test_store_remove_credential_only_affects_one_caller(store: CallerCredentialStore) -> None:
-    store.set_credential(principal="alice", credential_id="target", credential="a")
-    store.set_credential(principal="bob", credential_id="target", credential="b")
+def test_remove_credential_only_affects_one_caller() -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential="a")
+    credential.set_credential(principal="bob", credential="b")
 
-    assert store.remove_credential(principal="alice", credential_id="target")
-    assert not store.remove_credential(principal="alice", credential_id="target")
-    assert store.get_credential(principal="bob", credential_id="target") == "b"
-
-
-def test_store_remove_credential_id_forgets_every_caller(store: CallerCredentialStore) -> None:
-    store.set_credential(principal="alice", credential_id="target", credential="a")
-    store.set_credential(principal="bob", credential_id="target", credential="b")
-    store.set_credential(principal="alice", credential_id="other", credential="c")
-
-    store.remove_credential_id("target")
-
-    assert len(store) == 1
-    assert store.get_credential(principal="alice", credential_id="other") == "c"
+    assert credential.remove_credential(principal="alice")
+    assert not credential.remove_credential(principal="alice")
+    assert credential.has_credential(principal="bob")
 
 
-def test_store_clear(store: CallerCredentialStore) -> None:
-    store.set_credential(principal="alice", credential_id="target", credential="a")
+def test_credential_never_reveals_or_duplicates_keys() -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential=_SECRET)
 
-    store.clear()
-
-    assert len(store) == 0
-
-
-def test_store_never_reveals_or_duplicates_credentials(store: CallerCredentialStore) -> None:
-    store.set_credential(principal="alice", credential_id="target", credential=_SECRET)
-
-    assert _SECRET not in repr(store)
-    assert copy.copy(store) is store
-    assert copy.deepcopy({"store": store})["store"] is store
+    assert _SECRET not in repr(credential)
+    assert copy.copy(credential) is credential
+    assert copy.deepcopy({"credential": credential})["credential"] is credential
     with pytest.raises(TypeError, match="cannot be serialized"):
-        pickle.dumps(store)
+        pickle.dumps(credential)
 
 
 def test_caller_principal_scope_sets_and_restores() -> None:
@@ -112,78 +86,101 @@ async def test_caller_principal_context_overrides_inherited_caller_async() -> No
     assert (inherited, replaced, cleared) == ("alice", "bob", None)
 
 
-async def test_provider_returns_each_callers_own_credential_async(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
-    store.set_credential(principal="alice", credential_id="target", credential="alice-key")
-    store.set_credential(principal="bob", credential_id="target", credential="bob-key")
+async def test_get_credential_returns_each_callers_own_key_async() -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential="alice-key")
+    credential.set_credential(principal="bob", credential="bob-key")
 
     with caller_principal_scope("alice"):
-        alice_key = await provider()
+        alice_key = await credential.get_credential_async()
     with caller_principal_scope("bob"):
-        bob_key = await provider()
+        bob_key = await credential.get_credential_async()
 
     assert (alice_key, bob_key) == ("alice-key", "bob-key")
 
 
-async def test_provider_reads_replacement_on_next_call_async(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
-    store.set_credential(principal="alice", credential_id="target", credential="old")
+async def test_get_credential_reads_a_replaced_key_on_the_next_call_async() -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential="old")
 
     with caller_principal_scope("alice"):
-        first = await provider()
-        store.set_credential(principal="alice", credential_id="target", credential="new")
-        second = await provider()
+        first = await credential.get_credential_async()
+        credential.set_credential(principal="alice", credential="new")
+        second = await credential.get_credential_async()
 
     assert (first, second) == ("old", "new")
 
 
-async def test_provider_without_caller_fails_closed_async(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
-    store.set_credential(principal="alice", credential_id="target", credential="alice-key")
+async def test_get_credential_without_a_caller_fails_closed_async() -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential="alice-key")
 
-    with pytest.raises(CallerCredentialRequiredError, match="no caller identity"):
-        await provider()
-
-
-async def test_provider_without_callers_credential_fails_closed_async(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
-    store.set_credential(principal="alice", credential_id="target", credential=_SECRET)
-
-    with caller_principal_scope("bob"), pytest.raises(CallerCredentialRequiredError) as exc_info:
-        await provider()
-
-    assert "'shared'" in str(exc_info.value)
-    assert _SECRET not in str(exc_info.value)
+    with pytest.raises(CallerCredentialRequiredError, match="no signed-in caller"):
+        await credential.get_credential_async()
 
 
-async def test_provider_after_removal_fails_closed_async(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
-    store.set_credential(principal="alice", credential_id="target", credential="alice-key")
-    store.remove_credential_id("target")
+@pytest.mark.parametrize("remove", [False, True])
+async def test_get_credential_without_the_callers_key_fails_closed_async(remove: bool) -> None:
+    credential = CallerCredential()
+    credential.set_credential(principal="alice", credential=_SECRET)
+    if remove:
+        credential.remove_credential(principal="alice")
 
-    with caller_principal_scope("alice"), pytest.raises(CallerCredentialRequiredError):
-        await provider()
+    with caller_principal_scope("alice" if remove else "bob"), pytest.raises(CallerCredentialRequiredError) as exc:
+        await credential.get_credential_async()
+
+    assert "have not set yours" in str(exc.value)
+    assert _SECRET not in str(exc.value)
 
 
-def test_provider_is_an_async_token_provider(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
+def test_get_credential_is_an_async_token_provider() -> None:
+    provider = CallerCredential().get_credential_async
 
     assert inspect.iscoroutinefunction(provider)
     assert ensure_async_token_provider(provider) is provider
-    assert copy.deepcopy(provider) is provider
 
 
-def test_only_caller_credential_providers_are_recognized(store: CallerCredentialStore) -> None:
-    provider = create_caller_credential_provider(store=store, credential_id="target", component_name="shared")
+@pytest.mark.parametrize(
+    ("principal", "has_key", "missing"), [(None, False, False), ("alice", False, True), ("alice", True, False)]
+)
+def test_is_missing_for_current_caller(principal: str | None, has_key: bool, missing: bool) -> None:
+    credential = CallerCredential()
+    if has_key:
+        credential.set_credential(principal="alice", credential="alice-key")
 
-    async def own_provider() -> str:
-        return "own-key"
+    with caller_principal_scope(principal):
+        assert credential.is_missing_for_current_caller() is missing
 
-    assert is_caller_credential_provider(provider)
-    assert is_caller_credential_provider(ensure_async_token_provider(provider))
-    assert is_caller_credential_provider(copy.deepcopy(provider))
-    assert not is_caller_credential_provider(own_provider)
-    assert not is_caller_credential_provider(ensure_async_token_provider(lambda: "own-key"))
-    assert not is_caller_credential_provider("own-key")
-    assert not is_caller_credential_provider(None)
-    assert not is_caller_credential_provider({"api_key": "own-key"})
+
+def test_resolve_caller_credential_creates_or_reuses_a_credential_for_caller_mode() -> None:
+    existing = CallerCredential()
+
+    created = resolve_caller_credential(auth_mode="caller", api_key=None)
+
+    assert isinstance(created, CallerCredential)
+    assert created is not existing
+    assert resolve_caller_credential(auth_mode="caller", api_key=existing) is existing
+
+
+@pytest.mark.parametrize("api_key", ["a-key", lambda: "a-token"])
+def test_resolve_caller_credential_rejects_a_key_in_caller_mode(api_key: object) -> None:
+    with pytest.raises(ValueError, match="cannot be combined with an explicit api_key"):
+        resolve_caller_credential(auth_mode="caller", api_key=api_key)
+
+
+@pytest.mark.parametrize("auth_mode", ["api_key", "identity", "none"])
+def test_resolve_caller_credential_is_none_for_other_modes(auth_mode: str) -> None:
+    assert resolve_caller_credential(auth_mode=auth_mode, api_key="a-key") is None
+    with pytest.raises(ValueError, match='requires auth_mode="caller"'):
+        resolve_caller_credential(auth_mode=auth_mode, api_key=CallerCredential())
+
+
+@pytest.mark.parametrize("header", ["Authorization", "proxy-authorization", "api-key", "X-API-Key", "x-goog-api-key"])
+def test_validate_token_provider_headers_rejects_static_authentication(header: str) -> None:
+    with pytest.raises(ValueError, match="Static authentication headers"):
+        validate_token_provider_headers({header: "value"})
+
+
+def test_validate_token_provider_headers_allows_other_headers() -> None:
+    validate_token_provider_headers(None)
+    validate_token_provider_headers({"x-request-source": "pyrit"})

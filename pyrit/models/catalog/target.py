@@ -72,10 +72,15 @@ class TargetInstance(BaseModel):
     )
     requires_caller_credential: bool = Field(
         False,
-        description="Whether each caller must set their own credential before using this target",
+        description=(
+            "Whether the target uses each caller's own key (auth_mode 'caller') rather than the server's "
+            "shared credentials"
+        ),
     )
-    caller_credential_configured: bool = Field(
-        False,
-        description="Whether the requesting caller has set their own credential for this target",
+    caller_credential_configured: bool | None = Field(
+        None,
+        description=(
+            "Whether the requesting caller has set their own key for this target; null for a target that uses "
+            "shared credentials or when the request has no signed-in caller"
+        ),
     )
-    can_delete: bool = Field(False, description="Whether the requesting caller may delete this target")

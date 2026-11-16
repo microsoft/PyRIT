@@ -83,6 +83,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
+        requires_caller_credential=target_obj.caller_credential is not None,
     )
 
 

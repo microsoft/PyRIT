@@ -24,7 +24,6 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
-from pyrit.backend.services.target_service import TargetInUseError
 from pyrit.models.catalog import TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 
@@ -43,7 +42,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
     },
 )
 async def detect_capabilities_async(
-    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest
+    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest, request: Request
 ) -> TargetInstance:
     """
     Run live checks and automatically update a registered target.
@@ -53,7 +52,9 @@ async def detect_capabilities_async(
     """
     try:
         return await get_target_service().detect_capabilities_async(
-            target_registry_name=target_registry_name, expected_hash=body.expected_hash
+            target_registry_name=target_registry_name,
+            expected_hash=body.expected_hash,
+            caller=caller_principal(request),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -85,7 +86,7 @@ def _target_upload_directory(request: Request) -> str | None:
 
 def _require_single_process(request: Request) -> None:
     """
-    Reject caller credentials when requests may reach a backend process that does not hold them.
+    Refuse callers' keys when requests may reach a backend process that does not hold them.
 
     Raises:
         HTTPException: 409 when the deployment runs more than one backend worker or replica.
@@ -94,7 +95,7 @@ def _require_single_process(request: Request) -> None:
     if runtime is not None and not runtime.topology_supported:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Caller credentials are kept in one backend process and require one backend worker and one replica.",
+            detail="Callers' own keys are kept in one backend process and require one backend worker and one replica.",
         )
 
 
@@ -120,8 +121,8 @@ async def list_targets(  # pyrit-async-suffix-exempt
     """
     List target instances with pagination.
 
-    Returns paginated target instances, including whether the caller has set their own
-    credential for targets that require one.
+    Returns paginated target instances, including whether the caller has set their own key
+    for targets that use each caller's own key.
 
     Returns:
         TargetListResponse: Paginated list of target instances.
@@ -159,12 +160,12 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         },
         403: {
             "model": ProblemDetail,
-            "description": "Administrator access is required to run model repository code, to use the "
-            "server's stored credentials, or to change a personal copy's destination",
+            "description": "Administrator access is required to run model repository code or to use the "
+            "server's stored credentials",
         },
         409: {
             "model": ProblemDetail,
-            "description": "Caller credentials require one backend worker and one replica",
+            "description": "Callers' own keys require one backend worker and one replica",
         },
     },
 )
@@ -180,13 +181,13 @@ async def create_target(
     optional; unregistered responses contain no reusable object handle.
 
     Note: Sensitive parameters (API keys, tokens) are filtered from the response. With
-    ``requires_caller_credential``, a supported target keeps no submitted ``api_key``: it is
-    stored only for this caller, and other callers must set their own credential to use it.
+    ``auth_mode`` ``caller``, the target keeps no key: ``credential`` is stored only for this
+    caller, and other callers set their own key to use it.
 
     Returns:
         TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
     """
-    if body.requires_caller_credential:
+    if body.auth_mode == "caller":
         _require_single_process(request)
     service = get_target_service()
 
@@ -241,52 +242,11 @@ async def get_target(
     return target
 
 
-@router.delete(
-    "/{target_registry_name}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    responses={
-        403: {"model": ProblemDetail, "description": "Only the caller who created the target can delete it"},
-        404: {"model": ProblemDetail, "description": "Target not found"},
-        409: {
-            "model": ProblemDetail,
-            "description": "Runtime work is active, or a registered component uses the target",
-        },
-    },
-)
-async def delete_target(
-    *,
-    target_registry_name: IdentifierStr,
-    request: Request,
-) -> Response:  # pyrit-async-suffix-exempt
-    """
-    Delete a target the caller created through the API.
-
-    Deletion requires an idle runtime and no registered target, scorer, converter, or technique
-    that uses the target. Target resources are closed before every caller's credential is
-    forgotten. Upstream credentials are not revoked.
-
-    Returns:
-        Response: An empty 204 response.
-
-    Raises:
-        HTTPException: 404 if the target is not registered, or 409 if a registered component uses it.
-    """
-    try:
-        deleted = await get_target_service().delete_target_async(
-            target_registry_name=target_registry_name, caller=caller_principal(request)
-        )
-    except TargetInUseError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    if not deleted:
-        raise _target_not_found(target_registry_name)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
 @router.put(
     "/{target_registry_name}/credentials",
     response_model=TargetInstance,
     responses={
-        400: {"model": ProblemDetail, "description": "The target does not accept caller credentials"},
+        400: {"model": ProblemDetail, "description": "The target uses shared credentials"},
         403: {"model": ProblemDetail, "description": "No verified caller identity"},
         404: {"model": ProblemDetail, "description": "Target not found"},
         409: {"model": ProblemDetail, "description": "The deployment runs more than one backend process"},
@@ -299,10 +259,10 @@ async def set_target_credential(
     request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
-    Set or replace the caller's own credential for a target.
+    Set or replace the caller's own key for a target that uses each caller's own key.
 
-    The credential is kept only in this backend process's memory and is never returned. It
-    applies to the caller's next request through the target, including running work.
+    The key is kept only in this backend process's memory and is never returned. It applies
+    to the caller's next request through the target, including running work.
 
     Returns:
         TargetInstance: The target as seen by the caller.
@@ -322,7 +282,7 @@ async def set_target_credential(
     "/{target_registry_name}/credentials",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
-        400: {"model": ProblemDetail, "description": "The target does not accept caller credentials"},
+        400: {"model": ProblemDetail, "description": "The target uses shared credentials"},
         403: {"model": ProblemDetail, "description": "No verified caller identity"},
         404: {"model": ProblemDetail, "description": "Target not found"},
     },
@@ -333,7 +293,7 @@ async def delete_target_credential(
     request: Request,
 ) -> Response:  # pyrit-async-suffix-exempt
     """
-    Remove the caller's own credential for a target.
+    Remove the caller's own key for a target that uses each caller's own key.
 
     Returns:
         Response: An empty 204 response.

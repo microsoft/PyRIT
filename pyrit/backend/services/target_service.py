@@ -21,7 +21,7 @@ from functools import lru_cache
 from typing import Any
 from weakref import WeakKeyDictionary
 
-from pyrit.auth import CallerCredentialStore, create_caller_credential_provider
+from pyrit.auth import CallerCredential
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
     CreateTargetRequest,
@@ -35,7 +35,7 @@ from pyrit.backend.models.targets import (
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
-from pyrit.models import ComponentIdentifier, Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
+from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
@@ -49,13 +49,7 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
     CapabilityDiscoveryError,
 )
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    ConverterRegistry,
-    RegistryEntry,
-    ScorerRegistry,
-    TargetRegistry,
-)
+from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +66,6 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 _AUTH_MODE_PARAM = "auth_mode"
 
 
-class TargetInUseError(RuntimeError):
-    """A registered component still uses the target, so it can't be deleted."""
-
-
 class TargetService:
     """
     Service for managing target instances.
@@ -84,21 +74,15 @@ class TargetService:
     parameter coercion, reference resolution, and construction. Endpoint
     validation remains owned by the target classes.
 
-    A registered target created with ``requires_caller_credential`` holds no secret. A
-    submitted key is stored for its caller, and the target gets a provider that returns the
-    current caller's own credential on every request, so every other caller must set their
-    own before using it. Targets created without that option stay shared.
+    A target created with ``auth_mode="caller"`` uses each caller's own key. It keeps no key; each
+    caller sets their own, which the target holds only for that caller's requests.
     """
-
-    CREATED_BY_METADATA_KEY = "created_by"
-    CALLER_CREDENTIAL_ID_METADATA_KEY = "caller_credential_id"
 
     DETECTION_TIMEOUT_SECONDS: float = 240.0
 
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
-        self._credentials = get_caller_credential_store()
         self._detecting: set[str] = set()
         self._detecting_sources: set[int] = set()
         self._legacy_binding_capabilities: WeakKeyDictionary[PromptTarget, TargetCapabilities] = WeakKeyDictionary()
@@ -135,12 +119,20 @@ class TargetService:
         with target.capabilities_scope(capabilities):
             yield
 
-    async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
+    async def detect_capabilities_async(
+        self, *, target_registry_name: str, expected_hash: str, caller: str | None = None
+    ) -> TargetInstance:
         """
         Probe private targets and apply a completed result to the selected source.
 
         Round-robin detection probes each child independently and combines their
         results. Only the selected parent is updated; live children are not changed.
+
+        Args:
+            target_registry_name: The registry name of the target.
+            expected_hash: The identifier hash the caller last saw for the target.
+            caller: Principal of the requesting caller, used to report whether they have set their own
+                key. Defaults to None.
 
         Returns:
             TargetInstance: The updated live target.
@@ -194,7 +186,9 @@ class TargetService:
                     )
                 self._legacy_binding_capabilities.setdefault(target, target.capabilities)
                 target.apply_capabilities(capabilities=capabilities)
-                return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target)
+                return self._build_instance_for_caller(
+                    target_registry_name=target_registry_name, target_obj=target, caller=caller
+                )
         finally:
             self._detecting.discard(target_registry_name)
             self._detecting_sources.difference_update(source_ids)
@@ -228,38 +222,32 @@ class TargetService:
         """
         return target_object_to_instance(target_registry_name, target_obj)
 
-    def _build_instance_from_entry(self, *, entry: RegistryEntry[PromptTarget], caller: str | None) -> TargetInstance:
-        """
-        Build a TargetInstance that also reports the caller's credential and management access.
-
-        Returns:
-            TargetInstance: The registered target as seen by the caller.
-        """
-        instance = self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
-        return self._with_caller_access(instance=instance, metadata=entry.metadata, caller=caller)
-
-    def _with_caller_access(
-        self, *, instance: TargetInstance, metadata: dict[str, Any], caller: str | None
+    def _build_instance_for_caller(
+        self, *, target_registry_name: str, target_obj: PromptTarget, caller: str | None
     ) -> TargetInstance:
         """
-        Add the caller's credential and management access to a target description.
+        Build a TargetInstance that also reports whether the caller has set their own key.
 
         Returns:
-            TargetInstance: A copy with caller-specific access fields set.
+            TargetInstance: The target as seen by the caller.
         """
-        credential_id = metadata.get(self.CALLER_CREDENTIAL_ID_METADATA_KEY)
-        configured = (
-            caller is not None
-            and credential_id is not None
-            and self._credentials.has_credential(principal=caller, credential_id=credential_id)
-        )
-        return instance.model_copy(
-            update={
-                "requires_caller_credential": credential_id is not None,
-                "caller_credential_configured": configured,
-                "can_delete": caller is not None and metadata.get(self.CREATED_BY_METADATA_KEY) == caller,
-            }
-        )
+        instance = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+        return self._with_caller_status(instance=instance, target_obj=target_obj, caller=caller)
+
+    @staticmethod
+    def _with_caller_status(
+        *, instance: TargetInstance, target_obj: PromptTarget, caller: str | None
+    ) -> TargetInstance:
+        """
+        Report whether the caller has set their own key for a target that uses each caller's own key.
+
+        Returns:
+            TargetInstance: The description, with ``caller_credential_configured`` set when it applies.
+        """
+        credential = target_obj.caller_credential
+        if credential is None or caller is None:
+            return instance
+        return instance.model_copy(update={"caller_credential_configured": credential.has_credential(principal=caller)})
 
     async def list_targets_async(
         self,
@@ -274,14 +262,14 @@ class TargetService:
         Args:
             limit: Maximum items to return.
             cursor: Pagination cursor (target_registry_name to start after).
-            caller: Principal of the requesting caller, used to report their credential and
-                management access. Defaults to None.
+            caller: Principal of the requesting caller, used to report whether they have set their own
+                key. Defaults to None.
 
         Returns:
             TargetListResponse containing paginated targets.
         """
         items = [
-            self._build_instance_from_entry(entry=entry, caller=caller)
+            self._build_instance_for_caller(target_registry_name=entry.name, target_obj=entry.instance, caller=caller)
             for entry in self._registry.instances.get_all_instances()
         ]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
@@ -321,16 +309,16 @@ class TargetService:
 
         Args:
             target_registry_name: The registry name of the target.
-            caller: Principal of the requesting caller, used to report their credential and
-                management access. Defaults to None.
+            caller: Principal of the requesting caller, used to report whether they have set their own
+                key. Defaults to None.
 
         Returns:
             TargetInstance if found, None otherwise.
         """
-        entry = self._registry.instances.get_entry(target_registry_name)
-        if entry is None:
+        obj = self._registry.instances.get(target_registry_name)
+        if obj is None:
             return None
-        return self._build_instance_from_entry(entry=entry, caller=caller)
+        return self._build_instance_for_caller(target_registry_name=target_registry_name, target_obj=obj, caller=caller)
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
         """
@@ -464,19 +452,12 @@ class TargetService:
         ]
         return TargetTypeResponse(items=items)
 
-    async def build_from_source_async(
-        self, spec: SourceInstanceSpec, *, server_params: dict[str, object] | None = None
-    ) -> PromptTarget:
+    async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
         """
         Rebuild a private target and verify its saved effective identity.
 
         Overrides may set the target's caller path parameters, as on create, but not
         the upload folder, which only the server sets.
-
-        Args:
-            spec: The source and its external overrides.
-            server_params: Constructor arguments the server chooses, such as a caller credential
-                provider, which replace both source inputs and overrides. Defaults to None.
 
         Returns:
             PromptTarget: The caller-owned target.
@@ -487,7 +468,6 @@ class TargetService:
             params=spec.params,
             external_input=True,
             allowed_path_params=type(source).caller_path_parameters,
-            server_params=server_params,
         )
         if spec.effective_hash:
             legacy_capabilities = self._legacy_binding_capabilities.get(source)
@@ -604,11 +584,9 @@ class TargetService:
         login discovery in CoPyRIT. A target whose construction runs model
         repository code, or that would authenticate with this server's stored
         credentials, is built only for an administrator. A target created with
-        ``requires_caller_credential`` keeps no submitted key: the key is stored for
-        ``caller`` and the target resolves each caller's own credential per request.
-        Without that option, a submitted key stays on the shared target.
-        The response is built before the target is registered, so a failed request
-        leaves no registered target or stored credential.
+        ``caller`` auth keeps no key; the request's ``credential`` is stored only for
+        ``caller``. The response is built before the target is registered, so a failed
+        request leaves no registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -616,25 +594,24 @@ class TargetService:
                 or None when the server configures none.
             is_admin: Whether the caller may create a target that runs model repository code or
                 authenticates with this server's stored credentials.
-            caller: Principal of the requesting caller, recorded as the target's creator and, with
-                ``requires_caller_credential``, as the owner of a submitted credential. Defaults to None.
+            caller: Principal of the requesting caller, who owns the request's ``credential``.
+                Defaults to None.
 
         Returns:
             TargetInstance with the new target's details.
 
         Raises:
             ValueError: If the target type is not registered, ``params`` carries an
-                ``auth_mode`` that conflicts with the request-level choice, identity or
-                no-key auth is requested but unsupported by the target type, a target that
-                uploads local files is requested with its upload folder or while
-                the server configures none, or ``requires_caller_credential`` is requested
-                for an unsupported target, auth mode, or unregistered target. Construction
-                errors (unknown params, incompatible inner targets, unrecognized identity
-                endpoints) are raised by the registry / target classes.
-            PermissionError: If a non-administrator enables a target's model code execution,
+                ``auth_mode`` that conflicts with the request-level choice, identity,
+                no-key, or caller auth is requested but unsupported by the target type, caller
+                auth is requested with ``params.api_key`` or a blank ``credential``, or a target
+                that uploads local files is requested with its upload folder or while
+                the server configures none. Construction errors (unknown params,
+                incompatible inner targets, unrecognized identity endpoints) are
+                raised by the registry / target classes.
+            PermissionError: If a non-administrator enables a target's model code execution, or
                 creates a target that would authenticate with this server's stored credentials,
-                or changes where a personal copy sends requests, or if caller credentials are
-                requested without a verified caller identity.
+                or if a ``credential`` is sent without a verified caller identity.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -673,6 +650,9 @@ class TargetService:
                 raise ValueError(f"Target type '{request.type}' does not support no-key authentication.")
             params.pop("api_key", None)
 
+        if request.auth_mode == "caller":
+            self._validate_caller_auth(target_cls=target_cls, request=request, params=params, caller=caller)
+
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
         self._apply_upload_directory(
             target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
@@ -691,13 +671,14 @@ class TargetService:
                 )
 
         permission_params = params
-        source_inputs: dict[str, object] = {}
         if request.source is not None:
             source = self._registry.resolve_source(
                 name=request.source.source_name, identifier_hash=request.source.source_hash
             )
-            source_inputs = self._registry.get_reconstruction_parameters(source)
-            permission_params = {**source_inputs, **request.source.params}
+            permission_params = {
+                **self._registry.get_reconstruction_parameters(source),
+                **request.source.params,
+            }
         metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
         if metadata is not None:
             missing: list[str] = []
@@ -716,21 +697,6 @@ class TargetService:
         self._enforce_server_credential_permission(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
-        source_spec = request.source
-        if source_spec is not None and request.requires_caller_credential:
-            if _AUTH_MODE_PARAM in source_spec.params:
-                raise ValueError("A personal copy always uses caller credentials; omit auth_mode from source.params.")
-            if not is_admin:
-                self._enforce_personal_copy_destination(
-                    target_cls=target_cls, overrides=source_spec.params, source_inputs=source_inputs
-                )
-            source_spec = source_spec.model_copy(update={"params": dict(source_spec.params)})
-        caller_credential = self._take_caller_credential(
-            target_cls=target_cls,
-            request=request,
-            params=source_spec.params if source_spec is not None else params,
-            caller=caller,
-        )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
@@ -747,19 +713,14 @@ class TargetService:
             is not target_cls
         ):
             raise ValueError("The source target type does not match the requested type")
-        credential_id = uuid.uuid4().hex if request.requires_caller_credential else None
-        server_params = self._caller_credential_server_params(
-            target_cls=target_cls, credential_id=credential_id, target_registry_name=target_registry_name
-        )
         target_obj = (
-            await self.build_from_source_async(source_spec, server_params=server_params)
-            if source_spec
+            await self.build_from_source_async(request.source)
+            if request.source
             else await self._registry.create_instance_async(
                 name=request.type,
                 params=params,
                 external_input=True,
                 allowed_path_params=self._allowed_path_params(target_cls=target_cls),
-                server_params=server_params,
             )
         )
         if not request.register:
@@ -771,56 +732,78 @@ class TargetService:
                 )
             finally:
                 await release_component_async(target_obj)
-        metadata: dict[str, Any] = {}
-        if caller is not None:
-            metadata[self.CREATED_BY_METADATA_KEY] = caller
-        if credential_id is not None:
-            metadata[self.CALLER_CREDENTIAL_ID_METADATA_KEY] = credential_id
         try:
             target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-            self._registry.instances.register(target_obj, name=target_registry_name, metadata=metadata)
+            self._registry.instances.register(target_obj, name=target_registry_name)
         except Exception:
             await release_component_async(target_obj)
             raise
-        if caller_credential is not None and caller is not None and credential_id is not None:
-            self._credentials.set_credential(
-                principal=caller, credential_id=credential_id, credential=caller_credential
+        credential = target_obj.caller_credential
+        if credential is not None and request.credential is not None and caller is not None:
+            credential.set_credential(principal=caller, credential=request.credential.get_secret_value())
+        return self._with_caller_status(instance=target, target_obj=target_obj, caller=caller)
+
+    @staticmethod
+    def _validate_caller_auth(
+        *, target_cls: type[PromptTarget], request: CreateTargetRequest, params: dict[str, Any], caller: str | None
+    ) -> None:
+        """
+        Check a request for a target that uses each caller's own key, and drop an empty ``api_key``.
+
+        Raises:
+            ValueError: If the target type doesn't support caller auth, ``params`` carries a key, or the
+                ``credential`` is blank.
+            PermissionError: If a ``credential`` is sent without a verified caller identity.
+        """
+        if "caller" not in target_cls.supported_auth_modes:
+            raise ValueError(f"Target type '{request.type}' does not support each caller's own key.")
+        if params.pop("api_key", None) not in (None, ""):
+            raise ValueError(
+                "A target that uses each caller's own key keeps no key. Send your own key in 'credential', "
+                "not in params.api_key."
             )
-        return self._with_caller_access(instance=target, metadata=metadata, caller=caller)
+        if request.credential is None:
+            return
+        if caller is None:
+            raise PermissionError("A verified caller identity is required to set your own key.")
+        if not request.credential.get_secret_value().strip():
+            raise ValueError("credential must be a nonempty string.")
 
     async def set_caller_credential_async(
         self, *, target_registry_name: str, caller: str | None, credential: str
     ) -> TargetInstance | None:
         """
-        Set or replace the caller's own credential for a target.
+        Set or replace the caller's own key for a target that uses each caller's own key.
 
-        The target and its configuration are unchanged. The new credential applies to the
-        caller's next request through the target, including requests of work already running.
+        The target and its configuration are unchanged. The new key applies to the caller's next
+        request through the target, including requests of work already running.
 
         Args:
             target_registry_name: The registry name of the target.
             caller: Principal of the requesting caller.
-            credential: The caller's credential.
+            credential: The caller's key.
 
         Returns:
             TargetInstance | None: The target as seen by the caller, or None if it is not registered.
 
         Raises:
-            ValueError: If the target does not accept caller credentials or the credential is empty.
+            ValueError: If the target uses shared credentials, or the key is blank.
             PermissionError: If the request has no verified caller identity.
         """
-        entry = self._registry.instances.get_entry(target_registry_name)
-        if entry is None:
+        target_obj = self._registry.instances.get(target_registry_name)
+        if target_obj is None:
             return None
         principal = self._require_caller(caller)
-        self._credentials.set_credential(
-            principal=principal, credential_id=self._caller_credential_id(entry), credential=credential
+        self._caller_credential_of(target_registry_name=target_registry_name, target_obj=target_obj).set_credential(
+            principal=principal, credential=credential
         )
-        return self._build_instance_from_entry(entry=entry, caller=principal)
+        return self._build_instance_for_caller(
+            target_registry_name=target_registry_name, target_obj=target_obj, caller=principal
+        )
 
     async def remove_caller_credential_async(self, *, target_registry_name: str, caller: str | None) -> bool:
         """
-        Remove the caller's own credential for a target.
+        Remove the caller's own key for a target that uses each caller's own key.
 
         Args:
             target_registry_name: The registry name of the target.
@@ -828,87 +811,25 @@ class TargetService:
 
         Returns:
             bool: False if the target is not registered; otherwise True, whether or not the caller
-                had set a credential.
+                had set a key.
 
         Raises:
-            ValueError: If the target does not accept caller credentials.
+            ValueError: If the target uses shared credentials.
             PermissionError: If the request has no verified caller identity.
         """
-        entry = self._registry.instances.get_entry(target_registry_name)
-        if entry is None:
+        target_obj = self._registry.instances.get(target_registry_name)
+        if target_obj is None:
             return False
-        self._credentials.remove_credential(
-            principal=self._require_caller(caller), credential_id=self._caller_credential_id(entry)
+        principal = self._require_caller(caller)
+        self._caller_credential_of(target_registry_name=target_registry_name, target_obj=target_obj).remove_credential(
+            principal=principal
         )
         return True
-
-    async def delete_target_async(self, *, target_registry_name: str, caller: str | None) -> bool:
-        """
-        Unregister a target its caller created through the API, and forget all callers' credentials for it.
-
-        The API admission barrier requires an idle runtime and blocks new work until cleanup
-        finishes. Direct service callers must provide the same exclusive ownership.
-
-        Args:
-            target_registry_name: The registry name of the target.
-            caller: Principal of the requesting caller.
-
-        Returns:
-            bool: True if the target was deleted, False if it is not registered.
-
-        Raises:
-            PermissionError: If the caller did not create the target through the API.
-            TargetInUseError: If another registered target, scorer, converter, or technique uses it.
-        """
-        entry = self._registry.instances.get_entry(target_registry_name)
-        if entry is None:
-            return False
-        if caller is None or entry.metadata.get(self.CREATED_BY_METADATA_KEY) != caller:
-            raise PermissionError("Only the caller who created this target through the API can delete it.")
-        dependents = self._registered_dependents(entry=entry)
-        if dependents:
-            raise TargetInUseError(
-                f"Target '{target_registry_name}' is used by {', '.join(dependents)}. Deleting it would close the "
-                "client those components use, so remove them first."
-            )
-        await release_component_async(entry.instance)
-        if self._registry.instances.unregister(target_registry_name, expected_entry=entry) is None:
-            return False
-        credential_id = entry.metadata.get(self.CALLER_CREDENTIAL_ID_METADATA_KEY)
-        if credential_id is not None:
-            self._credentials.remove_credential_id(credential_id)
-        return True
-
-    def _registered_dependents(self, *, entry: RegistryEntry[PromptTarget]) -> list[str]:
-        """
-        Name the other registered components whose identity records this target.
-
-        A component that holds a target records the target's identifier, as a child or by its hash, in its
-        own identifier. An identical target registered under another name has the same hash, so it is
-        reported too.
-
-        Returns:
-            list[str]: Descriptions such as ``scorer 'refusal'``, grouped by registry and sorted by name.
-        """
-        target_hash = entry.instance.get_identifier().hash
-        registries: tuple[tuple[str, Any], ...] = (
-            ("target", self._registry),
-            ("scorer", ScorerRegistry.get_registry_singleton()),
-            ("converter", ConverterRegistry.get_registry_singleton()),
-            ("technique", AttackTechniqueRegistry.get_registry_singleton()),
-        )
-        return [
-            f"{kind} '{other.name}'"
-            for kind, registry in registries
-            for other in registry.instances.get_all_instances()
-            if other.instance is not entry.instance
-            and _identifier_references(identifier=other.instance.get_identifier(), target_hash=target_hash)
-        ]
 
     @staticmethod
     def _require_caller(caller: str | None) -> str:
         """
-        Require a verified caller identity for caller-owned credentials.
+        Require a verified caller identity for a caller's own key.
 
         Returns:
             str: The caller principal.
@@ -917,117 +838,27 @@ class TargetService:
             PermissionError: If there is no verified caller.
         """
         if caller is None:
-            raise PermissionError("A verified caller identity is required to manage caller credentials.")
+            raise PermissionError("A verified caller identity is required to manage your own key.")
         return caller
 
-    def _caller_credential_id(self, entry: RegistryEntry[PromptTarget]) -> str:
-        """
-        Return the credential slot of a target that accepts caller credentials.
-
-        Returns:
-            str: The target's credential ID.
-
-        Raises:
-            ValueError: If the target was not registered with caller credentials.
-        """
-        credential_id = entry.metadata.get(self.CALLER_CREDENTIAL_ID_METADATA_KEY)
-        if credential_id is None:
-            raise ValueError(
-                f"Target '{entry.name}' is shared and does not use caller credentials. Only targets created with "
-                "requires_caller_credential accept per-caller credentials."
-            )
-        return str(credential_id)
-
     @staticmethod
-    def _take_caller_credential(
-        *,
-        target_cls: type[PromptTarget],
-        request: CreateTargetRequest,
-        params: dict[str, Any],
-        caller: str | None,
-    ) -> str | None:
+    def _caller_credential_of(*, target_registry_name: str, target_obj: PromptTarget) -> CallerCredential:
         """
-        Validate an opt-in to caller credentials and remove the key the target will resolve per caller.
+        Return the credential of a target that uses each caller's own key.
 
         Returns:
-            str | None: The creator's submitted credential, or None when the request does not opt in
-                or submits no key.
+            CallerCredential: The target's credential.
 
         Raises:
-            ValueError: If the target type, auth mode, or registration does not support caller
-                credentials, or the submitted key is not a nonempty string.
-            PermissionError: If the request has no verified caller identity.
+            ValueError: If the target uses shared credentials.
         """
-        if not request.requires_caller_credential:
-            return None
-        parameter_name = target_cls.caller_credential_parameter
-        if parameter_name is None:
-            raise ValueError(f"Target type '{request.type}' does not support requires_caller_credential.")
-        if request.auth_mode != "api_key":
-            raise ValueError("requires_caller_credential requires auth_mode 'api_key'.")
-        if not request.register:
-            raise ValueError("requires_caller_credential applies only to registered targets.")
-        if caller is None:
-            raise PermissionError("A verified caller identity is required to create a target with caller credentials.")
-        credential = params.pop(parameter_name, None)
+        credential = target_obj.caller_credential
         if credential is None:
-            return None
-        if not isinstance(credential, str) or not credential.strip():
-            raise ValueError(f"'{parameter_name}' must be a nonempty string.")
-        return credential
-
-    def _caller_credential_server_params(
-        self, *, target_cls: type[PromptTarget], credential_id: str | None, target_registry_name: str
-    ) -> dict[str, object] | None:
-        """
-        Build the server-side provider that resolves each caller's credential for a new target.
-
-        The provider replaces any credential the target would otherwise inherit, such as a personal
-        copy's source key or managed identity, and the target always authenticates with the key it
-        returns.
-
-        Returns:
-            dict[str, object] | None: Constructor arguments with the provider, or None without a credential.
-        """
-        parameter_name = target_cls.caller_credential_parameter
-        if credential_id is None or parameter_name is None:
-            return None
-        provider = create_caller_credential_provider(
-            store=self._credentials, credential_id=credential_id, component_name=target_registry_name
-        )
-        return {**target_cls.get_auth_mode_parameters(auth_mode="api_key"), parameter_name: provider}
-
-    @staticmethod
-    def _enforce_personal_copy_destination(
-        *, target_cls: type[PromptTarget], overrides: dict[str, Any], source_inputs: dict[str, object]
-    ) -> None:
-        """
-        Keep a non-administrator's personal copy sending where its source sends.
-
-        A copy keeps the source's headers and client settings, which an operator may use for a gateway
-        secret, so only an administrator may point it at another destination (see the target's
-        ``destination_parameters``).
-
-        Args:
-            target_cls (type[PromptTarget]): The copied target's class.
-            overrides (dict[str, Any]): The copy's ``source.params``.
-            source_inputs (dict[str, object]): The source's reconstruction inputs.
-
-        Raises:
-            PermissionError: If an override changes one of the source's destination parameters.
-        """
-        changed = sorted(
-            name
-            for name in target_cls.destination_parameters
-            if name in overrides and overrides[name] != source_inputs.get(name)
-        )
-        if changed:
-            names = ", ".join(f"'{name}'" for name in changed)
-            raise PermissionError(
-                f"A personal copy sends requests where its source does, with the source's headers and client "
-                f"settings, so changing {names} requires administrator access. Create a personal target with your "
-                "own settings to use another address."
+            raise ValueError(
+                f"Target '{target_registry_name}' uses shared credentials and does not take your own key. Only "
+                "targets created with auth_mode 'caller' do."
             )
+        return credential
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool
@@ -1103,53 +934,6 @@ class TargetService:
                 f"credentials and requires administrator access. Create it with 'api_key' authentication and your "
                 f"own '{parameter_name}', or ask an administrator."
             )
-
-
-def _identifier_references(*, identifier: ComponentIdentifier, target_hash: str) -> bool:
-    """
-    Return whether an identifier records another component's hash, as a child or in a parameter.
-
-    Returns:
-        bool: True if ``target_hash`` appears among the identifier's children or parameter values.
-    """
-    return _value_references(value=list(identifier.children.values()), target_hash=target_hash) or _value_references(
-        value=identifier.params, target_hash=target_hash
-    )
-
-
-def _value_references(*, value: object, target_hash: str) -> bool:
-    """
-    Return whether an identifier value is, or contains, ``target_hash``.
-
-    Returns:
-        bool: True if the value is the hash, a component identifier that records it, or a container holding one.
-    """
-    if isinstance(value, ComponentIdentifier):
-        return value.hash == target_hash or _identifier_references(identifier=value, target_hash=target_hash)
-    if isinstance(value, str):
-        return value == target_hash
-    if isinstance(value, dict):
-        return any(_value_references(value=item, target_hash=target_hash) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_value_references(value=item, target_hash=target_hash) for item in value)
-    return False
-
-
-@lru_cache(maxsize=1)
-def get_caller_credential_store() -> CallerCredentialStore:
-    """
-    Get the process-memory store of callers' target credentials.
-
-    Returns:
-        The singleton CallerCredentialStore.
-    """
-    return CallerCredentialStore()
-
-
-def clear_caller_credentials() -> None:
-    """Forget every caller's target credentials, such as when registered targets are replaced."""
-    if get_caller_credential_store.cache_info().currsize:
-        get_caller_credential_store().clear()
 
 
 @lru_cache(maxsize=1)

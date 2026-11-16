@@ -274,7 +274,7 @@ class TestListTargetTypes:
         result = await service.list_target_types_async()
 
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
-        assert openai_entry.supported_auth_modes == ["api_key", "identity", "none"]
+        assert openai_entry.supported_auth_modes == ["api_key", "identity", "none", "caller"]
         azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
         assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
 
@@ -1085,7 +1085,7 @@ class TestCreateTarget:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
         create.assert_awaited_once_with(
-            name="TextTarget", params={}, external_input=True, allowed_path_params=frozenset(), server_params=None
+            name="TextTarget", params={}, external_input=True, allowed_path_params=frozenset()
         )
 
     async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:

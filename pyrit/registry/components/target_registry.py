@@ -113,7 +113,6 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
         params: Mapping[str, object],
         external_input: bool = False,
         allowed_path_params: frozenset[str] = frozenset(),
-        server_params: Mapping[str, object] | None = None,
     ) -> PromptTarget:
         """
         Build a target through its ``create_async``, so slow setup it needs runs off the calling event loop.
@@ -128,9 +127,6 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
                 Defaults to False.
             allowed_path_params (frozenset[str]): External parameters that can name a server file or folder but
                 that the caller has made safe. Defaults to none.
-            server_params (Mapping[str, object] | None): Constructor arguments the server chooses, such as a
-                credential provider. They are never taken from the external caller and replace any external
-                argument with the same name. Defaults to None.
 
         Returns:
             PromptTarget: The new target, not registered.
@@ -148,4 +144,4 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
             seam_base_type=self._seam_base_type(),
             allowed_path_params=allowed_path_params,
         )
-        return await cls.create_async(**{**resolved, **(server_params or {})})
+        return await cls.create_async(**resolved)

@@ -302,7 +302,7 @@ These modules support every component.
 
 **Responsibility**: Authenticate to the external services PyRIT calls, behind a common `Authenticator`. Components get credentials through these helpers instead of handling tokens themselves.
 
-- Caller-supplied credentials (`pyrit.auth.caller_credential`) let a shared component hold a token provider instead of a secret. The provider returns the current caller's own credential, read from an explicitly scoped caller principal and an in-memory store, and fails closed when either is missing. Hosts own identifying callers and scoping work to them; targets own only sending the value they receive.
+- A target with `auth_mode="caller"` holds a `CallerCredential` instead of a key. Before every request it sends the key of the caller in scope (`pyrit.auth.caller_principal_scope`) and fails closed when there is no caller or key. Hosts own identifying callers and scoping work to them; targets own only sending the key they receive.
 
 ## Code Execution (Experimental)
 
@@ -327,7 +327,7 @@ The backend is an adapter, not a second library. It owns HTTP and process concer
 - **Don't add domain models.** `pyrit/backend/models` holds backend-only envelopes, such as pagination and presentation views, built from `pyrit.models` types. If a backend model or a service's dataclass would describe a domain concept, put it in `pyrit.models` instead.
 - Keep each layer thin. Routes and middleware handle HTTP, services call the library for a request, and mappers translate library objects into API views. None of them make domain decisions.
 - Build components through the registry and persist through memory, as everywhere else.
-- The auth middleware scopes each request, and the work it starts, to its caller. For a target created with `requires_caller_credential`, including a personal copy of an existing target, `TargetService` stores submitted keys per caller and registers the target with a provider instead of a key; other targets stay shared. Work that starts outside its request, such as a queued scenario run, carries the principal captured at admission; shared single-flight work runs with no caller.
+- The auth middleware scopes each request, and the work it starts, to its caller. Work that starts outside its request, such as a queued run, carries the caller captured when it was admitted; shared single-flight work runs with no caller.
 
 **Framework Plans**:
 
@@ -363,7 +363,7 @@ These patterns cut across components. Use them instead of inventing a local vari
 - **Resolve defaults in one order.** An explicit argument wins, then an initializer default (`@apply_defaults`), then the environment variable that the class names, read at construction, then a declared default or an error. Components don't read `os.environ` anywhere else; setup, the backend, and the CLI read process settings at startup.
 - **Give data PyRIT queries a typed field.** If memory queries, filters, or sorts by a value, make it a typed field on the narrowest model that owns it (`MessagePiece`, not `Message`). Other structured data travels in metadata through a value object (below). Labels are user tags: PyRIT stores and filters them for users but never derives behavior from them.
 - **Let one value object own each metadata key.** A small model in `pyrit.models` declares a namespaced key and is the only code that reads or writes it, through `to_metadata()` and `from_metadata()`; see `ToolExecutionMetadata`. A missing key, or a legacy value from older rows, reads as unset.
-- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory.
+- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory. The one exception is the caller's identity, which travels in the caller scope (`pyrit.auth.caller_principal_scope`) so a shared target can send each caller's own key.
 - **Keep helper-model prompts in YAML seeds.** Prompts for judges, converters, and adversarial chat are YAML `SeedPrompt`s that declare their parameters. Render them only through `SeedPrompt`'s sandboxed rendering, never with f-strings or `str.format`; per-call content, such as the text being judged, can be plain message text.
 - **Declare structured output, and parse it once.** When you need JSON from a model, ask for it with `JsonResponseConfig`, and let the target enforce or adapt it. Parse each kind of response in one function that raises `InvalidJsonException`, and retry through `send_json_with_retry_async`, which starts each retry from a clean history.
 - **Store media through serializers.** Write media and other files that results reference only through `data_serializer_factory` into results storage, point to them by the returned path or URL, and read them back the same way. Don't persist base64, temporary files, or paths outside results storage.

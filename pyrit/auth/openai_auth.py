@@ -41,9 +41,15 @@ def resolve_openai_auth(
     Raises:
         ValueError: If identity or no-key auth is requested alongside an explicit ``api_key``, if
             identity auth is requested for an endpoint that is not a recognized Azure OpenAI
-            endpoint, or if ``"api_key"`` auth is requested and no key is available for an endpoint
-            that is not a recognized Azure OpenAI endpoint.
+            endpoint, if ``"api_key"`` auth is requested and no key is available for an endpoint
+            that is not a recognized Azure OpenAI endpoint, or if ``"caller"`` auth is requested.
+            Targets that send each caller's own key resolve it with ``resolve_caller_credential``.
     """
+    if auth_mode == "caller":
+        raise ValueError(
+            'auth_mode="caller" is supported only by targets that send each caller\'s own key. '
+            'Pass auth_mode="api_key" with a key or token provider.'
+        )
     if auth_mode == "none":
         if api_key is not None:
             raise ValueError(
