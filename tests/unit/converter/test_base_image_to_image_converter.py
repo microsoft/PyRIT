@@ -23,7 +23,7 @@ def _png_bytes() -> bytes:
     [ImageColorSaturationConverter(), ImageResizingConverter(scale_factor=0.5), ImageRotationConverter(angle=90)],
     ids=["saturation", "resizing", "rotation"],
 )
-async def test_image_transformation_runs_off_the_event_loop(converter: BaseImageToImageConverter) -> None:
+async def test_image_transformation_runs_off_the_event_loop_async(converter: BaseImageToImageConverter) -> None:
     loop_thread_id = threading.get_ident()
     transform_thread_ids: list[int] = []
     transform_image = converter._transform_image
