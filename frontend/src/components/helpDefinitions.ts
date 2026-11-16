@@ -7,4 +7,6 @@ export const HELP_DEFINITIONS = {
   maxConcurrency: 'Limits how much work one scenario runs at the same time. Lower values reduce load on its targets.',
   maxRetries: 'Maximum retries for retryable failures during a scenario run. Retries can increase target calls and run time.',
   promptRepetitions: 'How many conversations receive the next prompt. Additional conversations copy the current history before sending.',
+  ownKeyAuthentication: "Everyone can see and use this target, but each person's requests use their own key. Others must set their own key before using it. The key you enter here is stored only for you, in server memory, and is removed when the server restarts.",
+  targetAccount: "Shared targets use the server's credentials. Yours use each person's own key.",
 } as const

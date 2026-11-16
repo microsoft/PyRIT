@@ -31,14 +31,26 @@ import {
   ArrowHookUpLeftRegular,
   ChevronRightRegular,
   ChevronDownRegular,
+  DeleteRegular,
   EyeOffRegular,
   EyeRegular,
+  KeyFilled,
+  KeyRegular,
+  LockClosedFilled,
 } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import type { TargetInstance } from '@/types'
+import {
+  NEEDS_CALLER_KEY_LABEL,
+  TARGET_ACCOUNT_LABELS,
+  targetAccount,
+  targetNeedsCallerKey,
+} from '@/utils/targetAccount'
 import {
   sameTarget,
   targetEndpoint,
@@ -66,7 +78,13 @@ interface TargetTableProps {
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
   detection: TargetCapabilityDetection
+  /** Asks to set or replace the user's own key for a target that uses each person's own key. */
+  onSetKey: (target: TargetInstance) => void
+  /** Asks to remove the user's own key for a target that uses each person's own key. */
+  onRemoveKey: (target: TargetInstance) => void
 }
+
+const KEY_SET_LABEL = 'Your key is set'
 
 /** Format target_specific_params into a short human-readable string. */
 function formatParams(params?: Record<string, unknown> | null): string {
@@ -183,6 +201,42 @@ function ModelCell({ target }: { target: TargetInstance }) {
   return <Text size={200}>{displayName}</Text>
 }
 
+/**
+ * Render whose credentials the target uses. A target that uses each person's own key shows
+ * whether this user has set theirs; the icon's shape carries that, not only its color.
+ */
+function AccountCell({ target, onSetKey }: {
+  target: TargetInstance
+  onSetKey: (target: TargetInstance) => void
+}) {
+  const styles = useTargetTableStyles()
+  const account = targetAccount(target)
+  if (account === 'shared') {
+    return <Text size={200}>{TARGET_ACCOUNT_LABELS.shared}</Text>
+  }
+  return (
+    <span className={styles.accountCell}>
+      <Text size={200}>{TARGET_ACCOUNT_LABELS.yours}</Text>
+      {targetNeedsCallerKey(target) ? (
+        <Tooltip content={NEEDS_CALLER_KEY_LABEL} relationship="label">
+          <Button
+            className={styles.rowAction}
+            appearance="subtle"
+            size="small"
+            icon={<KeyFilled className={styles.needsKeyIcon} aria-label={NEEDS_CALLER_KEY_LABEL} />}
+            aria-label={`${NEEDS_CALLER_KEY_LABEL} — set your key for ${target.target_registry_name}`}
+            onClick={() => onSetKey(target)}
+          />
+        </Tooltip>
+      ) : (
+        <Tooltip content={KEY_SET_LABEL} relationship="label">
+          <LockClosedFilled className={styles.keySetIcon} aria-label={KEY_SET_LABEL} />
+        </Tooltip>
+      )}
+    </span>
+  )
+}
+
 /** Render capability cells for a target. */
 function CapabilityCells({ target }: { target: TargetInstance }) {
   const styles = useTargetTableStyles()
@@ -220,6 +274,10 @@ function InnerTargetRows({ parentKey, innerTargets, weights, selectionVisible, d
           <TableCell>
             <Text size={200}>{targetType(inner)}</Text>
           </TableCell>
+          <TableCell className={styles.accountColumn}>
+            {/* Inner targets aren't managed on their own, so only the account is shown. */}
+            <Text size={200}>{TARGET_ACCOUNT_LABELS[targetAccount(inner)]}</Text>
+          </TableCell>
           <TableCell>
             <ModelCell target={inner} />
           </TableCell>
@@ -253,6 +311,8 @@ export default function TargetTable({
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
   detection,
+  onSetKey,
+  onRemoveKey,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
   const { preferences, updatePreferences } = useUserPreferences()
@@ -452,6 +512,9 @@ export default function TargetTable({
                 <span className={styles.helpHeader}>Type</span>
               </Tooltip>
             </TableHeaderCell>
+            <TableHeaderCell aria-label="Account" className={styles.accountColumn}>
+              <ContextualHelpLabel term="Account">{HELP_DEFINITIONS.targetAccount}</ContextualHelpLabel>
+            </TableHeaderCell>
             <TableHeaderCell style={{ width: '160px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.model} relationship="description">
                 <span className={styles.helpHeader}>Model</span>
@@ -492,6 +555,8 @@ export default function TargetTable({
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
             const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
+            const usesOwnKey = targetAccount(target) === 'yours'
+            const keySet = usesOwnKey && !targetNeedsCallerKey(target)
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
@@ -500,7 +565,7 @@ export default function TargetTable({
                 key={target.target_registry_name}
                 name={target.target_registry_name}
                 identity={target.identifier}
-                columns={8 + CAPABILITY_COLUMNS.length + Number(selectionVisible) + Number(detectionVisible)}
+                columns={9 + CAPABILITY_COLUMNS.length + Number(selectionVisible) + Number(detectionVisible)}
                 expanded={expandedIdentities.has(target.target_registry_name)}
                 onToggle={() => toggleIdentity(target.target_registry_name)}
                 leadingCell={
@@ -523,17 +588,45 @@ export default function TargetTable({
                       </TableCell>
                     )}
                     <TableCell className={styles.actionCell}>
-                      <Button
-                        className={styles.rowAction}
-                        appearance="subtle"
-                        size="small"
-                        icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
-                        onClick={() => setTargetHidden(target, !hidden)}
-                        aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
-                        data-testid={`toggle-target-visibility-${target.target_registry_name}`}
-                      >
-                        {hidden ? 'Show' : 'Hide'}
-                      </Button>
+                      <div className={styles.rowActions}>
+                        <Button
+                          className={styles.rowAction}
+                          appearance="subtle"
+                          size="small"
+                          icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                          onClick={() => setTargetHidden(target, !hidden)}
+                          aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                          data-testid={`toggle-target-visibility-${target.target_registry_name}`}
+                        >
+                          {hidden ? 'Show' : 'Hide'}
+                        </Button>
+                        {usesOwnKey && (
+                          <Button
+                            className={styles.rowAction}
+                            appearance="subtle"
+                            size="small"
+                            icon={<KeyRegular />}
+                            onClick={() => onSetKey(target)}
+                            aria-label={`${keySet ? 'Replace' : 'Set'} key for ${target.target_registry_name}`}
+                            data-testid={`set-target-key-${target.target_registry_name}`}
+                          >
+                            {keySet ? 'Replace key' : 'Set key'}
+                          </Button>
+                        )}
+                        {keySet && (
+                          <Button
+                            className={styles.rowAction}
+                            appearance="subtle"
+                            size="small"
+                            icon={<DeleteRegular />}
+                            onClick={() => onRemoveKey(target)}
+                            aria-label={`Remove key for ${target.target_registry_name}`}
+                            data-testid={`remove-target-key-${target.target_registry_name}`}
+                          >
+                            Remove key
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </>
                 }
@@ -580,6 +673,9 @@ export default function TargetTable({
                     )}
                     <Text size={200}>{targetType(target)}</Text>
                   </div>
+                </TableCell>
+                <TableCell className={styles.accountColumn}>
+                  <AccountCell target={target} onSetKey={onSetKey} />
                 </TableCell>
                 <TableCell>
                   <ModelCell target={target} />

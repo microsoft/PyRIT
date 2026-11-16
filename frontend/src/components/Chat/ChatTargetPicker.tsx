@@ -5,6 +5,7 @@ import { ChevronDownRegular } from '@fluentui/react-icons'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import type { TargetInstance } from '@/types'
+import { NEEDS_CALLER_KEY_LABEL, targetNeedsCallerKey } from '@/utils/targetAccount'
 import { targetModelName } from '@/utils/targetIdentity'
 
 import TargetBadge from './TargetBadge'
@@ -28,6 +29,10 @@ export default function ChatTargetPicker({
   const placeholder = loading ? 'Loading targets...'
     : error ? 'Targets unavailable'
     : targets.length === 0 ? 'No targets registered' : 'Select a target'
+  // A target that needs the user's own key stays listed, but can't be chosen until they set it.
+  const unavailableReason = (item: TargetInstance): string | undefined => (
+    targetNeedsCallerKey(item) ? NEEDS_CALLER_KEY_LABEL : disabledReason?.(item)
+  )
   const picker = (
     <>
       <ChevronDownRegular aria-hidden="true" />
@@ -41,13 +46,16 @@ export default function ChatTargetPicker({
         }}
       >
         <option value="">{placeholder}</option>
-        {targets.map((item: TargetInstance) => (
-          <option key={item.target_registry_name} value={item.target_registry_name}
-            disabled={Boolean(disabledReason?.(item))} title={disabledReason?.(item)}>
-            {item.target_registry_name}{targetModelName(item) ? ` (${targetModelName(item)})` : ''}
-            {disabledReason?.(item) ? ` - ${disabledReason(item)}` : ''}
-          </option>
-        ))}
+        {targets.map((item: TargetInstance) => {
+          const reason = unavailableReason(item)
+          return (
+            <option key={item.target_registry_name} value={item.target_registry_name}
+              disabled={Boolean(reason)} title={reason}>
+              {item.target_registry_name}{targetModelName(item) ? ` (${targetModelName(item)})` : ''}
+              {reason ? ` - ${reason}` : ''}
+            </option>
+          )
+        })}
       </select>
     </>
   )

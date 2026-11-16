@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useId, useMemo, useRef } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -23,9 +23,13 @@ import {
   MessageBar,
   MessageBarBody,
   Tooltip,
+  type LabelProps,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { useContextualHelpLabelStyles } from '@/components/ContextualHelpLabel.styles'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ParameterField from '@/components/Parameters/ParameterField'
 import {
   buildParametersFromForm,
@@ -80,6 +84,9 @@ const FALLBACK_NO_KEY_TARGET_TYPES = new Set([
   'OpenAITTSTarget',
   'OpenAIResponseTarget',
 ])
+
+// The same OpenAI fallback types also support each user's own key.
+const FALLBACK_CALLER_KEY_TARGET_TYPES = FALLBACK_NO_KEY_TARGET_TYPES
 
 const TARGET_DISPLAY_NAMES: Record<string, string> = {
   AzureMLChatTarget: 'Azure Machine Learning chat',
@@ -139,6 +146,7 @@ const AUTH_MODE_LABELS: Record<TargetAuthMode, string> = {
   api_key: 'API key',
   identity: 'Microsoft Entra ID',
   none: 'No key',
+  caller: "Each user's own key",
 }
 
 function getTargetDisplayName(targetType: string): string {
@@ -168,6 +176,10 @@ function defaultSupportsIdentity(targetType: string): boolean {
 
 function defaultSupportsNoKey(targetType: string): boolean {
   return FALLBACK_NO_KEY_TARGET_TYPES.has(targetType)
+}
+
+function defaultSupportsCallerKey(targetType: string): boolean {
+  return FALLBACK_CALLER_KEY_TARGET_TYPES.has(targetType)
 }
 
 function getParameterLabel(name: string): string {
@@ -280,6 +292,8 @@ function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
 
 export default function CreateTargetDialog({ open, onClose, onCreated, existingTargets }: CreateTargetDialogProps) {
   const styles = useCreateTargetDialogStyles()
+  const helpStyles = useContextualHelpLabelStyles()
+  const callerKeyHelpId = useId()
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [modelName, setModelName] = useState('')
@@ -419,13 +433,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const supportsNoKey = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('none')
     : defaultSupportsNoKey(targetType)
-  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
+  const supportsCallerKey = targetTypeEntry
+    ? targetTypeEntry.supported_auth_modes.includes('caller')
+    : defaultSupportsCallerKey(targetType)
+  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey || supportsCallerKey)
   const isIdentity = showAuthField && authMode === 'identity'
   const isNoKey = showAuthField && authMode === 'none'
+  const isCallerKey = showAuthField && authMode === 'caller'
   const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
-  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey && !isCallerKey
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -629,7 +647,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
+      // With each user's own key the target keeps no key; a typed key is the creator's own credential.
+      if (hasApiKeyField && !isIdentity && !isNoKey && !isCallerKey && apiKey) params.api_key = apiKey
 
       if (
         (underlyingModelRequired || hasDifferentUnderlying)
@@ -644,6 +663,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
         ...(isNoKey ? { auth_mode: 'none' as const } : {}),
+        ...(isCallerKey ? {
+          auth_mode: 'caller' as const,
+          ...(hasApiKeyField && apiKey ? { credential: apiKey } : {}),
+        } : {}),
       })
 
       resetForm()
@@ -726,11 +749,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     const nextSupportsNoKey = nextEntry
                       ? nextEntry.supported_auth_modes.includes('none')
                       : defaultSupportsNoKey(next)
+                    const nextSupportsCallerKey = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('caller')
+                      : defaultSupportsCallerKey(next)
                     if (
                       (authMode === 'identity' && !nextSupportsIdentity)
                       || (authMode === 'none' && !nextSupportsNoKey)
+                      || (authMode === 'caller' && !nextSupportsCallerKey)
                     ) {
                       setAuthMode('api_key')
+                      // A key typed as the creator's own must not become the new target's shared key.
+                      setApiKey('')
                     }
                   }}
                 >
@@ -1043,11 +1072,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         onChange={(_, data) => {
                           const next = data.value as TargetAuthMode
                           setAuthMode(next)
-                          if (next === 'none') {
-                            setApiKey('')
-                          }
+                          // Each mode uses the key field differently, so a typed key never carries over:
+                          // a shared key must not become someone's own key, or the reverse.
+                          setApiKey('')
                           if (next === 'identity') {
-                            setApiKey('')
                             setParameterValues((current) => {
                               const cleared = { ...current }
                               for (const parameter of metadataDrivenParameters) {
@@ -1065,7 +1093,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         {supportsNoKey && (
                           <Radio value="none" label="No key (for servers that need none)" />
                         )}
+                        {supportsCallerKey && (
+                          <Radio
+                            value="caller"
+                            aria-describedby={callerKeyHelpId}
+                            label={{ children: (_: unknown, labelProps: LabelProps) => (
+                              <ContextualHelpLabel term={AUTH_MODE_LABELS.caller} labelProps={labelProps}>
+                                {HELP_DEFINITIONS.ownKeyAuthentication}
+                              </ContextualHelpLabel>
+                            ) }}
+                          />
+                        )}
                       </RadioGroup>
+                      {/* Keeps the explanation available to assistive technology while its help is closed. */}
+                      {supportsCallerKey && (
+                        <span id={callerKeyHelpId} className={helpStyles.srOnly}>
+                          {HELP_DEFINITIONS.ownKeyAuthentication}
+                        </span>
+                      )}
                     </Field>
                   )}
 
@@ -1079,7 +1124,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
                   {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
-                      label="API Key"
+                      label={isCallerKey ? 'Your key (optional)' : 'API Key'}
                       hint={apiKeyParameter?.description || undefined}
                       required={apiKeyRequired}
                       validationMessage={fieldErrors.apiKey}

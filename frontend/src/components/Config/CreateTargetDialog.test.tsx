@@ -2245,6 +2245,177 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByRole("radio", { name: /No key/ })).toBeInTheDocument();
   });
 
+  describe("each user's own key", () => {
+    const OWN_KEY = "Each user's own key";
+    const OWN_KEY_HELP = "Everyone can see and use this target, but each person's requests use their own key. "
+      + "Others must set their own key before using it. The key you enter here is stored only for you, "
+      + "in server memory, and is removed when the server restarts.";
+    const ENDPOINT = "https://my-resource.openai.azure.com/";
+    const OWN_KEY_TARGET_TYPES: TargetTypeListResponse = {
+      items: TARGET_TYPES.items.map((entry) => (
+        entry.target_type === "OpenAIChatTarget"
+          ? { ...entry, supported_auth_modes: [...entry.supported_auth_modes, "caller" as const] }
+          : entry
+      )),
+    };
+    const keyField = (): HTMLElement => screen.getByPlaceholderText("API key (stored in memory only)");
+
+    async function chooseOwnKeyChatTarget(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+      await selectTargetType("OpenAIChatTarget");
+      fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+        target: { value: ENDPOINT },
+      });
+      await user.click(screen.getByRole("radio", { name: OWN_KEY }));
+    }
+
+    beforeEach(() => {
+      mockedTargetsApi.listTargetTypes.mockResolvedValue(OWN_KEY_TARGET_TYPES);
+      mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+        target_registry_name: "own_key_chat",
+        target_type: "OpenAIChatTarget",
+        requires_caller_credential: true,
+      }));
+    });
+
+    it("should offer the option only for target types that support it", async () => {
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+
+      await selectTargetType("AzureMLChatTarget");
+      expect(screen.getByRole("radio", { name: /Identity-based/ })).toBeInTheDocument();
+      expect(screen.queryByRole("radio", { name: OWN_KEY })).not.toBeInTheDocument();
+
+      await selectTargetType("OpenAIChatTarget");
+      expect(screen.getByRole("radio", { name: OWN_KEY })).not.toBeChecked();
+      expect(screen.getByRole("region", { name: /selected target details/i })).toHaveTextContent(
+        "Supported authentication: API key or Microsoft Entra ID or No key or Each user's own key",
+      );
+    });
+
+    it("should not offer the option when the registry does not list it", async () => {
+      mockedTargetsApi.listTargetTypes.mockResolvedValue(TARGET_TYPES);
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+
+      await selectTargetType("OpenAIChatTarget");
+
+      expect(screen.getByRole("radio", { name: /No key/ })).toBeInTheDocument();
+      expect(screen.queryByRole("radio", { name: OWN_KEY })).not.toBeInTheDocument();
+    });
+
+    it("should offer the option for OpenAI targets when type metadata fails to load", async () => {
+      mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+
+      expect(await screen.findByText(/Target details could not be loaded/)).toBeInTheDocument();
+      await selectTargetType("OpenAIChatTarget");
+
+      expect(screen.getByRole("radio", { name: OWN_KEY })).toBeInTheDocument();
+    });
+
+    it("should explain the option with info help", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await selectTargetType("OpenAIChatTarget");
+
+      expect(screen.getByRole("radio", { name: OWN_KEY })).toHaveAccessibleDescription(OWN_KEY_HELP);
+      expect(screen.queryByRole("note")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /Each user's own key.*information/i }));
+      expect(await screen.findByRole("note")).toHaveTextContent(OWN_KEY_HELP);
+    });
+
+    it("should send the typed key only as the creator's own credential", async () => {
+      const user = userEvent.setup();
+      const onCreated = jest.fn();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} onCreated={onCreated} /></TestWrapper>);
+
+      await chooseOwnKeyChatTarget(user);
+      expect(keyField()).toHaveAccessibleName("Your key (optional)");
+      expect(keyField()).toHaveAttribute("type", "password");
+      expect(keyField()).not.toBeRequired();
+      fireEvent.change(keyField(), { target: { value: "sk-mine" } });
+      await user.click(screen.getByText("Create Target"));
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalled());
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: { endpoint: ENDPOINT },
+        auth_mode: "caller",
+        credential: "sk-mine",
+      });
+    });
+
+    it("should create the target without a credential when no key is typed", async () => {
+      const user = userEvent.setup();
+      const onCreated = jest.fn();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} onCreated={onCreated} /></TestWrapper>);
+
+      await chooseOwnKeyChatTarget(user);
+      await user.click(screen.getByText("Create Target"));
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalled());
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: { endpoint: ENDPOINT },
+        auth_mode: "caller",
+      });
+    });
+
+    it("should not carry a typed key between a shared API key and each user's own key", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await selectTargetType("OpenAIChatTarget");
+      fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+        target: { value: ENDPOINT },
+      });
+
+      fireEvent.change(keyField(), { target: { value: "sk-shared" } });
+      await user.click(screen.getByRole("radio", { name: OWN_KEY }));
+      expect(keyField()).toHaveValue("");
+      expect(keyField()).toHaveAccessibleName("Your key (optional)");
+
+      fireEvent.change(keyField(), { target: { value: "sk-mine" } });
+      await user.click(screen.getByRole("radio", { name: /API Key/ }));
+      expect(keyField()).toHaveValue("");
+      expect(keyField()).toHaveAccessibleName("API Key");
+
+      await user.click(screen.getByText("Create Target"));
+      await waitFor(() => expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: { endpoint: ENDPOINT },
+      }));
+    });
+
+    it("should drop the typed key when switching from each user's own key to identity", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await chooseOwnKeyChatTarget(user);
+      fireEvent.change(keyField(), { target: { value: "sk-mine" } });
+
+      await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+      expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+      await user.click(screen.getByText("Create Target"));
+
+      await waitFor(() => expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: { endpoint: ENDPOINT },
+        auth_mode: "identity",
+      }));
+    });
+
+    it("should return to API key auth with an empty key when the next type does not support the option", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await chooseOwnKeyChatTarget(user);
+      fireEvent.change(keyField(), { target: { value: "sk-mine" } });
+
+      await selectTargetType("AzureMLChatTarget");
+
+      expect(screen.getByRole("radio", { name: /API Key/ })).toBeChecked();
+      expect(screen.queryByRole("radio", { name: OWN_KEY })).not.toBeInTheDocument();
+      expect(keyField()).toHaveValue("");
+      expect(keyField()).toHaveAccessibleName("API Key");
+    });
+  });
+
   it("should warn the user when identity is selected for a non-Azure OpenAI endpoint", async () => {
     const user = userEvent.setup();
 

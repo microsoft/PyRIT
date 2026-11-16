@@ -14,6 +14,7 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 
 const OPTIONS: TargetFilterOptions = {
   types: [{ value: 'OpenAIChatTarget', label: 'OpenAIChatTarget' }, { value: 'OpenAITTSTarget', label: 'OpenAITTSTarget' }],
+  accounts: [{ value: 'shared', label: 'Shared' }, { value: 'yours', label: 'Yours' }],
   inputs: [{ value: 'text', label: 'Text' }, { value: 'image_path', label: 'Image' }],
   outputs: [],
   capabilities: [{ value: 'supports_json_schema', label: 'JSON Schema' }],
@@ -34,14 +35,14 @@ describe('TargetFiltersBar', () => {
     render(<TestWrapper><TargetFiltersBar {...defaultProps} /></TestWrapper>)
 
     const controls = screen.getAllByRole('combobox').map((combobox) => combobox.getAttribute('aria-label'))
-    expect(controls).toEqual(['Filter by type:', 'Filter by input:', 'Filter by capability:'])
+    expect(controls).toEqual(['Filter by type:', 'Filter by account:', 'Filter by input:', 'Filter by capability:'])
     const reset = screen.getByRole('button', { name: 'Reset all filters' })
     expect(reset.compareDocumentPosition(screen.getByRole('combobox', { name: 'Filter by type:' })))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('should render nothing when no filter has choices', () => {
-    const options = { types: [], inputs: [], outputs: [], capabilities: [] }
+    const options = { types: [], accounts: [], inputs: [], outputs: [], capabilities: [] }
     render(<TestWrapper><TargetFiltersBar {...defaultProps} options={options} /></TestWrapper>)
 
     expect(screen.queryByTestId('target-filters')).not.toBeInTheDocument()
@@ -70,6 +71,18 @@ describe('TargetFiltersBar', () => {
     await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Image' }))
 
     expect(defaultProps.onFiltersChange).toHaveBeenCalledWith({ ...DEFAULT_TARGET_FILTERS, inputs: ['text', 'image_path'] })
+  })
+
+  it('should filter by account with Shared and Yours choices', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><TargetFiltersBar {...defaultProps} /></TestWrapper>)
+
+    await user.click(screen.getByRole('combobox', { name: 'Filter by account:' }))
+    const choices = await screen.findAllByRole('menuitemcheckbox')
+    expect(choices.map((choice: HTMLElement) => choice.textContent)).toEqual(['Shared', 'Yours'])
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Yours' }))
+
+    expect(defaultProps.onFiltersChange).toHaveBeenCalledWith({ ...DEFAULT_TARGET_FILTERS, accounts: ['yours'] })
   })
 
   it('should narrow the choices to what you type and check the match with Enter', async () => {

@@ -9,15 +9,18 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular } from '@fluentui/react-icons'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
 import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
 import { sameTarget } from '@/utils/targetIdentity'
 import CreateTargetDialog from './CreateTargetDialog'
+import TargetKeyDialog from './TargetKeyDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
@@ -57,6 +60,10 @@ export default function TargetConfig({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  // The target whose key the user is setting, and the one whose key they asked to remove.
+  const [keyTarget, setKeyTarget] = useState<TargetInstance | null>(null)
+  const [keyToRemove, setKeyToRemove] = useState<TargetInstance | null>(null)
+  const [keyError, setKeyError] = useState<string | null>(null)
   const detecting = detection.running
   const detectionRef = useRef(detection)
   useEffect(() => { detectionRef.current = detection }, [detection])
@@ -115,6 +122,31 @@ export default function TargetConfig({
     fetchTargets()
   }, [fetchTargets])
 
+  const openKeyDialog = useCallback((target: TargetInstance) => {
+    setKeyError(null)
+    setKeyTarget(target)
+  }, [])
+
+  const confirmKeyRemoval = useCallback((target: TargetInstance) => {
+    setKeyError(null)
+    setKeyToRemove(target)
+  }, [])
+
+  const handleKeySaved = useCallback(() => {
+    setKeyTarget(null)
+    fetchTargets()
+  }, [fetchTargets])
+
+  const removeKey = async (target: TargetInstance): Promise<void> => {
+    setKeyToRemove(null)
+    try {
+      await targetsApi.removeTargetCredential(target.target_registry_name)
+      fetchTargets()
+    } catch (err) {
+      setKeyError(toApiError(err).detail)
+    }
+  }
+
   return (
     <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
@@ -149,6 +181,10 @@ export default function TargetConfig({
 
       {error && (
         <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>
+      )}
+
+      {keyError && (
+        <MessageBar intent="error"><MessageBarBody>{keyError}</MessageBarBody></MessageBar>
       )}
 
       {!loading && !error && targets.length === 0 && (
@@ -187,6 +223,8 @@ export default function TargetConfig({
           defaultAdversarialTarget={defaultAdversarialTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
           detection={detection}
+          onSetKey={openKeyDialog}
+          onRemoveKey={confirmKeyRemoval}
         />
       )}
 
@@ -196,6 +234,28 @@ export default function TargetConfig({
         onCreated={handleTargetCreated}
         existingTargets={targets}
       />
+
+      {keyTarget && (
+        <TargetKeyDialog
+          key={keyTarget.target_registry_name}
+          target={keyTarget}
+          onClose={() => setKeyTarget(null)}
+          onSaved={handleKeySaved}
+        />
+      )}
+
+      <ConfirmDialog
+        open={keyToRemove !== null}
+        title="Remove your key?"
+        confirmLabel="Remove key"
+        onConfirm={() => {
+          if (keyToRemove) void removeKey(keyToRemove)
+        }}
+        onCancel={() => setKeyToRemove(null)}
+      >
+        You won&apos;t be able to use <Text weight="semibold">{keyToRemove?.target_registry_name}</Text> until
+        you set your key again.
+      </ConfirmDialog>
     </div>
   )
 }

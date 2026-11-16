@@ -105,6 +105,21 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorPaletteRedForeground1,
     fontSize: tokens.fontSizeBase500,
   },
+  accountColumn: {
+    width: '110px',
+  },
+  accountCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
+  keySetIcon: {
+    color: tokens.colorStatusSuccessForeground1,
+    fontSize: tokens.fontSizeBase400,
+  },
+  needsKeyIcon: {
+    color: tokens.colorStatusDangerForeground1,
+  },
   helpHeader: {
     cursor: 'help',
   },
@@ -144,7 +159,13 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
   actionCell: {
-    width: '100px',
+    width: '132px',
+  },
+  rowActions: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalXXS,
   },
   rowAction: {
     ...mobileTouchTarget,

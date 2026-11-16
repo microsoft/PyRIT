@@ -67,6 +67,49 @@ describe('ChatTargetPicker', () => {
     expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('objective')
   })
 
+  it('lists targets that need your key but blocks choosing them, ahead of other reasons', async () => {
+    const user = userEvent.setup()
+    const needsKey = makeTarget({
+      target_registry_name: 'own_gpt', model_name: 'gpt-4o',
+      requires_caller_credential: true, caller_credential_configured: false,
+    })
+    const keySet = makeTarget({
+      target_registry_name: 'own_set', requires_caller_credential: true, caller_credential_configured: true,
+    })
+    const disabledReason = jest.fn((item: { target_registry_name: string }) => (
+      item.target_registry_name === 'other' ? undefined : 'This target does not support editable history.'
+    ))
+    render(
+      <ChatTargetPicker {...defaultProps} target={null} targets={[needsKey, keySet, otherTarget]}
+        disabledReason={disabledReason} />,
+      { wrapper: TestWrapper },
+    )
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+
+    const needsKeyOption = screen.getByRole('option', { name: 'own_gpt (gpt-4o) - Needs your key' })
+    expect(needsKeyOption).toBeDisabled()
+    expect(needsKeyOption).toHaveAttribute('title', 'Needs your key')
+    expect(screen.getByRole('option', { name: 'own_set - This target does not support editable history.' }))
+      .toBeDisabled()
+    expect(screen.getByRole('option', { name: 'other' })).toBeEnabled()
+    await user.selectOptions(selector, 'own_gpt')
+    expect(defaultProps.onSelect).not.toHaveBeenCalled()
+    await user.selectOptions(selector, 'other')
+    expect(defaultProps.onSelect).toHaveBeenCalledWith(otherTarget)
+  })
+
+  it('lets you choose a target that uses your own key once it is set', async () => {
+    const user = userEvent.setup()
+    const keySet = makeTarget({
+      target_registry_name: 'own_set', requires_caller_credential: true, caller_credential_configured: true,
+    })
+    render(<ChatTargetPicker {...defaultProps} target={null} targets={[keySet]} />, { wrapper: TestWrapper })
+
+    expect(screen.getByRole('option', { name: 'own_set' })).toBeEnabled()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Objective target' }), 'own_set')
+    expect(defaultProps.onSelect).toHaveBeenCalledWith(keySet)
+  })
+
   it.each([
     { loading: true },
     { disabled: true },

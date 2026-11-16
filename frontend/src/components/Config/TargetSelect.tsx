@@ -4,6 +4,7 @@ import { Select, type SelectOnChangeData } from '@fluentui/react-components'
 
 import HelpField from '@/components/HelpField'
 import type { TargetInstance } from '@/types'
+import { targetAccountLabelSuffix, targetNeedsCallerKey } from '@/utils/targetAccount'
 import { targetModelName } from '@/utils/targetIdentity'
 
 import { useTargetSelectStyles } from './TargetSelect.styles'
@@ -19,7 +20,10 @@ interface TargetSelectProps {
   disabled?: boolean
 }
 
-/** A controlled registry selector; the caller owns selection and persistence. */
+/**
+ * A controlled registry selector; the caller owns selection and persistence.
+ * Targets that need the user's own key stay listed but can't be chosen.
+ */
 export default function TargetSelect({
   targets,
   value,
@@ -44,9 +48,14 @@ export default function TargetSelect({
         <option value="">{placeholder}</option>
         {targets.map((target: TargetInstance) => {
           const model = targetModelName(target)
+          const name = model ? `${target.target_registry_name} (${model})` : target.target_registry_name
           return (
-            <option key={target.target_registry_name} value={target.target_registry_name}>
-              {model ? `${target.target_registry_name} (${model})` : target.target_registry_name}
+            <option
+              key={target.target_registry_name}
+              value={target.target_registry_name}
+              disabled={targetNeedsCallerKey(target)}
+            >
+              {`${name}${targetAccountLabelSuffix(target)}`}
             </option>
           )
         })}

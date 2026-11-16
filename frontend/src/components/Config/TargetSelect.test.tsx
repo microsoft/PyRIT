@@ -61,6 +61,32 @@ describe('TargetSelect', () => {
     expect(onChange).toHaveBeenLastCalledWith(null)
   })
 
+  it('should list targets that need your key without letting you choose them', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    const needsKey = makeTarget({
+      target_registry_name: 'own-a', model_name: 'gpt-4o',
+      requires_caller_credential: true, caller_credential_configured: false,
+    })
+    const keySet = makeTarget({
+      target_registry_name: 'own-b', requires_caller_credential: true, caller_credential_configured: true,
+    })
+    render(
+      <TestWrapper>
+        <TargetSelect targets={[...targets, needsKey, keySet]} value="" label="Adversarial target" onChange={onChange} />
+      </TestWrapper>,
+    )
+    const select = screen.getByRole('combobox', { name: 'Adversarial target' })
+
+    expect(screen.getByRole('option', { name: 'own-a (gpt-4o) · needs your key' })).toBeDisabled()
+    expect(screen.getByRole('option', { name: 'own-b · yours' })).toBeEnabled()
+    expect(screen.getByRole('option', { name: 'target-a (gpt-4o)' })).toBeEnabled()
+    await user.selectOptions(select, 'own-a')
+    expect(onChange).not.toHaveBeenCalled()
+    await user.selectOptions(select, 'own-b')
+    expect(onChange).toHaveBeenCalledWith(keySet)
+  })
+
   it('should retain the blank placeholder for an empty registry and respect disabled', () => {
     render(
       <TestWrapper>

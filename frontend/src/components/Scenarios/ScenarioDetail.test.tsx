@@ -1110,6 +1110,29 @@ describe('ScenarioDetail', () => {
     expect(mockListTargets).not.toHaveBeenCalled()
   })
 
+  it('lists objective targets that need your key without letting you choose them', async () => {
+    const user = userEvent.setup()
+    const needsKey: TargetInstance = {
+      ...makeTarget('own-gpt', 'gpt-4o'), requires_caller_credential: true, caller_credential_configured: false,
+    }
+    const keySet: TargetInstance = {
+      ...makeTarget('own-set'), requires_caller_credential: true, caller_credential_configured: true,
+    }
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
+      targets: [makeTarget('target-a'), needsKey, keySet],
+    })
+
+    const select = await screen.findByTestId('scenario-target-select')
+    expect(select).toHaveValue('target-a')
+    expect(within(select).getByRole('option', { name: 'own-gpt (gpt-4o) · needs your key' })).toBeDisabled()
+    expect(within(select).getByRole('option', { name: 'own-set · yours' })).toBeEnabled()
+    expect(within(select).getByRole('option', { name: 'target-a' })).toBeEnabled()
+    await user.selectOptions(select, 'own-gpt')
+    expect(select).toHaveValue('target-a')
+    await user.selectOptions(select, 'own-set')
+    expect(select).toHaveValue('own-set')
+  })
+
   it.each([null, makeTarget('missing-target'), {
     ...makeTarget('target-a'),
     identifier: { class_name: 'OpenAIChatTarget', hash: 'changed' },

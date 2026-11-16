@@ -15,6 +15,8 @@ jest.mock("../../services/api", () => ({
     listTargets: jest.fn(),
     createTarget: jest.fn(),
     detectCapabilities: jest.fn(),
+    setTargetCredential: jest.fn(),
+    removeTargetCredential: jest.fn(),
   },
 }));
 
@@ -777,4 +779,134 @@ describe("TargetConfig", () => {
     expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
   });
 
+  describe("your own key", () => {
+    const needsKey = makeTarget({
+      target_registry_name: "own_gpt",
+      target_type: "OpenAIChatTarget",
+      requires_caller_credential: true,
+      caller_credential_configured: false,
+    });
+    const keySet: TargetInstance = { ...needsKey, caller_credential_configured: true };
+    const listOf = (items: TargetInstance[]): TargetListResponse => ({
+      items, pagination: { limit: 200, has_more: false },
+    });
+
+    it("should open the set-key dialog from the key shortcut, save the key, and refresh the targets", async () => {
+      const user = userEvent.setup();
+      const onTargetsLoaded = jest.fn();
+      mockedTargetsApi.listTargets
+        .mockResolvedValueOnce(listOf([sampleTargets[0], needsKey]))
+        .mockResolvedValueOnce(listOf([sampleTargets[0], keySet]));
+      mockedTargetsApi.setTargetCredential.mockResolvedValueOnce(keySet);
+      render(<TestWrapper><TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Needs your key — set your key for own_gpt" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent("Set your key");
+      await user.type(within(dialog).getByLabelText(/Your key/), "sk-mine");
+      await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mockedTargetsApi.setTargetCredential).toHaveBeenCalledWith("own_gpt", "sk-mine");
+      expect(await screen.findByRole("img", { name: "Your key is set" })).toBeInTheDocument();
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+      expect(onTargetsLoaded).toHaveBeenLastCalledWith([sampleTargets[0], keySet]);
+    });
+
+    it("should keep the set-key dialog open with the error when saving fails", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets.mockResolvedValue(listOf([needsKey]));
+      mockedTargetsApi.setTargetCredential.mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 409, data: { detail: "Your own key needs a single backend process." } },
+      });
+      render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Set key for own_gpt" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.type(within(dialog).getByLabelText(/Your key/), "sk-mine");
+      await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Your own key needs a single backend process.");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    });
+
+    it("should close the set-key dialog without saving when cancelled", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets.mockResolvedValue(listOf([needsKey]));
+      render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Set key for own_gpt" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mockedTargetsApi.setTargetCredential).not.toHaveBeenCalled();
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    });
+
+    it("should replace a key that is already set", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets.mockResolvedValue(listOf([keySet]));
+      mockedTargetsApi.setTargetCredential.mockResolvedValueOnce(keySet);
+      render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Replace key for own_gpt" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveTextContent("Replace your key");
+      await user.type(within(dialog).getByLabelText(/Your key/), "sk-new");
+      await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2));
+      expect(mockedTargetsApi.setTargetCredential).toHaveBeenCalledWith("own_gpt", "sk-new");
+    });
+
+    it("should confirm before removing the key, then refresh the targets", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets
+        .mockResolvedValueOnce(listOf([keySet]))
+        .mockResolvedValueOnce(listOf([needsKey]));
+      mockedTargetsApi.removeTargetCredential.mockResolvedValueOnce(undefined);
+      render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Remove key for own_gpt" }));
+      const confirm = await screen.findByRole("dialog");
+      expect(confirm).toHaveTextContent("Remove your key?");
+      expect(confirm).toHaveTextContent("You won't be able to use own_gpt until you set your key again.");
+      expect(mockedTargetsApi.removeTargetCredential).not.toHaveBeenCalled();
+      await user.click(within(confirm).getByRole("button", { name: "Remove key" }));
+
+      await waitFor(() => expect(mockedTargetsApi.removeTargetCredential).toHaveBeenCalledWith("own_gpt"));
+      expect(await screen.findByRole("button", { name: "Needs your key — set your key for own_gpt" })).toBeInTheDocument();
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+    });
+
+    it("should keep the key when removal is cancelled", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets.mockResolvedValue(listOf([keySet]));
+      render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Remove key for own_gpt" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mockedTargetsApi.removeTargetCredential).not.toHaveBeenCalled();
+    });
+
+    it("should show the error when removing the key fails", async () => {
+      const user = userEvent.setup();
+      mockedTargetsApi.listTargets.mockResolvedValue(listOf([keySet]));
+      mockedTargetsApi.removeTargetCredential.mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 403, data: { detail: "A verified caller identity is required to manage your own key." } },
+      });
+      render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+      await user.click(await screen.findByRole("button", { name: "Remove key for own_gpt" }));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove key" }));
+
+      expect(await screen.findByText("A verified caller identity is required to manage your own key.")).toBeInTheDocument();
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    });
+  });
 });
