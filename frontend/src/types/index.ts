@@ -122,6 +122,9 @@ export interface PendingComposerDraft {
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
+  converters?: ChatConverterSnapshot
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
@@ -143,6 +146,17 @@ export interface ChatDraftContent {
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Backend send ID for status verification before reconciling this snapshot with history. */
+  acceptedSendId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {
@@ -479,6 +493,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
   supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
@@ -757,6 +772,8 @@ export interface Parameter {
   multiline?: boolean
   /** Whether the value must be omitted when identity-based authentication is selected. */
   identity_conflicting?: boolean
+  /** Whether a private copy keeps its source's value, because it sets where requests go or how they sign in. */
+  copy_locked?: boolean
   description?: string | null
 }
 
@@ -841,6 +858,9 @@ export type AttackTargetResolutionStatus =
   | 'legacy'
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
+
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
 
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
@@ -1119,6 +1139,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  initialConverters?: ChatConverterSnapshot
   sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
@@ -1128,6 +1149,7 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
   unsavedImport?: boolean
   pendingPromptId?: string
 }
@@ -1244,6 +1266,16 @@ export interface DisplayScore extends BackendScore {
   pieceIndex: number
   pieceType: string
   sourceLabel: string
+}
+
+/** Message-score fields displayed by ScoreDetails. */
+export interface ScoreSummary {
+  scorer: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
 }
 
 export interface BackendMessagePiece {
@@ -1409,6 +1441,20 @@ export interface AttackConversationsResponse {
   pagination?: PaginationInfo | null
   total_count?: number | null
 }
+
+/** Read-only display references may lack saved-result counts and a main conversation. */
+export interface ConversationReferenceView extends Omit<ConversationSummary, 'message_count'> {
+  message_count: number | null
+}
+
+export interface AttackConversationReferencesView extends Omit<AttackConversationsResponse, 'main_conversation_id' | 'conversations'> {
+  main_conversation_id: string | null
+  conversations: ConversationReferenceView[]
+}
+
+export type ReadAttackConversationReferences = (
+  attackResultId: string, params?: ConversationPageParams,
+) => Promise<AttackConversationReferencesView>
 
 
 export interface CreateConversationRequest {
@@ -2272,6 +2318,8 @@ export interface PairedOutcomeDetailPage {
 }
 
 export interface ScenarioRunPlanAtomicGroup {
+  /** Absent in legacy plans, whose topology is unknown. */
+  is_compound?: boolean | null
   kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string

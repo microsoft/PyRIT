@@ -5,7 +5,23 @@ from io import StringIO
 
 import pytest
 
-from pyrit.common.text_helper import escape_control_characters, is_non_empty_string, read_txt
+from pyrit.common.text_helper import escape_control_characters, graphemes, is_non_empty_string, read_txt
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("", []),
+        ("abc", ["a", "b", "c"]),
+        ("café", ["c", "a", "f", "é"]),
+        ("\U0001f1ee\U0001f1f3!", ["\U0001f1ee\U0001f1f3", "!"]),
+        ("\U0001f468‍\U0001f469‍\U0001f467", ["\U0001f468‍\U0001f469‍\U0001f467"]),
+        ("नमस्ते", ["न", "म", "स्ते"]),
+        ("a\r\nb", ["a", "\r\n", "b"]),
+    ],
+)
+def test_graphemes_keeps_clusters_together(text: str, expected: list[str]):
+    assert graphemes(text) == expected
 
 
 def test_read_txt_ignores_blank_lines():

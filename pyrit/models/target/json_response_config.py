@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Self
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from pyrit.models.target.json_schema_definition import (
-    JSON_SCHEMA_METADATA_KEY,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    JSON_SCHEMA_METADATA_KEY,  # runtime-required by Pydantic field annotations
 )
 
 

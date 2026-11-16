@@ -376,22 +376,28 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
-    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+    def test_a_copy_uses_its_sources_auth_mode(self, auth_mode: str) -> None:
         source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
 
-        with pytest.raises(ValidationError, match="including auth_mode"):
+        with pytest.raises(ValidationError, match="a copy uses its source's auth mode"):
             CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
 
     @pytest.mark.parametrize(
-        "overrides",
+        ("fields", "message"),
         [
-            {"temperature": 0.8},
-            {"temperature": 0.8, "api_key": None},
-            {"temperature": 0.8, "headers": None},
-            {"temperature": 0.8, "headers": ""},
+            ({}, "source requires register=false"),
+            ({"register": False, "params": {"temperature": 0.8}}, "a copy takes its overrides in source.params"),
         ],
     )
-    async def test_no_key_source_stays_no_key_async(self, overrides: dict[str, Any]) -> None:
+    def test_a_copy_is_unregistered_and_takes_overrides_in_its_source(
+        self, fields: dict[str, object], message: str
+    ) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match=message):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, **fields)
+
+    async def test_no_key_source_stays_no_key_async(self) -> None:
         source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(source, name="source")
@@ -401,7 +407,9 @@ class TestTemporaryComponents:
                 {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
             ):
                 private = await TargetService().build_from_source_async(
-                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=overrides)
+                    SourceInstanceSpec(
+                        source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+                    )
                 )
             try:
                 assert private._api_key == "not-needed"
@@ -409,6 +417,22 @@ class TestTemporaryComponents:
                 assert private.get_identifier().temperature == 0.8
             finally:
                 await private.cleanup_target_async()
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("overrides", [{"api_key": None}, {"headers": None}, {"headers": ""}])
+    async def test_no_key_source_copy_cannot_clear_its_key_or_headers_async(self, overrides: dict[str, Any]) -> None:
+        source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        try:
+            with pytest.raises(ValueError, match=f"can't set {next(iter(overrides))}"):
+                await TargetService().build_from_source_async(
+                    SourceInstanceSpec(
+                        source_name="source",
+                        source_hash=source.get_identifier().hash,
+                        params={"temperature": 0.8, **overrides},
+                    )
+                )
         finally:
             await source.cleanup_target_async()
 
@@ -978,6 +1002,27 @@ class TestTemporaryComponents:
                         source_hash=source.get_identifier().hash,
                         params={"httpx_client_kwargs": {"timeout": 5}},
                     )
+                )
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"endpoint": "https://other.test/v1"},
+            {"endpoint": "https://example.test/v1"},
+            {"api_key": "other-key"},
+            {"auth_mode": "identity"},
+            {"headers": '{"X-Extra": "1"}'},
+        ],
+    )
+    async def test_source_copy_keeps_connection_settings_async(self, params: dict[str, str]) -> None:
+        source = source_target()
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        try:
+            with pytest.raises(ValueError, match=f"can't set {next(iter(params))}"):
+                await TargetService().build_from_source_async(
+                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=params)
                 )
         finally:
             await source.cleanup_target_async()
