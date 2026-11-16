@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import inspect
 import io
 import json
@@ -432,6 +433,28 @@ async def test_get_tools_async_gives_every_tool_a_unique_compatible_name() -> No
     provider._create_session_async = create_session  # type: ignore[method-assign]
     await tools[2].execute_async(arguments={})
     session.call_tool.assert_awaited_once_with(name=long_name, arguments={})
+
+
+async def test_get_tools_async_disambiguates_a_generated_alias_from_an_existing_name() -> None:
+    provider = _http_provider()
+    digest = hashlib.sha256(b"a_b").hexdigest()
+    provider._tools = [
+        Tool(name="a.b", description="", input_schema={"type": "object", "properties": {}}),
+        Tool(
+            name=f"a_b_{digest[:8]}",
+            description="",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        Tool(name="a_b", description="", input_schema={"type": "object", "properties": {}}),
+    ]
+
+    tools = await provider.get_tools_async()
+    names = [tool.name for tool in tools]
+
+    assert names[0] == "a_b"
+    assert names[1] == f"a_b_{digest[:8]}"
+    assert names[2] == f"a_b_{digest[:10]}"
+    assert len(set(names)) == 3
 
 
 async def test_call_tool_async_returns_mcp_result() -> None:

@@ -30,14 +30,29 @@ _TOOL_NAME_HASH_LENGTH = 8
 
 
 def _advertised_tool_name(*, name: str, used: set[str]) -> str:
-    """Return a model-compatible tool name that is unique within ``used``."""
+    """
+    Return a model-compatible tool name that is unique within ``used``.
+
+    Returns:
+        A unique name the model APIs accept.
+
+    Raises:
+        ValueError: If every candidate name is already present in ``used``.
+    """
     if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) and name not in used:
         return name
     sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", name)
     if len(sanitized) <= _MAX_TOOL_NAME_LENGTH and sanitized not in used:
         return sanitized
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:_TOOL_NAME_HASH_LENGTH]
-    return f"{sanitized[: _MAX_TOOL_NAME_LENGTH - _TOOL_NAME_HASH_LENGTH - 1]}_{digest}"
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    for length in range(_TOOL_NAME_HASH_LENGTH, _MAX_TOOL_NAME_LENGTH - 1, 2):
+        candidate = f"{sanitized[: _MAX_TOOL_NAME_LENGTH - length - 1]}_{digest[:length]}"
+        if candidate not in used:
+            return candidate
+    candidate = f"_{digest[: _MAX_TOOL_NAME_LENGTH - 1]}"
+    if candidate not in used:
+        return candidate
+    raise ValueError(f"Cannot derive a unique tool name for {name!r}")
 
 
 if TYPE_CHECKING:
