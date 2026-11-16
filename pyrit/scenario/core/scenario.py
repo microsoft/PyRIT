@@ -83,6 +83,7 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
 )
@@ -1479,11 +1480,14 @@ class Scenario(ABC):
         ``supported_parameters`` falls back to that input's default here.
 
         Raises:
+            DatasetConstraintError: If the configured datasets can't be resolved for a reason other
+                than a resumed run's dataset having been deleted.
             IncompatibleTechniqueError: If techniques were selected but none can run.
             ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
                 nor registered as a default), if a supplied target name is not registered in
-                ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
-                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
+                ``TargetRegistry``, if ``include_baseline=True`` is set for a scenario whose
+                ``BASELINE_ATTACK_POLICY`` is ``Forbidden``, or if a resumed run's datasets were
+                deleted or changed after the run was planned.
         """
         if not self._params_resolved:
             self.set_params_from_args(args=self.params)
@@ -1560,7 +1564,12 @@ class Scenario(ABC):
         is_resume = self._scenario_result_id is not None
         if not is_resume:
             await self._prepare_datasets_async()
-        seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
+        try:
+            seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
+        except DatasetConstraintError as error:
+            if is_resume:
+                await self._raise_if_datasets_deleted_async(cause=error)
+            raise
         if stored_plan is not None:
             planned_seed_ids = {group_id for group in stored_plan.atomic_groups for group_id in group.seed_group_ids}
             if seed_groups_by_dataset:
@@ -1568,8 +1577,11 @@ class Scenario(ABC):
                 missing_seed_ids = planned_seed_ids - resolved_seed_ids
                 if missing_seed_ids:
                     raise ValueError(
-                        f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                        f"missing {len(missing_seed_ids)} planned seed group(s) in the resolved datasets."
+                        self._resume_error_message(
+                            reason=f"missing {len(missing_seed_ids)} planned seed group(s) in the resolved "
+                            f"datasets ({', '.join(repr(name) for name in seed_groups_by_dataset)}); "
+                            "their content changed after the run was planned"
+                        )
                     )
             seed_groups_by_dataset = {
                 name: [group for group in groups if group.logical_id in planned_seed_ids]
@@ -1800,6 +1812,51 @@ class Scenario(ABC):
             return None
         return ScenarioRunPlan.model_validate(raw_plan)
 
+    def _resume_error_message(self, *, reason: str) -> str:
+        """
+        Build the error for a resume refused because its planned seeds can't be found.
+
+        Args:
+            reason (str): What is missing, without a trailing period.
+
+        Returns:
+            str: The message, ending with the two ways to recover.
+        """
+        return (
+            f"Scenario result id '{self._scenario_result_id}' cannot resume: {reason}. "
+            "To resume, re-import the dataset content this run used; "
+            "otherwise drop scenario_result_id to start a new run."
+        )
+
+    async def _raise_if_datasets_deleted_async(self, *, cause: DatasetConstraintError) -> None:
+        """
+        Explain a resume whose dataset resolution failed because a dataset was deleted.
+
+        Only an absent population or required dataset is reported this way; any other resolution
+        error is left for the caller to re-raise unchanged. Names are compared case-insensitively,
+        so a backend with a case-insensitive collation never reports a present dataset as deleted.
+
+        Args:
+            cause (DatasetConstraintError): The error raised while resolving the planned datasets.
+
+        Raises:
+            ValueError: If any population or required dataset has no seeds in memory.
+        """
+        configured = list(self._dataset_config.dataset_names)
+        if self._required_data is not None:
+            configured.extend(name for name in self._required_data.dataset_names if name not in configured)
+        if not configured:
+            return
+        stored = {name.casefold() for name in await self._memory.get_seed_dataset_names_async()}
+        missing = [name for name in configured if name.casefold() not in stored]
+        if missing:
+            raise ValueError(
+                self._resume_error_message(
+                    reason=f"dataset(s) {', '.join(repr(name) for name in missing)} are no longer in memory; "
+                    "they were deleted after the run was planned"
+                )
+            ) from cause
+
     def _apply_persisted_run_plan(self, *, stored_plan: ScenarioRunPlan) -> None:
         """
         Validate and replay the exact logical units captured by a stored plan.
@@ -1826,8 +1883,10 @@ class Scenario(ABC):
             missing_seed_groups = set(planned_group.seed_group_ids) - current_seed_groups.keys()
             if missing_seed_groups:
                 raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' cannot resume: atomic group "
-                    f"'{planned_group.atomic_attack_name}' is missing {len(missing_seed_groups)} planned seed group(s)."
+                    self._resume_error_message(
+                        reason=f"atomic group '{planned_group.atomic_attack_name}' is missing "
+                        f"{len(missing_seed_groups)} planned seed group(s)"
+                    )
                 )
             atomic_attack._seed_groups = [current_seed_groups[group_id] for group_id in planned_group.seed_group_ids]
             retained_attacks.append(atomic_attack)
