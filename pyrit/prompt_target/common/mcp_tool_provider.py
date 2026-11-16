@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 import sys
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
@@ -20,6 +22,23 @@ from mcp.types import PaginatedRequestParams
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.prompt_target.common.tool_provider import Tool
+
+logger = logging.getLogger(__name__)
+
+_MAX_TOOL_NAME_LENGTH = 64
+_TOOL_NAME_HASH_LENGTH = 8
+
+
+def _advertised_tool_name(*, name: str, used: set[str]) -> str:
+    """Return a model-compatible tool name that is unique within ``used``."""
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) and name not in used:
+        return name
+    sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", name)
+    if len(sanitized) <= _MAX_TOOL_NAME_LENGTH and sanitized not in used:
+        return sanitized
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:_TOOL_NAME_HASH_LENGTH]
+    return f"{sanitized[: _MAX_TOOL_NAME_LENGTH - _TOOL_NAME_HASH_LENGTH - 1]}_{digest}"
+
 
 if TYPE_CHECKING:
     from typing import TextIO
@@ -93,16 +112,17 @@ class MCPConfig(BaseModel):
 class _MCPTool(Tool):
     """An executable tool discovered from an MCP server."""
 
-    def __init__(self, *, provider: MCPToolProvider, definition: MCPToolDefinition) -> None:
+    def __init__(self, *, provider: MCPToolProvider, definition: MCPToolDefinition, advertised_name: str) -> None:
         super().__init__(
-            name=definition.name,
+            name=advertised_name,
             description=definition.description or "",
             parameters=dict(definition.input_schema),
         )
+        self._mcp_tool_name = definition.name
         self._provider = provider
 
     async def execute_async(self, *, arguments: dict[str, object]) -> object:
-        return await self._provider.call_tool_async(name=self.name, arguments=arguments)
+        return await self._provider.call_tool_async(name=self._mcp_tool_name, arguments=arguments)
 
 
 class MCPToolProvider:
@@ -333,10 +353,26 @@ class MCPToolProvider:
         """
         Discover executable MCP tools.
 
+        MCP tool names may contain characters or lengths that model tool-name
+        rules reject, so each tool is advertised under a compatible name while
+        executions still target the original MCP name.
+
         Returns:
             Tools that carry both their definitions and execution behavior.
         """
-        return [_MCPTool(provider=self, definition=definition) for definition in await self.list_tools_async()]
+        tools: list[Tool] = []
+        used: set[str] = set()
+        for definition in await self.list_tools_async():
+            advertised_name = _advertised_tool_name(name=definition.name, used=used)
+            if advertised_name != definition.name:
+                logger.info(
+                    "MCP tool %r is advertised as %r to satisfy model tool-name rules",
+                    definition.name,
+                    advertised_name,
+                )
+            used.add(advertised_name)
+            tools.append(_MCPTool(provider=self, definition=definition, advertised_name=advertised_name))
+        return tools
 
     @staticmethod
     def _get_stdio_stderr() -> TextIO:

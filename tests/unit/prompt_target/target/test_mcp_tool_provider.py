@@ -379,6 +379,61 @@ async def test_get_tools_async_discovers_all_pages() -> None:
     assert session.list_tools.call_args_list[1].kwargs["params"].cursor == "page-2"
 
 
+async def test_get_tools_async_keeps_original_mcp_name_for_execution() -> None:
+    provider = _http_provider()
+    provider._tools = [
+        Tool(
+            name="notes.search",
+            description="Search notes",
+            input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        )
+    ]
+    session = MagicMock()
+    session.call_tool = AsyncMock(return_value=CallToolResult(content=[]))
+
+    @asynccontextmanager
+    async def create_session():
+        yield session
+
+    provider._create_session_async = create_session  # type: ignore[method-assign]
+
+    tools = await provider.get_tools_async()
+    assert tools[0].name == "notes_search"
+
+    await tools[0].execute_async(arguments={"query": "welcome"})
+    session.call_tool.assert_awaited_once_with(name="notes.search", arguments={"query": "welcome"})
+
+
+async def test_get_tools_async_gives_every_tool_a_unique_compatible_name() -> None:
+    provider = _http_provider()
+    long_name = "x" * 70
+    provider._tools = [
+        Tool(name="a.b", description="", input_schema={"type": "object", "properties": {}}),
+        Tool(name="a_b", description="", input_schema={"type": "object", "properties": {}}),
+        Tool(name=long_name, description="", input_schema={"type": "object", "properties": {}}),
+    ]
+
+    tools = await provider.get_tools_async()
+    names = [tool.name for tool in tools]
+
+    assert len(set(names)) == 3
+    assert names[0] == "a_b"
+    assert names[1].startswith("a_b_")
+    assert len(names[2]) == 64
+    assert names[2].startswith(f"{'x' * 55}_")
+
+    session = MagicMock()
+    session.call_tool = AsyncMock(return_value=CallToolResult(content=[]))
+
+    @asynccontextmanager
+    async def create_session():
+        yield session
+
+    provider._create_session_async = create_session  # type: ignore[method-assign]
+    await tools[2].execute_async(arguments={})
+    session.call_tool.assert_awaited_once_with(name=long_name, arguments={})
+
+
 async def test_call_tool_async_returns_mcp_result() -> None:
     provider = _http_provider()
     provider._tools = [
