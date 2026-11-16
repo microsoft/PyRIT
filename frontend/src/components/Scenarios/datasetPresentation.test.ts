@@ -1,6 +1,6 @@
-import type { ScenarioDatasetOptions, ScenarioDatasetSettings } from '@/types'
+import type { ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
 
-import { datasetNameWithOrigin, datasetPolicies } from './datasetPresentation'
+import { datasetNameWithOrigin, datasetPolicies, datasetTotalLimit } from './datasetPresentation'
 
 const SETTINGS: ScenarioDatasetSettings = {
   sources: [
@@ -12,6 +12,18 @@ const SETTINGS: ScenarioDatasetSettings = {
 const OPTIONS: ScenarioDatasetOptions = {
   mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true, filters: true,
 }
+
+describe('datasetTotalLimit', () => {
+  it.each<[ScenarioDatasetRequest, number | 'all']>([
+    [{}, 5],
+    [{ max_total: null }, 5],
+    [{ max_total: 'default' }, 5],
+    [{ max_total: 3 }, 3],
+    [{ max_total: 'all' }, 'all'],
+  ])('resolves %j against the current defaults', (request: ScenarioDatasetRequest, expected: number | 'all') => {
+    expect(datasetTotalLimit(request, { ...SETTINGS, max_total: 5 })).toBe(expected)
+  })
+})
 
 describe('datasetNameWithOrigin', () => {
   it.each(['local', 'remote', 'generated', 'user'])('displays recorded %s origin', (origin) => {

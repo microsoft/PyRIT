@@ -24,7 +24,7 @@ import getpass
 from pyrit.datasets import TargetObjectiveProvider
 from pyrit.memory import CentralMemory
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core import get_default_adversarial_target
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore

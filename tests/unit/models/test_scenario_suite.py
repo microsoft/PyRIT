@@ -7,11 +7,15 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.models.catalog.scenario_suite import (
-    SUITE_SCHEMA_VERSION,
+from pyrit.models import (
     ScenarioSuite,
     ScenarioSuiteEntry,
+)
+from pyrit.models.catalog import (
     ScenarioSuiteRegistryEntry,
+)
+from pyrit.models.catalog.scenario_suite import (
+    SUITE_SCHEMA_VERSION,
 )
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")

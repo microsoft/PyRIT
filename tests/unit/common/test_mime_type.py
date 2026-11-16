@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.mime_type import get_mime_type
+from pyrit.common import get_mime_type
 
 
 @pytest.mark.parametrize(

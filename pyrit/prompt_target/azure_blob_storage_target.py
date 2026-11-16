@@ -3,7 +3,8 @@
 
 import logging
 import posixpath
-from enum import Enum
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -12,8 +13,8 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
-from pyrit.common import default_values
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, print_deprecation_message
+from pyrit.memory import SupportedContentType
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -21,16 +22,6 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
-
-
-class SupportedContentType(Enum):
-    """
-    All supported content types for uploading blobs to provided storage account container.
-    See all options here: https://www.iana.org/assignments/media-types/media-types.xhtml.
-    """
-
-    PLAIN_TEXT = "text/plain"
-    HTML = "text/html"
 
 
 class AzureBlobStorageTarget(PromptTarget):
@@ -64,6 +55,8 @@ class AzureBlobStorageTarget(PromptTarget):
     # the target authenticates with the server's own credentials, so the create-target API gates
     # it on administrator access.
     server_credential_parameter: ClassVar[str | None] = "sas_token"
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"sas_token": None})
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"container_url": True})
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
@@ -114,7 +107,8 @@ class AzureBlobStorageTarget(PromptTarget):
             ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
         """
         self._validate_auth_mode(auth_mode)
-        self._blob_content_type: str = blob_content_type.value
+        # Coerce so direct callers may pass a raw MIME string; invalid values raise ValueError.
+        self._blob_content_type: str = SupportedContentType(blob_content_type)
 
         self._container_url: str = default_values.get_required_value(
             env_var_name=self.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE, passed_value=container_url

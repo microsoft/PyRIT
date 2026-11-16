@@ -14,7 +14,7 @@ import type {
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, parseCaseLimit } from './datasetPresentation'
+import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 
 interface ScenarioDatasetTableProps {
@@ -52,8 +52,7 @@ export default function ScenarioDatasetTable({
   const canAdd = options.max_selected == null || selected.length < options.max_selected
   const replaceSingleSource = options.max_selected === 1
   const busy = disabled || preparing
-  const total = typeof request.max_total === 'number' || request.max_total === 'all'
-    ? request.max_total : defaults.max_total
+  const total = datasetTotalLimit(request, defaults)
   const filters = { ...defaults.filters, ...request.filters }
   const candidates = datasetChoices(datasets, defaults.sources, options)
     .filter((name) => !selected.some((source) => source.name === name) && name.toLowerCase().includes(search.toLowerCase()))
@@ -143,6 +142,9 @@ export default function ScenarioDatasetTable({
 
   return (
     <div className={styles.root}>
+      {selected.length > 0 && (loading || preparing) && <Text role="status" size={200} className={styles.loadingHint}>
+        {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
+      </Text>}
       {!allLoaded && selected.length > 0 && <div className={styles.toolbar}>
         {onLoad && <Button appearance="primary" className={styles.button}
           disabled={busy || loading || !loadEnabled || hasMissingRefresh || requiresImport
@@ -202,7 +204,7 @@ export default function ScenarioDatasetTable({
                   <Badge appearance="outline" color="subtle">Unlabeled</Badge>
                 </Tooltip>}
                 {metadata.harm_categories.length === 0 && metadata.modalities.length === 0 && <Text size={200}>No metadata labels.</Text>}
-              </div> : <Text size={200} role={loading || preparing ? 'status' : undefined}>
+              </div> : <Text size={200}>
                 {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable' : 'Not stored in memory'}
               </Text>}</TableCell>
               <TableCell className={styles.actionsCell}>

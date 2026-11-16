@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.common.utils import (
+from pyrit.common import (
     combine_dict,
     get_kwarg_param,
     get_random_indices,
     verify_and_resolve_path,
     warn_if_set,
 )
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 
 
 def test_combine_non_empty_dict():

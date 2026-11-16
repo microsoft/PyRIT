@@ -12,7 +12,7 @@ from typing import Any
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ class CopilotAuthenticator(Authenticator):
         import sys
 
         try:
-            from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]  # noqa: F401
+            from playwright.async_api import async_playwright  # type: ignore[ty:import-not-found]  # noqa: F401
         except ImportError:
             raise RuntimeError(
                 "Playwright is not installed. Please install it with: "
@@ -365,7 +365,7 @@ class CopilotAuthenticator(Authenticator):
         Raises:
             ValueError: If the username is not set.
         """
-        from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]
+        from playwright.async_api import async_playwright  # type: ignore[ty:import-not-found]
 
         bearer_token: str | None = None
         token_expires_in = None

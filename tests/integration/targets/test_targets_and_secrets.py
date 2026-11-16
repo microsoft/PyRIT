@@ -14,7 +14,7 @@ from PIL import Image
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider, is_azure_openai_endpoint
 from pyrit.common.path import HOME_PATH
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
-from pyrit.memory.sqlite_memory import SQLiteMemory
+from pyrit.memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import (
     OpenAIChatTarget,

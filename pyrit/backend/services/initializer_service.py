@@ -9,13 +9,15 @@ import asyncio
 import logging
 from functools import lru_cache
 
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import (
+    ListRegisteredInitializersResponse,
+    PaginationInfo,
+)
 from pyrit.backend.models.initializers import (
     CustomInitializerListResponse,
     CustomInitializerResponse,
-    ListRegisteredInitializersResponse,
 )
-from pyrit.models.catalog.initializer import RegisteredInitializer
+from pyrit.models.catalog import RegisteredInitializer
 from pyrit.registry import InitializerMetadata, InitializerRegistry
 
 logger = logging.getLogger(__name__)

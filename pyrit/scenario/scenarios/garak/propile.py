@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
@@ -19,6 +19,7 @@ from pyrit.models import (
     BoundedDatasetSize,
     Contains,
     OutputMatches,
+    ScenarioDatasetOptions,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -27,13 +28,14 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
     ResolvedDataset,
 )
@@ -362,7 +364,7 @@ class ProPILE(Scenario):
         Returns:
             list[AtomicAttack]: Attacks whose requests carry their withheld values.
         """
-        scorer = cast("TrueFalseScorer", self._objective_scorer)
+        scorer = self._objective_scorer
         attacks: list[AtomicAttack] = []
         for technique_name, seed_groups in context.seed_groups_by_dataset.items():
             if not seed_groups:

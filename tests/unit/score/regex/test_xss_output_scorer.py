@@ -8,8 +8,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.score import XSSOutputScorer
 
 
@@ -85,6 +84,82 @@ async def test_xss_executable_data_uris_detected(text: str, patch_central_databa
     scorer = XSSOutputScorer()
     score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<script>alert(1)</script >",
+        "<script>alert(1)</script\n>",
+        "<script>alert(1)</script\t\t>",
+        "<script>alert(1)</script\f>",
+        "<script>alert(1)</script\r>",
+        "<script>alert(1)</SCRIPT/>",
+        '<script>alert(1)</script foo="bar">',
+        '<script>alert(1)</script foo=">">',
+        "<script>alert(1)</script foo='>'>",
+        "<script>alert(1)</script x'>",
+        '<script>alert(1)</script x">',
+        "<script>alert(1)</script x=y'>",
+        '<script>alert(1)</script x=y">',
+        '<script>alert(1)</script =">',
+        '<script>alert(1)</script x=">"y=z>',
+        '<script>alert(1)</script x = \t"bar">',
+        "<script>alert(1)</script x=>",
+        "<script>alert(1)</script x=/>",
+        '<script>alert(1)</script x="</script>">',
+        "<script>alert(1)</scripts></script>",
+        "<script/>alert(1)</script>",
+        "<SCRIPT/x>alert(1)</SCRIPT >",
+    ],
+)
+async def test_xss_script_tag_name_terminators_detected(text: str, patch_central_database: MagicMock) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == "Matched: Script Tag"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<script>alert(1)</scripts>",
+        "<scripts>alert(1)</script>",
+        "<scripting>alert(1)</scripting>",
+    ],
+)
+async def test_xss_script_tag_name_lookalikes_not_detected(text: str, patch_central_database: MagicMock) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is False
+
+
+@pytest.mark.parametrize(
+    "ending",
+    ["/", " ", "\t", "\n", "\f", "\r", ' foo=">', " foo='>"],
+)
+async def test_xss_script_tag_incomplete_ending_not_detected(*, ending: str, patch_central_database: MagicMock) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=f"<script>alert(1)</script{ending}"))[0]
+    assert score.get_value() is False
+    assert score.score_rationale == ""
+
+
+@pytest.mark.parametrize("quote", ['"', "'"])
+async def test_xss_script_tag_end_tag_in_unfinished_attribute_not_detected(
+    *, quote: str, patch_central_database: MagicMock
+) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=f"<script>alert(1)</script x={quote}</script>"))[0]
+    assert score.get_value() is False
+    assert score.score_rationale == ""
+
+
+@pytest.mark.parametrize("separator", ["\v", "\x85", "\u00a0", "\u2003", "\u2028", "\u2029"])
+@pytest.mark.parametrize("opening", [False, True])
+async def test_xss_script_tag_non_html_whitespace_not_detected(
+    *, separator: str, opening: bool, patch_central_database: MagicMock
+) -> None:
+    text = f"<script{separator}>alert(1)</script>" if opening else f"<script>alert(1)</script{separator}>"
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is False
+    assert score.score_rationale == ""
 
 
 @pytest.mark.parametrize(

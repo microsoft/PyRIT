@@ -15,7 +15,7 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.score.scorer import Scorer
+from pyrit.score import Scorer
 
 
 class _RouteLeafScorer(Scorer):

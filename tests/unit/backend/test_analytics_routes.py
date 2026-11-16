@@ -243,6 +243,21 @@ async def test_native_pages_and_facets_are_sdk_equivalent_without_reports_or_hyd
     assert len(sessions) == 5
 
 
+@pytest.mark.usefixtures("analytics_results")
+async def test_facets_route_patterns_are_explicit_and_validated_async(*, analytics_client: httpx.AsyncClient) -> None:
+    dimension = {"name": "label", "label_key": "case"}
+    url = "/api/analytics/attacks/facets"
+    pattern = await analytics_client.post(url, json={"dimension": dimension, "search_pattern": "CASE-_"})
+    assert pattern.status_code == 200
+    assert {item["label"] for item in pattern.json()["items"]} == {f"case-{index}" for index in range(1, 5)}
+    literal = await analytics_client.post(url, json={"dimension": dimension, "search": "case-_"})
+    assert literal.status_code == 200
+    assert literal.json()["items"] == []
+    for filters in ({"search_pattern": "/"}, {"search": "", "search_pattern": "%"}):
+        invalid = await analytics_client.post(url, json={"dimension": dimension, **filters})
+        assert invalid.status_code == 422
+
+
 @pytest.mark.parametrize(
     ("endpoint", "body"),
     [

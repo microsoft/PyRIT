@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.score import FentanylKeywordScorer
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score import FentanylKeywordScorer, RegexScorer
 
 
 def test_is_regex_scorer_subclass():

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH
 from pyrit.backend.models.message_sends import MessageSendStatus
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.message_send_service import MessageSendNotFoundError, MessageSendService
 from pyrit.memory.memory_interface import AttackStateConflictError

@@ -8,19 +8,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioLaunchConfiguration
-from pyrit.models.scenario_suite_execution import (
+from pyrit.models import (
     LaunchScenarioSuiteRequest,
+    ScenarioLaunchConfiguration,
     ScenarioSuiteExecutionMetadata,
+    ScenarioSuiteReadinessRequest,
 )
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry.components.scenario_preset_registry import ScenarioPresetRegistry
 from pyrit.registry.components.scenario_suite_registry import ScenarioSuiteRegistry
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from pyrit.models.catalog.scenario_preset import ScenarioPreset
-    from pyrit.models.catalog.scenario_suite import ScenarioSuiteRegistryEntry
+    from pyrit.models import ScenarioPreset
+    from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 
 
 class _RunDefaults(TypedDict, total=False):
@@ -45,7 +47,7 @@ class ScenarioSuiteNotRunnableError(ValueError):
 def resolve_scenario_preset_run_request(
     *,
     preset: ScenarioPreset,
-    launch: ScenarioLaunchConfiguration,
+    launch: ScenarioLaunchConfiguration | LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest,
 ) -> RunScenarioRequest:
     """
     Combine a preset with the target and execution fields it deliberately omits.
@@ -66,6 +68,8 @@ def resolve_scenario_preset_run_request(
         scenario_params=preset.scenario_params,
         target_name=launch.target_name,
         adversarial_target_name=launch.adversarial_target_name,
+        scoring_target_name=launch.scoring_target_name,
+        objective_scorer=launch.objective_scorer,
         initializers=launch.initializers,
         initializer_args=launch.initializer_args,
         operation_id=launch.operation_id,
@@ -130,7 +134,9 @@ class ScenarioSuiteLaunchResolver:
         self._suite_registry = suite_registry
         self._preset_registry = preset_registry
 
-    def resolve(self, *, name: str, request: LaunchScenarioSuiteRequest) -> ResolvedScenarioSuiteLaunch:
+    def resolve(
+        self, *, name: str, request: LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest
+    ) -> ResolvedScenarioSuiteLaunch:
         """
         Resolve and validate the complete suite before any child is submitted.
 

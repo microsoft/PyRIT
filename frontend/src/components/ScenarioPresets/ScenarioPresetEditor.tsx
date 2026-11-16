@@ -493,7 +493,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                   <ParameterField
                     key={parameter.name}
                     parameter={parameter}
-                    value={config.scenarioParamValues[parameter.name]}
+                    value={config.scenarioParamValues[parameter.name] ?? ''}
                     disabled={saving}
                     onChange={updateScenarioParam}
                     testIdPrefix="preset-param"

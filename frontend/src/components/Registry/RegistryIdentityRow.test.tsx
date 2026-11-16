@@ -36,6 +36,10 @@ function RegistryRows() {
 }
 
 describe('RegistryIdentityRow', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
   it('should expand JSON only with Enter and collapse with Space without losing focus', async () => {
     const user = userEvent.setup()
     render(<RegistryRows />)
@@ -67,5 +71,22 @@ describe('RegistryIdentityRow', () => {
     await user.click(screen.getByRole('button', { name: 'Identity for first' }))
     expect(screen.queryByRole('region', { name: 'Identity for first' })).not.toBeInTheDocument()
     expect(second).toBeVisible()
+  })
+
+  it('should reveal details only when mounted and preserve disclosure focus', async () => {
+    const user = userEvent.setup()
+    const rendered = render(<RegistryRows />)
+    const toggle = screen.getByRole('button', { name: 'Identity for first' })
+
+    await user.click(toggle)
+
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'start' })
+    expect(toggle).toHaveFocus()
+    jest.mocked(Element.prototype.scrollIntoView).mockClear()
+
+    rendered.rerender(<RegistryRows />)
+
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    expect(toggle).toHaveFocus()
   })
 })

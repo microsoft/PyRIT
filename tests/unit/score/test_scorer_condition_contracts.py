@@ -29,8 +29,10 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.score import (
+    DecisionScorer,
     LegacyScorerHookError,
     MessageTrueFalseScorer,
+    ObservationSource,
     ProgramExecutionScorer,
     Scorer,
     ScorerPromptValidator,
@@ -39,9 +41,7 @@ from pyrit.score import (
     SubStringScorer,
     TrueFalseScorer,
 )
-from pyrit.score.float_scale.decision_scorer import DecisionScorer
 from pyrit.score.observation import execution
-from pyrit.score.observation.observation_source import ObservationSource
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 

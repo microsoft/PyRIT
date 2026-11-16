@@ -7,6 +7,7 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AttackFindingListResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -72,6 +73,9 @@ import type {
   ScenarioRunProgress,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
+  PairedOutcomeStatistics,
+  PairedOutcomeDetailPage,
+  PairedOutcomeTransition,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -82,6 +86,8 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  MediaUploadRequest,
+  MediaUploadResponse,
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
@@ -108,6 +114,12 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
+export const mediaApi = {
+  upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
+    return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
+  },
+}
+
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
 export const operationsApi = {
@@ -130,7 +142,7 @@ export const operationsApi = {
     await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
-    operationId: string, params: { limit: number; offset: number; title?: string },
+    operationId: string, params: { limit: number; offset: number; title?: string; title_pattern?: string },
   ): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
@@ -372,6 +384,14 @@ export const runtimeApi = {
 }
 
 export const targetsApi = {
+  detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
+    const response = await apiClient.post<TargetInstance>(
+      `/targets/${encodeURIComponent(target.target_registry_name)}/detect-capabilities`,
+      { expected_hash: target.identifier.hash },
+    )
+    return response.data
+  },
+
   listTargetTypes: async (): Promise<TargetTypeListResponse> => {
     const response = await apiClient.get('/targets/types')
     return response.data
@@ -499,6 +519,12 @@ export const attacksApi = {
     const response = conversationId === undefined
       ? await apiClient.get(url)
       : await apiClient.get(url, { params: { conversation_id: conversationId } })
+    return response.data
+  },
+
+  /** Findings in any Operation that link this attack as evidence; empty for an unsaved running attack. */
+  getAttackFindings: async (attackResultId: string): Promise<AttackFindingListResponse> => {
+    const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}/findings`)
     return response.data
   },
 
@@ -781,6 +807,36 @@ export const scenariosApi = {
     return response.data
   },
 
+  getPairedOutcomes: async (
+    scenarioResultId: string,
+    params: { baseline_group_id: string; attack_group_id: string },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeStatistics> => {
+    const response = await apiClient.get<PairedOutcomeStatistics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomeDetails: async (
+    scenarioResultId: string,
+    params: {
+      baseline_group_id: string
+      attack_group_id: string
+      transition: PairedOutcomeTransition
+      cursor?: string
+      limit: number
+    },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeDetailPage> => {
+    const response = await apiClient.get<PairedOutcomeDetailPage>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
+      { params, signal },
+    )
+    return response.data
+  },
+
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })
     return response.data
@@ -837,8 +893,14 @@ export const scenarioPresetsApi = {
     return response.data
   },
 
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
+  /**
+   * Deletes a stored preset. With `expectedVersion`, a preset that changed after that
+   * read fails with 409 instead of being deleted.
+   */
+  remove: async (name: string, expectedVersion?: string): Promise<void> => {
+    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`, {
+      params: { expected_version: expectedVersion },
+    })
   },
 }
 
@@ -873,8 +935,14 @@ export const scenarioSuitesApi = {
     return response.data
   },
 
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  /**
+   * Deletes a stored suite. With `expectedVersion`, a suite that changed after that
+   * read fails with 409 instead of being deleted.
+   */
+  remove: async (name: string, expectedVersion?: string): Promise<void> => {
+    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`, {
+      params: { expected_version: expectedVersion },
+    })
   },
 
   launch: async (
@@ -915,12 +983,16 @@ export const scenarioSuitesApi = {
 const MAX_SEED_SEARCH_LENGTH = 1_000
 
 function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
+  if (params.search != null && params.value_pattern != null) {
+    throw new Error('Supply either literal search or value_pattern, not both.')
+  }
   const query: Record<string, string | number | readonly string[]> = {
     selection_key: params.selection_key,
   }
   if (params.limit != null) query.limit = params.limit
   if (params.cursor) query.cursor = params.cursor
   if (params.search) query.search = params.search.slice(0, MAX_SEED_SEARCH_LENGTH)
+  if (params.value_pattern != null) query.value_pattern = params.value_pattern
   if (params.modality && params.modality.length > 0) query.modality = params.modality
   if (params.seed_type && params.seed_type.length > 0) query.seed_type = params.seed_type
   if (params.harm_category && params.harm_category.length > 0) query.harm_category = params.harm_category

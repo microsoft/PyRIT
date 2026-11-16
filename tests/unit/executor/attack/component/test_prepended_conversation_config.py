@@ -5,7 +5,7 @@ from typing import get_type_hints
 
 from unit.mocks import get_mock_prompt_normalizer
 
-from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
+from pyrit.executor.attack import PrependedConversationConfig
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import ChatMessageRole
 
