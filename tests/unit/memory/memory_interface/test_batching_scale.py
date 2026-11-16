@@ -13,8 +13,7 @@ from unittest.mock import patch
 
 from unit.mocks import make_scenario_result
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import PromptMemoryEntry
+from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
 
 # Use the class attribute for the batch limit in tests

@@ -5,7 +5,7 @@ import logging
 import pathlib
 import textwrap
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.models import ComponentIdentifier, SeedPrompt

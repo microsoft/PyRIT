@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy import select
 
-from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack
-from pyrit.executor.attack.compound.sequential_attack import (
+from pyrit.executor.attack import (
+    AttackScoringConfig,
+    AttackStrategy,
+    PromptSendingAttack,
     SequenceCompletionPolicy,
     SequentialAttack,
 )
@@ -32,7 +34,7 @@ from pyrit.scenario import (
     IncompatibleTechniquePolicy,
     TechniqueRequirements,
 )
-from pyrit.scenario.scenarios.adaptive.dispatcher import (
+from pyrit.scenario.scenarios.adaptive import (
     ADAPTIVE_ATTEMPT_LABEL,
     AdaptiveTechniqueDispatcher,
     TechniqueBundle,
@@ -414,8 +416,8 @@ class TestEvalHashRoundTrip:
     async def test_predicted_hash_matches_persisted_row_async(
         self, *, packaged: bool, sqlite_instance: SQLiteMemory
     ) -> None:
-        from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-        from pyrit.memory.memory_models import AttackResultEntry
+        from pyrit.executor.attack import PromptSendingAttack
+        from pyrit.memory import AttackResultEntry
         from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.models.identifiers import compute_inner_attack_eval_hash
 

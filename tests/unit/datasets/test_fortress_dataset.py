@@ -6,13 +6,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.fortress_dataset import (
-    HF_DATASET_NAME,
-    HF_REVISION,
+from pyrit.datasets.seed_datasets.remote import (
     FortressRiskDomain,
     FortressRiskSubdomain,
     FortressSplit,
     _FortressDataset,
+)
+from pyrit.datasets.seed_datasets.remote.fortress_dataset import (
+    HF_DATASET_NAME,
+    HF_REVISION,
     _shorten_risk_subdomain,
 )
 from pyrit.models import SeedDataset, SeedPrompt

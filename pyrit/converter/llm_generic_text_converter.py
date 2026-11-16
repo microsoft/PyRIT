@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_none
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.exceptions.exception_classes import _DynamicStopAfterAttempt, get_retry_max_num_attempts
+from pyrit.exceptions import get_retry_max_num_attempts
+from pyrit.exceptions.exception_classes import _DynamicStopAfterAttempt
 from pyrit.exceptions.exceptions_helpers import log_exception
 from pyrit.models import (
     ComponentIdentifier,
@@ -221,16 +222,10 @@ class LLMGenericTextConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        conversation_id = str(uuid.uuid4())
-
+        system_prompt = None
         if self._system_prompt_template:
             system_prompt = self._system_prompt_template.render_template_value(
                 **self._render_values(template=self._system_prompt_template, objective=prompt)
-            )
-            (
-                await self._converter_target.set_system_prompt_async(
-                    system_prompt=system_prompt, conversation_id=conversation_id
-                )
             )
 
         converted_prompt = prompt
@@ -239,13 +234,14 @@ class LLMGenericTextConverter(Converter):
                 **self._render_values(template=self._user_prompt_template_with_objective, objective=prompt)
             )
 
+        # The system prompt template is sent in the user turn; see Converter._prepend_instructions.
         request = Message(
             message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value=prompt,
-                    converted_value=converted_prompt,
-                    conversation_id=conversation_id,
+                    converted_value=self._prepend_instructions(instructions=system_prompt, prompt=converted_prompt),
+                    conversation_id=str(uuid.uuid4()),
                     sequence=1,
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,

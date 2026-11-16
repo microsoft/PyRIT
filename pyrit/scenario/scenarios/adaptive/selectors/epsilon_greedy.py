@@ -11,13 +11,13 @@ import random
 import struct
 from typing import TYPE_CHECKING
 
-from pyrit.analytics.technique_analysis import compute_technique_stats_async
+from pyrit.analytics import compute_technique_stats_async
 from pyrit.scenario.scenarios.adaptive.selectors.technique_selector import SelectorScope
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.analytics.result_analysis import AttackStats
+    from pyrit.analytics import AttackStats
 
 logger = logging.getLogger(__name__)
 

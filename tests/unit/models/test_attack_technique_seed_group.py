@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.models import Message
-from pyrit.models.seeds import (
+from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    Message,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,

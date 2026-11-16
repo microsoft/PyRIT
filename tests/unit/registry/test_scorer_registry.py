@@ -8,29 +8,28 @@ and its introspection helpers.
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece, Score
 from pyrit.prompt_target import (
     PromptTarget,
     TargetCapabilities,
     TargetConfiguration,
 )
-from pyrit.registry.components import (
+from pyrit.registry import (
     ScorerMetadata,
     ScorerRegistry,
     TargetRegistry,
 )
 from pyrit.registry.resolution import derive_parameters
 from pyrit.score import (
+    MessageFloatScaleScorer,
+    MessageTrueFalseScorer,
+    Scorer,
+    ScorerPromptValidator,
     SelfAskRefusalScorer,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
     create_conversation_scorer,
 )
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 class DummyValidator(ScorerPromptValidator):
@@ -451,7 +450,7 @@ class TestRegistrationGate:
         assert "SelfAskRefusalScorer" in names
 
     def test_is_llm_based_matches_target_reference(self, registry: ScorerRegistry) -> None:
-        from pyrit.models.identifiers import ScorerIdentifier
+        from pyrit.models import ScorerIdentifier
 
         for meta in registry.get_all_registered_class_metadata():
             parameters = derive_parameters(cls=registry.get_class(meta.class_name), identifier_type=ScorerIdentifier)

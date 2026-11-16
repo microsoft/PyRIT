@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.converter.prompt_template_converter import PromptTemplateConverter
 from pyrit.models import ComponentIdentifier
 

@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from pyrit.memory.storage.storage import (
+from pyrit.memory import (
     AzureBlobStorageIO,
     DiskStorageIO,
     SupportedContentType,
@@ -39,6 +40,39 @@ async def test_blob_storage_deletion_closes_client_on_failure_async() -> None:
         await storage.delete_file_async("https://account.blob.core.windows.net/container/owned.txt")
     client.delete_blob.assert_awaited_once_with("owned.txt")
     client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_blob_upload_stream_is_inert_exclusive_and_closes_client_async(fails: bool) -> None:
+    from azure.storage.blob.aio import ContainerClient
+
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    client = AsyncMock(spec=ContainerClient)
+    storage._client_async = client
+    if fails:
+        client.upload_blob.side_effect = OSError("upload failed")
+
+    async def chunks_async() -> AsyncIterator[bytes]:
+        yield b"arbitrary"
+        yield b"\x00bytes"
+
+    chunks = chunks_async()
+    try:
+        if fails:
+            with pytest.raises(OSError, match="upload failed"):
+                await storage.write_stream_async(path="nested/file.bin", chunks=chunks)
+        else:
+            await storage.write_stream_async(path="nested/file.bin", chunks=chunks)
+        client.upload_blob.assert_awaited_once()
+        kwargs = client.upload_blob.call_args.kwargs
+        assert kwargs["name"] == "nested/file.bin"
+        assert kwargs["data"] is chunks
+        assert kwargs["overwrite"] is False
+        assert kwargs["content_settings"].content_type == "application/octet-stream"
+        assert kwargs["content_settings"].content_disposition == "attachment"
+        client.close.assert_awaited_once()
+    finally:
+        await chunks.aclose()
 
 
 async def test_disk_storage_io_read_file():
@@ -160,6 +194,14 @@ async def test_azure_blob_storage_io_write_file():
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
             file_name="testfile.txt", data=data_to_write, content_type=SupportedContentType.PLAIN_TEXT.value
         )
+
+
+def test_azure_blob_storage_io_accepts_raw_mime_string():
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url="https://youraccount.blob.core.windows.net/yourcontainer",
+        blob_content_type="text/html",  # type: ignore[arg-type]
+    )
+    assert azure_blob_storage_io._blob_content_type == "text/html"
 
 
 async def test_azure_blob_storage_io_write_file_with_relative_path():

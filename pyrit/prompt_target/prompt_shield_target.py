@@ -3,7 +3,8 @@
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, assert_never
 
 from pyrit.auth import (
@@ -11,8 +12,7 @@ from pyrit.auth import (
     get_default_azure_scope,
     is_azure_openai_endpoint,
 )
-from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, net_utility, print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -58,6 +58,8 @@ class PromptShieldTarget(PromptTarget):
     # A subscription key is the "api_key"; auth_mode="identity" mints an Entra ID token
     # provider for a recognized Azure Content Safety endpoint instead.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
 
     _endpoint: str
     _api_key: str | Callable[[], str] | None

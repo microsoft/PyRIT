@@ -414,6 +414,8 @@ class _AnthropicModelWrittenEvalsDataset(_RemoteDatasetLoader):
                     )
             except ExceptionGroup as group:
                 fetch_error = group.exceptions[0]
+                for other_error in group.exceptions[1:]:
+                    fetch_error.add_note(f"Another file fetch also failed: {type(other_error).__name__}: {other_error}")
             if fetch_error is not None:
                 # Preserve the original error without adding the group's exception context.
                 raise fetch_error

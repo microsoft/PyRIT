@@ -11,18 +11,16 @@ from pyrit.converter import (
     Base64Converter,
     Converter,
     ConverterResult,
-    LeetspeakConverter,
-    RandomCapitalLettersConverter,
-    ROT13Converter,
-    SelectiveTextConverter,
-)
-from pyrit.converter.text_selection_strategy import (
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
+    LeetspeakConverter,
     PositionSelectionStrategy,
     ProportionSelectionStrategy,
+    RandomCapitalLettersConverter,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    ROT13Converter,
+    SelectiveTextConverter,
     TextSelectionStrategy,
     TokenSelectionStrategy,
     WordIndexSelectionStrategy,
@@ -857,3 +855,32 @@ def test_identifier_ignores_word_separator_for_char_level_strategies() -> None:
     )
     assert "word_separator" not in space.get_identifier().params
     assert space.get_identifier().hash == comma.get_identifier().hash
+
+
+async def test_token_selection_failed_region_cancels_in_flight_regions_async() -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(sub_converter=sub_converter, selection_strategy=TokenSelectionStrategy())
+    error = RuntimeError("rate limited")
+    sibling_started = asyncio.Event()
+    cancelled: list[str] = []
+
+    async def convert_region_async(*, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        if prompt == "bad":
+            await sibling_started.wait()
+            raise error
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(prompt)
+            raise
+        raise AssertionError("sibling region was not cancelled")
+
+    with (
+        patch.object(sub_converter, "convert_async", new_callable=AsyncMock, side_effect=convert_region_async),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await converter.convert_tokens_async(prompt="⟪slow⟫ and ⟪bad⟫")
+
+    assert exc_info.value is error
+    assert cancelled == ["slow"]

@@ -50,7 +50,7 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalL,
     [NARROW_VIEWPORT_QUERY]: {
       gridTemplateColumns: '1fr',
-      gridTemplateRows: 'auto minmax(24rem, 1fr)',
+      gridTemplateRows: 'minmax(min-content, auto) minmax(24rem, 1fr)',
     },
   },
   navigation: {

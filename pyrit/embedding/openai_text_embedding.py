@@ -9,8 +9,7 @@ import tenacity
 from openai import AsyncOpenAI
 
 from pyrit.auth import resolve_openai_auth
-from pyrit.common import default_values
-from pyrit.common.auth_mode import AuthMode
+from pyrit.common import AuthMode, default_values
 from pyrit.models import (
     EmbeddingData,
     EmbeddingResponse,

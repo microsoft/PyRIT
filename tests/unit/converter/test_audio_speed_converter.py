@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from pyrit.converter.audio_speed_converter import AudioSpeedConverter
+from pyrit.converter import AudioSpeedConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.registry import ConverterRegistry
 

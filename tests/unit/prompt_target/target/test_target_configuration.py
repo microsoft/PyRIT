@@ -1,10 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+import inspect
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.message_normalizer import (
     GenericSystemSquashNormalizer,
@@ -12,15 +17,14 @@ from pyrit.message_normalizer import (
     JsonSchemaNormalizer,
     MessageListNormalizer,
 )
-from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Identifiable, Message, MessagePiece
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture
@@ -329,6 +333,78 @@ def test_ensure_can_handle_raises_valueerror_for_non_normalizable_capability():
         config.ensure_can_handle(capability=CapabilityName.MULTI_MESSAGE_PIECES)
 
 
+def test_ensure_can_handle_unknown_behavior_keeps_historical_fallback():
+    """Values outside UnsupportedCapabilityBehavior keep the ADAPT error, not a new failure mode."""
+    config = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_editable_history=False),
+        policy=CapabilityHandlingPolicy(
+            behaviors={CapabilityName.EDITABLE_HISTORY: UnsupportedCapabilityBehavior.ADAPT}
+        ),
+    )
+    with patch.object(CapabilityHandlingPolicy, "get_behavior", return_value="future_behavior"):
+        with pytest.raises(ValueError, match="no default or configured normalizer"):
+            config.ensure_can_handle(capability=CapabilityName.EDITABLE_HISTORY)
+
+
+@pytest.mark.parametrize("python_version", ["3.11", "3.12"])
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_ensure_can_handle_dispatch_type_exhaustiveness(
+    tmp_path: Path, *, extend_enum: bool, python_version: Literal["3.11", "3.12"]
+) -> None:
+    enum_source = inspect.getsource(UnsupportedCapabilityBehavior)
+    if extend_enum:
+        enum_source += '\n    FUTURE = "future"\n'
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "from collections.abc import Mapping",
+                "from enum import Enum",
+                "from typing import TYPE_CHECKING, assert_never",
+                "from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities",
+                (
+                    "from pyrit.prompt_target.common.conversation_normalization_pipeline import "
+                    "ConversationNormalizationPipeline"
+                ),
+                enum_source,
+                "class CapabilityHandlingPolicy:",
+                "    behaviors: Mapping[CapabilityName, UnsupportedCapabilityBehavior]",
+                inspect.getsource(CapabilityHandlingPolicy.get_behavior),
+                "class DispatchProbe:",
+                "    _capabilities: TargetCapabilities",
+                "    _pipeline: ConversationNormalizationPipeline",
+                "    _policy: CapabilityHandlingPolicy",
+                inspect.getsource(TargetConfiguration.ensure_can_handle),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[4]),
+            "--python-version",
+            python_version,
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(behavior)" in output, output
+        assert "UnsupportedCapabilityBehavior.FUTURE" in output, output
+
+
 # ---------------------------------------------------------------------------
 # normalize_async
 # ---------------------------------------------------------------------------
@@ -379,7 +455,7 @@ async def test_normalize_async_adapts_multi_turn(adapt_all_policy, make_message)
 # ---------------------------------------------------------------------------
 
 
-def test_capabilities_to_identifier_params_includes_all_fields():
+def test_capabilities_to_identifier_params_excludes_request_only_availability():
     caps = TargetCapabilities(
         supports_multi_turn=True,
         supports_multi_message_pieces=True,
@@ -391,8 +467,7 @@ def test_capabilities_to_identifier_params_includes_all_fields():
 
     params = TargetConfiguration._capabilities_to_identifier_params(caps)
 
-    # Every model field on TargetCapabilities must appear in the params.
-    assert set(params.keys()) == set(type(caps).model_fields)
+    assert set(params.keys()) == set(type(caps).model_fields) - {"supports_temperature"}
 
 
 def test_capabilities_to_identifier_params_scalar_fields_passthrough():

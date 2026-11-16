@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.unicode_confusable_converter import (
+from pyrit.converter import (
+    ConverterResult,
     UnicodeConfusableConverter,
 )
 

@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.analytics import compute_outcome_statistics
-from pyrit.analytics.technique_analysis import compute_technique_stats, compute_technique_stats_async
+from pyrit.analytics import compute_outcome_statistics, compute_technique_stats_async
+from pyrit.analytics.technique_analysis import compute_technique_stats
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.models import AttackOutcome, AttackStats, OutcomeStatistics
 from unit.memory.test_attack_analytics import make_result

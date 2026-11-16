@@ -7,17 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
-from pyrit.executor.attack.core.attack_parameters import (
+from pyrit.executor.attack import (
     AttackParameters,
+    PromptSendingAttackParameters,
+    SimulatedConversationResult,
 )
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
-from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttackParameters
 from pyrit.models import (
     AttackSeedGroup,
+    ChatMessageRole,
     ConversationReference,
     ConversationType,
     Message,
@@ -26,7 +27,6 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
-from pyrit.models.literals import ChatMessageRole
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:
@@ -413,3 +413,30 @@ async def test_from_seed_group_async_rejects_plain_seed_group():
     plain_group = SeedGroup(seeds=[SeedObjective(value="Test objective")])
     with pytest.raises(TypeError, match="seed_group must be a AttackSeedGroup"):
         await AttackParameters.from_seed_group_async(seed_group=plain_group)  # type: ignore[arg-type]
+
+
+class TestPositionalConstructorCompatibility:
+    """The released positional constructor order must remain unchanged."""
+
+    @pytest.mark.parametrize(
+        "params_type",
+        [
+            AttackParameters,
+            PromptSendingAttackParameters,
+            AttackParameters.excluding("next_message"),
+        ],
+    )
+    def test_continuation_is_not_an_attack_parameter(self, params_type: type[AttackParameters]) -> None:
+        assert "continue_final_assistant_message" not in {field.name for field in dataclasses.fields(params_type)}
+
+    def test_fourth_positional_argument_is_memory_labels(self) -> None:
+        params = AttackParameters("objective", None, None, {"run": "example"})
+
+        assert params.memory_labels == {"run": "example"}
+
+    def test_reduced_type_keeps_positional_order(self) -> None:
+        reduced = AttackParameters.excluding("next_message")
+
+        params = reduced("objective", None, {"run": "example"})
+
+        assert params.memory_labels == {"run": "example"}

@@ -7,6 +7,7 @@ import json
 import sys
 import types
 from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +27,7 @@ from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
+    CapabilityName,
     JsonResponseConfig,
     Message,
     MessagePiece,
@@ -36,13 +38,16 @@ from pyrit.models import (
     ToolsCalled,
     TraceScorable,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
+    LiteLLMChatTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
+    discover_target_capabilities_async,
 )
-from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
@@ -332,6 +337,27 @@ def test_custom_configuration_overrides_derivation(patch_central_database, litel
     supported = {ty for combo in t.capabilities.input_modalities for ty in combo}
     assert supported == {"text"}
     assert t.capabilities.supports_json_output is False
+    assert t.capabilities.supports_prefill is False
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+def test_prefill_survives_capability_derivation(patch_central_database, litellm_stub, underlying_model):
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", underlying_model=underlying_model)
+    assert target.capabilities.supports_prefill is True
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+def test_custom_prefill_opt_out_wins_over_model_metadata(patch_central_database, litellm_stub, underlying_model):
+    custom = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True, supports_editable_history=True, supports_prefill=False
+        )
+    )
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", underlying_model=underlying_model, custom_configuration=custom
+    )
+    assert target.configuration is custom
+    assert target.capabilities.supports_prefill is False
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +658,66 @@ async def test_send_prompt_parses_audio_response(patch_central_database, litellm
     assert audio_piece.converted_value == "/path/to/audio.wav"
 
 
+async def test_send_prompt_replays_audio_response_as_transcript_without_audio_input(patch_central_database, tmp_path):
+    """Stored assistant audio must not block the next text turn when the adapter sends only its transcript."""
+    audio_file = tmp_path / "response.wav"
+    audio_file.write_bytes(b"fake audio bytes")
+    litellm, exc_mod = _make_litellm_stub(supports_audio_input=False, supports_audio_output=True)
+    litellm.acompletion = AsyncMock(side_effect=[_mock_audio_response("Spoken response"), _mock_response("Follow-up")])
+    conversation_id = "litellm-audio-history"
+
+    with (
+        patch.dict(sys.modules, {"litellm": litellm, "litellm.exceptions": exc_mod}),
+        patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory,
+    ):
+        mock_serializer = MagicMock()
+        mock_serializer.value = str(audio_file)
+        mock_serializer.save_data_async = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        target = LiteLLMChatTarget(
+            model_name="openai/gpt-4o-audio-preview",
+            audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+        )
+        assert not any("audio_path" in combo for combo in target.capabilities.input_modalities)
+
+        normalizer = PromptNormalizer()
+        first = await normalizer.send_prompt_async(
+            message=_user_message("Hi", conversation_id=conversation_id), target=target, conversation_id=conversation_id
+        )
+        assert [piece.converted_value_data_type for piece in first.message_pieces] == ["text", "audio_path"]
+
+        second = await normalizer.send_prompt_async(
+            message=_user_message("Continue", conversation_id=conversation_id),
+            target=target,
+            conversation_id=conversation_id,
+        )
+
+    assert second.get_value() == "Follow-up"
+    assert litellm.acompletion.await_count == 2
+    second_messages = litellm.acompletion.await_args_list[1].kwargs["messages"]
+    assert [message["role"] for message in second_messages] == ["user", "assistant", "user"]
+    assert second_messages[1]["content"] == [{"type": "text", "text": "Spoken response"}]
+    assert second_messages[-1]["content"] == [{"type": "text", "text": "Continue"}]
+    assert not any(part.get("type") == "input_audio" for message in second_messages for part in message["content"])
+
+
+def test_audio_history_validation_still_rejects_current_user_audio(patch_central_database, litellm_stub):
+    """Assistant-audio history support must not enable unsupported live audio input."""
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o-audio-preview",
+        audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+    )
+    audio_request = MessagePiece(
+        role="user",
+        original_value="/path/to/input.wav",
+        original_value_data_type="audio_path",
+    ).to_message()
+
+    with pytest.raises(ValueError, match="Received: audio_path"):
+        target._validate_request(normalized_conversation=[audio_request])
+
+
 # ---------------------------------------------------------------------------
 # JSON output
 # ---------------------------------------------------------------------------
@@ -789,6 +875,70 @@ async def test_unknown_error_wrapped_in_pyrit_exception(target, litellm_stub):
     litellm_stub.acompletion = AsyncMock(side_effect=RuntimeError("something broke"))
     with pytest.raises(PyritException, match="LiteLLM error"):
         await target.send_prompt_async(message=_user_message())
+
+
+@pytest.mark.parametrize("status_code", [None, 400, 422, 403, 500])
+async def test_provider_error_preserves_status_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int | None
+) -> None:
+    error = _StubLiteLLMError("Provider rejected request", status_code=status_code)
+    litellm_stub.acompletion.side_effect = error
+    with pytest.raises(PyritException) as caught:
+        await target.send_prompt_async(message=_user_message())
+    assert caught.value.status_code == (status_code or 500)
+    assert caught.value.__cause__ is error
+
+
+@pytest.mark.parametrize("status_code", [400, 422])
+async def test_strict_discovery_records_provider_rejection_after_control_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int
+) -> None:
+    calls: list[dict[str, object]] = []
+    expected = target.capabilities.model_copy(update={"supports_json_output": False})
+
+    async def complete_async(**kwargs: object) -> object:
+        calls.append(kwargs)
+        if kwargs.get("response_format"):
+            raise litellm_stub.exceptions.BadRequestError("JSON mode unsupported", status_code=status_code)
+        return _mock_response()
+
+    litellm_stub.acompletion.side_effect = complete_async
+    result = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[CapabilityName.JSON_OUTPUT],
+        test_modalities={frozenset({"text"})},
+        retries=0,
+        apply=True,
+        raise_on_error=True,
+    )
+    assert "response_format" not in calls[0]
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert result == expected
+    assert target.capabilities == expected
+
+
+@pytest.mark.parametrize("status_code", [401, 500])
+async def test_strict_discovery_preserves_configuration_on_operational_failure_async(
+    target: LiteLLMChatTarget, litellm_stub: Any, status_code: int
+) -> None:
+    original = target.configuration
+
+    async def complete_async(**kwargs: object) -> object:
+        if kwargs.get("response_format"):
+            raise _StubLiteLLMError("Operational failure", status_code=status_code)
+        return _mock_response()
+
+    litellm_stub.acompletion.side_effect = complete_async
+    with pytest.raises(CapabilityDiscoveryError):
+        await discover_target_capabilities_async(
+            target=target,
+            capabilities=[CapabilityName.JSON_OUTPUT],
+            test_modalities={frozenset({"text"})},
+            retries=0,
+            apply=True,
+            raise_on_error=True,
+        )
+    assert target.configuration is original
 
 
 # ---------------------------------------------------------------------------

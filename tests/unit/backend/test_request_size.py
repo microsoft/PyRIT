@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app as backend_app
-from pyrit.backend.middleware.error_handlers import register_error_handlers
+from pyrit.backend.middleware import register_error_handlers
 from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
 
 _LIMIT = 16

@@ -10,7 +10,7 @@ import pytest
 
 import pyrit.memory
 import pyrit.memory.migration
-import pyrit.setup.configuration_loader
+import pyrit.setup
 import pyrit.setup.environment_loading
 from pyrit.cli import pyrit_migrate
 
@@ -25,7 +25,7 @@ def mocks() -> Iterator[dict[str, MagicMock]]:
     config = MagicMock(memory_db_type="azure_sql", env_akv_strict=True)
     memory = MagicMock(engine="engine", dispose_engine_async=AsyncMock())
     with ExitStack() as stack:
-        loader = stack.enter_context(patch.object(pyrit.setup.configuration_loader, "ConfigurationLoader"))
+        loader = stack.enter_context(patch.object(pyrit.setup, "ConfigurationLoader"))
         loader.load_with_overrides.return_value = config
         stack.enter_context(patch.dict("os.environ", {"AZURE_SQL_DB_CONNECTION_STRING": CONNECTION_STRING}))
         memory_class = stack.enter_context(patch.object(pyrit.memory, "AzureSQLMemory", return_value=memory))

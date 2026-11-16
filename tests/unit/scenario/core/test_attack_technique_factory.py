@@ -10,18 +10,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, TranslationConverter
-from pyrit.executor.attack.core.attack_config import (
-    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
+    PromptSendingAttack,
+    TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig, TreeOfAttacksWithPruningAttack
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+)
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+from pyrit.scenario import AttackTechnique, AttackTechniqueFactory
+from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
 
 if TYPE_CHECKING:

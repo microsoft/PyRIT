@@ -9,16 +9,18 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.converter import Converter, ConverterResult
-from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
-from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
-from pyrit.executor.attack.core import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
+from pyrit.executor.attack import (
+    AttackAdversarialConfig,
+    AttackParameters,
+    AttackScoringConfig,
+    ConversationManager,
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
-)
-from pyrit.executor.attack.multi_turn.tree_of_attacks import (
+    PrependedConversationConfig,
     TreeOfAttacksWithPruningAttack,
+)
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
+from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     _TreeOfAttacksNode,
 )
 from pyrit.memory import CentralMemory
@@ -721,7 +723,7 @@ def test_crescendo_requires_native_editable_history(
     adversarial_config: AttackAdversarialConfig,
     scoring_config: AttackScoringConfig,
 ):
-    from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
+    from pyrit.executor.attack import CrescendoAttack
 
     target = _RecordingTarget(supports_multi_turn=True, supports_editable_history=False)
     with pytest.raises(ValueError, match=CapabilityName.EDITABLE_HISTORY.value):
@@ -734,7 +736,7 @@ def test_crescendo_requires_native_editable_history(
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_multi_prompt_sending_requires_native_multi_turn():
-    from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttack
+    from pyrit.executor.attack import MultiPromptSendingAttack
 
     with pytest.raises(ValueError, match=CapabilityName.MULTI_TURN.value):
         MultiPromptSendingAttack(objective_target=_RecordingTarget())
@@ -742,7 +744,7 @@ def test_multi_prompt_sending_requires_native_multi_turn():
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_chunked_request_requires_native_multi_turn():
-    from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack
+    from pyrit.executor.attack import ChunkedRequestAttack
 
     with pytest.raises(ValueError, match=CapabilityName.MULTI_TURN.value):
         ChunkedRequestAttack(objective_target=_RecordingTarget())

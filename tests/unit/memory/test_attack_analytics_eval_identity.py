@@ -16,13 +16,15 @@ from sqlalchemy import text
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.schema import CreateIndex
 
+from pyrit.memory import (
+    AttackResultEntry,
+)
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.attack_analytics import AttackAnalyticsReader
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
 from pyrit.memory.memory_models import (
     AtomicAttackIdentifierEntry,
     AttackIdentifierEntry,
-    AttackResultEntry,
     AttackTechniqueIdentifierEntry,
     TargetIdentifierEntry,
 )

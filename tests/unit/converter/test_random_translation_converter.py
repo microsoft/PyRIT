@@ -14,7 +14,7 @@ from pyrit.converter import (
     WordProportionSelectionStrategy,
 )
 from pyrit.models import Message, MessagePiece, PromptDataType
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget
 
 
 def test_random_translation_converter_raises_when_converter_target_is_none():
@@ -38,13 +38,13 @@ def mock_target() -> MagicMock:
     return target
 
 
-async def test_random_translation_converter_sets_system_prompt(mock_target) -> None:
+async def test_random_translation_converter_sends_instructions_in_user_turn(mock_target) -> None:
     converter = RandomTranslationConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "Each word is associated with a target language on the same line." in system_arg
 
