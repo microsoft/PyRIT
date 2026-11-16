@@ -30,10 +30,17 @@ async def test_morse_converter_uppercase():
     assert result.output_type == "text"
 
 
-async def test_morse_converter_percent_sign_is_zero_slash_zero():
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("%", "----- -..-. -----"),
+        ("50%", "..... ----- ----- -..-. -----"),
+    ],
+)
+async def test_morse_converter_percent_sign_is_zero_slash_zero(prompt, expected):
     converter = MorseConverter()
-    result = await converter.convert_async(prompt="50%", input_type="text")
-    assert result.output_text == "..... ----- ----- -..-. -----"
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
 
 
 async def test_morse_converter_with_description():
