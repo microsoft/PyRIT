@@ -1190,22 +1190,12 @@ class FuzzerGenerator(
         # score_batch_async returns one flattened list where a scorable may yield
         # zero or several scores, so a jailbreak verdict is attributed to its
         # response by the scored piece id rather than by position in that list.
-        conversation_by_piece_id = {
-            str(piece.id): piece.conversation_id for response in responses for piece in response.message_pieces
-        }
-
-        jailbroken_piece_ids: set[str] = set()
-        for score in scores:
-            if self._is_jailbreak(score):
-                piece_id = str(score.message_piece_id)
-                conversation_id = conversation_by_piece_id.get(piece_id)
-                if conversation_id is None:
-                    raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
-                jailbroken_piece_ids.add(piece_id)
+        jailbroken_piece_ids = {str(score.message_piece_id) for score in scores if self._is_jailbreak(score)}
 
         for response in responses:
-            if any(str(piece.id) in jailbroken_piece_ids for piece in response.message_pieces):
-                conversation_id = response.message_pieces[0].conversation_id
+            jailbroken_pieces = [piece for piece in response.message_pieces if str(piece.id) in jailbroken_piece_ids]
+            if jailbroken_pieces:
+                conversation_id = jailbroken_pieces[0].conversation_id
                 if conversation_id is None:
                     raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
                 jailbreak_count += 1
