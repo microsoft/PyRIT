@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./_fixtures";
 import { compatibilityHeaders, mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 
 test("creates and selects a runtime technique with the real backend @seeded", async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -308,6 +309,56 @@ async function installRegistryMocks(page: Page): Promise<void> {
     });
   });
 }
+
+test("keeps scorer evaluation metrics inside a narrow viewport when identity expands", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installRegistryMocks(page);
+  await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: READY_RUNTIME });
+  });
+  await page.route(/\/api\/labels(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: { source: "attacks", labels: {} } });
+  });
+  await page.route(/\/api\/scorers(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: { items: [{
+      scorer_registry_name: "evaluated judge",
+      identifier: { class_name: "Judge", hash: "runtime-hash", scorer_type: "true_false" },
+      evaluation_identifier: {
+        class_name: "Judge", hash: "behavioral-hash", parameters: { model: "configured judge" },
+      },
+      metrics: {
+        accuracy: 0.93, accuracy_standard_error: 0.02, recall: 0, precision: 0.94,
+        f1_score: 0.92, average_score_time_seconds: 0.01, num_responses: 100,
+        num_human_raters: 0, num_input_responses: 100, num_scorer_trials: 1,
+        dataset_name: "Evaluation dataset", dataset_version: "1",
+      },
+    }], pagination: { has_more: false } } });
+  });
+  await page.goto("/registry/scorers");
+  const trigger = page.getByRole("button", { name: "Evaluation metrics for evaluated judge", exact: true });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Scorer evaluation metrics" });
+  const heading = dialog.getByRole("heading", { name: "Scorer evaluation metrics" });
+  for (const expanded of [false, true]) {
+    if (expanded) {
+      await dialog.getByRole("button", { name: "Identity for Behavioral evaluation identity" }).click();
+      await expect(dialog.getByRole("region", { name: "Identity for Behavioral evaluation identity" }))
+        .toContainText("behavioral-hash");
+    }
+    await expect.poll(async () => {
+      const bounds = await dialog.boundingBox();
+      return bounds !== null && bounds.x >= 0 && bounds.y >= 0
+        && bounds.x + bounds.width <= 391 && bounds.y + bounds.height <= 845;
+    }).toBe(true);
+    await dialog.evaluate((element) => { element.scrollTop = 0; });
+    await expect.poll(async () => (await heading.boundingBox())?.y ?? -1).toBeGreaterThanOrEqual(0);
+    await dialog.getByRole("link", { name: "About scorer metrics" }).scrollIntoViewIfNeeded();
+    await expect(dialog.getByRole("link", { name: "About scorer metrics" })).toBeVisible();
+  }
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
 
 async function submitDuplicateName(page: Page): Promise<() => void> {
   let releaseCreate: (() => void) | undefined;

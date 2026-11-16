@@ -25,7 +25,9 @@ export default function ScorerEvaluationDetails({
   const headingId = useId()
   const hasMetrics = metrics && Object.values(metrics).some((value: ScorerEvaluationMetrics[string]) => value != null)
   return (
-    <Popover withArrow trapFocus>
+    <Popover withArrow trapFocus positioning={{
+      autoSize: 'height', align: 'start', strategy: 'fixed', shiftToCoverTarget: true,
+    }}>
       <PopoverTrigger disableButtonEnhancement>
         <Button appearance="transparent" size="small" className={styles.trigger}
           aria-label={`Evaluation metrics for ${name}`}>

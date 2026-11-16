@@ -185,7 +185,7 @@ The Scorer Registry keeps its compact comparison table; each scorer's
 **Evaluation metrics** opens the complete supplied metrics, including standard
 errors and sample counts. Runtime identity and behavioral evaluation identity
 remain separate. Registry names are not used to substitute metrics for a
-recorded run.
+recorded run. The metrics popover scrolls within the viewport on narrow screens.
 
 ## Dataset catalog
 
