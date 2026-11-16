@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         ToolCallRequirement,
         ToolsCalled,
         ToolsCalledInOrder,
+        ViolatesAssertPolicy,
     )
     from pyrit.models.score.expectation import (
         ScoringExpectation,
@@ -71,7 +72,6 @@ if TYPE_CHECKING:
         ExecutionStep,
         ExecutionStepKind,
         ToolExecution,
-        TraceContent,
         TraceCoverage,
         TraceQuery,
         TraceQueryResult,
@@ -128,7 +128,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ToolExecution": "pyrit.models.score.trace",
     "ToolsCalled": "pyrit.models.score.condition",
     "ToolsCalledInOrder": "pyrit.models.score.condition",
-    "TraceContent": "pyrit.models.score.trace",
     "TraceCoverage": "pyrit.models.score.trace",
     "TraceQuery": "pyrit.models.score.trace",
     "TraceQueryResult": "pyrit.models.score.trace",
@@ -138,6 +137,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "TraceSpanStatus": "pyrit.models.score.trace",
     "UndeterminedScoreError": "pyrit.models.score.score",
     "UnvalidatedScore": "pyrit.models.score.score",
+    "ViolatesAssertPolicy": "pyrit.models.score.condition",
     "scorable_from_dict": "pyrit.models.score.scorable",
     "scoring_expectation_fingerprint": "pyrit.models.score.expectation",
 }

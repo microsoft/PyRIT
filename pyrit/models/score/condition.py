@@ -15,6 +15,7 @@ from pyrit.models.code_execution import (  # runtime-required by Pydantic
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.seeds.assert_generation import AssertTaxonomy  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from typing import Self
@@ -290,6 +291,20 @@ class AnswerMatches(Condition):
     correct_answer: str = Field(min_length=1)
     #: A nonempty choice label. It is not cross-checked against choices in prompt text.
     correct_answer_label: str | None = Field(default=None, min_length=1)
+
+
+class ViolatesAssertPolicy(Condition):
+    """
+    The conversation fails one of an ASSERT judge's dimensions under this policy.
+
+    ``taxonomy`` is the complete policy. ``application_context`` describes the application and
+    its capabilities, and ``target_instructions`` holds its actual instructions when known.
+    """
+
+    condition_type: Literal["violates_assert_policy"] = "violates_assert_policy"
+    taxonomy: AssertTaxonomy
+    application_context: str = ""
+    target_instructions: str | None = None
 
 
 class ContentWritten(Condition):

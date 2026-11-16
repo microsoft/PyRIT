@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
 from enum import Enum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -17,8 +15,6 @@ from pyrit.models.score._trace_validation import (  # noqa: TC001 (runtime-requi
     TraceId,
 )
 from pyrit.models.score.scorable import TraceScorable  # noqa: TC001 (runtime-required by Pydantic)
-
-_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 class TraceSpanStatus(str, Enum):
@@ -167,72 +163,12 @@ class ExecutionStepKind(str, Enum):
     OTHER = "other"
 
 
-class TraceContent(BaseModel):
-    """
-    Span content after any redaction: the complete value, or only its length and digest.
-
-    ``text`` is the complete value, never a prefix. It is None only when the source was
-    configured to withhold content; ``length`` and ``sha256`` still identify the value.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    text: str | None = None
-    length: int = Field(ge=0, strict=True)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    redacted: bool = Field(default=False, strict=True)
-
-    @classmethod
-    def of(cls, value: str, *, retain: bool = True, redacted: bool = False) -> TraceContent:
-        """
-        Describe a complete value, keeping its text only when ``retain`` is true.
-
-        A lone surrogate cannot be encoded as UTF-8, serialized, or persisted, so each is replaced
-        with U+FFFD first; the text, length, and digest then describe the same valid string.
-
-        Returns:
-            TraceContent: The content.
-        """
-        value = _LONE_SURROGATE.sub("\N{REPLACEMENT CHARACTER}", value)
-        return cls(
-            text=value if retain else None,
-            length=len(value),
-            sha256=cls._digest(value),
-            redacted=redacted,
-        )
-
-    @staticmethod
-    def _digest(value: str) -> str:
-        """
-        Hash a value's UTF-8 bytes.
-
-        Returns:
-            str: The hex SHA-256 digest.
-        """
-        return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-    @model_validator(mode="after")
-    def _validate_complete_value(self) -> TraceContent:
-        """
-        Require retained text to be the complete value its length and digest describe.
-
-        Returns:
-            TraceContent: The validated content.
-
-        Raises:
-            ValueError: If retained text differs from the described value.
-        """
-        if self.text is not None and (len(self.text) != self.length or self._digest(self.text) != self.sha256):
-            raise ValueError("Retained trace content must be the complete value its length and digest describe.")
-        return self
-
-
 class ExecutionStep(_TraceInterval):
     """
     One normalized execution span: a model call, tool call, agent step, or other operation.
 
-    ``index`` is the step's stable position within its observation, used to cite it. Names
-    and labels are kept exactly as observed, after any redaction.
+    ``index`` is the step's stable position within its observation, used to cite it. Names,
+    labels, inputs, outputs, and errors are kept complete and exactly as observed.
     """
 
     index: int = Field(ge=0, strict=True)
@@ -240,12 +176,12 @@ class ExecutionStep(_TraceInterval):
     kind: ExecutionStepKind
     name: str = Field(min_length=1)
     status: TraceSpanStatus = TraceSpanStatus.UNSET
-    error_content: TraceContent | None = None
+    error_content: str | None = None
     model: str | None = None
     tool_name: ToolName | None = None
     call_id: str | None = Field(default=None, min_length=1)
     node_name: str | None = None
-    input_content: TraceContent | None = None
-    output_content: TraceContent | None = None
+    input_content: str | None = None
+    output_content: str | None = None
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)

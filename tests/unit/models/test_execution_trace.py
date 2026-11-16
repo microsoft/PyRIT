@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -14,7 +13,6 @@ from pyrit.models import (
     ExecutionStepKind,
     ExecutionTraceObservationPayload,
     Observation,
-    TraceContent,
     TraceCoverage,
     TraceScorable,
 )
@@ -23,10 +21,7 @@ TRACE = "1" * 32
 OTHER_TRACE = "2" * 32
 START = datetime(2026, 1, 1, tzinfo=UTC)
 SCOPE = TraceScorable(trace_ids=(TRACE,))
-
-
-def _content(value: str, *, retain: bool = True) -> TraceContent:
-    return TraceContent.of(value, retain=retain)
+SOURCE = ComponentIdentifier(class_name="Source", class_module=__name__)
 
 
 def _step(
@@ -38,117 +33,67 @@ def _step(
         span_id=span or f"{index + 1:016x}",
         start_time=START + timedelta(seconds=index),
         end_time=START + timedelta(seconds=index + 1) if ended else None,
-        kind=fields.pop("kind", ExecutionStepKind.TOOL),
-        name=fields.pop("name", "lookup"),
+        kind=ExecutionStepKind.TOOL,
+        name="lookup",
         **fields,
     )
 
 
-def test_trace_content_keeps_the_complete_value() -> None:
-    value = "x" * 50_000 + " charged_usd=900"
-    content = _content(value)
-    assert (content.text, content.length) == (value, len(value))
-    assert content.sha256 == hashlib.sha256(value.encode()).hexdigest()
-    withheld = _content(value, retain=False)
-    assert (withheld.text, withheld.length, withheld.sha256) == (None, len(value), content.sha256)
-
-
-def test_trace_content_replaces_a_lone_surrogate_so_it_describes_valid_text() -> None:
-    content = _content("a\ud800b")
-    assert (content.text, content.length) == ("a\ufffdb", 3)
-    assert content.sha256 == hashlib.sha256("a\ufffdb".encode()).hexdigest()
-    assert _content("a\ud800b", retain=False).sha256 == content.sha256
-    assert TraceContent.model_validate_json(content.model_dump_json()) == content
-
-
-@pytest.mark.parametrize("text", ["abc", "abcdeg"])
-def test_trace_content_rejects_text_that_is_not_the_described_value(text: str) -> None:
-    described = _content("abcdef")
-    with pytest.raises(ValidationError, match="complete value"):
-        TraceContent(text=text, length=described.length, sha256=described.sha256)
-
-
-def test_payload_rejects_index_gaps_duplicates_and_out_of_scope_steps() -> None:
-    with pytest.raises(ValidationError, match="indexes must match"):
-        ExecutionTraceObservationPayload(scope=SCOPE, steps=(_step(1),))
-    with pytest.raises(ValidationError, match="unique trace/span"):
-        ExecutionTraceObservationPayload(scope=SCOPE, steps=(_step(0, span="a" * 16), _step(1, span="a" * 16)))
-    with pytest.raises(ValidationError, match="declared trace scope"):
-        ExecutionTraceObservationPayload(scope=SCOPE, steps=(_step(0, trace=OTHER_TRACE),))
-
-
-def test_payload_rejects_unfinished_steps_under_complete_coverage() -> None:
-    with pytest.raises(ValidationError, match="unfinished"):
-        ExecutionTraceObservationPayload(
-            scope=SCOPE, steps=(_step(0, ended=False),), coverage=TraceCoverage(complete=True)
-        )
-
-
-def test_payload_enforces_content_policy() -> None:
-    with pytest.raises(ValidationError, match="retention policy"):
-        ExecutionTraceObservationPayload(
-            scope=SCOPE, steps=(_step(0, output_content=_content("secret")),), content_retained=False
-        )
-    digest_only = _content("secret", retain=False)
-    with pytest.raises(ValidationError, match="retention policy"):
-        ExecutionTraceObservationPayload(scope=SCOPE, steps=(_step(0, input_content=digest_only),))
-    payload = ExecutionTraceObservationPayload(
-        scope=SCOPE, steps=(_step(0, output_content=digest_only),), content_retained=False
-    )
-    assert payload.steps[0].output_content == digest_only
-
-
-def test_payload_rejects_unknown_schema_version() -> None:
-    with pytest.raises(ValidationError, match="schema_version"):
-        ExecutionTraceObservationPayload(scope=SCOPE, schema_version=2)
+@pytest.mark.parametrize(
+    ("fields", "error"),
+    [
+        ({"steps": (_step(1),)}, "indexes must match"),
+        ({"steps": (_step(0, span="a" * 16), _step(1, span="a" * 16))}, "unique trace/span"),
+        ({"steps": (_step(0, trace=OTHER_TRACE),)}, "declared trace scope"),
+        ({"steps": (_step(0, ended=False),), "coverage": TraceCoverage(complete=True)}, "unfinished"),
+        ({"schema_version": 2}, "schema_version"),
+    ],
+)
+def test_payload_rejects_inconsistent_snapshots(fields: dict[str, object], error: str) -> None:
+    with pytest.raises(ValidationError, match=error):
+        ExecutionTraceObservationPayload(scope=SCOPE, **fields)
 
 
 @pytest.mark.parametrize(
-    ("acquisition", "coverage", "steps", "error"),
+    ("acquisition", "scorable", "coverage", "steps", "error"),
     [
-        (Acquisition.COMPLETE, TraceCoverage(complete=False), (), "must agree"),
-        (Acquisition.PARTIAL, TraceCoverage(complete=True), (), "must agree"),
-        (Acquisition.UNAVAILABLE, TraceCoverage(reasons=("gone",)), (_step(0),), "cannot contain steps"),
+        (Acquisition.COMPLETE, SCOPE, TraceCoverage(complete=False), (), "must agree"),
+        (Acquisition.PARTIAL, SCOPE, TraceCoverage(complete=True), (), "must agree"),
+        (Acquisition.UNAVAILABLE, SCOPE, TraceCoverage(reasons=("gone",)), (_step(0),), "cannot contain steps"),
+        (
+            Acquisition.PARTIAL,
+            TraceScorable(trace_ids=(OTHER_TRACE,)),
+            TraceCoverage(reasons=("pending",)),
+            (),
+            "TraceScorable matching",
+        ),
     ],
 )
-def test_observation_requires_acquisition_to_agree_with_payload(
-    acquisition: Acquisition, coverage: TraceCoverage, steps: tuple[ExecutionStep, ...], error: str
+def test_observation_requires_acquisition_and_scope_to_agree_with_payload(
+    acquisition: Acquisition,
+    scorable: TraceScorable,
+    coverage: TraceCoverage,
+    steps: tuple[ExecutionStep, ...],
+    error: str,
 ) -> None:
     with pytest.raises(ValidationError, match=error):
         Observation(
-            source_identifier=ComponentIdentifier(class_name="Source", class_module=__name__),
+            source_identifier=SOURCE,
             acquisition=acquisition,
-            scorable=SCOPE,
+            scorable=scorable,
             payload=ExecutionTraceObservationPayload(scope=SCOPE, steps=steps, coverage=coverage),
-        )
-
-
-def test_observation_requires_matching_trace_scope() -> None:
-    with pytest.raises(ValidationError, match="TraceScorable matching"):
-        Observation(
-            source_identifier=ComponentIdentifier(class_name="Source", class_module=__name__),
-            acquisition=Acquisition.PARTIAL,
-            scorable=TraceScorable(trace_ids=(OTHER_TRACE,)),
-            payload=ExecutionTraceObservationPayload(scope=SCOPE, coverage=TraceCoverage(reasons=("pending",))),
         )
 
 
 def test_observation_round_trips_through_json() -> None:
     observation = Observation(
-        source_identifier=ComponentIdentifier(class_name="Source", class_module=__name__),
+        source_identifier=SOURCE,
         acquisition=Acquisition.COMPLETE,
         scorable=SCOPE,
         payload=ExecutionTraceObservationPayload(
             scope=SCOPE,
-            steps=(_step(0, tool_name="lookup", input_content=_content('{"q": 1}'), output_content=_content("ok")),),
+            steps=(_step(0, tool_name="lookup", input_content='{"q": 1}', output_content="ok", error_content="e"),),
             coverage=TraceCoverage(complete=True),
         ),
     )
     assert Observation.model_validate_json(observation.model_dump_json()) == observation
-
-
-def test_error_content_follows_the_content_policy() -> None:
-    with pytest.raises(ValidationError, match="retention policy"):
-        ExecutionTraceObservationPayload(
-            scope=SCOPE, steps=(_step(0, error_content=_content("declined")),), content_retained=False
-        )

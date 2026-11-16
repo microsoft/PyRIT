@@ -20,8 +20,6 @@ from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
 from pyrit.score.observation.trace_client import InMemoryTraceClient
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from opentelemetry.context import Context
     from opentelemetry.sdk.trace import ReadableSpan, Span
     from opentelemetry.trace import Tracer
@@ -205,34 +203,18 @@ class LocalTraceCapture:
         """
         return TargetTraceConfig(enabled=True, tracer=self.tracer)
 
-    def source(
-        self,
-        *,
-        retain_content: bool = True,
-        redactor: Callable[[str], str] | None = None,
-        timeout_seconds: float = 30,
-    ) -> OtelExecutionTraceSource:
+    def source(self) -> OtelExecutionTraceSource:
         """
         Build an execution source that reads this capture.
-
-        Args:
-            retain_content (bool): Whether to keep inputs, outputs, and errors. Defaults to True.
-            redactor (Callable[[str], str] | None): Rewrites each value first. Defaults to None.
-            timeout_seconds (float): Acquisition timeout. Defaults to 30.
 
         Returns:
             OtelExecutionTraceSource: The source.
         """
-        return OtelExecutionTraceSource(
-            trace_client=self._client,
-            retain_content=retain_content,
-            redactor=redactor,
-            timeout_seconds=timeout_seconds,
-        )
+        return OtelExecutionTraceSource(trace_client=self._client)
 
     def register(self, *, name: str, replace: bool = False) -> OtelExecutionTraceSource:
         """
-        Register a default-configured source for this capture so scenarios can name it.
+        Register a source for this capture so registered scorers can name it.
 
         Args:
             name (str): The ``SourceRegistry`` instance name.

@@ -27,7 +27,6 @@ from pyrit.models import (
     Scorable,
     Score,
     ScoringExpectation,
-    TraceContent,
     TraceScorable,
     TraceSpanStatus,
 )
@@ -136,9 +135,7 @@ class ConversationScorer(MessageScorer, ABC):
     _trace_requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE
     _max_rendered_trace_chars: int = 60000
 
-    #: 2 fenced and indented trace content; 3 renders steps unreachable through parent links;
-    #: 4 bounds content and label previews here, since saved evidence is complete.
-    TRACE_RENDERING_VERSION: ClassVar[int] = 4
+    TRACE_RENDERING_VERSION: ClassVar[int] = 1
     #: The judge sees at most this many characters of each saved input, output, or error value.
     MAX_RENDERED_CONTENT_CHARS: ClassVar[int] = 4000
     #: The judge sees at most this many characters of each step name, model, or node label.
@@ -146,9 +143,8 @@ class ConversationScorer(MessageScorer, ABC):
     #: Metadata key on an undetermined result whose judge was not called because the configured
     #: trace requirement was not met. Its value is the reason.
     EVIDENCE_REQUIREMENT_UNMET_KEY: ClassVar[str] = "evidence_requirement_unmet"
-    _TRACE_CITATION: ClassVar[re.Pattern[str]] = re.compile(r"\[T(\d+)\]")
-    #: A citation with more digits than this cannot be a step; it is read as this index, which is never shown.
-    _MAX_CITED_INDEX: ClassVar[int] = 10**9
+    #: Step citations such as `[T3]`; longer numbers cannot name a step and are ignored.
+    _TRACE_CITATION: ClassVar[re.Pattern[str]] = re.compile(r"\[T(\d{1,9})\]")
     _NO_SPANS_LINE: ClassVar[str] = "  (no spans recorded)\n"
 
     def get_chat_target(self) -> "PromptTarget | None":
@@ -585,13 +581,7 @@ class ConversationScorer(MessageScorer, ABC):
         Returns:
             dict[str, str]: Citation metadata, empty when nothing was cited.
         """
-        limit = self._MAX_CITED_INDEX
-        cited = sorted(
-            {
-                int(stripped or "0") if len(stripped := digits.lstrip("0")) < len(str(limit)) else limit
-                for digits in self._TRACE_CITATION.findall(score.score_rationale or "")
-            }
-        )
+        cited = sorted({int(digits) for digits in self._TRACE_CITATION.findall(score.score_rationale or "")})
         if not cited:
             return {}
         shown = rendering.rendered_step_indexes if rendering else frozenset()
@@ -674,9 +664,9 @@ class ConversationScorer(MessageScorer, ABC):
             text = self._render_step(step=step, depth=depth, include_content=True)
             contents = (step.error_content, step.input_content, step.output_content)
             labels = (step.name, step.model, step.node_name)
-            if any(c and c.text and len(c.text) > self.MAX_RENDERED_CONTENT_CHARS for c in contents):
-                truncated[0] = True
-            if any(value and len(" ".join(value.split())) > self.MAX_RENDERED_LABEL_CHARS for value in labels):
+            if any(len(value) > self.MAX_RENDERED_CONTENT_CHARS for value in contents if value) or any(
+                len(" ".join(value.split())) > self.MAX_RENDERED_LABEL_CHARS for value in labels if value
+            ):
                 truncated[0] = True
             if len(text) > budget[0]:
                 truncated[0] = True
@@ -728,14 +718,12 @@ class ConversationScorer(MessageScorer, ABC):
         return "".join(lines)
 
     @staticmethod
-    def _render_content(*, label: str, content: TraceContent, indent: str, full: bool) -> str:
-        if not full or content.text is None:
-            reason = "not retained" if full else "omitted for length"
-            return f"{indent}  {label}: ({content.length} chars {reason}; sha256={content.sha256[:16]})\n"
+    def _render_content(*, label: str, content: str, indent: str, full: bool) -> str:
+        if not full:
+            return f"{indent}  {label}: ({len(content)} chars omitted for length)\n"
         limit = ConversationScorer.MAX_RENDERED_CONTENT_CHARS
-        text = content.text[:limit]
-        note = f" (first {limit} of {content.length} chars)" if len(content.text) > limit else ""
-        body = "".join(f"{indent}    {line}" for line in text.splitlines(keepends=True))
+        note = f" (first {limit} of {len(content)} chars)" if len(content) > limit else ""
+        body = "".join(f"{indent}    {line}" for line in content[:limit].splitlines(keepends=True))
         return f"{indent}  {label}{note}:\n{body}\n"
 
     def _render_conversation(

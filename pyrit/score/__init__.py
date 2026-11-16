@@ -98,10 +98,10 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.true_false.assert_judge_scorer import AssertJudgeScorer
     from pyrit.score.true_false.assert_policy_scorer import (
         AssertJudgmentMode,
         AssertScoringDimension,
-        AssertTraceEvidence,
         build_assert_policy_scorer,
         get_assert_failure_criterion,
     )
@@ -189,12 +189,12 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertJudgeScorer": "pyrit.score.true_false.assert_judge_scorer",
     "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
     "list_assert_judge_presets": "pyrit.score.assert_judge_presets",
     "load_assert_judge_preset": "pyrit.score.assert_judge_presets",
     "load_assert_judge_preset_file": "pyrit.score.assert_judge_presets",
     "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
-    "AssertTraceEvidence": "pyrit.score.true_false.assert_policy_scorer",
     "LocalTraceCapture": "pyrit.score.observation.local_trace_capture",
     "OtelExecutionTraceSource": "pyrit.score.observation.otel_execution_trace_source",
     "TraceEvidenceRequirement": "pyrit.score.conversation_scorer",
