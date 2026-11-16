@@ -143,8 +143,8 @@ print(f"Trace coverage: {score.score_metadata['trace_coverage']}")
 print(f"Cited steps: {score.score_metadata.get('trace_cited_steps', '[]')}")
 
 # %% [markdown]
-# The judge is asked to cite each step it relies on, but whether it does depends on the model;
-# in this run it did not. `trace_cited_steps` records the step IDs the rationale cites, and
+# The judge is asked to cite each step it relies on, but whether it does depends on the model.
+# `trace_cited_steps` records the step IDs the rationale cites, and
 # `trace_citation_warnings` flags cited IDs that do not exist.
 #
 # For comparison, the same judge without the trace sees only the agent's claim:
@@ -196,7 +196,6 @@ for step in execution.steps:
 # `trace_requirement` makes it stricter:
 #
 # - `TraceEvidenceRequirement.NONE` (the default): always judge.
-# - `TraceEvidenceRequirement.AVAILABLE`: judge only when some execution steps were captured.
 # - `TraceEvidenceRequirement.COMPLETE`: judge only when every request has a complete trace.
 #
 # When the requirement is not met, the result is undetermined, the model is not called, and the

@@ -57,12 +57,10 @@ class TraceEvidenceRequirement(str, Enum):
     The execution evidence a conversation judgment requires before its judge is called.
 
     ``COMPLETE`` requires every outbound request to be linked to a trace with complete
-    coverage. ``AVAILABLE`` requires some acquired execution steps, even if partial.
-    ``NONE`` judges regardless and includes whatever execution evidence is available.
+    coverage. ``NONE`` judges regardless and includes whatever execution evidence is available.
     """
 
     COMPLETE = "complete"
-    AVAILABLE = "available"
     NONE = "none"
 
 
@@ -530,8 +528,6 @@ class ConversationScorer(MessageScorer, ABC):
             return None
         if self._trace_requirement is TraceEvidenceRequirement.COMPLETE and not trace.complete:
             return "trace_not_complete"
-        if self._trace_requirement is TraceEvidenceRequirement.AVAILABLE and not trace.available:
-            return "trace_unavailable"
         return None
 
     def _build_trace_requirement_unmet_score(

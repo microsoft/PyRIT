@@ -237,32 +237,21 @@ async def test_incomplete_traces_are_judged_with_their_coverage_async(
     assert score.score_metadata["trace_coverage"] == coverage
 
 
-@pytest.mark.parametrize(
-    ("requirement", "traced", "dimension", "reason"),
-    [
-        (TraceEvidenceRequirement.COMPLETE, True, "policy_violation", "trace_not_complete"),
-        (TraceEvidenceRequirement.AVAILABLE, False, _BUDGET_GRADE, "trace_unavailable"),
-    ],
-)
-async def test_unmet_requirements_are_undetermined_without_a_judge_call_async(
+async def test_unmet_requirement_is_undetermined_without_a_judge_call_async(
     sqlite_instance: MemoryInterface,
-    requirement: TraceEvidenceRequirement,
-    traced: bool,
-    dimension: Any,
-    reason: str,
 ) -> None:
     capture = LocalTraceCapture(auto_complete=False)
     judge = MockPromptTarget()
     try:
-        conversation_id = await _converse_async((_AgentTarget(capture=capture, traced=traced), "Book Seattle"))
-        scorer = _judge(judge=judge, capture=capture, requirement=requirement, dimension=dimension)
+        conversation_id = await _converse_async((_AgentTarget(capture=capture), "Book Seattle"))
+        scorer = _judge(judge=judge, capture=capture, requirement=TraceEvidenceRequirement.COMPLETE)
         score, transport = await _score_async(scorer, judge=judge, conversation_id=conversation_id)
     finally:
         capture.close()
 
     transport.assert_not_awaited()
     assert score.is_undetermined
-    assert score.score_metadata[ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY] == reason
+    assert score.score_metadata[ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY] == "trace_not_complete"
 
 
 async def test_blocked_judge_is_not_an_unmet_requirement_async(
@@ -553,7 +542,7 @@ def test_trace_requirement_needs_a_source() -> None:
     with pytest.raises(ValueError, match="needs a trace_source"):
         create_conversation_scorer(
             scorer=SelfAskTrueFalseScorer(chat_target=MockPromptTarget()),
-            trace_requirement=TraceEvidenceRequirement.AVAILABLE,
+            trace_requirement=TraceEvidenceRequirement.COMPLETE,
         )
 
 

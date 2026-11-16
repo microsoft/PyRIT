@@ -320,8 +320,8 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # give the judge `trace_source=capture.source()`. Each dimension then reads the conversation's model
 # calls, tool calls with arguments and results, and agent steps, and is asked to cite them as `[T3]`.
 # The judge's `trace_requirement` sets the evidence it needs: `none` (the default) always judges, with
-# whatever traces exist, while `available` and `complete` leave results undetermined without some or
-# complete traces. See [Judging with execution traces](../code/scoring/8_trace_evidence_scoring.ipynb).
+# whatever traces exist, while `complete` leaves results undetermined without complete traces. See
+# [Judging with execution traces](../code/scoring/8_trace_evidence_scoring.ipynb).
 #
 # **Differences from ASSERT:**
 #

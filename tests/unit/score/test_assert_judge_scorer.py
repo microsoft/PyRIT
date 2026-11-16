@@ -131,7 +131,7 @@ def test_identity_records_the_judge_configuration() -> None:
     ("options", "message"),
     [
         ({"samples": 0}, "samples must be a positive integer"),
-        ({"trace_requirement": TraceEvidenceRequirement.AVAILABLE}, "needs a trace_source"),
+        ({"trace_requirement": TraceEvidenceRequirement.COMPLETE}, "needs a trace_source"),
     ],
 )
 def test_invalid_configuration_is_rejected(options: dict[str, Any], message: str) -> None:
