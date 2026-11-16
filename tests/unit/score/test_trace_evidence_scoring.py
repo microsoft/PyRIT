@@ -159,7 +159,7 @@ async def _score_async(
 
 
 def _transcript(transport: AsyncMock, call: Any = None) -> str:
-    return (call or transport.call_args).kwargs["normalized_conversation"][-1].get_value()
+    return str((call or transport.call_args).kwargs["normalized_conversation"][-1].get_value())
 
 
 async def _execution_payload_async(memory: MemoryInterface, score: Any) -> ExecutionTraceObservationPayload:
