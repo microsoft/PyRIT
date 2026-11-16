@@ -4,7 +4,9 @@
 import enum
 import json
 import logging
-from typing import Any
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Any, ClassVar
 
 from pyrit.common import default_values, net_utility
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
@@ -278,6 +280,9 @@ class HackAPromptTarget(PromptTarget):
     BASE_URL: str = "https://www.hackaprompt.com"
     session_id_environment_variable: str = "HACK_A_PROMPT_SESSION_ID"
     cookie_environment_variable: str = "HACK_A_PROMPT_COOKIE"
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType(
+        {"session_id": None, "cookie": None}
+    )
 
     # Prefixes of the data-stream parts this target reads, see _parse_stream.
     # ``0:`` carries model text and ``3:`` carries an error the server chose to

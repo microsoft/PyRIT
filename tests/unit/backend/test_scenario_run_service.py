@@ -9,6 +9,7 @@ import asyncio
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -22,9 +23,10 @@ import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
-from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError
+from pyrit.backend.services.scenario_run_service import SavedEntryLaunchConflictError, ScenarioRunConflictError
 from pyrit.common.utils import to_sha256
-from pyrit.converter import Converter
+from pyrit.converter import Base64Converter, Converter, ROT13Converter
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import (
     AttackResultKeysetCursor,
     AzureSQLMemory,
@@ -64,8 +66,9 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import TargetCapabilities
-from pyrit.registry import ConverterRegistry, ScenarioMetadata, ScenarioRegistry
-from pyrit.scenario import IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -73,6 +76,7 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
+from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
@@ -263,6 +267,126 @@ async def test_has_active_work_covers_scheduler_owned_work(patch_central_databas
     await service.close_async()
 
 
+@pytest.fixture
+def converter_registry() -> Iterator[ConverterRegistry]:
+    ConverterRegistry.reset_registry_singleton()
+    yield ConverterRegistry.get_registry_singleton()
+    ConverterRegistry.reset_registry_singleton()
+
+
+class _LaunchScript:
+    """A launch script that registers one converter, optionally swallowing or wrapping errors."""
+
+    def __init__(self, *, name: str, swallow: bool = False, wrap: bool = False) -> None:
+        self._name = name
+        self._swallow = swallow
+        self._wrap = wrap
+
+    async def initialize_async(self) -> None:
+        registry = ConverterRegistry.get_registry_singleton()
+        try:
+            registry.instances.register(Base64Converter(), name=self._name, replace=True)
+        except Exception as error:
+            if self._wrap:
+                raise ValueError("The launch script failed.") from error
+            if not self._swallow:
+                raise
+
+
+async def _run_launch_scripts_async(scripts: dict[str, Any]) -> None:
+    initializers = MagicMock()
+    initializers.create_and_configure.side_effect = lambda name, initializer_params=None: scripts[name]
+    with patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton", return_value=initializers):
+        await ScenarioRunService()._run_initializers_async(request=_make_request(initializers=list(scripts)))
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "script",
+    [
+        ConverterInitializer(),
+        _LaunchScript(name="rot13"),
+        _LaunchScript(name="rot13", swallow=True),
+        _LaunchScript(name="rot13", wrap=True),
+    ],
+)
+async def test_launch_scripts_cannot_replace_a_saved_entry_async(
+    converter_registry: ConverterRegistry, script: Any
+) -> None:
+    saved = ROT13Converter()
+    converter_registry.instances.register(saved, name="rot13", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+    with pytest.raises(SavedEntryLaunchConflictError, match="'converters' would replace the saved converter 'rot13'"):
+        await _run_launch_scripts_async({"converters": script})
+
+    assert converter_registry.instances.get("rot13") is saved
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_tools_launch_script_cannot_use_a_saved_technique_in_its_place_async() -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    saved = AttackTechniqueFactory(name="role_play_tool_calls", attack_class=PromptSendingAttack)
+    registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+    try:
+        with pytest.raises(
+            SavedEntryLaunchConflictError, match="'tools' would replace the saved technique 'role_play_tool_calls'"
+        ):
+            await _run_launch_scripts_async({"tools": ToolsInitializer()})
+
+        assert registry.instances.get("role_play_tool_calls") is saved
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
+    converter_registry: ConverterRegistry,
+) -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    saved = ROT13Converter()
+    converter_registry.instances.register(
+        saved, name="role_play_tool_calls", metadata={SAVED_ENTRY_METADATA_KEY: "converters"}
+    )
+    try:
+        with pytest.raises(
+            SavedEntryLaunchConflictError, match="'tools' would replace the saved converter 'role_play_tool_calls'"
+        ):
+            await _run_launch_scripts_async({"tools": ToolsInitializer()})
+
+        assert converter_registry.instances.get("role_play_tool_calls") is saved
+        assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+class _FailingLaunchScript:
+    """A launch script that fails for a reason unrelated to saved entries."""
+
+    async def initialize_async(self) -> None:
+        raise ValueError("The launch script failed.")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_launch_script_errors_without_a_saved_entry_clash_pass_through_async(
+    converter_registry: ConverterRegistry,
+) -> None:
+    with pytest.raises(ValueError, match="The launch script failed") as raised:
+        await _run_launch_scripts_async({"failing": _FailingLaunchScript()})
+
+    assert not isinstance(raised.value, SavedEntryLaunchConflictError)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_launch_scripts_still_replace_startup_entries_async(converter_registry: ConverterRegistry) -> None:
+    startup = ROT13Converter()
+    converter_registry.instances.register(startup, name="rot13")
+
+    await _run_launch_scripts_async({"converters": _LaunchScript(name="rot13")})
+
+    assert isinstance(converter_registry.instances.get("rot13"), Base64Converter)
+
+
 def _make_request(
     *,
     scenario_name: str = "foundry.red_team_agent",
@@ -368,6 +492,36 @@ def test_capture_launch_references_includes_run_local_simulation_target() -> Non
     get_default.assert_called_once()
 
 
+@pytest.mark.parametrize("current_hash", ["launch-scorer", "changed-scorer"])
+def test_targetless_rerun_validates_all_modern_role_references(current_hash: str) -> None:
+    service = ScenarioRunService(memory=MagicMock())
+    scenario_class = MagicMock()
+    scenario_class.supported_parameters.return_value = []
+    registry = MagicMock()
+    registry.get_class.return_value = scenario_class
+    registry.get_class_metadata.return_value = SimpleNamespace(scenario_version=1)
+    stored = SimpleNamespace(
+        scenario_version=1,
+        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+    )
+    request = RunScenarioRequest(scenario_name="test")
+    readiness = SimpleNamespace(
+        issues=[],
+        bindings=[SimpleNamespace(role="objective_scorer", identifier=SimpleNamespace(hash=current_hash))],
+    )
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service._configuration_resolver, "resolve_readiness", return_value=readiness) as resolve,
+    ):
+        if current_hash == "launch-scorer":
+            service._validate_rerun_references(stored=stored, request=request)
+        else:
+            with pytest.raises(ScenarioRunConflictError, match="dependencies changed"):
+                service._validate_rerun_references(stored=stored, request=request)
+    resolve.assert_called_once_with(scenario_name="test", request=request)
+    registry.create_and_initialize_async.assert_not_called()
+
+
 def test_rerun_validation_uses_saved_launch_scorer_not_effective_scorer() -> None:
     service = ScenarioRunService(memory=MagicMock())
     metadata = SimpleNamespace(
@@ -381,7 +535,7 @@ def test_rerun_validation_uses_saved_launch_scorer_not_effective_scorer() -> Non
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -407,7 +561,7 @@ def test_rerun_validation_uses_explicit_scorer_hash_without_resolving_provider()
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -443,7 +597,7 @@ def test_rerun_validation_rejects_changed_explicit_scorer_source() -> None:
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "explicit-launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -483,7 +637,7 @@ def test_rerun_validation_rejects_changed_launch_scorer() -> None:
     registry.get_class_metadata.return_value = metadata
     stored = SimpleNamespace(
         scenario_version=1,
-        metadata={_svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "saved-launch-scorer"}},
+        metadata={_svc_mod._LEGACY_LAUNCH_REFERENCES_METADATA_KEY: {"objective_scorer_hash": "saved-launch-scorer"}},
         objective_scorer_identifier=SimpleNamespace(hash="runtime-derived-composite"),
         scenario_identifier=SimpleNamespace(objective_target=None),
     )
@@ -514,7 +668,7 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
         patch.object(Scam, "supported_parameters", return_value=declared),
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target") as resolve_target,
+        patch.object(type(service._configuration_resolver), "resolve_target") as resolve_target,
     ):
         await service._prepare_run_async(request=request)
         kwargs = registry.create_and_initialize_async.call_args.kwargs
@@ -528,7 +682,7 @@ async def test_prepare_and_restore_preserve_common_input_support_async(
         )
         restored = service._restore_launch_request(stored=stored)
         if supports_common_inputs:
-            resolve_target.assert_called_once()
+            assert resolve_target.call_count == 2
             assert kwargs["max_concurrency"] == restored.max_concurrency == 10
             assert kwargs["max_retries"] == restored.max_retries == 0
             assert restored.target_name == "my_target"
@@ -563,7 +717,7 @@ async def test_prepare_persists_internal_initial_metadata_with_run_service_field
     with (
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target"),
+        patch.object(type(service._configuration_resolver), "resolve_target"),
     ):
         await service._prepare_run_async(
             request=RunScenarioRequest(scenario_name="test.support", target_name="my_target"),
@@ -595,15 +749,12 @@ async def test_start_rejects_caller_metadata_that_overwrites_run_service_fields(
 async def test_prepare_requires_target_for_scenarios_that_declare_it_async(
     patch_central_database: MagicMock,
 ) -> None:
-    registry = MagicMock(spec=ScenarioRegistry)
-    registry.get_class.return_value = Scam
     service = ScenarioRunService()
     with (
-        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        pytest.raises(ValueError, match="requires an objective target"),
+        pytest.raises(ValueError, match="objective_target"),
     ):
-        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="test.support"))
+        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="airt.scam"))
     await service.close_async()
 
 
@@ -1178,10 +1329,10 @@ class TestScenarioRunServiceStartRun:
             scenario_params=scenario_params,
             scenario_result_id=None,
             constructor_kwargs={},
+            configuration_metadata=ANY,
             initial_metadata={
                 _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
                 _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
-                _svc_mod._LAUNCH_REFERENCES_METADATA_KEY: {},
             },
             objective_target=objective_target,
             max_concurrency=10,

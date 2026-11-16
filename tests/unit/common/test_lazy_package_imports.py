@@ -10,6 +10,7 @@ from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _PACKAGE_ROOT = _REPOSITORY_ROOT / "pyrit"
@@ -362,7 +363,7 @@ def _assert_subprocess_succeeds(code: str) -> None:
         [sys.executable, "-c", dedent(code)],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=TEST_WATCHDOG_SECONDS,
     )
 
     assert result.returncode == 0, result.stderr
@@ -539,6 +540,7 @@ def test_observation_acquisition_and_scorer_do_not_load_otel_sdk() -> None:
             InMemoryTraceClient, ObservationSource, OtelTraceSource, TraceAcquisitionError, TraceClient,
         )
         from pyrit.score import OtelToolCallScorer
+        from pyrit.score.observation import OtlpJsonTraceClient
         assert not any(name.startswith("opentelemetry.sdk") for name in sys.modules)
         try:
             from pyrit.score.observation import InMemoryTraceExporter
@@ -558,6 +560,7 @@ def test_observation_acquisition_and_scorer_do_not_load_otel_sdk() -> None:
         "NonReplayableObservationError",
         "ObservationSource",
         "OtelTraceSource",
+        "OtlpJsonTraceClient",
         "TraceAcquisitionError",
         "TraceClient",
     ],

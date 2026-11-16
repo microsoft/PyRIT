@@ -76,6 +76,11 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
   const [generation, setGeneration] = useState(0)
   const pending = useRef(false)
   const mutationEpoch = useRef(0)
+  const [settledLoads, setSettledLoads] = useState(0)
+  const editButtons = useRef(new Map<string, HTMLElement>())
+  const newPresetButton = useRef<HTMLButtonElement>(null)
+  // A conflict reload can drop the record, so focus waits until the reload settles.
+  const focusAfterReload = useRef<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -93,6 +98,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         setSource(response.source)
         setError(null)
         setLoading(false)
+        setSettledLoads((count) => count + 1)
 
         if (response.items.length === 0) {
           setEstimatesLoading(false)
@@ -113,6 +119,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         setError(toApiError(err).detail)
         setLoading(false)
         setEstimatesLoading(false)
+        setSettledLoads((count) => count + 1)
       } finally {
         if (!cancelled) pending.current = false
       }
@@ -132,6 +139,15 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
   }, [])
   useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting && !togglingVisibility)
 
+  useEffect(() => {
+    const name = focusAfterReload.current
+    if (name === null) return
+    focusAfterReload.current = null
+    const editButton = editButtons.current.get(name)
+    if (editButton && !editButton.matches(':disabled')) editButton.focus()
+    else newPresetButton.current?.focus()
+  }, [settledLoads])
+
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
@@ -140,12 +156,22 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
     mutationEpoch.current++
     setActionError(null)
     try {
-      await scenarioPresetsApi.remove(pendingDelete.preset.name)
+      await scenarioPresetsApi.remove(pendingDelete.preset.name, pendingDelete.version ?? undefined)
       setPendingDelete(null)
       refresh()
       onPresetDeleted()
     } catch (err) {
-      setActionError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        focusAfterReload.current = pendingDelete.preset.name
+        setPendingDelete(null)
+        refresh()
+        setActionError(
+          `Preset '${pendingDelete.preset.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
     } finally {
       setDeleting(false)
     }
@@ -206,6 +232,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         </div>
         <div className={styles.headerActions}>
           <Button
+            ref={newPresetButton}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
@@ -338,6 +365,10 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
                     <TableCell>
                       <div className={styles.cardActions}>
                         <Button
+                          ref={(node) => {
+                            if (node) editButtons.current.set(item.preset.name, node)
+                            else editButtons.current.delete(item.preset.name)
+                          }}
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}

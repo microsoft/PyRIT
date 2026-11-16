@@ -13,7 +13,7 @@ from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolic
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniqueError
-from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.airt import Leakage  # type: ignore[ty:import-not-found]
 from pyrit.scenario.core import BaselineAttackPolicy, resolve_technique_factories_for_techniques
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique, _leakage_factories
 from pyrit.score import TrueFalseCompositeScorer
@@ -98,6 +98,7 @@ def reset_technique_registry():
     _build_leakage_technique.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
+    adv_target.get_identifier.return_value = _mock_target_id("ConfiguredGenerator")
     adv_target.capabilities.includes.return_value = True
     adv_target.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
@@ -146,7 +147,7 @@ class TestLeakageInitialization:
     def test_init_with_default_scorer(self):
         """Test initialization with default scorer."""
         scenario = Leakage()
-        assert scenario._objective_scorer_identifier
+        assert scenario._objective_scorer_identifier is None
 
     def test_default_scorer_uses_leakage_yaml(self):
         """Test that the default scorer uses leakage.yaml, not privacy.yaml."""

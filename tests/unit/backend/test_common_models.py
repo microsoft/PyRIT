@@ -557,7 +557,11 @@ def test_openapi_shows_the_target_binding_limit_on_requests_only() -> None:
         assert {field: binding["properties"][field].get("maxLength") for field in limited} == dict.fromkeys(
             limited, MAX_IDENTIFIER_LENGTH
         )
-    assert all("maxLength" not in field for field in schemas["TargetBinding"]["properties"].values())
+    saved_bindings = [
+        schema for name, schema in schemas.items() if name in {"TargetBinding-Input", "TargetBinding-Output"}
+    ]
+    assert saved_bindings
+    assert all("maxLength" not in field for schema in saved_bindings for field in schema["properties"].values())
 
 
 @pytest.mark.parametrize(
