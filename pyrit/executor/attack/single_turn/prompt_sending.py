@@ -6,13 +6,13 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults, warn_if_set
 from pyrit.common.random_context import random_execution
-from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
+from pyrit.executor.attack.core import AttackParamsT
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
-from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
@@ -31,10 +31,15 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 from pyrit.score.score_utils import score_is_true
 
 logger = logging.getLogger(__name__)
+
+# An outgoing caller-written assistant prefix needs the target to send it natively for continuation.
+_ASSISTANT_PREFIX_TARGET_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.PREFILL, CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY})
+)
 
 
 @dataclass(frozen=True)
@@ -391,6 +396,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             Message | None: The model's response if successful, or None if
                 the request was filtered, blocked, or encountered an error.
         """
+        is_assistant_prefix = message.api_role == "assistant" and message.is_simulated
+        if is_assistant_prefix:
+            _ASSISTANT_PREFIX_TARGET_REQUIREMENTS.validate(target=self._objective_target)
+
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
@@ -403,7 +412,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 message=message,
                 target=self._objective_target,
                 conversation_id=context.conversation_id,
-                request_converter_configurations=self._request_converters,
+                request_converter_configurations=([] if is_assistant_prefix else self._request_converters),
                 response_converter_configurations=self._response_converters,
                 normalizer_overrides=self._get_prepended_normalizer_overrides(
                     prepended_history_send_context=context.prepended_history_send_context,

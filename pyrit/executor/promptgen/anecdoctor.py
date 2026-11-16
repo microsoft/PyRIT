@@ -9,10 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
+from pyrit.common import combine_dict, get_kwarg_param
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.common.yaml_helper import safe_load_yaml
-from pyrit.executor.core.config import StrategyConverterConfig
+from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategy,
     PromptGeneratorStrategyContext,

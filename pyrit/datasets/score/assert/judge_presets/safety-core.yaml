@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Adapted from responsibleai/ASSERT v0.3.0 (2026-09-04).
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+# Source: assert_ai/library/judges/safety-core.yaml.
+kind: judge_preset
+name: safety-core
+version: "1.0"
+tags: [safety, alignment]
+description: >
+  Core safety dimensions for any AI agent or assistant. Detects both
+  harmful policy violations and overly cautious refusals of permissible
+  requests.
+
+# PyRIT judges the built-in dimensions against the taxonomy with its own templates,
+# so this preset lists them by reference instead of redefining them. They are on unless disabled.
+builtin_dimensions:
+  - policy_violation
+  - overrefusal

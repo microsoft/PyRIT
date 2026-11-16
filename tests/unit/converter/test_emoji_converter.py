@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.converter import ConverterResult, EmojiConverter
-from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy
+from pyrit.converter import ConverterResult, EmojiConverter, WordProportionSelectionStrategy
 
 
 async def test_emoji_converter_basic():

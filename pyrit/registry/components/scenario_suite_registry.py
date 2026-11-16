@@ -8,10 +8,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from pyrit.models.catalog.scenario_suite import (
+from pyrit.models import (
     ScenarioSuite,
-    ScenarioSuiteRegistryEntry,
     StoredScenarioSuite,
+)
+from pyrit.models.catalog import (
+    ScenarioSuiteRegistryEntry,
 )
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
@@ -200,17 +202,22 @@ class ScenarioSuiteRegistry(Registry["ScenarioSuite", ScenarioSuiteMetadata]):
         logger.info(f"Saved scenario suite '{suite.name}'.")
         return stored
 
-    def delete_suite(self, *, name: str) -> bool:
+    def delete_suite(self, *, name: str, expected_version: str | None = None) -> bool:
         """
         Delete one stored suite without affecting a registered suite.
 
         Args:
             name (str): The suite name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
 
         Returns:
             bool: True if a stored document was deleted, otherwise False.
+
+        Raises:
+            ScenarioSuiteConflictError: If the stored version does not match ``expected_version``.
         """
-        deleted = self._get_storage().delete_suite(name)
+        deleted = self._get_storage().delete_suite(name, expected_version=expected_version)
         if deleted:
             logger.info(f"Deleted scenario suite '{name}'.")
         return deleted

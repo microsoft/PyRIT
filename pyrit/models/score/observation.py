@@ -23,7 +23,7 @@ from pyrit.models.score.scorable import (
     ConversationScorable,
     MessageScorable,
     ProgramExecutionScorable,
-    ScorableUnion,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ScorableUnion,  # runtime-required by Pydantic field annotations
     SurfaceScorable,
     TraceScorable,
 )

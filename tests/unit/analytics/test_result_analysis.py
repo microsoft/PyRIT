@@ -8,14 +8,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.analytics import compute_outcome_statistics
-from pyrit.analytics.result_analysis import (
+from pyrit.analytics import (
     AttackStats,
-    _objective_target_eval_hash_for,
     analyze_results,
+    compute_outcome_statistics,
     get_cached_results_for_technique_async,
 )
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.analytics.result_analysis import (
+    _objective_target_eval_hash_for,
+)
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,

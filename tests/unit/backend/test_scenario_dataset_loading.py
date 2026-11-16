@@ -9,17 +9,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.services.scenario_service import ScenarioService
+from pyrit.backend.services import ScenarioService
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
-from pyrit.models import SeedDataset, SeedObjective
-from pyrit.models.catalog import ScenarioRunSizeEstimateRequest
-from pyrit.models.scenario_dataset import DatasetFetchPolicy, ScenarioDatasetRequest
+from pyrit.models import (
+    DatasetFetchPolicy,
+    ScenarioDatasetRequest,
+    ScenarioRunSizeEstimateRequest,
+    SeedDataset,
+    SeedObjective,
+)
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario
-from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import SubStringScorer
 
 

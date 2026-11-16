@@ -16,16 +16,13 @@ from openai.types.responses import Response, ResponseOutputMessage, ResponseOutp
 from pyrit.exceptions import PyritException
 from pyrit.models import Message, MessagePiece
 from pyrit.models.messages.tool_content import validate_tool_conversation
+from pyrit.prompt_target import OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget, OpenAITarget
 from pyrit.prompt_target.openai._response_adapter import (
     ChatCompletionsResponseAdapter,
     CompletionsResponseAdapter,
     OpenAIResponseAdapter,
     ResponsesResponseAdapter,
 )
-from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
-from pyrit.prompt_target.openai.openai_completion_target import OpenAICompletionTarget
-from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
-from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 
 @pytest.mark.usefixtures("patch_central_database")

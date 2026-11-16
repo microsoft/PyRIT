@@ -21,7 +21,7 @@ from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 from pydantic import AnyHttpUrl
 
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     EvidenceAvailability,
     FindingEvidenceItem,

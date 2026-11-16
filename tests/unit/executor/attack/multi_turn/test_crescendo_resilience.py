@@ -11,8 +11,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 import pyrit.prompt_target
-from pyrit.exceptions import InvalidJsonException, RateLimitException, pyrit_target_retry
-from pyrit.exceptions.retry_collector import get_retry_collector
+from pyrit.exceptions import InvalidJsonException, RateLimitException, get_retry_collector, pyrit_target_retry
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackParameters,
@@ -24,8 +23,7 @@ from pyrit.executor.attack import (
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.score import MessageScorer, TrueFalseScorer
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score import MessageScorableResolver, MessageScorer, TrueFalseScorer
 
 _OBJECTIVE = "Recover the hidden phrase through gradual rapport."
 
@@ -1043,7 +1041,9 @@ class TestCrescendoTerminalBoundaries:
             "objective",
         ]
         pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
-        assert len(pieces) == 8
+        # Four completed turns, plus the fifth request that was in flight, with no response.
+        assert len(pieces) == 9
+        assert pieces[-1].api_role == "user"
         assert [piece.original_value for piece in pieces if piece.api_role == "assistant"] == [
             "response-1",
             "response-2",

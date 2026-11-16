@@ -12,15 +12,19 @@ composite identifier has this shape::
       │   ├── attack            (attack strategy's ComponentIdentifier)
       │   └── technique_seeds   (optional, list of seed ComponentIdentifiers)
       └── seed_identifiers      (list of ALL seed ComponentIdentifiers, for traceability)
+
+When the atomic attack generates simulated conversations with its own adversarial
+chat, that chat's behavioral eval hash is stored in ``params`` under
+``SIMULATED_CONVERSATION_ADVERSARIAL_CHAT_EVAL_HASH_KEY``.
 """
 
-from typing import TYPE_CHECKING, Annotated, Self
+from typing import TYPE_CHECKING, Annotated, ClassVar, Self
 
 from pydantic import Field
 
 from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.attack_technique_identifier import AttackTechniqueIdentifier
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier, JSONValue
 from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.seed_identifier import SeedIdentifier, compute_seed_group_hash
 
@@ -42,7 +46,16 @@ class AtomicAttackIdentifier(ComponentIdentifier):
     Promotes the attack technique (``attack_technique``) and all seed identifiers
     from the dataset (``seed_identifiers``). ``seed_identifiers`` is excluded from
     the eval hash — it is present for traceability only.
+
+    The simulated-conversation adversarial chat hash is an unpromoted param: it
+    feeds the identity and eval hashes without adding a persisted identifier column.
     """
+
+    #: ``params`` key for the behavioral eval hash of the adversarial chat that
+    #: generates the atomic attack's simulated conversations.
+    SIMULATED_CONVERSATION_ADVERSARIAL_CHAT_EVAL_HASH_KEY: ClassVar[str] = (
+        "simulated_conversation_adversarial_chat_eval_hash"
+    )
 
     #: The attack technique executed.
     attack_technique: Annotated[AttackTechniqueIdentifier | None, Evaluate.Include()] = None
@@ -56,12 +69,14 @@ class AtomicAttackIdentifier(ComponentIdentifier):
         technique_identifier: ComponentIdentifier | None = None,
         attack_identifier: ComponentIdentifier | None = None,
         seed_group: "SeedGroup | None" = None,
+        simulated_conversation_adversarial_chat_eval_hash: str | None = None,
     ) -> Self:
         """
         Build a composite AtomicAttackIdentifier for an atomic attack.
 
         The identifier places the attack technique in ``children["attack_technique"]``
         and all seeds from the seed group in ``children["seed_identifiers"]`` for traceability.
+        A simulated-conversation adversarial chat hash, when given, is stored in ``params``.
 
         Callers that have an ``AttackTechnique`` object should pass
         ``technique_identifier=attack_technique.get_identifier()``.
@@ -77,6 +92,9 @@ class AtomicAttackIdentifier(ComponentIdentifier):
                 ``AttackTechnique`` instance is available. Mutually exclusive
                 with ``technique_identifier``.
             seed_group: The seed group to extract all seeds from.
+            simulated_conversation_adversarial_chat_eval_hash: Behavioral eval hash of the
+                adversarial chat the atomic attack uses to generate simulated conversations.
+                ``None`` when the atomic attack generates none.
 
         Returns:
             A composite AtomicAttackIdentifier with class_name="AtomicAttack".
@@ -103,9 +121,16 @@ class AtomicAttackIdentifier(ComponentIdentifier):
         if seed_group is not None:
             seed_identifiers.extend(SeedIdentifier.from_seed(seed) for seed in seed_group.seeds)
 
+        params: dict[str, JSONValue] = {}
+        if simulated_conversation_adversarial_chat_eval_hash is not None:
+            params[cls.SIMULATED_CONVERSATION_ADVERSARIAL_CHAT_EVAL_HASH_KEY] = (
+                simulated_conversation_adversarial_chat_eval_hash
+            )
+
         return cls(
             class_name=_ATOMIC_ATTACK_CLASS_NAME,
             class_module=_ATOMIC_ATTACK_CLASS_MODULE,
+            params=params,
             attack_technique=technique,
             seed_identifiers=seed_identifiers,
         )

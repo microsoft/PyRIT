@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import _CBTBenchDataset
+from pyrit.datasets.seed_datasets.remote import _CBTBenchDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 

@@ -178,6 +178,17 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
         )
         lines.append(self._format_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color))
 
+        baseline_accuracy = getattr(metrics, "baseline_accuracy", None)
+        if baseline_accuracy is not None:
+            beats_baseline = metrics.accuracy > baseline_accuracy + _BASELINE_TIE_TOLERANCE
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Constant-Guess Baseline Accuracy: {baseline_accuracy:.2%}"
+                    + ("" if beats_baseline else " (scorer does not beat it)"),
+                    Fore.CYAN if beats_baseline else Fore.RED,
+                )
+            )
+
         lines.append(self._render_scored_responses(metrics=metrics))
 
         if metrics.accuracy_standard_error is not None:
@@ -187,11 +198,56 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 )
             )
 
+        single_trial_accuracy = getattr(metrics, "single_trial_accuracy", None)
+        if single_trial_accuracy is not None:
+            single_trial_color = self._get_quality_color(
+                single_trial_accuracy, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Single-Trial Accuracy: {single_trial_accuracy:.2%}"
+                    f" (mean of {metrics.num_scorer_trials} trials)",
+                    single_trial_color,
+                )
+            )
+
+        num_inconsistent_responses = getattr(metrics, "num_inconsistent_responses", None)
+        if num_inconsistent_responses is not None:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Responses With Inconsistent Trials: "
+                    f"{num_inconsistent_responses}/{metrics.num_responses}",
+                    Fore.CYAN,
+                )
+            )
+
+        alpha_model = getattr(metrics, "krippendorff_alpha_model", None)
+        if alpha_model is not None:
+            alpha_model_color = self._get_quality_color(
+                alpha_model, higher_is_better=True, good_threshold=0.8, bad_threshold=0.6
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Krippendorff Alpha (Model): {alpha_model:.4f}", alpha_model_color
+                )
+            )
+
         if metrics.f1_score is not None:
             f1_color = self._get_quality_color(
                 metrics.f1_score, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
             )
             lines.append(self._format_colored(f"{self._indent * 3}• F1 Score: {metrics.f1_score:.4f}", f1_color))
+
+            baseline_f1_score = getattr(metrics, "baseline_f1_score", None)
+            if baseline_f1_score is not None:
+                beats_baseline = metrics.f1_score > baseline_f1_score + _BASELINE_TIE_TOLERANCE
+                lines.append(
+                    self._format_colored(
+                        f"{self._indent * 3}• Constant-Guess Baseline F1: {baseline_f1_score:.4f}"
+                        + ("" if beats_baseline else " (scorer does not beat it)"),
+                        Fore.CYAN if beats_baseline else Fore.RED,
+                    )
+                )
 
         if metrics.precision is not None:
             precision_color = self._get_quality_color(
@@ -261,6 +317,19 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 self._format_colored(f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN)
             )
 
+        single_trial_mae = getattr(metrics, "single_trial_mean_absolute_error", None)
+        if single_trial_mae is not None:
+            single_trial_color = self._get_quality_color(
+                single_trial_mae, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Single-Trial MAE: {single_trial_mae:.4f}"
+                    f" (mean of {metrics.num_scorer_trials} trials)",
+                    single_trial_color,
+                )
+            )
+
         if metrics.mean_absolute_error_unanimous is not None:
             lines.append(
                 self._format_colored(
@@ -290,6 +359,21 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                     f"{self._indent * 3}• Constant-Guess Baseline MAE: {baseline_mae:.4f}"
                     + ("" if beats_baseline else " (scorer does not beat it)"),
                     Fore.CYAN if beats_baseline else Fore.RED,
+                )
+            )
+
+        if metrics.krippendorff_alpha_gold_model is not None:
+            alpha_gold_color = self._get_quality_color(
+                metrics.krippendorff_alpha_gold_model,
+                higher_is_better=True,
+                good_threshold=0.8,
+                bad_threshold=0.6,
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Krippendorff Alpha (Gold vs Model): "
+                    f"{metrics.krippendorff_alpha_gold_model:.4f}",
+                    alpha_gold_color,
                 )
             )
 
@@ -393,7 +477,7 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
             ObjectiveScorerMetrics or None: The metrics, or None if not found.
         """
         from pyrit.models import ScorerEvaluationIdentifier
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+        from pyrit.score import (
             find_objective_metrics_by_eval_hash,
         )
 

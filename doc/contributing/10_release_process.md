@@ -108,6 +108,27 @@ for private vulnerability reporting.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
   - **Azure key-based auth is disabled in our tenant.** Our Azure subscription has API-key (local) auth turned off, so Azure target integration tests authenticate with Microsoft Entra ID. Tests that run notebooks requiring Azure API keys are deliberately skipped; otherwise they fail with HTTP 403 `AuthenticationTypeDisabled` ("Key based authentication is disabled for this resource"). Do not re-enable key auth for our tenant. When validating a release manually, authenticate Azure targets with Entra (`az login`) rather than API keys.
 - **Update scorer metrics.** Run `python -m build_scripts.evaluate_scorers` and commit the results so that scorer evaluation metrics are up to date.
+  Scorers explicitly tagged `skip_batch_evaluation` are reported as skipped, including
+  when selected through `--tags`. The raw `task_achieved_microsoft_decision` probability
+  scorer carries this tag; its `task_achieved_microsoft_decision_threshold_07` wrapper
+  remains eligible for the objective benchmark. Both remain registered for normal use.
+  Missing evaluation mappings on other selected scorers are errors, not implicit exclusions.
+  An empty eligible selection also exits nonzero.
+  Completion may use cached metrics; it does not guarantee fresh scoring.
+  Blocked judge requests produce undetermined judgments rather than aborting the evaluation.
+  A blocked response being evaluated is different: existing scorer semantics still apply
+  (normally false, or true for refusal scorers).
+  Metrics exclude a response from every trial if its final verdict is undetermined in any trial;
+  exclusions are not counted as true/false judgments or penalized in F1/accuracy.
+  Review the evaluated/input counts, excluded counts, and partial-coverage warnings before
+  interpreting metrics as full-dataset results. Legacy cached metrics without input counts
+  have unknown coverage. Evaluations with no determined results or other errors still fail:
+  the script finishes the remaining scorers, then exits nonzero without reporting overall success.
+  Automatic best-objective selection ranks F1 only when `num_input_responses > 0`
+  and `num_responses == num_input_responses`. Partial and unknown-coverage results
+  remain stored and reusable, but cannot win that ranking. If none qualify, the
+  initializer preserves its configured composite fallback and warns that it is not
+  an F1-backed winner. Explicit scorer selection remains available.
 
 ## 2. Decide the Next Version
 
@@ -332,9 +353,7 @@ Before running the demos, execute `az login` or `az login --use-device-code`, as
 
 Additionally, verify that your environment file includes all the test secrets needed to run the demos. If not, update your .env file using the secrets from the key vault.
 
-In the new location, run all notebooks that are currently skipped by integration tests in VS Code. To find them, search for `skipped_files` under `tests/integration/`, and also check the separate `_azure_key_auth_notebooks` set described below; the lists live in several differently-named test modules, so search rather than relying on a fixed filename pattern or a remembered count. The notebooks themselves are in the doc folder that you copied into your new `releases\releasevx.y.z` folder. Note that some of these notebooks have known issues and it may make sense to skip testing them until those are fixed. Check with the last person to deploy or look for the relevant release work item for more information. In running the notebooks, you may also see exceptions. If this happens, make sure to look for existing bugs open on the ADO board or create a new one if it does not exist! If it is easy to fix, we prefer to fix the issue before the release continues.
-
-Some notebooks that use Azure targets with API-key (local) auth are skipped by the integration tests for a separate reason: key-based auth is disabled in our Azure subscription (see the note under *Release Readiness* above). These are tracked in the `_azure_key_auth_notebooks` set in `tests/integration/targets/test_notebooks_targets.py` (distinct from the long-standing `skipped_files` list). Validate them with Entra auth (`az login`) rather than API keys, or rely on the equivalent Entra-auth integration tests; running them with API keys fails with HTTP 403 `AuthenticationTypeDisabled`.
+In the new location, run all notebooks that are currently skipped by integration tests in VS Code. To find them, search for `skipped_files` under `tests/integration/`; the lists live in several differently-named test modules, so search rather than relying on a fixed filename pattern or a remembered count. The notebooks themselves are in the doc folder that you copied into your new `releases\releasevx.y.z` folder. Note that some of these notebooks have known issues and it may make sense to skip testing them until those are fixed. Check with the last person to deploy or look for the relevant release work item for more information. In running the notebooks, you may also see exceptions. If this happens, make sure to look for existing bugs open on the ADO board or create a new one if it does not exist! If it is easy to fix, we prefer to fix the issue before the release continues.
 
 A reminder that you should ensure that the integration tests pass in the version you are releasing in addition to the skipped files.
 

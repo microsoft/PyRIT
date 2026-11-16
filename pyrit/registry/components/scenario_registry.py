@@ -21,23 +21,22 @@ from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import (
     ScenarioDatasetOptions,
     ScenarioDatasetSettings,
+    ScenarioIdentifier,
     ScenarioRunSizeEstimate,
     ScenarioTechniqueSummary,
     class_name_to_snake_case,
 )
-from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from types import ModuleType
 
-    from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier, Parameter
+    from pyrit.scenario import ScenarioTechnique
     from pyrit.scenario.core import Scenario
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)
@@ -235,7 +234,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             )
             for aggregate in technique_class.get_aggregate_techniques()
         )
-        default_datasets = tuple(instance._default_dataset_config.dataset_names)
+        default_datasets = tuple(instance.get_default_dataset_names())
 
         return ScenarioMetadata(
             class_name=cls.__name__,
@@ -303,6 +302,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         scenario_result_id: str | None = None,
         initial_metadata: Mapping[str, Any] | None = None,
         constructor_kwargs: dict[str, Any] | None = None,
+        configuration_metadata: Callable[[Scenario], Mapping[str, Any]] | None = None,
         **initialize_kwargs: Any,
     ) -> Scenario:
         """
@@ -337,6 +337,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             initial_metadata (Mapping[str, Any] | None): Caller-owned metadata to
                 persist atomically when a fresh scenario result is created.
             constructor_kwargs (dict[str, Any] | None): Explicit constructor inputs for this run.
+            configuration_metadata: Validate resolved configuration and capture identities before initialization.
             **initialize_kwargs (Any): Common run-resolved parameters merged into the
                 param bag (notably ``objective_target``).
 
@@ -354,6 +355,9 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         scenario.set_scenario_registry_name(scenario_registry_name=name)
         if initial_metadata:
             scenario.set_initial_metadata(metadata=initial_metadata)
+        if configuration_metadata is not None:
+            metadata = await run_legacy_sync_async(configuration_metadata, scenario)
+            scenario.set_initial_metadata(metadata={**(initial_metadata or {}), **metadata})
         await scenario.initialize_async()
         return scenario
 

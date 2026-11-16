@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.models import JsonResponseConfig, UnvalidatedScore
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 if TYPE_CHECKING:
     import uuid
@@ -161,6 +162,17 @@ def _build_unvalidated_score(
         # Unrecognized metadata shape; drop to avoid downstream errors
         normalized_md = None
 
+    if normalized_md:
+        # The judge's JSON body is untrusted with respect to score arithmetic:
+        # normalize_score_to_float prefers an "original_float_value" metadata
+        # key over the validated score_value, so a judge (or a target that
+        # steered the judge) could store score_value "0.0" while every
+        # consumer computes the metadata float. The threshold wrapper writes
+        # this key itself after parsing (float_scale_threshold_scorer), and
+        # true_false_score_aggregator / true_false_inverter_scorer already
+        # strip it defensively on the same grounds.
+        normalized_md.pop(ORIGINAL_FLOAT_VALUE_KEY, None)
+
     return UnvalidatedScore(
         raw_score_value=str(parsed_response[score_value_output_key]),
         score_value_description=parsed_response.get(description_output_key, ""),
@@ -272,6 +284,9 @@ class JsonSchemaResponseHandler(ResponseHandler):
     category, and metadata from configurable keys. It also owns the response contract: the
     optional JSON schema handed to the target, and (when ``numeric_value`` is set) validating
     that the parsed score value is finite and numeric.
+
+    Replay version 2 excludes judge-supplied ``original_float_value`` metadata. Observations
+    acquired under version 1 must be rescored rather than replayed under changed semantics.
     """
 
     def __init__(
@@ -328,7 +343,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
         """Return all configuration that changes JSON parsing."""
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
-            "version": 1,
+            "version": 2,
             "score_value_output_key": self._score_value_output_key,
             "rationale_output_key": self._rationale_output_key,
             "description_output_key": self._description_output_key,
@@ -374,6 +389,20 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 return legacy
         return [*legacy, historical]
 
+    def _convert_response(self, parsed_response: dict[str, Any]) -> dict[str, Any]:
+        """
+        Validate and convert the decoded response before the score is read from it.
+
+        Subclasses with their own response contract override this, so the response is decoded once.
+
+        Args:
+            parsed_response (dict[str, Any]): The decoded top-level JSON object.
+
+        Returns:
+            dict[str, Any]: The response the score is read from.
+        """
+        return parsed_response
+
     def parse(
         self,
         *,
@@ -417,7 +446,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
                     message=f"Invalid JSON response, expected a top-level object: {response_json}"
                 )
             score = _build_unvalidated_score(
-                parsed_response=parsed_response,
+                parsed_response=self._convert_response(parsed_response),
                 score_value_output_key=self._score_value_output_key,
                 rationale_output_key=self._rationale_output_key,
                 description_output_key=self._description_output_key,
@@ -692,7 +721,7 @@ class CallableResponseHandler(ResponseHandler):
             return None
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
-            "version": 1,
+            "version": 2,
             "parser_fingerprint": self._parser_fingerprint,
             "parser": parser,
             "score_value_output_key": self._score_value_output_key,

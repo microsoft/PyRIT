@@ -5,8 +5,10 @@ import random
 
 import pytest
 
-from pyrit.converter.puzzled.puzzle_builders import (
+from pyrit.converter import (
     PuzzleType,
+)
+from pyrit.converter.puzzled.puzzle_builders import (
     build_anagram,
     build_crossword,
     build_word_search,

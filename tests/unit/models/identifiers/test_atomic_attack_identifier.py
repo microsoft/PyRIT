@@ -4,14 +4,14 @@
 
 from typing import assert_type
 
-from pyrit.models.identifiers import (
+from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     ComponentIdentifier,
     SeedIdentifier,
+    SeedPrompt,
     compute_eval_hash,
 )
-from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 
 class _FakeSeedGroup:
@@ -56,6 +56,19 @@ def _make_attack(
 
 class TestBuildSeedIdentifier:
     """Tests for SeedIdentifier.from_seed."""
+
+    def test_preserves_subclass_type(self):
+        class CustomSeedIdentifier(SeedIdentifier):
+            pass
+
+        seed = SeedPrompt(value="hello", value_sha256="abc123", dataset_name="test_ds", name="seed1")
+        base_result = SeedIdentifier.from_seed(seed)
+        subclass_result = CustomSeedIdentifier.from_seed(seed)
+
+        assert_type(base_result, SeedIdentifier)
+        assert_type(subclass_result, CustomSeedIdentifier)
+        assert type(base_result) is SeedIdentifier
+        assert type(subclass_result) is CustomSeedIdentifier
 
     def test_returns_component_identifier(self):
         seed = SeedPrompt(value="hello", value_sha256="abc123", dataset_name="test_ds", name="seed1")
@@ -234,7 +247,9 @@ class TestAtomicAttackEvaluationIdentifier:
 
     def test_adversarial_chat_rule(self):
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["adversarial_chat"]
-        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
         assert rule.inner_child_name == "targets"
         assert not rule.exclude
@@ -251,7 +266,9 @@ class TestAtomicAttackEvaluationIdentifier:
         max_requests_per_minute) are excluded.
         """
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["converter_target"]
-        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
         assert rule.inner_child_name == "targets"
         assert not rule.exclude

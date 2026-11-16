@@ -24,7 +24,7 @@ from pyrit.converter import (
 )
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import AttackTechniqueFactory
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:

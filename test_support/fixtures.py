@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 @contextmanager
 def use_sqlite_memory(sqlite_memory: SQLiteMemory) -> Generator[None, None, None]:
     """Temporarily bind CentralMemory and the SQLite singleton to a fixture-owned instance."""
-    from pyrit.common.singleton import Singleton
+    from pyrit.common import Singleton
     from pyrit.memory import CentralMemory, SQLiteMemory
 
     previous_instance = Singleton._instances.get(SQLiteMemory)

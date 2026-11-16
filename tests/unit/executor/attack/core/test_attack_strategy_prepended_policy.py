@@ -9,24 +9,26 @@ from typing import Any
 
 import pytest
 
-from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack import (
+    AttackScoringConfig,
+    AttackStrategy,
+    ChunkedRequestAttack,
+    CrescendoAttack,
+    MultiPromptSendingAttack,
+    PAIRAttack,
+    PrependedConversationConfig,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SkeletonKeyAttack,
+    TreeOfAttacksWithPruningAttack,
+)
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.executor.attack.core import AttackStrategy
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack
-from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
-from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttack
-from pyrit.executor.attack.multi_turn.pair import PAIRAttack
-from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import AttackTechniqueFactory
 
 
 class _NonEditableHistoryTarget(PromptTarget):

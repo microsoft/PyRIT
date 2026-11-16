@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode, type Ref } from 'react'
 
-import { Text, mergeClasses } from '@fluentui/react-components'
+import { Text, mergeClasses, useMergedRefs } from '@fluentui/react-components'
 import { AttachRegular } from '@fluentui/react-icons'
 
 import { isFileDrag } from '@/utils/fileDrag'
@@ -8,6 +8,7 @@ import { isFileDrag } from '@/utils/fileDrag'
 import { useFileDropZoneStyles } from './FileDropZone.styles'
 
 interface FileDropZoneProps {
+  ref?: Ref<HTMLDivElement>
   children: ReactNode
   onFiles: (files: File[]) => void
   disabled?: boolean
@@ -19,10 +20,11 @@ interface FileDropZoneProps {
 }
 
 export default function FileDropZone({
-  children, onFiles, disabled = false, disabledReason, enabled = true, className, label = 'Drop files to attach', testId,
+  ref, children, onFiles, disabled = false, disabledReason, enabled = true, className, label = 'Drop files to attach', testId,
 }: FileDropZoneProps) {
   const styles = useFileDropZoneStyles()
   const rootRef = useRef<HTMLDivElement>(null)
+  const mergedRef = useMergedRefs(rootRef, ref)
   const dragTargets = useRef(new Set<Node>())
   const [dragging, setDragging] = useState(false)
   const localTarget = (event: DragEvent<HTMLDivElement>): Node | null =>
@@ -63,7 +65,7 @@ export default function FileDropZone({
   }, [dragging, pruneTargets, reset])
 
   return <div
-    ref={rootRef}
+    ref={mergedRef}
     className={mergeClasses(styles.root, className)}
     data-testid={testId}
     onDragEnter={(event: DragEvent<HTMLDivElement>) => {

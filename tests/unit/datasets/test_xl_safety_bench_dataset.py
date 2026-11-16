@@ -6,15 +6,17 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     XLSafetyBenchCountry,
     XLSafetyBenchCulturalCategory,
     XLSafetyBenchJailbreakCategory,
     XLSafetyBenchLanguageMode,
-    _csv_column_names,
     _XLSafetyBenchCulturalDataset,
     _XLSafetyBenchJailbreakDataset,
     _XLSafetyBenchJailbreakObjectivesDataset,
+)
+from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
+    _csv_column_names,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 

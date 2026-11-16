@@ -3,28 +3,28 @@
 
 """Tests for the scenario preset routes."""
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import AzureError
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.scenario_presets import (
+from pyrit.backend.models import (
     PresetIssue,
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
 )
-from pyrit.backend.services.scenario_preset_service import ScenarioPresetService
-from pyrit.models.catalog import ScenarioPreset, ScenarioRunSizeEstimate
-from pyrit.models.catalog.scenario import ScenarioRunSizeComponent
+from pyrit.backend.services import ScenarioPresetService
+from pyrit.models import ScenarioPreset, ScenarioRunSizeComponent, ScenarioRunSizeEstimate
 from pyrit.registry import (
     ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,
     resolve_scenario_preset_run_request,
 )
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 
 PRESET_NAME = "quick_scan"
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -147,13 +147,22 @@ class TestListPresets:
 
         assert anonymous_client.get("/api/scenario-presets").status_code == 200
 
-    def test_storage_failure_is_reported_without_sdk_detail(self, client: TestClient, service: MagicMock) -> None:
-        service.list_presets_async = AsyncMock(side_effect=AzureError("container 'x' key=secret"))
+    def test_storage_failure_names_the_source_only_in_the_log(
+        self, client: TestClient, service: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service.list_presets_async = AsyncMock(
+            side_effect=DocumentStorageUnavailableError(
+                label="Scenario preset", source="/srv/presets", reason="Permission denied"
+            )
+        )
 
-        response = client.get("/api/scenario-presets")
+        with caplog.at_level(logging.WARNING, logger="pyrit.backend.middleware.error_handlers"):
+            response = client.get("/api/scenario-presets")
 
         assert response.status_code == 503
-        assert "secret" not in response.text
+        assert response.json()["detail"] == "Scenario preset storage is unavailable"
+        assert "/srv/presets" not in response.text
+        assert "Scenario preset storage at /srv/presets is unavailable: Permission denied" in caplog.text
 
     def test_each_preset_carries_its_own_run_size(self, client: TestClient, service: MagicMock) -> None:
         estimate = _estimate(42)
@@ -248,6 +257,29 @@ class TestCreatePreset:
 
         assert response.status_code == 422
 
+    @pytest.mark.parametrize(("field", "limit"), [("description", 100_000), ("author", 256)])
+    def test_create_limits_the_description_and_author(
+        self, *, client: TestClient, service: MagicMock, field: str, limit: int
+    ) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response())
+
+        at_limit = client.post("/api/scenario-presets", json={**_preset().model_dump(), field: "x" * limit})
+        over_limit = client.post("/api/scenario-presets", json={**_preset().model_dump(), field: "x" * (limit + 1)})
+
+        assert at_limit.status_code == 201
+        assert over_limit.status_code == 422
+        service.save_preset_async.assert_awaited_once()
+
+    def test_create_limits_the_name_without_echoing_it(self, client: TestClient, service: MagicMock) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response())
+        name = "x" * 257
+
+        response = client.post("/api/scenario-presets", json={**_preset().model_dump(), "name": name})
+
+        assert response.status_code == 422
+        assert name not in response.text
+        service.save_preset_async.assert_not_called()
+
     @pytest.mark.usefixtures("signed_in_user")
     def test_the_signed_in_user_is_recorded_as_the_author(self, client: TestClient, service: MagicMock) -> None:
         service.save_preset_async = AsyncMock(return_value=_response())
@@ -307,6 +339,17 @@ class TestUpdatePreset:
         assert response.status_code == 200
         assert service.save_preset_async.call_args.kwargs["preset"].show_in_scanner is show_in_scanner
         assert response.json()["preset"]["show_in_scanner"] is show_in_scanner
+
+    def test_update_limits_the_expected_version(self, client: TestClient, service: MagicMock) -> None:
+        service.save_preset_async = AsyncMock(return_value=_response(version="v2"))
+        path = f"/api/scenario-presets/{PRESET_NAME}"
+
+        at_limit = client.put(path, json={"preset": _preset().model_dump(), "expected_version": "v" * 256})
+        over_limit = client.put(path, json={"preset": _preset().model_dump(), "expected_version": "v" * 257})
+
+        assert at_limit.status_code == 200
+        assert over_limit.status_code == 422
+        service.save_preset_async.assert_awaited_once()
 
     @pytest.mark.parametrize("explicit_null", [False, True])
     @pytest.mark.usefixtures("signed_in_user")
@@ -383,7 +426,9 @@ class TestUpdatePreset:
     def test_a_failed_author_read_is_reported_without_storage_details(
         self, *, client: TestClient, service: MagicMock
     ) -> None:
-        service.get_preset_async.side_effect = AzureError("key=secret")
+        service.get_preset_async.side_effect = DocumentStorageUnavailableError(
+            label="Scenario preset", source="/srv/presets", reason="Permission denied"
+        )
 
         response = client.put(
             f"/api/scenario-presets/{PRESET_NAME}",
@@ -391,7 +436,7 @@ class TestUpdatePreset:
         )
 
         assert response.status_code == 503
-        assert "secret" not in response.text
+        assert "/srv/presets" not in response.text
         service.save_preset_async.assert_not_called()
 
     def test_a_body_naming_a_different_preset_is_rejected(self, client: TestClient, service: MagicMock) -> None:
@@ -456,6 +501,29 @@ class TestDeletePreset:
         response = client.delete(f"/api/scenario-presets/{PRESET_NAME}")
 
         assert response.status_code == 204
+        service.delete_preset_async.assert_awaited_once_with(name=PRESET_NAME, expected_version=None)
+
+    def test_delete_forwards_the_version_that_was_read(self, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(return_value=True)
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 204
+        service.delete_preset_async.assert_awaited_once_with(name=PRESET_NAME, expected_version="v1")
+
+    def test_delete_of_a_changed_preset_is_a_conflict(self, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(
+            side_effect=ScenarioPresetConflictError(
+                name=PRESET_NAME, expected_version="v1", actual_version="v2", action="deleted"
+            )
+        )
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            f"Scenario preset '{PRESET_NAME}' changed since it was read; re-read it and retry"
+        )
 
     def test_delete_reports_a_missing_preset(self, client: TestClient, service: MagicMock) -> None:
         service.delete_preset_async = AsyncMock(return_value=False)
@@ -463,6 +531,27 @@ class TestDeletePreset:
         response = client.delete(f"/api/scenario-presets/{PRESET_NAME}")
 
         assert response.status_code == 404
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            DocumentStorageUnavailableError(
+                label="Scenario preset", source="https://secret.test/c", reason="AzureError"
+            ),
+            DocumentStorageUnavailableError(
+                label="Scenario preset", source="/srv/secret", reason="Timed out waiting to write '.secret.lock'"
+            ),
+        ],
+    )
+    def test_a_delete_storage_failure_is_unavailable(
+        self, *, client: TestClient, service: MagicMock, error: Exception
+    ) -> None:
+        service.delete_preset_async = AsyncMock(side_effect=error)
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 503
+        assert "secret" not in response.text
 
     def test_delete_requires_admin(self, anonymous_client: TestClient, service: MagicMock) -> None:
         service.delete_preset_async = AsyncMock(return_value=True)
@@ -534,6 +623,17 @@ class TestResolvePreset:
         assert response.status_code == 200
         assert service.resolve_run_request_async.call_args.kwargs["launch"].expected_version == "v1"
 
+    def test_resolve_limits_the_expected_version(self, client: TestClient, service: MagicMock) -> None:
+        service.resolve_run_request_async = self._resolving()
+        path = f"/api/scenario-presets/{PRESET_NAME}/resolve"
+
+        at_limit = client.post(path, json={"target_name": "gpt4", "expected_version": "v" * 256})
+        over_limit = client.post(path, json={"target_name": "gpt4", "expected_version": "v" * 257})
+
+        assert at_limit.status_code == 200
+        assert over_limit.status_code == 422
+        service.resolve_run_request_async.assert_awaited_once()
+
     def test_a_preset_edited_after_it_was_read_is_a_conflict(self, client: TestClient, service: MagicMock) -> None:
         service.resolve_run_request_async = AsyncMock(
             side_effect=ScenarioPresetConflictError(name=PRESET_NAME, expected_version="v1", actual_version="v2")
@@ -554,3 +654,21 @@ class TestResolvePreset:
 
         assert response.status_code == 200
         assert service.resolve_run_request_async.call_args.kwargs["launch"].expected_version is None
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "", None),
+        ("PUT", "", {"preset": _preset().model_dump(), "expected_version": "v1"}),
+        ("DELETE", "", None),
+        ("POST", "/resolve", {"target_name": "gpt4"}),
+    ],
+    ids=["get", "update", "delete", "resolve"],
+)
+@pytest.mark.usefixtures("service")
+def test_path_name_is_limited(*, client: TestClient, method: str, suffix: str, body: dict[str, object] | None) -> None:
+    response = client.request(method, f"/api/scenario-presets/{'x' * 257}{suffix}", json=body)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["path.name"]
