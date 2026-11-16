@@ -526,9 +526,7 @@ class ConversationScorer(MessageScorer, ABC):
         """
         if trace is None or self._trace_requirement is TraceEvidenceRequirement.NONE:
             return None
-        if self._trace_requirement is TraceEvidenceRequirement.COMPLETE and not trace.complete:
-            return "trace_not_complete"
-        return None
+        return None if trace.complete else "trace_not_complete"
 
     def _build_trace_requirement_unmet_score(
         self,
