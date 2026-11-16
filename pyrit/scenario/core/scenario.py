@@ -1974,14 +1974,14 @@ class Scenario(ABC):
         fallback.
 
         ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are not
-        completed, but they still mark the attack as started. Resume uses the
-        started set only for ordering: attacks that never started go before
-        attacks that already failed, so one failing objective cannot starve the
-        rest of the queue on every retry.
+        completed, but they mark the attack as failed. Resume uses that set only
+        for ordering: attacks that never failed (untouched or merely interrupted)
+        go before attacks that already failed, so one failing objective cannot
+        starve the rest of the queue on every retry.
 
         Returns:
             tuple: Completed objective hashes per attack key, and the set of
-                attack keys with any persisted result. A missing eval hash is
+                attack keys with a failed result. A missing eval hash is
                 represented as ``None`` in both.
 
         Raises:
@@ -2004,7 +2004,9 @@ class Scenario(ABC):
             if isinstance(attribution, dict):
                 name = attribution.get("parent_collection")
                 eval_hash = attribution.get("parent_eval_hash")
-                if isinstance(name, str) and (eval_hash is None or isinstance(eval_hash, str)):
+                is_failure = row.outcome == AttackOutcome.ERROR
+                is_failure = is_failure or AttackPreparationFailure.from_result(result=row) is not None
+                if is_failure and isinstance(name, str) and (eval_hash is None or isinstance(eval_hash, str)):
                     started_attack_keys.add((name, eval_hash))
 
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
@@ -2085,7 +2087,7 @@ class Scenario(ABC):
 
         # A retry/resume otherwise re-queues the same partially failed attack first,
         # hits the same failing objective, and stops admission before the attacks
-        # behind it ever start. Put attacks with no persisted result first; the sort
+        # behind it ever start. Put attacks with no failed result first; the sort
         # is stable, so original order is kept within each group.
         remaining_attacks.sort(
             key=lambda attack: (
