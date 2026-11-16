@@ -306,6 +306,7 @@ class AssertPolicy(Scenario):
 
     #: Version 2 runs registered attack techniques instead of ``single_turn``/``multi_turn``.
     VERSION: int = 2
+    SUPPORTS_EXACT_EXAMPLE_SELECTION: ClassVar[bool] = False
     #: ASSERT's tester prompts. The system prompt is ASSERT's text, and the first message and reply
     #: framing match ASSERT's tester loop, which shows each reply in ``<target_response>`` tags.
     TESTER_SYSTEM_PROMPT_PATH: ClassVar[Path] = EXECUTOR_RED_TEAM_PATH / "assert_tester_system.yaml"

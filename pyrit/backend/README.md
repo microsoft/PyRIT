@@ -82,6 +82,31 @@ overrides; reconstruction preserves declarations from the source target.
 Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
+### Exact dataset example selection
+
+Dataset browse summaries include a `fingerprint`. For configured scenario estimates
+and launches, send the selected browse references as `example_selection`:
+
+```json
+{"example_selection":{"examples":[
+  {"selection_key":"dataset:named:my_dataset",
+   "example_id":"00000000-0000-0000-0000-000000000001",
+   "fingerprint":"<64-character lowercase SHA-256 from the browse response>"}
+]}}
+```
+
+Selections are dataset-scoped and limited to 100 examples. They replace the
+scenario's default population without caps or resampling; named sources, filters,
+limits, and fetch overrides cannot be combined with them. Estimates inspect stored
+records without loading legacy prompt templates. Launch preserves objective
+conditions and decomposition relationships, prompt fields, and technique flags.
+Unsupported scenarios, group shapes, or techniques that would drop selected content
+return 400. `foundry.assert_policy` currently rejects REST exact selections because
+its tester and baseline policies can skip selected groups; use named datasets instead.
+Changed content or membership returns 409; oversized lists return 422.
+Resume rechecks the saved references and fingerprints rather than accepting a new
+selection. Omit `example_selection` to retain named-dataset behavior.
+
 ### Dataset creation, batch mutation, and deletion
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.

@@ -29,10 +29,13 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     AnswerMatches,
+    AttackSeedGroup,
     DatasetExampleReference,
     DatasetExampleSelection,
     DatasetExampleSelectionError,
+    DatasetFetchPolicy,
     DatasetSourceInput,
+    DecompositionPath,
     ScenarioDatasetRequest,
     ScenarioRunSizeEstimateRequest,
     Seed,
@@ -52,6 +55,7 @@ from pyrit.scenario import (
     ScenarioTechnique,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, LeakReplay, SystemPromptExtraction
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
@@ -436,8 +440,8 @@ async def test_load_route_rejects_exact_selection_before_memory(sqlite_instance:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, Exploitation, LeakReplay])
-async def test_named_only_scenarios_reject_exact_selection_before_resolution(scenario_class: type[Scenario]) -> None:
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, Exploitation, LeakReplay, AssertPolicy])
+async def test_unsupported_scenarios_reject_exact_selection_before_resolution(scenario_class: type[Scenario]) -> None:
     assert scenario_supports_exact_example_selection(scenario_class) is False
     with (
         patch(
@@ -934,6 +938,94 @@ async def test_non_objective_without_conditions_builds(
     groups = await resolved["dataset_config"].get_attack_seed_groups_async()
     assert len(groups) == 1
     assert [prompt.value for prompt in groups[0].prompts] == ["body"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_exact_groups_preserve_decomposition_and_technique_identity(sqlite_instance: MemoryInterface) -> None:
+    parent_group, child_group = uuid4(), uuid4()
+    child = _objective("child goal", prompt_group_id=child_group)
+    parent = _objective("parent goal", prompt_group_id=parent_group, paths=[DecompositionPath(steps=(child.id,))])
+    child.parent_objective_id = parent.id
+    prompt = _prompt("general prompt", prompt_group_id=parent_group, is_general_technique=True)
+    conversation = SeedSimulatedConversation(
+        dataset_name=DATASET,
+        added_by="test",
+        prompt_group_id=child_group,
+        is_general_technique=False,
+        num_turns=1,
+        adversarial_chat_system_prompt=SeedPrompt(value="adversary"),
+        simulated_target_system_prompt=SeedPrompt(value="target"),
+    )
+    original = [AttackSeedGroup(seeds=[parent, prompt]), AttackSeedGroup(seeds=[child, conversation])]
+    await _store(sqlite_instance, parent, prompt, child, conversation)
+    selection = await _selection(
+        sqlite_instance, selection_key=NAMED, example_ids=[parent_group, child_group], dataset_name=DATASET
+    )
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact", scenario_class=_ExactScenario, example_selection=selection, memory=sqlite_instance
+    )
+
+    groups = await resolved["dataset_config"].get_attack_seed_groups_async()
+
+    assert groups[0].objective.paths == parent.paths
+    assert groups[1].objective.parent_objective_id == parent.id
+    assert groups[0].prompts[0].is_general_technique is True
+    assert groups[1].simulated_conversation_config.is_general_technique is False
+    assert [group.logical_id for group in groups] == [group.logical_id for group in original]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"parent_objective_id": uuid4()},
+        {"paths": [{"id": str(uuid4()), "steps": [str(uuid4())]}]},
+    ],
+    ids=["parent", "paths"],
+)
+@pytest.mark.usefixtures("patch_central_database")
+async def test_non_objective_decomposition_is_unsupported(
+    sqlite_instance: MemoryInterface, fields: dict[str, object]
+) -> None:
+    group = uuid4()
+    prompt = _prompt("body", prompt_group_id=group)
+    await _store(sqlite_instance, _objective("goal", prompt_group_id=group), prompt)
+    await _mutate(sqlite_instance, prompt.id, **fields)
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact", scenario_class=_ExactScenario, example_selection=selection, memory=sqlite_instance
+    )
+
+    with pytest.raises(DatasetExampleSelectionError, match="decomposition") as caught:
+        await resolved["dataset_config"].get_attack_seed_groups_async()
+    assert caught.value.code == "unsupported"
+    assert caught.value.example_id == group
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"max_total": 1},
+        {"max_per_dataset": 1},
+        {"filters": {"harm_categories": ["violence"]}},
+        {"fetch": DatasetFetchPolicy.ALWAYS},
+    ],
+    ids=["total-cap", "source-cap", "filter", "fetch"],
+)
+@pytest.mark.usefixtures("patch_central_database")
+async def test_exact_configuration_rejects_population_changing_overrides(
+    sqlite_instance: MemoryInterface, overrides: dict[str, Any]
+) -> None:
+    first, second = _objective("first"), _objective("second")
+    await _store(sqlite_instance, first, second)
+    selection = await _selection(
+        sqlite_instance, selection_key=NAMED, example_ids=[first.id, second.id], dataset_name=DATASET
+    )
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact", scenario_class=_ExactScenario, example_selection=selection, memory=sqlite_instance
+    )
+    config = resolved["dataset_config"].with_overrides(**overrides)
+    with pytest.raises(DatasetExampleSelectionError, match="conflicting_mode"):
+        await config.get_attack_seed_groups_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

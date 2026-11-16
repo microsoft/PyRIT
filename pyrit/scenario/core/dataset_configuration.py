@@ -1207,6 +1207,26 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
     def _default_max_per_dataset(self) -> ResolvedDatasetLimit:
         return "all"
 
+    def validate_configuration(self) -> None:
+        """
+        Reject settings that could change the resolved exact population.
+
+        Raises:
+            DatasetExampleSelectionError: If limits, filters, or fetch settings replace exact mode.
+        """
+        super().validate_configuration()
+        if (
+            self.sources
+            or self.max_per_dataset != "all"
+            or self.has_sampling_limits
+            or self.filters
+            or self.fetch is not DatasetFetchPolicy.NEVER
+        ):
+            raise DatasetExampleSelectionError(
+                code="conflicting_mode",
+                detail="Exact example selection cannot be combined with dataset sources, filters, limits, or fetch.",
+            )
+
     def get_size_budget(self) -> BoundedDatasetSize:
         """
         Return the resolved example count.
@@ -1219,43 +1239,20 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         """
         return BoundedDatasetSize(value=len(self._selected_examples))
 
-    async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
+    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
         """
-        Return every selected group.
-
-        Args:
-            apply_sampling: Ignored. An exact selection is not sampled.
+        Build exact groups at the shared resolution seam, without reading memory again.
 
         Returns:
-            list[AttackSeedGroup]: One group per selected example, in request order.
-        """
-        grouped = await self.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-        return [group for groups in grouped.values() for group in groups]
-
-    async def get_attack_groups_by_dataset_async(
-        self, *, apply_sampling: bool = True
-    ) -> dict[str, list[AttackSeedGroup]]:
-        """
-        Return every selected group under the inline dataset label.
-
-        Args:
-            apply_sampling: Ignored. An exact selection is not sampled.
-
-        Returns:
-            dict[str, list[AttackSeedGroup]]: The inline label mapped to every group.
+            tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]: Selected groups and their full seed population.
 
         Raises:
             DatasetExampleSelectionError: If a selected example cannot be built into one group.
-            DatasetConstraintError: If the selection is empty.
         """
-        del apply_sampling
-        self.validate_configuration()
         groups = await asyncio.to_thread(self._build_selected_groups)
-        if not groups:
-            raise DatasetConstraintError("Resolved attack-group dataset is empty (datasets: <inline>).")
         flattened = [seed for group in groups for seed in group.seeds]
-        self.validate(ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=()))
-        return {INLINE_DATASET_NAME: groups}
+        resolved = ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=())
+        return {INLINE_DATASET_NAME: groups}, resolved
 
     def validate_technique_factories(
         self, factories: Mapping[str, AttackTechniqueFactory], *, inspect_only: bool = False
@@ -1399,8 +1396,8 @@ def _seed_from_record(
         Seed: The seed model for one stored record.
 
     Raises:
-        DatasetExampleSelectionError: If a non-objective seed has conditions, or a simulated
-            conversation cannot be built.
+        DatasetExampleSelectionError: If a non-objective seed has conditions or decomposition
+            fields, or a simulated conversation cannot be built.
     """
     if record.seed_type != "objective" and record.conditions:
         raise DatasetExampleSelectionError(
@@ -1408,6 +1405,13 @@ def _seed_from_record(
             selection_key=reference.selection_key,
             example_id=reference.example_id,
             detail="Only objective seeds can have persisted conditions.",
+        )
+    if record.seed_type != "objective" and (record.parent_objective_id is not None or record.paths):
+        raise DatasetExampleSelectionError(
+            code="unsupported",
+            selection_key=reference.selection_key,
+            example_id=reference.example_id,
+            detail="Only objective seeds can have persisted decomposition fields.",
         )
     common: dict[str, Any] = {
         "id": record.id,
@@ -1425,9 +1429,15 @@ def _seed_from_record(
         "added_by": record.added_by,
         "metadata": record.metadata,
         "prompt_group_id": record.prompt_group_id,
+        "is_general_technique": record.is_general_technique,
     }
     if record.seed_type == "objective":
-        return SeedObjective(**common, conditions=record.conditions if record.conditions is not None else ())
+        return SeedObjective(
+            **common,
+            conditions=record.conditions if record.conditions is not None else (),
+            parent_objective_id=record.parent_objective_id,
+            paths=record.paths,
+        )
     if record.seed_type == "simulated_conversation":
         if inspect_only:
             return _simulated_conversation_for_inspection(record=record, reference=reference, common=common)
