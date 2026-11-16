@@ -1,12 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.exceptions import ScorerLLMResponseBlockedException
@@ -17,32 +13,24 @@ from pyrit.models import (
     ContentScorable,
     ConversationObservationPayload,
     ConversationScorable,
-    ExecutionStep,
-    ExecutionTraceObservationPayload,
     Message,
     MessagePiece,
     MessageScorable,
-    Observation,
     PromptDataType,
     Scorable,
     Score,
     ScoringExpectation,
     TraceScorable,
-    TraceSpanStatus,
+)
+from pyrit.score.evidence.conversation_trace_evidence import (
+    ConversationTraceEvidence,
+    TraceEvidenceRequirement,
+    TraceRendering,
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation import ConversationSource
-from pyrit.score.observation.execution import (
-    _acquire_once_async,
-    _collect_observation,
-    _ObservationEvidenceResolver,
-)
-from pyrit.score.observation.message_trace_resolver import (
-    RequestTraceLink,
-    resolve_conversation_trace_links_async,
-    trace_scope_from_links,
-)
+from pyrit.score.observation.execution import _collect_observation, _ObservationEvidenceResolver
 from pyrit.score.observation.observation_source import ObservationSource
 from pyrit.score.scorer import Scorer, SnapshotParticipation, _read_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -50,62 +38,6 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, Tru
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
-
-
-class TraceEvidenceRequirement(str, Enum):
-    """
-    The execution evidence a conversation judgment requires before its judge is called.
-
-    ``COMPLETE`` requires every outbound request to be linked to a trace with complete
-    coverage. ``NONE`` judges regardless and includes whatever execution evidence is available.
-    """
-
-    COMPLETE = "complete"
-    NONE = "none"
-
-
-@dataclass(frozen=True, kw_only=True)
-class _TraceEvidence:
-    """Execution evidence acquired for one conversation, with the reasons it is incomplete."""
-
-    links: tuple[RequestTraceLink, ...]
-    observation: Observation | None
-    reasons: tuple[str, ...]
-
-    @property
-    def payload(self) -> ExecutionTraceObservationPayload | None:
-        if self.observation is None or not isinstance(self.observation.payload, ExecutionTraceObservationPayload):
-            return None
-        return self.observation.payload
-
-    @property
-    def complete(self) -> bool:
-        return (
-            self.observation is not None
-            and self.observation.acquisition is Acquisition.COMPLETE
-            and bool(self.links)
-            and all(link.linked for link in self.links)
-        )
-
-    @property
-    def available(self) -> bool:
-        payload = self.payload
-        return payload is not None and (bool(payload.steps) or self.complete)
-
-    @property
-    def coverage_label(self) -> str:
-        return "complete" if self.complete else "partial" if self.available else "unavailable"
-
-
-@dataclass(frozen=True, kw_only=True)
-class _TraceRendering:
-    """Execution blocks keyed by the request sequence they follow, plus summary framing."""
-
-    header: str
-    blocks: dict[int, str]
-    request_sequences: frozenset[int]
-    rendered_step_indexes: frozenset[int]
-    truncated: bool
 
 
 class ConversationScorer(MessageScorer, ABC):
@@ -129,21 +61,11 @@ class ConversationScorer(MessageScorer, ABC):
     )
     _source: ObservationSource[ConversationScorable]
     _excluded_data_types: tuple[PromptDataType, ...] = ()
-    _trace_source: ObservationSource[TraceScorable] | None = None
-    _trace_requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE
-    _max_rendered_trace_chars: int = 60000
+    _trace_evidence: ConversationTraceEvidence | None = None
 
-    TRACE_RENDERING_VERSION: ClassVar[int] = 1
-    #: The judge sees at most this many characters of each saved input, output, or error value.
-    MAX_RENDERED_CONTENT_CHARS: ClassVar[int] = 4000
-    #: The judge sees at most this many characters of each step name, model, or node label.
-    MAX_RENDERED_LABEL_CHARS: ClassVar[int] = 200
     #: Metadata key on an undetermined result whose judge was not called because the configured
     #: trace requirement was not met. Its value is the reason.
     EVIDENCE_REQUIREMENT_UNMET_KEY: ClassVar[str] = "evidence_requirement_unmet"
-    #: Step citations such as `[T3]`; longer numbers cannot name a step and are ignored.
-    _TRACE_CITATION: ClassVar[re.Pattern[str]] = re.compile(r"\[T(\d{1,9})\]")
-    _NO_SPANS_LINE: ClassVar[str] = "  (no spans recorded)\n"
 
     def get_chat_target(self) -> "PromptTarget | None":
         """
@@ -254,52 +176,11 @@ class ConversationScorer(MessageScorer, ABC):
             if available_ids:
                 used_observation_ids[str(score.id)].add(str(min(available_ids, key=str)))
                 matched_scores.append(score)
-        if self._trace_source is None or not matched_scores:
+        if self._trace_evidence is None or not matched_scores:
             return matched_scores
-        return await self._filter_matching_scores_by_trace_async(
-            scores=matched_scores, conversation_id=conversation_scorable.conversation_id
+        return await self._trace_evidence.filter_matching_scores_async(
+            scores=matched_scores, conversation_id=conversation_scorable.conversation_id, memory=self._memory
         )
-
-    async def _filter_matching_scores_by_trace_async(
-        self, *, scores: Sequence[Score], conversation_id: str
-    ) -> list[Score]:
-        """
-        Keep results whose linked execution snapshot matches the evidence acquired now.
-
-        Matching is intentionally strict: a stored result is reused only when the evidence acquired
-        now equals the evidence it was judged with. Once the capture is closed or the trace evicted,
-        or in a new process, the evidence differs, so the conversation is judged again with what is
-        available now; earlier results stay in memory unchanged. A result made without execution
-        evidence matches only while none is available.
-
-        Returns:
-            list[Score]: Results whose execution evidence is unchanged.
-        """
-        current = (await self._acquire_trace_evidence_async(conversation_id=conversation_id)).observation
-        stored = await self._memory.get_observations_async(
-            observation_ids=list({observation_id for score in scores for observation_id in score.observation_ids})
-        )
-        traces = {
-            observation.id: observation
-            for observation in stored
-            if isinstance(observation.payload, ExecutionTraceObservationPayload)
-        }
-        matched = []
-        for score in scores:
-            linked = [traces[observation_id] for observation_id in score.observation_ids if observation_id in traces]
-            if current is None:
-                if not linked:
-                    matched.append(score)
-                continue
-            if any(
-                observation.acquisition == current.acquisition
-                and observation.scorable == current.scorable
-                and observation.source_identifier == current.source_identifier
-                and observation.payload == current.payload
-                for observation in linked
-            ):
-                matched.append(score)
-        return matched
 
     async def _score_message_scorable_async(
         self,
@@ -436,31 +317,30 @@ class ConversationScorer(MessageScorer, ABC):
         pieces = await _ObservationEvidenceResolver(memory=self._memory).resolve_async(observation=observation)
         if not isinstance(pieces, tuple):
             raise TypeError("Conversation evidence must resolve to an ordered tuple of message pieces.")
-        trace = (
-            await self._acquire_trace_evidence_async(conversation_id=scorable.conversation_id)
-            if self._trace_source is not None
-            else None
-        )
-        rendering = self._render_trace(trace) if trace is not None else None
+        evidence = self._trace_evidence
+        trace = rendering = None
+        if evidence is not None:
+            trace = await evidence.acquire_async(conversation_id=scorable.conversation_id, memory=self._memory)
+            rendering = evidence.render(trace)
         text = self._render_conversation(pieces, trace_rendering=rendering)
         if not text:
             return []
         observations = [observation] + ([trace.observation] if trace and trace.observation else [])
         for acquired in observations:
             _collect_observation(acquired)
-        trace_metadata = self._trace_metadata(trace=trace, rendering=rendering)
-        unmet = self._unmet_trace_requirement(trace)
-        if unmet is not None and trace is not None:
-            return [
-                self._build_trace_requirement_unmet_score(
+        trace_metadata: dict[str, str | int | float] = {}
+        if evidence is not None and trace is not None and rendering is not None:
+            trace_metadata = evidence.get_metadata(trace=trace, rendering=rendering)
+            if unmet := evidence.get_unmet_requirement(trace):
+                score = self._build_undetermined_score(
+                    rationale=evidence.describe_unmet_requirement(trace),
+                    description="Required execution evidence is missing.",
                     scorable=scorable,
-                    expectation=expectation,
-                    reason=unmet,
-                    trace=trace,
-                    metadata=trace_metadata,
-                    observations=observations,
+                    objective=expectation.objective if expectation else None,
+                    score_metadata={**trace_metadata, self.EVIDENCE_REQUIREMENT_UNMET_KEY: unmet},
                 )
-            ]
+                score.observation_ids = [acquired.id for acquired in observations]
+                return [score]
         child = self._get_wrapped_scorer()
         try:
             scores = await child._score_nested_async(
@@ -481,247 +361,17 @@ class ConversationScorer(MessageScorer, ABC):
             for acquired in observations:
                 if acquired.id not in score.observation_ids:
                     score.observation_ids.append(acquired.id)
-            if trace_metadata:
+            if evidence is not None and rendering is not None:
                 score.score_metadata = {
                     **(score.score_metadata or {}),
                     **trace_metadata,
-                    **self._citation_metadata(score=score, rendering=rendering),
+                    **evidence.get_citation_metadata(rationale=score.score_rationale or "", rendering=rendering),
                 }
             results.append(score)
         return results
 
-    async def _acquire_trace_evidence_async(self, *, conversation_id: str) -> _TraceEvidence:
-        """
-        Acquire execution evidence for every outbound request in the conversation.
-
-        Returns:
-            _TraceEvidence: The links, the acquired observation if any, and coverage gaps.
-
-        Raises:
-            ValueError: If the trace source returns evidence for a different scope or kind.
-        """
-        links = await resolve_conversation_trace_links_async(conversation_id=conversation_id, memory=self._memory)
-        reasons = ["unlinked_requests"] if any(not link.linked for link in links) else []
-        scope = trace_scope_from_links(links)
-        if scope is None or self._trace_source is None:
-            return _TraceEvidence(links=links, observation=None, reasons=(*reasons, "no_request_trace_links"))
-        trace_source = self._trace_source
-        key = ("trace", trace_source.get_identifier().hash, scope.trace_ids)
-        observation = await _acquire_once_async(key=key, acquire=lambda: trace_source.acquire_async(scorable=scope))
-        if (
-            observation.scorable != scope
-            or not isinstance(observation.payload, ExecutionTraceObservationPayload)
-            or observation.payload.scope != scope
-        ):
-            raise ValueError("Trace source returned incompatible evidence or scope.")
-        reasons.extend(observation.payload.coverage.reasons)
-        return _TraceEvidence(links=links, observation=observation, reasons=tuple(dict.fromkeys(reasons)))
-
-    def _unmet_trace_requirement(self, trace: _TraceEvidence | None) -> str | None:
-        """
-        Return why the configured trace requirement is not met, or None when it is.
-
-        Returns:
-            str | None: The unmet requirement's reason.
-        """
-        if trace is None or self._trace_requirement is TraceEvidenceRequirement.NONE:
-            return None
-        return None if trace.complete else "trace_not_complete"
-
-    def _build_trace_requirement_unmet_score(
-        self,
-        *,
-        scorable: ConversationScorable,
-        expectation: ScoringExpectation | None,
-        reason: str,
-        trace: _TraceEvidence,
-        metadata: dict[str, str | int | float],
-        observations: list[Observation],
-    ) -> Score:
-        score = self._build_undetermined_score(
-            rationale=(
-                f"The judge was not called: this scorer requires {self._trace_requirement.value} execution "
-                f"evidence, but the conversation's trace coverage is {trace.coverage_label} "
-                f"({', '.join(trace.reasons) or 'no reasons reported'})."
-            ),
-            description="Required execution evidence is missing.",
-            scorable=scorable,
-            objective=expectation.objective if expectation else None,
-            score_metadata={**metadata, self.EVIDENCE_REQUIREMENT_UNMET_KEY: reason},
-        )
-        score.observation_ids = [observation.id for observation in observations]
-        return score
-
-    def _trace_metadata(
-        self, *, trace: _TraceEvidence | None, rendering: _TraceRendering | None
-    ) -> dict[str, str | int | float]:
-        if trace is None:
-            return {}
-        payload = trace.payload
-        metadata: dict[str, str | int | float] = {
-            "trace_coverage": trace.coverage_label,
-            "trace_reasons": ",".join(trace.reasons),
-            "trace_step_count": len(payload.steps) if payload else 0,
-            "trace_requirement": self._trace_requirement.value,
-        }
-        if rendering is not None and rendering.truncated:
-            metadata["trace_rendering_truncated"] = "true"
-        return metadata
-
-    def _citation_metadata(self, *, score: Score, rendering: _TraceRendering | None) -> dict[str, str]:
-        """
-        Record the execution steps the judge cited and any it cited that it was not shown.
-
-        Returns:
-            dict[str, str]: Citation metadata, empty when nothing was cited.
-        """
-        cited = sorted({int(digits) for digits in self._TRACE_CITATION.findall(score.score_rationale or "")})
-        if not cited:
-            return {}
-        shown = rendering.rendered_step_indexes if rendering else frozenset()
-        unknown = [index for index in cited if index not in shown]
-        metadata = {"trace_cited_steps": json.dumps(cited)}
-        if unknown:
-            metadata["trace_citation_warnings"] = json.dumps([f"unknown_step:T{index}" for index in unknown])
-        return metadata
-
-    def _render_trace(self, trace: _TraceEvidence) -> _TraceRendering:
-        """
-        Render execution steps into one fenced block per linked request trace.
-
-        Returns:
-            _TraceRendering: The header, per-request blocks, and rendering statistics.
-        """
-        payload = trace.payload
-        reasons = f" ({', '.join(trace.reasons)})" if trace.reasons else ""
-        steps = payload.steps if payload else ()
-        header = (
-            "[BEGIN EXECUTION EVIDENCE]\n"
-            f"  coverage: {trace.coverage_label}{reasons}\n"
-            f"  steps: {len(steps)}\n"
-            "[END EXECUTION EVIDENCE]\n"
-        )
-        budget = [self._max_rendered_trace_chars]
-        rendered: set[int] = set()
-        truncated = [False]
-        blocks: dict[int, str] = {}
-        emitted: set[str] = set()
-        for link in trace.links:
-            if link.trace_id is None or link.trace_id in emitted:
-                continue
-            emitted.add(link.trace_id)
-            trace_steps = [step for step in steps if step.trace_id == link.trace_id]
-            body = self._render_steps(steps=trace_steps, budget=budget, rendered=rendered, truncated=truncated)
-            body = body or self._NO_SPANS_LINE
-            fence = f"EXECUTION TRACE {len(emitted)}"
-            blocks[link.sequence] = f"[BEGIN {fence}]\n{body}[END {fence}]\n"
-        return _TraceRendering(
-            header=header,
-            blocks=blocks,
-            request_sequences=frozenset(link.sequence for link in trace.links),
-            rendered_step_indexes=frozenset(rendered),
-            truncated=truncated[0],
-        )
-
-    def _render_steps(
-        self, *, steps: list[ExecutionStep], budget: list[int], rendered: set[int], truncated: list[bool]
-    ) -> str:
-        """
-        Render steps depth-first by parent, spending a shared character budget.
-
-        Steps unreachable from a root, because their parent links form a cycle, are rendered as
-        roots so no step is hidden. Each content value is previewed up to
-        ``MAX_RENDERED_CONTENT_CHARS``. Content is dropped first when the budget runs low; then
-        remaining steps are omitted. Any preview cut or omission marks the rendering truncated.
-
-        Returns:
-            str: The indented step lines.
-        """
-        span_ids = {step.span_id for step in steps}
-        children: dict[str | None, list[ExecutionStep]] = {}
-        for step in steps:
-            parent = step.parent_span_id if step.parent_span_id in span_ids else None
-            children.setdefault(parent, []).append(step)
-        ordered: list[tuple[ExecutionStep, int]] = []
-        visited: set[int] = set()
-        for start in [*children.get(None, []), *steps]:
-            stack = [(start, 0)]
-            while stack:
-                step, depth = stack.pop()
-                if step.index in visited:
-                    continue
-                visited.add(step.index)
-                ordered.append((step, depth))
-                stack.extend((child, depth + 1) for child in reversed(children.get(step.span_id, [])))
-        lines = []
-        for position, (step, depth) in enumerate(ordered):
-            text = self._render_step(step=step, depth=depth, include_content=True)
-            contents = (step.error_content, step.input_content, step.output_content)
-            labels = (step.name, step.model, step.node_name)
-            if any(len(value) > self.MAX_RENDERED_CONTENT_CHARS for value in contents if value) or any(
-                len(" ".join(value.split())) > self.MAX_RENDERED_LABEL_CHARS for value in labels if value
-            ):
-                truncated[0] = True
-            if len(text) > budget[0]:
-                truncated[0] = True
-                text = self._render_step(step=step, depth=depth, include_content=False)
-            if len(text) > budget[0]:
-                lines.append(f"  ... {len(ordered) - position} more steps omitted (rendering budget)\n")
-                break
-            budget[0] -= len(text)
-            rendered.add(step.index)
-            lines.append(text)
-        return "".join(lines)
-
-    @classmethod
-    def _render_label(cls, value: str) -> str:
-        """
-        Flatten a saved label to one line and bound its preview.
-
-        Returns:
-            str: The one-line label preview.
-        """
-        label = " ".join(value.split())
-        limit = cls.MAX_RENDERED_LABEL_CHARS
-        return label if len(label) <= limit else f"{label[:limit]}..."
-
-    @staticmethod
-    def _render_step(*, step: ExecutionStep, depth: int, include_content: bool) -> str:
-        indent = "  " * (depth + 1)
-        details = [f"status={step.status.value}"] if step.status is not TraceSpanStatus.UNSET else []
-        details += [
-            f"{label}={ConversationScorer._render_label(value)}"
-            for label, value in (("model", step.model), ("node", step.node_name))
-            if value
-        ]
-        if step.input_tokens is not None or step.output_tokens is not None:
-            details.append(f"tokens={step.input_tokens or 0}/{step.output_tokens or 0}")
-        name = ConversationScorer._render_label(step.name)
-        lines = [f"{indent}T{step.index} {step.kind.value} {name}" + "".join(f" {d}" for d in details) + "\n"]
-        for label, content in (
-            ("error", step.error_content),
-            ("input", step.input_content),
-            ("output", step.output_content),
-        ):
-            if content is not None:
-                lines.append(
-                    ConversationScorer._render_content(
-                        label=label, content=content, indent=indent, full=include_content
-                    )
-                )
-        return "".join(lines)
-
-    @staticmethod
-    def _render_content(*, label: str, content: str, indent: str, full: bool) -> str:
-        if not full:
-            return f"{indent}  {label}: ({len(content)} chars omitted for length)\n"
-        limit = ConversationScorer.MAX_RENDERED_CONTENT_CHARS
-        note = f" (first {limit} of {len(content)} chars)" if len(content) > limit else ""
-        body = "".join(f"{indent}    {line}" for line in content[:limit].splitlines(keepends=True))
-        return f"{indent}  {label}{note}:\n{body}\n"
-
     def _render_conversation(
-        self, pieces: tuple[MessagePiece, ...], *, trace_rendering: _TraceRendering | None = None
+        self, pieces: tuple[MessagePiece, ...], *, trace_rendering: TraceRendering | None = None
     ) -> str:
         """
         Render each turn inside a numbered, role-labeled fence with indented content.
@@ -746,7 +396,7 @@ class ConversationScorer(MessageScorer, ABC):
 
         Args:
             pieces (tuple[MessagePiece, ...]): The conversation pieces to render.
-            trace_rendering (_TraceRendering | None): Rendered execution evidence, if any.
+            trace_rendering (TraceRendering | None): Rendered execution evidence, if any.
 
         Returns:
             str: The fenced transcript, or an empty string when no turn is applicable.
@@ -855,12 +505,12 @@ def create_conversation_scorer(
         trace_source (ObservationSource[TraceScorable] | None): Execution evidence source. When
             set, the traces linked to the conversation's outbound requests are acquired, saved
             as an observation, and rendered after the turns they produced, with step IDs such as
-            ``[T3]`` that the judge can cite. Defaults to None.
+            ``[T3]`` that the judge can cite. See ``ConversationTraceEvidence``. Defaults to None.
         trace_requirement (TraceEvidenceRequirement): Evidence required before the judge is
             called. An unmet requirement returns an undetermined score marked with
             ``ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY``, without a judge call. Defaults to NONE.
         max_rendered_trace_chars (int): Character budget for rendered execution steps. Each
-            content value is previewed up to ``ConversationScorer.MAX_RENDERED_CONTENT_CHARS``;
+            content value is previewed up to ``ConversationTraceEvidence.MAX_RENDERED_CONTENT_CHARS``;
             past the budget, content is dropped first, then steps. The saved evidence stays
             complete. Defaults to 60000.
 
@@ -883,6 +533,13 @@ def create_conversation_scorer(
         raise ValueError("A trace requirement needs a trace_source to acquire execution evidence.")
     if max_rendered_trace_chars < 1:
         raise ValueError("max_rendered_trace_chars must be positive.")
+    trace_evidence = (
+        ConversationTraceEvidence(
+            source=trace_source, requirement=requirement, max_rendered_chars=max_rendered_trace_chars
+        )
+        if trace_source is not None
+        else None
+    )
     # Determine the base class of the wrapped scorer
     scorer_base_class: type[Scorer] | None = None
 
@@ -908,9 +565,7 @@ def create_conversation_scorer(
             self._wrapped_scorer = scorer
             self._source = source if source is not None else ConversationSource()
             self._excluded_data_types = tuple(sorted(set(excluded_data_types)))
-            self._trace_source = trace_source
-            self._trace_requirement = requirement
-            self._max_rendered_trace_chars = max_rendered_trace_chars
+            self._trace_evidence = trace_evidence
 
         def _get_wrapped_scorer(self) -> Scorer:
             """
@@ -947,20 +602,16 @@ def create_conversation_scorer(
                         if self._validator._enforce_all_pieces_valid
                         else {}
                     ),
-                    **(
-                        {
-                            "trace_rendering_version": self.TRACE_RENDERING_VERSION,
-                            "trace_requirement": self._trace_requirement.value,
-                            "max_rendered_trace_chars": self._max_rendered_trace_chars,
-                        }
-                        if self._trace_source is not None
-                        else {}
-                    ),
+                    **(self._trace_evidence.get_identifier_params() if self._trace_evidence is not None else {}),
                 },
                 sub_scorers=[self._wrapped_scorer.get_identifier()],
                 children={
                     "source": self._source.get_identifier(),
-                    **({"trace_source": self._trace_source.get_identifier()} if self._trace_source is not None else {}),
+                    **(
+                        {"trace_source": self._trace_evidence.source_identifier}
+                        if self._trace_evidence is not None
+                        else {}
+                    ),
                 },
             )
             if not isinstance(identifier, ComponentIdentifier):

@@ -33,7 +33,8 @@ from pyrit.models import (
 )
 from pyrit.registry import ScorerRegistry
 from pyrit.score.assert_dimension_scorer import _AssertDimensionScorer
-from pyrit.score.conversation_scorer import TraceEvidenceRequirement, create_conversation_scorer
+from pyrit.score.conversation_scorer import create_conversation_scorer
+from pyrit.score.evidence.conversation_trace_evidence import TraceEvidenceRequirement
 from pyrit.score.response_handler import JsonSchemaResponseHandler
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 from pyrit.score.scorer import _set_snapshot_participation

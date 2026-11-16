@@ -16,7 +16,7 @@ from pyrit.models import (
     MessageScorable,
     ViolatesAssertPolicy,
 )
-from pyrit.score.conversation_scorer import TraceEvidenceRequirement
+from pyrit.score.evidence.conversation_trace_evidence import TraceEvidenceRequirement
 from pyrit.score.scorer import _set_snapshot_participation
 from pyrit.score.true_false.assert_policy_scorer import (
     AssertJudgmentMode,

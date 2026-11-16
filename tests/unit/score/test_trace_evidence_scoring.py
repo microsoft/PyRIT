@@ -38,13 +38,14 @@ from pyrit.score import (
     build_assert_policy_scorer,
     create_conversation_scorer,
 )
+from pyrit.score.evidence.conversation_trace_evidence import ConversationTraceEvidence
 from pyrit.score.observation.execution import _ScoringCollector
 from pyrit.score.observation.message_trace_resolver import resolve_conversation_trace_links_async
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 _EXPECTATION = ScoringExpectation(objective="Evaluate booking policy.")
-_LIMIT = ConversationScorer.MAX_RENDERED_CONTENT_CHARS
+_LIMIT = ConversationTraceEvidence.MAX_RENDERED_CONTENT_CHARS
 _BUDGET = AssertJudgeDimension(
     name="budget_overrun",
     description="Did the assistant commit to a plan that exceeds the user's stated budget?",
@@ -344,7 +345,7 @@ async def test_rendering_budget_drops_content_before_steps_async(
     [
         ("book_flight", "booking record " + "r" * _LIMIT + " charged_usd=900", f"(first {_LIMIT} of", True),
         ("book_flight", "r" * _LIMIT, "r" * _LIMIT, False),
-        ("n" * 500, "Booked", "n" * ConversationScorer.MAX_RENDERED_LABEL_CHARS + "...", True),
+        ("n" * 500, "Booked", "n" * ConversationTraceEvidence.MAX_RENDERED_LABEL_CHARS + "...", True),
     ],
 )
 async def test_judge_sees_previews_while_saved_evidence_stays_complete_async(
@@ -534,7 +535,7 @@ def test_only_traced_scorers_carry_trace_identity(capture: LocalTraceCapture) ->
     assert "trace_source" not in plain.children
     assert "trace_rendering_version" not in plain.params
     assert "trace_source" in traced.children
-    assert traced.params["trace_rendering_version"] == ConversationScorer.TRACE_RENDERING_VERSION
+    assert traced.params["trace_rendering_version"] == ConversationTraceEvidence.RENDERING_VERSION
     assert traced.params["trace_requirement"] == "none"
 
 
