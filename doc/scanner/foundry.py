@@ -146,7 +146,7 @@ await output_scenario_async(scenario_result)
 #   rejected when a selected group stores its own system prompt.
 #
 # The judges are the scenario's scorers. Each group's stored policy reaches them as a
-# `ViolatesAssertPolicy` condition. By default, `AssertJudgeScorer` judges on the scoring target score
+# `ViolatesAssertPolicy` condition. By default, two `AssertJudgeScorer`s on the scoring target judge
 # `policy_violation` as the objective and `overrefusal` as an auxiliary score. To change them, pass
 # your own as `AssertPolicy(objective_scorer=..., auxiliary_scorers=[...])`, or register an objective
 # scorer and pick it in the GUI; see "Judge dimensions and presets" below.
