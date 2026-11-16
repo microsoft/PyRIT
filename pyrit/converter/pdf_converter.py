@@ -318,7 +318,7 @@ class PDFConverter(Converter):
         if not self._existing_pdf_bytes or not self._injection_items:
             raise ValueError("Existing PDF and injection items are required for modification.")
 
-        reader = PdfReader(self._existing_pdf_bytes)
+        reader = PdfReader(BytesIO(self._existing_pdf_bytes.getvalue()))
         # clone_from attaches all pages to the writer up-front, avoiding
         # the deprecated PageObject.replace_contents() call on unattached pages.
         writer = PdfWriter(clone_from=reader)

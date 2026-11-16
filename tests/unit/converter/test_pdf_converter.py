@@ -771,3 +771,24 @@ async def test_convert_async_offloads_pdf_build_off_event_loop(monkeypatch: pyte
     assert len(worker_threads) == 1
     assert worker_threads[0] is not event_loop_thread
     assert asyncio.get_running_loop() is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("patch_central_database")
+async def test_convert_async_existing_pdf_is_thread_safe_under_concurrency(mock_pdf_path) -> None:
+    import asyncio
+    from pathlib import Path
+
+    converter = PDFConverter(
+        existing_pdf=mock_pdf_path,
+        injection_items=[{"page": 0, "x": 10, "y": 10, "text": "injected"}],
+    )
+
+    results = await asyncio.gather(
+        *(converter.convert_async(prompt=f"prompt-{idx}") for idx in range(5))
+    )
+
+    assert len(results) == 5
+    for res in results:
+        assert res.output_type == "binary_path"
+        assert Path(res.output_text).read_bytes().startswith(b"%PDF-")
