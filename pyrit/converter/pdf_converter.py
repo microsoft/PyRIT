@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import ast
+import asyncio
 import hashlib
 import json
 import time
@@ -181,7 +182,10 @@ class PDFConverter(Converter):
         content = self._prepare_content(prompt)
 
         # Step 2: Generate or modify the PDF (Overlay, if existing PDF)
-        pdf_bytes = self._modify_existing_pdf() if self._existing_pdf_bytes else self._generate_pdf(content)
+        if self._existing_pdf_bytes:
+            pdf_bytes = await asyncio.to_thread(self._modify_existing_pdf)
+        else:
+            pdf_bytes = await asyncio.to_thread(self._generate_pdf, content)
 
         # Step 3: Serialize PDF
         pdf_serializer = await self._serialize_pdf_async(pdf_bytes, content)
