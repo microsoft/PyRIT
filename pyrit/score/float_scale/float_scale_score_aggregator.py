@@ -261,10 +261,12 @@ def _create_aggregator_by_category(
             raw_result = result_func(float_values)
             if use_selected_score_metadata:
                 selected_score = next(
-                    score for score, value in zip(scores_list, float_values, strict=True) if value == raw_result
+                    (score for score, value in zip(scores_list, float_values, strict=True) if value == raw_result),
+                    None,
                 )
-                selected_metadata = selected_score.score_metadata or {}
-                metadata.update(selected_metadata)
+                if selected_score is not None:
+                    selected_metadata = selected_score.score_metadata or {}
+                    metadata.update(selected_metadata)
             result = max(0.0, min(1.0, raw_result))
 
             description, rationale = _build_rationale(scores_list, aggregate_description=aggregate_description)
@@ -304,16 +306,23 @@ def _create_aggregator_by_category(
             float_values = _float_values(category_scores)
             if float_values is None:
                 results.append(
-                    _undetermined_result(category_scores, name=name, metadata=metadata, category=category_list)
+                    _undetermined_result(
+                        category_scores,
+                        name=name,
+                        metadata=metadata,
+                        category=category_list,
+                    )
                 )
                 continue
             raw_result = result_func(float_values)
             if use_selected_score_metadata:
                 selected_score = next(
-                    score for score, value in zip(category_scores, float_values, strict=True) if value == raw_result
+                    (score for score, value in zip(category_scores, float_values, strict=True) if value == raw_result),
+                    None,
                 )
-                selected_metadata = selected_score.score_metadata or {}
-                metadata.update(selected_metadata)
+                if selected_score is not None:
+                    selected_metadata = selected_score.score_metadata or {}
+                    metadata.update(selected_metadata)
             result = max(0.0, min(1.0, raw_result))
 
             # Build description and rationale for this category group
