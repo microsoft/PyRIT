@@ -316,7 +316,9 @@ def test_replace_placeholder_in_paragraph_returns_false_when_not_found() -> None
     """_replace_placeholder_in_paragraph should return False when placeholder is not in any run."""
     document = Document()
     paragraph = document.add_paragraph("No placeholder here")
-    result = WordDocConverter._replace_placeholder_in_paragraph(paragraph, "{{INJECTION_PLACEHOLDER}}", "content")
+    result = WordDocConverter._replace_placeholder_in_paragraph(
+        paragraph=paragraph, placeholder="{{INJECTION_PLACEHOLDER}}", content="content"
+    )
     assert result is False
 
 
@@ -325,6 +327,8 @@ def test_replace_placeholder_in_paragraph_returns_true_on_match() -> None:
     document = Document()
     paragraph = document.add_paragraph()
     paragraph.add_run("Text with {{INJECTION_PLACEHOLDER}} inside")
-    result = WordDocConverter._replace_placeholder_in_paragraph(paragraph, "{{INJECTION_PLACEHOLDER}}", "REPLACED")
+    result = WordDocConverter._replace_placeholder_in_paragraph(
+        paragraph=paragraph, placeholder="{{INJECTION_PLACEHOLDER}}", content="REPLACED"
+    )
     assert result is True
     assert paragraph.runs[0].text == "Text with REPLACED inside"

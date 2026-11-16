@@ -224,7 +224,7 @@ class TransparencyAttackConverter(Converter):
         except Exception as e:
             raise ValueError(f"Failed to load and preprocess image from {path}: {e}") from e
 
-    def _compute_mse_loss(self, blended_image: np.ndarray, target_tensor: np.ndarray) -> float:
+    def _compute_mse_loss(self, *, blended_image: np.ndarray, target_tensor: np.ndarray) -> float:
         """
         Compute Mean Squared Error (MSE) loss between blended and target images.
 
@@ -237,7 +237,7 @@ class TransparencyAttackConverter(Converter):
         """
         return float(np.mean(np.square(blended_image - target_tensor)))
 
-    def _create_blended_image(self, attack_image: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+    def _create_blended_image(self, *, attack_image: np.ndarray, alpha: np.ndarray) -> np.ndarray:
         """
         Create a blended image using the attack image and alpha transparency.
 
@@ -259,7 +259,7 @@ class TransparencyAttackConverter(Converter):
 
         return la_image
 
-    async def _save_blended_image_async(self, attack_image: np.ndarray, alpha: np.ndarray) -> str:
+    async def _save_blended_image_async(self, *, attack_image: np.ndarray, alpha: np.ndarray) -> str:
         """
         Save the blended image with transparency as a PNG file.
 
@@ -277,7 +277,7 @@ class TransparencyAttackConverter(Converter):
             img_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
             img_serializer.file_extension = "png"
 
-            la_image = self._create_blended_image(attack_image, alpha)
+            la_image = self._create_blended_image(attack_image=attack_image, alpha=alpha)
             # Pillow 10+ can infer the mode from the array dtype and shape
             la_pil = Image.fromarray(la_image)
             image_buffer = BytesIO()
@@ -325,7 +325,9 @@ class TransparencyAttackConverter(Converter):
             # Simulate blending: alpha=1 uses darkened attack image, alpha=0 uses white
             blended_image = alpha * background_tensor + (1 - alpha) * white_background
 
-            current_loss = self._compute_mse_loss(blended_image, self._cached_benign_image)
+            current_loss = self._compute_mse_loss(
+                blended_image=blended_image, target_tensor=self._cached_benign_image
+            )
             if step % 100 == 0:
                 logger.debug(f"Step {step}/{self.steps}, Loss: {current_loss:.6f}")
 
@@ -345,5 +347,5 @@ class TransparencyAttackConverter(Converter):
             alpha = optimizer.update(params=alpha, grads=grad_alpha)
             alpha = np.clip(alpha, 0.0, 1.0)
 
-        image_path = await self._save_blended_image_async(background_tensor, alpha)
+        image_path = await self._save_blended_image_async(attack_image=background_tensor, alpha=alpha)
         return ConverterResult(output_text=image_path, output_type="image_path")

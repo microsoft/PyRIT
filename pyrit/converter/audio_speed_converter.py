@@ -74,7 +74,9 @@ class AudioSpeedConverter(Converter):
             },
         )
 
-    def _resample_channel(self, channel_data: np.ndarray[Any, Any], new_num_samples: int) -> np.ndarray[Any, Any]:
+    def _resample_channel(
+        self, *, channel_data: np.ndarray[Any, Any], new_num_samples: int
+    ) -> np.ndarray[Any, Any]:
         """
         Resample a single channel of audio data using linear interpolation.
 
@@ -114,9 +116,12 @@ class AudioSpeedConverter(Converter):
             )
 
         if data.ndim == 1:
-            return self._resample_channel(data, new_num_samples).astype(original_dtype)
+            return self._resample_channel(channel_data=data, new_num_samples=new_num_samples).astype(original_dtype)
 
-        channels = [self._resample_channel(data[:, ch], new_num_samples) for ch in range(data.shape[1])]
+        channels = [
+            self._resample_channel(channel_data=data[:, ch], new_num_samples=new_num_samples)
+            for ch in range(data.shape[1])
+        ]
         return np.column_stack(channels).astype(original_dtype)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "audio_path") -> ConverterResult:

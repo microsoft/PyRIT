@@ -100,7 +100,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
 
         with open(resolved_path, encoding="utf-8") as f:
             filter_data = safe_load_yaml(f)
-        self._validate_filter_data(filter_data, resolved_path)
+        self._validate_filter_data(filter_data=filter_data, resolved_path=resolved_path)
 
         self._style_instructions: str = filter_data["style_instructions"]
         self._variations: dict[str, str] = filter_data["variations"]
@@ -188,7 +188,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         return await super().convert_async(prompt=prompt, input_type=input_type)
 
     @staticmethod
-    def _validate_filter_data(filter_data: Any, resolved_path: Path) -> None:
+    def _validate_filter_data(*, filter_data: Any, resolved_path: Path) -> None:
         """
         Validate the structure of a parsed filter YAML.
 
@@ -248,6 +248,6 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
 
         with open(resolved_path, encoding="utf-8") as f:
             filter_data = safe_load_yaml(f)
-        cls._validate_filter_data(filter_data, resolved_path)
+        cls._validate_filter_data(filter_data=filter_data, resolved_path=resolved_path)
 
         return sorted(filter_data["variations"].keys())
