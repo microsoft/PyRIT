@@ -200,6 +200,7 @@ These hints appear separately from exact stored counts and provenance. Missing f
 appear as unknown, and invalid provider metadata does not prevent browsing stored datasets.
 Local provider source links come from the bundled dataset metadata. Provider links use HTTPS
 and omit credential-bearing URLs, including query strings and fragments.
+Source, License, and Access links display their destination URLs.
 Access requirements show environment-variable names only; configuring
 credentials still requires permission from the source. Opening an unloaded provider shows
 its description on the same detail route. The view, search, filters and sort stay in the URL.

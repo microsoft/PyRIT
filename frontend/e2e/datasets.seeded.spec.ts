@@ -78,8 +78,9 @@ test.describe("dataset examples against the real backend @seeded", () => {
         await page.goto(`/datasets?view=available&q=${provider.name}`);
         await page.getByRole("link", { name: provider.name, exact: true }).click();
         await expect(page.getByRole("heading", { name: provider.name, exact: true })).toBeVisible();
-        await expect(page.getByRole("link", { name: "Source", exact: true }))
-          .toHaveAttribute("href", provider.url);
+        const sourceLink = page.getByRole("link", { name: `Source: ${provider.url}`, exact: true });
+        await expect(sourceLink).toHaveAttribute("href", provider.url);
+        await expect(sourceLink).toHaveText(provider.url);
         await expect(page.getByText("This provider's dataset has not been loaded into memory.")).toBeVisible();
         await expect(page.getByRole("table", { name: "Examples" })).toHaveCount(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);

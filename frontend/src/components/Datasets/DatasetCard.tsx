@@ -91,7 +91,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
           ] as const).map(([label, url]) => <div key={label}>
             <dt>{label}</dt>
             <dd>{url && /^https:\/\//.test(url)
-              ? <a href={url} target="_blank" rel="noopener noreferrer">{label}</a>
+              ? <a href={url} aria-label={`${label}: ${url}`} target="_blank" rel="noopener noreferrer">{url}</a>
               : UNKNOWN_LABEL}</dd>
           </div>)}
           <div><dt>Declared modalities</dt><dd>{dataset.provider.modalities.join(', ') || UNKNOWN_LABEL}</dd></div>

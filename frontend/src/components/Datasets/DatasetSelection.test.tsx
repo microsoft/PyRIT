@@ -162,14 +162,23 @@ describe('DatasetSelection', () => {
       logical_examples: null, seed_pieces: null, objectives: null,
       provider: {
         description: 'Default public dataset description', source_url: 'https://example.com/dataset',
-        license_url: null, access_url: null, required_environment_variables: ['HUGGINGFACE_TOKEN'],
+        license_url: 'https://example.com/license', access_url: 'https://example.com/access',
+        required_environment_variables: ['HUGGINGFACE_TOKEN'],
         modalities: ['text'], harm_categories: [], size: ['medium'], load_time: [], unavailable_reason: null,
       },
     })
     mockGet.mockResolvedValue({ data: { items: [available] } })
     renderSelection(datasetDetailPath(available.selection_key))
     expect(await screen.findByText('Default public dataset description')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', 'https://example.com/dataset')
+    for (const [label, url] of [
+      ['Source', 'https://example.com/dataset'],
+      ['License', 'https://example.com/license'],
+      ['Access', 'https://example.com/access'],
+    ]) {
+      const link = screen.getByRole('link', { name: `${label}: ${url}` })
+      expect(link).toHaveTextContent(url)
+      expect(link).toHaveAttribute('href', url)
+    }
     expect(screen.getByText(/Access may require HUGGINGFACE_TOKEN/)).toBeInTheDocument()
     expect(seedCalls()).toEqual([])
   })
