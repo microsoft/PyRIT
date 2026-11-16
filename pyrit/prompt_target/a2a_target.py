@@ -8,7 +8,7 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping  # noqa: TC003 - registry annotation resolution
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping  # registry annotation resolution
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from types import MappingProxyType

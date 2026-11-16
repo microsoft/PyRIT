@@ -4,6 +4,7 @@
 """Tests for the SeedGroup and AttackSeedGroup classes."""
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -546,6 +547,68 @@ class TestAttackSeedGroupMessageExtraction:
         assert prepended is not None
         assert len(prepended) == 2
 
+    def test_next_message_include_final_assistant_returns_simulated_prefix(self):
+        """The explicit opt-in selects a trailing assistant sequence as the outgoing message."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="User msg", data_type="text", sequence=0, role="user"),
+                SeedPrompt(value="Assistant prefix", data_type="text", sequence=1, role="assistant"),
+            ]
+        )
+
+        next_msg = group.get_next_message(include_final_assistant=True)
+        assert next_msg is not None
+        assert next_msg.get_value() == "Assistant prefix"
+        assert next_msg.api_role == "assistant"
+        assert next_msg.is_simulated
+
+    def test_prepended_conversation_include_final_assistant_reserves_last_sequence(self):
+        """With the opt-in, the trailing assistant sequence is excluded from history."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="User msg", data_type="text", sequence=0, role="user"),
+                SeedPrompt(value="Assistant prefix", data_type="text", sequence=1, role="assistant"),
+            ]
+        )
+
+        prepended = group.get_prepended_conversation(include_final_assistant=True)
+        assert prepended is not None
+        assert len(prepended) == 1
+        assert prepended[0].get_value() == "User msg"
+
+    def test_include_final_assistant_with_single_sequence_has_no_history(self):
+        """A lone assistant sequence is the outgoing message with no prepended history."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="Assistant prefix", data_type="text", sequence=0, role="assistant"),
+            ]
+        )
+
+        assert group.get_prepended_conversation(include_final_assistant=True) is None
+        next_msg = group.get_next_message(include_final_assistant=True)
+        assert next_msg is not None
+        assert next_msg.get_value() == "Assistant prefix"
+
+    def test_include_final_assistant_keeps_user_ending_behavior(self):
+        """The opt-in is inert when the final sequence is a user turn."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="Assistant 1", data_type="text", sequence=0, role="assistant"),
+                SeedPrompt(value="User 2", data_type="text", sequence=1, role="user"),
+            ]
+        )
+
+        next_msg = group.get_next_message(include_final_assistant=True)
+        assert next_msg is not None
+        assert next_msg.get_value() == "User 2"
+        prepended = group.get_prepended_conversation(include_final_assistant=True)
+        assert prepended is not None
+        assert len(prepended) == 1
+
     def test_user_messages_returns_all_prompts_as_messages(self):
         """Test user_messages returns all prompts as Messages."""
         group = AttackSeedGroup(
@@ -1022,3 +1085,42 @@ class TestAttackSeedGroupFilterCompatible:
 
         result = AttackSeedGroup.filter_compatible(seed_groups=groups, technique=technique)
         assert len(result) == 1
+
+
+class TestSeedGroupMetadataIsolation:
+    def test_derived_messages_do_not_share_nested_metadata_with_seeds(self) -> None:
+        seeds = [
+            SeedPrompt(value="u", role="user", sequence=0, metadata={"nested": {"labels": ["source"]}}),
+            SeedPrompt(value="a", role="assistant", sequence=1, metadata={"nested": {"labels": ["source"]}}),
+            SeedPrompt(value="u2", role="user", sequence=2, metadata={"nested": {"labels": ["source"]}}),
+        ]
+        group = SeedGroup(seeds=seeds)
+
+        first = group.next_message
+        second = group.next_message
+        history = group.prepended_conversation
+        second_history = group.prepended_conversation
+        assert first is not None and history is not None and second_history is not None
+
+        first.get_piece().prompt_metadata["nested"]["labels"].append("message-only")
+        history[1].get_piece().prompt_metadata["nested"]["labels"].append("history-only")
+
+        assert [seed.metadata["nested"]["labels"] for seed in seeds] == [["source"], ["source"], ["source"]]
+        assert second.get_piece().prompt_metadata["nested"]["labels"] == ["source"]
+        assert history[0].get_piece().prompt_metadata["nested"]["labels"] == ["source"]
+        assert second_history[1].get_piece().prompt_metadata["nested"]["labels"] == ["source"]
+
+    @pytest.mark.parametrize("metadata", [None, {}])
+    def test_derived_messages_with_empty_metadata_get_independent_dicts(self, metadata: dict[str, Any] | None) -> None:
+        seed = SeedPrompt(value="hello", role="user", metadata=metadata)
+        group = SeedGroup(seeds=[seed])
+
+        first = group.next_message
+        second = group.next_message
+        assert first is not None and second is not None
+
+        first.get_piece().prompt_metadata["added"] = True
+
+        assert first.get_piece().prompt_metadata is not second.get_piece().prompt_metadata
+        assert second.get_piece().prompt_metadata == {}
+        assert seed.metadata == metadata

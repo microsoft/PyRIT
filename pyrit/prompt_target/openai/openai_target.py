@@ -168,9 +168,9 @@ class OpenAITarget(PromptTarget):
     # The OpenAI SDK adds these headers to every client it creates.
     server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
 
-    # The OpenAI SDK resolves a callable ``api_key`` before every request and sends it as it
-    # would send a string key.
-    caller_credential_parameter: ClassVar[str | None] = "api_key"
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}
+    )
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
