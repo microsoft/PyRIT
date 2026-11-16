@@ -112,11 +112,10 @@ class AssertPolicy(Scenario):
     ASSERT's own tester system prompt. Any registered technique can run too; ``red_teaming`` uses
     the same attack with the group's stored PyRIT tester prompt.
 
-    Each group's stored policy reaches the scorers as a ``ViolatesAssertPolicy`` condition. By
-    default, ``AssertJudgeScorer`` judges on the scoring target score policy violation as the
-    objective and overrefusal as an auxiliary score. Pass your own scorers to judge other
-    dimensions, more samples, or execution traces. Blocked or errored target replies stay
-    undetermined. Results are grouped by technique.
+    Each conversation is judged against its group's stored policy. By default, a judge on the
+    scoring target decides success by policy violation and also records overrefusal. Choose
+    another objective scorer to judge other dimensions or execution traces. Blocked or errored
+    target replies stay undetermined. Results are grouped by technique.
     """
 
     #: Version 3 passes each group's policy to the scorers as a condition.
