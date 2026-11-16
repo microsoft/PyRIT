@@ -113,24 +113,6 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append("\n")
         return "".join(lines)
 
-    def _get_rate_color(self, rate: int) -> str:
-        """
-        Get color based on success rate.
-
-        Args:
-            rate (int): Success rate percentage (0-100).
-
-        Returns:
-            str: Colorama color constant.
-        """
-        if rate >= 75:
-            return str(Fore.RED)
-        if rate >= 50:
-            return str(Fore.YELLOW)
-        if rate >= 25:
-            return str(Fore.CYAN)
-        return str(Fore.GREEN)
-
     async def render_async(
         self,
         result: ScenarioResult,

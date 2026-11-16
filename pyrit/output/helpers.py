@@ -12,7 +12,14 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 import asyncio
 import os
 
-from pyrit.models import AttackResult, ComponentIdentifier, Message, ScenarioResult, Score
+from pyrit.models import (
+    AttackResult,
+    ComponentIdentifier,
+    Message,
+    ScenarioResult,
+    ScenarioSuiteExecutionSummary,
+    Score,
+)
 from pyrit.output._derivation import select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
@@ -30,6 +37,8 @@ from pyrit.output.scenario_result.json import (
     build_scenario_full_payload,
 )
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+from pyrit.output.scenario_suite_result.json import JsonScenarioSuiteResultMemoryPrinter
+from pyrit.output.scenario_suite_result.pretty import PrettyScenarioSuiteResultMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
@@ -142,6 +151,36 @@ async def output_scenario_async(
         sort_groups_by_success_rate=sort_groups_by_success_rate,
     )
     await printer.write_async(result)
+
+
+async def output_scenario_suite_async(
+    execution: ScenarioSuiteExecutionSummary,
+    *,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a suite execution snapshot with each submitted entry's stored scenario result.
+
+    Child results are loaded from CentralMemory; entries without a stored result are shown
+    as unavailable. Snapshot states may be older than the loaded result counts.
+
+    Args:
+        execution (ScenarioSuiteExecutionSummary): Snapshot providing suite status and every entry.
+        format (OutputFormat): Either "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Output destination. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If the format is unsupported or stored results do not match the snapshot.
+    """
+    printer: PrettyScenarioSuiteResultMemoryPrinter | JsonScenarioSuiteResultMemoryPrinter
+    if format == "pretty":
+        printer = PrettyScenarioSuiteResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+    elif format == "json":
+        printer = JsonScenarioSuiteResultMemoryPrinter(sink=sink or StdoutSink())
+    else:
+        raise ValueError(f"Unsupported format for scenario suites: {format!r}. Only 'pretty' and 'json' are available.")
+    await printer.write_async(execution)
 
 
 async def output_scenario_attacks_async(

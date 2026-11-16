@@ -11,13 +11,15 @@
 # %% [markdown]
 # # Scenario Suites
 #
-# A **scenario** runs attack techniques against a target using objective datasets and
-# scores the results (see [Scenarios](./0_scenarios)).
-# A **preset** saves a scenario's techniques, objectives, and parameter choices.
-# A **suite** is an ordered collection of preset references.
-# One launch runs those presets against a selected target through the ordinary scenario
-# execution path. The `scenario_suite` initializer registers read-only suites whose presets
-# are fixed snapshots, similar to how the target and converter initializers register components.
+# - A **scenario** pairs objective datasets with attack techniques and runs them against
+#   a target, scoring each result (see [Scenarios](./0_scenarios)).
+# - A **preset** is a saved scenario configuration (techniques, objectives, and parameters),
+#   without a target; you choose the target when you launch.
+# - A **suite** is an ordered collection of preset references. One suite launch runs its
+#   presets against the selected target through the ordinary  scenario execution path.
+#
+# The `scenario_suite` initializer registers read-only suites whose presets are fixed
+# snapshots, the same way the `target` and `converter` initializers register components.
 #
 # This notebook runs the text-only horizontal suite against the default `openai_chat`
 # target. Like the other scenario guides, it loads the shared Scanner configuration and
@@ -37,7 +39,7 @@ preset_registry = ScenarioPresetRegistry.get_registry_singleton()
 suite_registry = ScenarioSuiteRegistry.get_registry_singleton()
 
 # %% [markdown]
-# ## The horizontal suite
+# ## The horizontal techniques suite
 #
 # `HorizontalTechniquesSuite` evaluates text with three presets that run the same
 # objectives (the `airt_harms` dataset):
@@ -80,14 +82,69 @@ for entry in suite.entries:
 # registered suite or preset takes precedence over it.
 
 # %% [markdown]
+# ## Run the suite
+#
+# A launch request names the target and lists the reviewed entries, including stored-definition
+# versions, so changes since review can be detected. The suite execution service, which also
+# backs the GUI Scanner, preflights every entry before submitting any of them. It then queues
+# each preset as an ordinary scenario run against `openai_chat`, in order. Runs use the
+# configured default adversarial and scoring roles unless the request overrides them. Each
+# run fetches the shared objective dataset on demand and records the suite identity on its
+# scenario result. The initializer itself never executes attacks.
+
+# %%
+import asyncio
+
+from pyrit.backend.services import get_scenario_suite_execution_service
+from pyrit.models import (
+    LaunchScenarioSuiteRequest,
+    ScenarioSuiteExecutionStatus,
+    ScenarioSuiteLaunchEntrySnapshot,
+)
+
+request = LaunchScenarioSuiteRequest(
+    target_name="openai_chat",
+    entries=[
+        ScenarioSuiteLaunchEntrySnapshot(
+            entry_id=entry.entry_id, preset_name=entry.preset_name, origin="registered", preset_version=None
+        )
+        for entry in suite.entries
+    ],
+)
+suite_service = get_scenario_suite_execution_service()
+execution = await suite_service.launch_async(name=suite.name, request=request)  # type: ignore
+
+while execution.status in (ScenarioSuiteExecutionStatus.QUEUING, ScenarioSuiteExecutionStatus.IN_PROGRESS):
+    await asyncio.sleep(10)  # type: ignore
+    execution = await suite_service.get_execution_async(execution_id=execution.suite_execution_id)  # type: ignore
+
+print(f"Suite execution: {execution.status.value}")
+for entry in execution.entries:
+    print(f"{entry.entry_position}. {entry.preset_name}: {entry.state.value}")
+
+# %% [markdown]
+# ## Summarize the results
+#
+# The output helper loads each entry's stored scenario result and prints every entry from
+# the execution snapshot, leaving raw conversations in memory. Each entry counts the latest
+# outcome of each technique/objective execution. See
+# [Printing Suite Results](../output/0_output.ipynb#printing-suite-results).
+
+# %%
+from pyrit.output import output_scenario_suite_async
+
+await output_scenario_suite_async(execution)  # type: ignore
+
+# %% [markdown]
 # ## Define your own suite
 #
 # ### In code
 #
-# A builder returns a `ScenarioSuite` and the `list[ScenarioPreset]` its entries
-# reference. Use stable entry IDs and unique suite/preset names. Save this example as
-# `my_suites.py` in your configured
-# [custom initializer source](../../getting_started/pyrit_conf.md#custom_initializers_source):
+# A builder returns a `ScenarioSuite` and the list of `ScenarioPreset` it references.
+# Use unique suite and preset names, and fixed entry IDs (for example, `uuid5` of
+# the suite and preset names) so launches reviewed before a restart still match.
+# Save this example as `my_suites.py` in your configured
+# [custom initializer source](../../getting_started/pyrit_conf.md#custom-initializers-source):
 #
 # ```python
 # from uuid import NAMESPACE_URL, uuid5
@@ -137,73 +194,6 @@ for entry in suite.entries:
 # In the GUI's **Registry > Scenario presets** page, save your presets, then create
 # an ordered suite in the **Scenario suites** section. Alternatively, use
 # `POST /api/scenario-presets` and `POST /api/scenario-suites`.
+#
 # Presets are saved to `scenario_presets_source`; suites are saved to
 # `scenario_suites_source`. These stored definitions are editable, unlike code-registered ones.
-
-# %% [markdown]
-# ## Run the suite
-#
-# A launch request names the target and lists the reviewed entries, including stored-definition
-# versions, so changes since review can be detected. The suite execution service, which also
-# backs the GUI Scanner, preflights every entry before submitting any of them. It then queues
-# each preset as an ordinary scenario run against `openai_chat`, in order. Runs use the
-# configured default adversarial and scoring roles unless the request overrides them. Each
-# run fetches the shared objective dataset on demand and records the suite identity on its
-# scenario result. The initializer itself never executes attacks.
-
-# %%
-import asyncio
-
-from pyrit.backend.services import get_scenario_suite_execution_service
-from pyrit.models import (
-    LaunchScenarioSuiteRequest,
-    ScenarioSuiteExecutionStatus,
-    ScenarioSuiteLaunchEntrySnapshot,
-)
-
-request = LaunchScenarioSuiteRequest(
-    target_name="openai_chat",
-    entries=[
-        ScenarioSuiteLaunchEntrySnapshot(
-            entry_id=entry.entry_id, preset_name=entry.preset_name, origin="registered", preset_version=None
-        )
-        for entry in suite.entries
-    ],
-)
-suite_service = get_scenario_suite_execution_service()
-execution = await suite_service.launch_async(name=suite.name, request=request)  # type: ignore
-
-while execution.status in (ScenarioSuiteExecutionStatus.QUEUING, ScenarioSuiteExecutionStatus.IN_PROGRESS):
-    await asyncio.sleep(10)  # type: ignore
-    execution = await suite_service.get_execution_async(execution_id=execution.suite_execution_id)  # type: ignore
-
-print(f"Suite execution: {execution.status.value}")
-for entry in execution.entries:
-    print(f"{entry.entry_position}. {entry.preset_name}: {entry.state.value}")
-
-# %% [markdown]
-# ## Summarize the results
-#
-# Each row counts the latest outcome for each technique/objective execution unit.
-# This summary leaves raw conversations in memory rather than printing them here.
-
-# %%
-from pyrit.analytics import compute_scenario_statistics
-from pyrit.backend.services import get_scenario_run_service
-
-run_service = get_scenario_run_service()
-results = {
-    entry.preset_name: await run_service.get_run_results_async(scenario_result_id=entry.run.scenario_result_id)  # type: ignore
-    for entry in execution.entries
-    if entry.run is not None
-}
-
-for preset_name, result in results.items():
-    counts = compute_scenario_statistics(result).overall
-    outcomes = counts.outcomes
-    assert outcomes is not None
-    print(
-        f"{preset_name}: {counts.completed}/{counts.planned} completed, "
-        f"{outcomes.successes} succeeded, {outcomes.failures} failed, "
-        f"{outcomes.errors} errors, {outcomes.undetermined} undetermined"
-    )

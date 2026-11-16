@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from colorama import Style
+from colorama import Fore, Style
 
 from pyrit.common.text_helper import escape_control_characters
 
@@ -28,3 +28,22 @@ class _PrettyPrinterMixin:
             color_prefix = "".join(colors)
             return f"{color_prefix}{text}{Style.RESET_ALL}\n"
         return f"{text}\n"
+
+    @staticmethod
+    def _get_rate_color(rate: int) -> str:
+        """
+        Get color based on success rate.
+
+        Args:
+            rate (int): Success rate percentage (0-100).
+
+        Returns:
+            str: Colorama color constant.
+        """
+        if rate >= 75:
+            return str(Fore.RED)
+        if rate >= 50:
+            return str(Fore.YELLOW)
+        if rate >= 25:
+            return str(Fore.CYAN)
+        return str(Fore.GREEN)

@@ -31,6 +31,7 @@ from pyrit.output import (
     output_scenario_attacks_async,
     output_scenario_conversations_async,
     output_scenario_full_async,
+    output_scenario_suite_async,
     output_score_async,
     output_scorer_async,
 )
@@ -172,6 +173,35 @@ async def test_output_attack_async_rejects_unsupported_format_before_writing_asy
 async def test_output_scenario_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
         await output_scenario_async(AsyncMock(), format="markdown")
+
+
+# --- output_scenario_suite_async tests ---
+
+
+@patch("pyrit.output.helpers.PrettyScenarioSuiteResultMemoryPrinter")
+async def test_output_scenario_suite_async_pretty(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    execution = MagicMock()
+
+    await output_scenario_suite_async(execution)
+
+    mock_cls.assert_called_once()
+    mock_printer.write_async.assert_called_once_with(execution)
+
+
+@pytest.mark.parametrize("fmt", ["markdown", "html"])
+async def test_output_scenario_suite_async_rejects_unsupported_format(fmt):
+    with (
+        patch("pyrit.output.helpers.PrettyScenarioSuiteResultMemoryPrinter") as pretty_cls,
+        patch("pyrit.output.helpers.JsonScenarioSuiteResultMemoryPrinter") as json_cls,
+        pytest.raises(ValueError, match="Unsupported format for scenario suites"),
+    ):
+        await output_scenario_suite_async(MagicMock(), format=fmt)
+
+    pretty_cls.assert_not_called()
+    json_cls.assert_not_called()
 
 
 # --- output_scorer_async tests ---
@@ -324,6 +354,19 @@ async def test_output_scenario_attacks_async_json(mock_cls):
     mock_cls.return_value = mock_printer
 
     await output_scenario_attacks_async(MagicMock(), format="json")
+
+    mock_cls.assert_called_once()
+    assert isinstance(mock_cls.call_args[1]["sink"], StdoutSink)
+    mock_printer.write_async.assert_awaited_once()
+
+
+@patch("pyrit.output.helpers.JsonScenarioSuiteResultMemoryPrinter")
+async def test_output_scenario_suite_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_scenario_suite_async(MagicMock(), format="json")
 
     mock_cls.assert_called_once()
     assert isinstance(mock_cls.call_args[1]["sink"], StdoutSink)
