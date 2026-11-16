@@ -95,8 +95,10 @@ jobs:
       - name: Compute matrix
         id: matrix
         env:
-          # Hash the tested workflow before any release-branch checkout.
-          WORKFLOW_HASH: ${{ hashFiles('.github/workflows/docs.yml') }}
+          # Hash every current-branch input that can change a historical build.
+          WORKFLOW_HASH: >-
+            ${{ hashFiles('.github/workflows/docs.yml', '.github/docs-versions.yml',
+                'build_scripts/pin_docs_theme.py') }}
         run: |
           uv run --no-project --with "pyyaml==6.0.3" python -m build_scripts.resolve_docs_matrix \
             --config .github/docs-versions.yml \
@@ -146,6 +148,22 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
+
+      - name: Checkout docs build helper
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .docs-workflow
+          sparse-checkout: build_scripts/pin_docs_theme.py
+          sparse-checkout-cone-mode: false
+
+      - name: Pin MyST theme
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          python .docs-workflow/build_scripts/pin_docs_theme.py \
+            --config doc/myst.yml \
+            --template "${{ matrix.template }}"
 
       - name: Install uv
         if: steps.cache.outputs.cache-hit != 'true'
