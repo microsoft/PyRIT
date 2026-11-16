@@ -420,6 +420,34 @@ def test_all_categories_filters_empty_strings():
     assert results[0].category == ["Hate"]  # Only valid category
 
 
+def test_all_categories_extrema_resolve_conflicting_metadata_from_selected_score() -> None:
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 2, "low_only": 1}),
+        _mk_score(0.7, category=["Violence"], metadata={"severity": 5, "high_only": 1}),
+    ]
+
+    max_result = FloatScaleScorerAllCategories.MAX(scores)[0]
+    min_result = FloatScaleScorerAllCategories.MIN(scores)[0]
+
+    assert max_result.value == 0.7
+    assert max_result.metadata == {"severity": 5, "low_only": 1, "high_only": 1}
+    assert min_result.value == 0.3
+    assert min_result.metadata == {"severity": 2, "low_only": 1, "high_only": 1}
+
+
+def test_all_categories_max_uses_first_winner_metadata_for_ties() -> None:
+    scores = [
+        _mk_score(0.7, category=["Hate"], metadata={"source": "first"}),
+        _mk_score(0.7, category=["Violence"], metadata={"source": "second"}),
+        _mk_score(0.3, category=["Hate"], metadata={"source": "lower"}),
+    ]
+
+    result = FloatScaleScorerAllCategories.MAX(scores)[0]
+
+    assert result.value == 0.7
+    assert result.metadata == {"source": "first"}
+
+
 # Edge cases
 def test_empty_scores_list():
     """Test that empty score lists are handled gracefully."""
