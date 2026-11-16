@@ -410,7 +410,5 @@ def test_main_pr_passes_immutable_sha_to_diff(
     diff.assert_called_once_with(TESTED_SHA)
     outputs = dict(line.split("=", 1) for line in capsys.readouterr().out.splitlines())
     template = module.load_config(config)["versions"][0]["template"]
-    assert json.loads(outputs["matrix"]) == {
-        "include": [{"slug": "latest", "ref": TESTED_SHA, "template": template}]
-    }
+    assert json.loads(outputs["matrix"]) == {"include": [{"slug": "latest", "ref": TESTED_SHA, "template": template}]}
     assert outputs["compose"] == "false"

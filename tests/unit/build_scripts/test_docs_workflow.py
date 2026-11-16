@@ -157,8 +157,7 @@ def test_rendered_cache_uses_tested_workflow_and_exact_source_commit() -> None:
     workflow = _workflow()
     matrix_step = _step(job="versions", name="Compute matrix")
     assert " ".join(matrix_step["env"]["WORKFLOW_HASH"].split()) == (
-        "${{ hashFiles('.github/workflows/docs.yml', '.github/docs-versions.yml', "
-        "'build_scripts/pin_docs_theme.py') }}"
+        "${{ hashFiles('.github/workflows/docs.yml', '.github/docs-versions.yml', 'build_scripts/pin_docs_theme.py') }}"
     )
     assert ".github/workflows/docs.yml" in _checkout("versions")["with"]["sparse-checkout"].splitlines()
     assert 'echo "workflow_hash=$WORKFLOW_HASH" >> "$GITHUB_OUTPUT"' in matrix_step["run"]

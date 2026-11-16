@@ -9,9 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-_IMMUTABLE_BOOK_THEME_URL = re.compile(
-    r"https://github\.com/myst-templates/book-theme/archive/[0-9a-f]{40}\.zip"
-)
+_IMMUTABLE_BOOK_THEME_URL = re.compile(r"https://github\.com/myst-templates/book-theme/archive/[0-9a-f]{40}\.zip")
 _BOOK_THEME_LINE = re.compile(r"^(?P<indent>[ \t]*)template:[ \t]*book-theme[ \t]*$", re.MULTILINE)
 
 
