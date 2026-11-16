@@ -1988,3 +1988,30 @@ class TestSelectEvaluationScore:
         scores = [self._score(category=["violence"]), self._score(category=["self_harm"])]
         with pytest.raises(ValueError, match="requires exactly one score per response"):
             ScorerEvaluator._select_evaluation_score(scores=scores, harm_category="hate_speech")
+
+
+def test_compute_objective_metrics_reports_a_wilson_interval_for_perfect_accuracy(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 1, 0, 0, 0]])
+    all_model_scores = np.array([[1, 1, 0, 0, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    # The Wald standard error is 0 at 100% accuracy; 5 of 5 correct still leaves a wide interval.
+    assert metrics.accuracy == 1.0
+    assert metrics.accuracy_standard_error == 0.0
+    assert metrics.accuracy_ci_lower == pytest.approx(0.5655175352168251)
+    assert metrics.accuracy_ci_upper == 1.0
+
+
+def test_compute_objective_metrics_wilson_interval_uses_the_majority_vote_accuracy(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # The majority vote of the three trials is [1, 1, 0, 1]: 3 of 4 responses correct.
+    all_human_scores = np.array([[1, 1, 0, 0]])
+    all_model_scores = np.array([[1, 1, 0, 1], [1, 0, 0, 1], [1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.accuracy == pytest.approx(0.75)
+    assert metrics.accuracy_ci_lower == pytest.approx(0.30064184258240184)
+    assert metrics.accuracy_ci_upper == pytest.approx(0.9544127391902995)

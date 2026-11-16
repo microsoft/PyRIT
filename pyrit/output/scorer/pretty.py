@@ -198,6 +198,16 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 )
             )
 
+        accuracy_ci_lower = getattr(metrics, "accuracy_ci_lower", None)
+        accuracy_ci_upper = getattr(metrics, "accuracy_ci_upper", None)
+        if accuracy_ci_lower is not None and accuracy_ci_upper is not None:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Accuracy 95% CI (Wilson): [{accuracy_ci_lower:.2%}, {accuracy_ci_upper:.2%}]",
+                    Fore.CYAN,
+                )
+            )
+
         single_trial_accuracy = getattr(metrics, "single_trial_accuracy", None)
         if single_trial_accuracy is not None:
             single_trial_color = self._get_quality_color(

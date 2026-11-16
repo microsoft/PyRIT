@@ -961,3 +961,20 @@ def test_registry_entry_with_undefined_statistics_is_valid_json(*, tmp_path: Pat
     assert reloaded.t_statistic is None
     assert reloaded.p_value is None
     assert reloaded.mean_absolute_error == 0.08
+
+
+def test_find_objective_metrics_fills_in_the_accuracy_interval_for_older_entries(tmp_path):
+    identifier = _make_identifier()
+    entry = identifier.model_dump()
+    entry["eval_hash"] = "hash_abc"
+    metrics = _metrics_to_registry_dict(_make_objective_metrics(accuracy=0.88))
+    metrics.pop("accuracy_ci_lower", None)
+    metrics.pop("accuracy_ci_upper", None)
+    entry["metrics"] = metrics
+    path = tmp_path / "objective_achieved_metrics.jsonl"
+    _write_jsonl(path, [entry])
+
+    result = find_objective_metrics_by_eval_hash(eval_hash="hash_abc", file_path=path)
+    assert result is not None
+    assert result.accuracy_ci_lower is not None
+    assert result.accuracy_ci_lower < 0.88 < result.accuracy_ci_upper

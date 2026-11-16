@@ -475,3 +475,11 @@ async def test_write_async_harm_with_colors_covers_lower_is_better_bands(mock_fi
     await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
     output = capsys.readouterr().out
     assert "\x1b[" in output
+
+
+def test_render_objective_metrics_shows_the_wilson_accuracy_interval():
+    metrics = _make_objective_metrics(accuracy=0.92, num_responses=100)
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_objective_metrics(metrics)
+
+    assert "Accuracy 95% CI (Wilson): [85.00%, 95.89%]" in output
