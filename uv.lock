@@ -5201,7 +5201,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.22" },
-    { name = "regex", specifier = ">=2024.11.6" },
+    { name = "regex", specifier = ">=2024.11.6,!=2026.11.7,!=2026.11.8,!=2026.11.9" },
     { name = "reportlab", specifier = ">=4.4.4" },
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "segno", specifier = ">=1.6.6" },
