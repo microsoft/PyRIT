@@ -16,6 +16,33 @@ from pyrit.common.net_utility import (
 
 
 @pytest.mark.parametrize(
+    "body, expected_content, expected_content_type",
+    [
+        ({}, b"{}", "application/json"),
+        (None, b"", None),
+        ({"enabled": False, "count": 0}, b'{"enabled":false,"count":0}', "application/json"),
+    ],
+)
+async def test_json_request_body_preserves_explicit_empty_object(body, expected_content, expected_content_type):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200)
+
+    await make_request_and_raise_if_error_async(
+        endpoint_uri="https://example.test/",
+        method="POST",
+        request_body=body,
+        transport=httpx.MockTransport(handle),
+    )
+
+    assert len(requests) == 1
+    assert requests[0].content == expected_content
+    assert requests[0].headers.get("content-type") == expected_content_type
+
+
+@pytest.mark.parametrize(
     "use_async, expected_type",
     [
         (False, httpx.Client),
