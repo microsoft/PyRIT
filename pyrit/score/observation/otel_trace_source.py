@@ -24,7 +24,7 @@ from pyrit.score.observation.trace_client import TraceAcquisitionError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.models import TraceScorable, TraceSpan
+    from pyrit.models import TraceQueryResult, TraceScorable, TraceSpan
     from pyrit.score.observation.trace_client import TraceClient
 
 logger = logging.getLogger(__name__)
@@ -61,13 +61,11 @@ class OtelTraceSource:
         Returns:
             Observation: The sanitized snapshot, including acquisition and coverage state.
         """
-        try:
-            async with asyncio.timeout(self._timeout_seconds):
-                result = await self._client.get_spans_async(query=TraceQuery(scope=scorable, limit=self._max_spans))
-        except (TraceAcquisitionError, TimeoutError) as error:
-            reason = "trace_query_timeout" if isinstance(error, TimeoutError) else "trace_query_failed"
-            logger.warning("Trace acquisition failed (%s).", reason)
-            return self._observation(scorable=scorable, acquisition=Acquisition.ERROR, reasons=(reason,))
+        result = await _query_trace_spans_async(
+            client=self._client, scorable=scorable, max_spans=self._max_spans, timeout_seconds=self._timeout_seconds
+        )
+        if isinstance(result, str):
+            return self._observation(scorable=scorable, acquisition=Acquisition.ERROR, reasons=(result,))
 
         if not result.available:
             return self._observation(
@@ -76,12 +74,8 @@ class OtelTraceSource:
                 reasons=result.coverage.reasons or ("trace_unavailable",),
             )
 
-        reasons = list(result.coverage.reasons)
-        if not result.coverage.complete:
-            reasons.append("source_coverage_incomplete")
-        if len(result.spans) > self._max_spans:
-            reasons.append("query_limit_exceeded")
-        events, normalization_reasons = self._normalize(spans=result.spans[: self._max_spans], scope=scorable)
+        spans, reasons = _scoped_spans(result=result, scope=scorable, max_spans=self._max_spans)
+        events, normalization_reasons = self._normalize(spans=spans)
         reasons.extend(normalization_reasons)
         acquisition = Acquisition.PARTIAL if reasons else Acquisition.COMPLETE
         return self._observation(
@@ -111,21 +105,10 @@ class OtelTraceSource:
         )
 
     @staticmethod
-    def _normalize(*, spans: Sequence[TraceSpan], scope: TraceScorable) -> tuple[tuple[ToolExecution, ...], list[str]]:
-        seen: dict[tuple[str, str], TraceSpan] = {}
+    def _normalize(*, spans: Sequence[TraceSpan]) -> tuple[tuple[ToolExecution, ...], list[str]]:
         events: list[ToolExecution] = []
         reasons: list[str] = []
         for span in spans:
-            if span.trace_id not in scope.trace_ids:
-                raise ValueError("Trace client returned evidence outside the requested scope.")
-            key = (span.trace_id, span.span_id)
-            if key in seen:
-                if seen[key] != span:
-                    raise ValueError("Trace client returned conflicting span identities.")
-                continue
-            seen[key] = span
-            if not span.sampled or span.end_time is None:
-                reasons.append("span_not_complete")
             open_inference = span.attributes.get("openinference.span.kind") == "TOOL"
             gen_ai = span.attributes.get("gen_ai.operation.name") == "execute_tool"
             if not (open_inference or gen_ai):
@@ -151,3 +134,53 @@ class OtelTraceSource:
             )
         events.sort(key=lambda event: (event.start_time, event.trace_id, event.span_id))
         return tuple(events), reasons
+
+
+async def _query_trace_spans_async(
+    *, client: TraceClient, scorable: TraceScorable, max_spans: int, timeout_seconds: float
+) -> TraceQueryResult | str:
+    """
+    Query a client within the timeout, mapping defined operational failures to a reason.
+
+    Returns:
+        TraceQueryResult | str: The client's result, or the failure reason.
+    """
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            return await client.get_spans_async(query=TraceQuery(scope=scorable, limit=max_spans))
+    except (TraceAcquisitionError, TimeoutError) as error:
+        reason = "trace_query_timeout" if isinstance(error, TimeoutError) else "trace_query_failed"
+        logger.warning("Trace acquisition failed (%s).", reason)
+        return reason
+
+
+def _scoped_spans(
+    *, result: TraceQueryResult, scope: TraceScorable, max_spans: int
+) -> tuple[list[TraceSpan], list[str]]:
+    """
+    Select unique in-scope spans and report coverage gaps.
+
+    Returns:
+        tuple[list[TraceSpan], list[str]]: The unique spans and the reasons coverage is incomplete.
+
+    Raises:
+        ValueError: If the client returned out-of-scope or conflicting evidence.
+    """
+    reasons = list(result.coverage.reasons)
+    if not result.coverage.complete:
+        reasons.append("source_coverage_incomplete")
+    if len(result.spans) > max_spans:
+        reasons.append("query_limit_exceeded")
+    seen: dict[tuple[str, str], TraceSpan] = {}
+    for span in result.spans[:max_spans]:
+        if span.trace_id not in scope.trace_ids:
+            raise ValueError("Trace client returned evidence outside the requested scope.")
+        key = (span.trace_id, span.span_id)
+        if key in seen:
+            if seen[key] != span:
+                raise ValueError("Trace client returned conflicting span identities.")
+            continue
+        seen[key] = span
+        if not span.sampled or span.end_time is None:
+            reasons.append("span_not_complete")
+    return list(seen.values()), reasons
