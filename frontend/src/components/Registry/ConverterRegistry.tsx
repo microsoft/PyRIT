@@ -95,6 +95,9 @@ export default function ConverterRegistry() {
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
+  // Deletion errors live in their own state so they can render inside the open
+  // dialog; the page-level `error` banner sits under the dialog's aria-hidden root.
+  const [removeError, setRemoveError] = useState<string | null>(null)
   const [focusRestore, setFocusRestore] = useState<FocusRestore | null>(null)
   // Both dialogs open from state rather than from a DialogTrigger, so mark the
   // opening controls as restore targets the way FeedbackDialog does; that is what
@@ -201,19 +204,21 @@ export default function ConverterRegistry() {
   const openRemoveDialog = (event: MouseEvent<HTMLButtonElement>, converter: ConverterInstance) => {
     removeTriggerRef.current = event.currentTarget
     openDialog('remove')
+    setRemoveError(null)
     setConverterToRemove(converter)
   }
 
   const dismissRemoveDialog = () => {
     openDialogRef.current = null
     setConverterToRemove(null)
+    setRemoveError(null)
     restoreFocus(removeTriggerRef.current)
   }
 
   const removeConverter = async () => {
     if (!converterToRemove) return
     setRemoving(true)
-    setError(null)
+    setRemoveError(null)
     try {
       await convertersApi.deleteConverter(converterToRemove.converter_id)
       setConverters((current) => current.filter((item) => item.converter_id !== converterToRemove.converter_id))
@@ -226,7 +231,7 @@ export default function ConverterRegistry() {
       restoreFocus(newConverterRef.current)
       await loadConverters(true)
     } catch (err) {
-      setError(toApiError(err).detail)
+      setRemoveError(toApiError(err).detail)
     } finally {
       setRemoving(false)
     }
@@ -408,6 +413,11 @@ export default function ConverterRegistry() {
               {converterToRemove
                 ? `Remove "${converterToRemove.converter_id}" from the converter registry?`
                 : ''}
+              {removeError && (
+                <div role="alert">
+                  <MessageBar intent="error"><MessageBarBody>{removeError}</MessageBarBody></MessageBar>
+                </div>
+              )}
             </DialogContent>
             <DialogActions>
               <Button disabled={removing} onClick={dismissRemoveDialog}>Cancel</Button>

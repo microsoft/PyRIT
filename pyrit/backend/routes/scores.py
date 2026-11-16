@@ -9,8 +9,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import AuthenticatedUser
-from pyrit.backend.models.attacks import ScoreView
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models import ProblemDetail, ScoreView
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, MessageScorable, ScoringExpectation

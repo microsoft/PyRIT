@@ -20,12 +20,14 @@ from pyrit.models import (
     ScoreStatus,
     UndeterminedScoreError,
 )
-from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScoreAggregator
+from pyrit.score import (
+    FloatScaleScoreAggregator,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 from pyrit.score.score_utils import normalize_score_to_float, score_is_true
-from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
-from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
 def _scorer_id() -> ComponentIdentifier:

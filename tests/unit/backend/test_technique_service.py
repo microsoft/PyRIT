@@ -18,8 +18,7 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models.techniques import CreateTechniqueRequest
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.backend.services.scenario_service import ScenarioService
+from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.executor.attack import PromptSendingAttack
@@ -31,16 +30,13 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import Scenario
+from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioTechnique
 from pyrit.scenario.core import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios import airt
-from pyrit.scenario.scenarios.airt.leakage import Leakage
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+from pyrit.scenario.scenarios.airt import Leakage, RapidResponse
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 from unit.async_utils import (

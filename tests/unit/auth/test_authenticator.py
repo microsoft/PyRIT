@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.auth.authenticator import Authenticator
+from pyrit.auth import Authenticator
 
 
 class ConcreteAuthenticator(Authenticator):

@@ -7,7 +7,7 @@ from unittest.mock import patch
 import jwt as pyjwt
 import pytest
 
-from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
+from pyrit.auth import ManualCopilotAuthenticator
 
 # HS256 requires a key >= 32 bytes (RFC 7518 §3.2) to avoid PyJWT's
 # InsecureKeyLengthWarning. The authenticator decodes tokens with

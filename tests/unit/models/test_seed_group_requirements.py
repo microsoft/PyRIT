@@ -5,7 +5,15 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from pyrit.models import AttackSeedGroup, MatchesObjective, SeedGroupRequirements, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    ChatMessageRole,
+    MatchesObjective,
+    SeedGroupRequirements,
+    SeedObjective,
+    SeedPrompt,
+    SeedSimulatedConversation,
+)
 
 
 def test_empty_requirements_accept_additional_prompts() -> None:
@@ -48,3 +56,45 @@ def test_requirements_are_frozen() -> None:
 
     with pytest.raises(FrozenInstanceError):
         requirements.objective_only = True  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("with_prompts", [False, True])
+def test_user_prompts_only_accepts_objective_and_static_user_prompts(with_prompts: bool) -> None:
+    group = AttackSeedGroup(seeds=[SeedObjective(value="objective", metadata={"source": "dataset"})])
+    if with_prompts:
+        group = AttackSeedGroup(seeds=[*group.seeds, SeedPrompt(value="context", role="user", sequence=99)])
+    original = group.model_dump()
+
+    assert SeedGroupRequirements(user_prompts_only=True).check(seed_group=group) == []
+    assert group.model_dump() == original
+
+
+@pytest.mark.parametrize("role", ["assistant", "system", "tool"])
+def test_user_prompts_only_rejects_non_user_history(role: ChatMessageRole) -> None:
+    group = AttackSeedGroup(seeds=[SeedObjective(value="objective"), SeedPrompt(value="authored history", role=role)])
+    original = group.model_dump()
+    source_id = group.logical_id
+
+    assert "non-user history" in SeedGroupRequirements(user_prompts_only=True).check(seed_group=group)[0]
+    assert SeedGroupRequirements().check(seed_group=group) == []
+    assert group.model_dump() == original
+    assert group.logical_id == source_id
+
+
+def test_user_prompts_only_rejects_simulation_without_mutating_source() -> None:
+    group = AttackSeedGroup(
+        seeds=[
+            SeedObjective(value="objective"),
+            SeedPrompt(value="context", sequence=0),
+            SeedSimulatedConversation(
+                sequence=2,
+                num_turns=1,
+                adversarial_chat_system_prompt=SeedPrompt(value="Use the supplied objective."),
+            ),
+        ]
+    )
+    original = group.model_dump()
+
+    assert "simulated conversations" in SeedGroupRequirements(user_prompts_only=True).check(seed_group=group)[0]
+    assert SeedGroupRequirements().check(seed_group=group) == []
+    assert group.model_dump() == original

@@ -4,9 +4,9 @@
 
 import pytest
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.token_smuggling import (
+from pyrit.converter import (
     AsciiSmugglerConverter,
+    ConverterResult,
     SneakyBitsSmugglerConverter,
     VariationSelectorSmugglerConverter,
 )

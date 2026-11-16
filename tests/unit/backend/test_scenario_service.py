@@ -18,14 +18,15 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
+from pyrit.backend.services import (
+    ScenarioService,
+    get_scenario_service,
+)
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
-    ScenarioService,
     _metadata_to_registered_scenario,
-    get_scenario_service,
 )
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
@@ -37,8 +38,8 @@ from pyrit.models import (
     ScenarioRunSizeEstimateRequest,
     ScenarioTechniqueSummary,
 )
-from pyrit.models.catalog.scenario import RegisteredScenario
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.models.catalog import RegisteredScenario
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
@@ -48,8 +49,8 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
-from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.airt import Scam
+from pyrit.scenario.scenarios.garak import Exploitation
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
@@ -217,7 +218,7 @@ def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> Non
         for parameter in summary.model_dump(mode="json")["supported_parameters"]
     }
     assert described == {
-        "words": {"type_name": "list[str]", "is_list": True, "default": None},
+        "words": {"type_name": "list[str] | None", "is_list": True, "default": None},
         "size": {"type_name": "int", "is_list": False, "default": None},
     }
     assert metadata.supported_parameters[0].param_type == Collection[str] | None
@@ -336,7 +337,7 @@ class TestAdversarialEstimateScope:
         target_registry.instances.get.side_effect = targets.get
 
         async def estimate_async(scenario: Scam, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
-            assert scenario._adversarial_chat is selected
+            assert scenario._adversarial_chat is None
             assert get_default_adversarial_target() is selected
             return ScenarioRunSizeEstimate(total_attack_count=0)
 
@@ -345,7 +346,7 @@ class TestAdversarialEstimateScope:
             patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
             patch.object(Scam, "get_run_size_estimate_async", autospec=True, side_effect=estimate_async),
             patch(
-                "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
+                "pyrit.prompt_target.OpenAIChatTarget",
                 side_effect=AssertionError("The request must not construct the server fallback."),
             ),
         ):
@@ -911,32 +912,64 @@ class TestScenarioServiceListScenarios:
 
         assert result == estimate
 
-    async def test_one_failed_estimate_does_not_break_catalog(self) -> None:
+    @pytest.mark.parametrize(
+        "scenario_names",
+        [("test.good", "test.bad"), ("test.bad", "test.good")],
+        ids=["good-first", "bad-first"],
+    )
+    async def test_one_failed_estimate_does_not_break_catalog(
+        self, *, scenario_names: tuple[str, str], estimate_watchdog_seconds: float
+    ) -> None:
         """A scenario estimate failure is explicit and isolated from other catalog entries."""
-        metadata = [
-            _make_scenario_metadata(registry_name="test.good"),
-            _make_scenario_metadata(registry_name="test.bad"),
-        ]
+        metadata = [_make_scenario_metadata(registry_name=name) for name in scenario_names]
         estimate = ScenarioRunSizeEstimate(
             total_attack_count=2,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=2)],
         )
-        good_scenario = MagicMock()
+        good_scenario = MagicMock(spec=Scenario)
         good_scenario.get_default_run_size_estimate_async = AsyncMock(return_value=estimate)
-        bad_scenario = MagicMock()
+        bad_scenario = MagicMock(spec=Scenario)
         bad_scenario.get_default_run_size_estimate_async = AsyncMock(side_effect=RuntimeError("dataset unavailable"))
+        original_wait = asyncio.wait
 
-        with patch.object(ScenarioService, "__init__", lambda self: None):
-            service = ScenarioService()
-            service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = metadata
-            service._registry.create_instance.side_effect = lambda name: {
-                "test.good": good_scenario,
-                "test.bad": bad_scenario,
-            }[name]
+        async def wait_async(
+            tasks: set[asyncio.Task[ScenarioRunSizeEstimate]], *, timeout: float
+        ) -> tuple[set[asyncio.Task[ScenarioRunSizeEstimate]], set[asyncio.Task[ScenarioRunSizeEstimate]]]:
+            assert timeout == estimate_watchdog_seconds
+            return await original_wait(tasks, timeout=timeout)
 
-            result = await service.list_scenarios_async()
-        assert "RuntimeError" in result.items[1].default_run_size.note
+        service = ScenarioService()
+        service._registry = MagicMock(spec=ScenarioRegistry)
+        service._registry.get_all_registered_class_metadata.return_value = metadata
+        service._registry.create_instance.side_effect = lambda name: {
+            "test.good": good_scenario,
+            "test.bad": bad_scenario,
+        }[name]
+        with patch(
+            "pyrit.backend.services.scenario_service.asyncio",
+            wraps=asyncio,
+            wait=AsyncMock(side_effect=wait_async),
+            CancelledError=asyncio.CancelledError,
+        ) as service_asyncio:
+            try:
+                async with asyncio.timeout(estimate_watchdog_seconds):
+                    result = await service.list_scenarios_async()
+            finally:
+                async with asyncio.timeout(estimate_watchdog_seconds):
+                    await service.close_async()
+
+        assert service_asyncio.wait.await_count == 2
+        assert len(result.items) == 2
+        estimates = {item.scenario_name: item.default_run_size for item in result.items}
+        assert set(estimates) == {"test.good", "test.bad"}
+        assert estimates["test.good"] == estimate
+        assert estimates["test.bad"].estimated_attack_count is None
+        assert estimates["test.bad"].note is not None
+        assert "RuntimeError" in estimates["test.bad"].note
+        assert "timed out" not in estimates["test.bad"].note
+        good_scenario.get_default_run_size_estimate_async.assert_awaited_once()
+        bad_scenario.get_default_run_size_estimate_async.assert_awaited_once()
+        assert service.outstanding_estimates() == 0
 
     async def test_catalog_estimates_use_bounded_parallelism(self) -> None:
         """Catalog estimates run concurrently without exceeding their configured bound."""
@@ -1781,7 +1814,7 @@ class TestScenarioServiceGetScenario:
                 scenario_name="test.scenario",
                 request=ScenarioRunSizeEstimateRequest(dataset_names=["harmbench"], **limit_args),
             )
-        from pyrit.models.scenario_dataset import ScenarioDatasetOptions
+        from pyrit.models import ScenarioDatasetOptions
         from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 
         mapped = service._registry.create_and_estimate_async.await_args.kwargs["dataset_overrides"]

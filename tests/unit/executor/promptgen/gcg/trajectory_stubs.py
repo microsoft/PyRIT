@@ -128,6 +128,7 @@ class TrajectoryWorker:
         self.barrier = barrier
         self.events = events
         self.tokenizer = IntTokenizer()
+        self._vocabulary_identities: dict[int, str] = {}
         self.model = SimpleNamespace(device=torch.device("cpu"), name_or_path=f"stub-model-{worker_id}")
         self.results: queue.SimpleQueue[Any] = queue.SimpleQueue()
 

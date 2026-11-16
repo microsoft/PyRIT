@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { createRef, useState } from 'react'
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -23,6 +23,22 @@ function leaveFileDrag(target: Node | Window, relatedTarget: EventTarget | null,
 
 describe('FileDropZone', () => {
   beforeEach(() => jest.clearAllMocks())
+
+  it('should expose the same surface to its caller without losing drag ownership', () => {
+    const ref = createRef<HTMLDivElement>()
+    const onFiles = jest.fn()
+    const { unmount } = render(<TestWrapper>
+      <FileDropZone ref={ref} onFiles={onFiles} testId="zone">Content</FileDropZone>
+    </TestWrapper>)
+    expect(ref.current).toBe(screen.getByTestId('zone'))
+    fireEvent.dragEnter(screen.getByText('Content'), { dataTransfer })
+    expect(screen.getByRole('status')).toBeVisible()
+    fireEvent.drop(screen.getByText('Content'), { dataTransfer })
+    expect(onFiles).toHaveBeenCalledWith([file])
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    unmount()
+    expect(ref.current).toBeNull()
+  })
 
   it('should deliver a nested drop only once and clear feedback from both surfaces', () => {
     const outer = jest.fn()

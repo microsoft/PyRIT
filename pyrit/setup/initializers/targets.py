@@ -21,8 +21,7 @@ from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
 from pyrit.common.async_compatibility import run_legacy_sync_async
-from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS
-from pyrit.models.parameter import Parameter
+from pyrit.models import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS, Parameter
 from pyrit.prompt_target import (
     AzureMLChatTarget,
     LiteLLMDecisionTarget,
@@ -38,6 +37,7 @@ from pyrit.prompt_target import (
     RoundRobinTarget,
 )
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -828,6 +828,8 @@ class TargetInitializer(PyRITInitializer):
             rr_name = generate_rr_name(key)
 
             if rr_name in registry.instances:
+                # Skipping would leave a saved target standing in for this group.
+                refuse_saved_entry(registry.instances.get_entry(rr_name))
                 logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
                 continue
 

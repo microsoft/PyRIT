@@ -23,13 +23,16 @@ from pyrit.models import (
     ScoreStatus,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import _build_tool_pieces
-from pyrit.score import ScorerPromptValidator, TrueFalseScoreAggregator
+from pyrit.score import (
+    AgentThreatRulesScorer,
+    ScorerPromptValidator,
+    TrueFalseAggregatorFunc,
+    TrueFalseScoreAggregator,
+)
 from pyrit.score.true_false.regex.agent_threat_rules_scorer import (
     SUPPORTED_DIGEST_SCHEMA,
-    AgentThreatRulesScorer,
     _patterns_from_digest,
 )
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 _MODULE = "pyrit.score.true_false.regex.agent_threat_rules_scorer"
 

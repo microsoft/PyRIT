@@ -3,7 +3,7 @@
 
 import asyncio
 
-from pyrit.exceptions.retry_collector import (
+from pyrit.exceptions import (
     RetryCollector,
     clear_retry_collector,
     get_retry_collector,
@@ -134,7 +134,7 @@ class TestRetryCollector:
         """record() extracts component_role, component_name, and endpoint from ExecutionContext."""
         from unittest.mock import MagicMock
 
-        from pyrit.exceptions.exception_context import (
+        from pyrit.exceptions import (
             ComponentRole,
             ExecutionContext,
             set_execution_context,

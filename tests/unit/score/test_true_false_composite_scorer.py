@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from unit.mocks import store_message_async
 
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     ComponentIdentifier,
     MatchesObjective,

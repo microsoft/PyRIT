@@ -12,10 +12,12 @@ import pytest
 
 from pyrit.exceptions import PyritException, RateLimitException, pyrit_target_retry
 from pyrit.models import MessagePiece
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import (
+    PromptTarget,
+    limit_requests_per_minute,
+)
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
-    limit_requests_per_minute,
     validate_frequency_penalty,
     validate_presence_penalty,
     validate_temperature,

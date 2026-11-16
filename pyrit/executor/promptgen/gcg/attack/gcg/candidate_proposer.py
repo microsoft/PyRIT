@@ -3,8 +3,11 @@
 
 """Candidate proposal logic for Greedy Coordinate Gradient (GCG) attacks."""
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -14,6 +17,21 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     PromptManager,
 )
 from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, SamplingStrategy
+
+
+def _hf_vocabulary_identity(*, tokenizer: Any, num_embeddings: int) -> str:
+    """
+    Fingerprint Hugging Face token/id mappings within the paired model's embedding rows.
+
+    Args:
+        tokenizer (Any): The worker's Hugging Face tokenizer.
+        num_embeddings (int): The number of rows in the paired model's embedding matrix.
+
+    Returns:
+        str: A stable SHA-256 digest of the sampleable token/id mappings.
+    """
+    vocab = sorted((i, token) for token, i in tokenizer.get_vocab().items() if i < num_embeddings)
+    return hashlib.sha256(json.dumps(vocab).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +132,7 @@ class GCGCandidateProposer:
         control_cands: list[list[str]] = []
         group_worker_indices: list[int] = []
         grad: torch.Tensor | None = None
-        vocab: dict[str, int] | None = None
+        vocab: str | None = None
 
         # Collect and aggregate gradients across workers
         for j, worker in enumerate(self._workers):
@@ -122,7 +140,12 @@ class GCGCandidateProposer:
             new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
             # Each embedding row is a sampleable token ID, including added tokens.
             # Tokens outside the embedding matrix cannot be sampled and need not match.
-            new_vocab = {token: i for token, i in worker.tokenizer.get_vocab().items() if i < new_grad.shape[-1]}
+            # Workers outlive per-step proposers and progressive inner attacks.
+            identities = worker._vocabulary_identities
+            key = new_grad.shape[-1]
+            if key not in identities:
+                identities[key] = _hf_vocabulary_identity(tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1])
+            new_vocab = identities[key]
 
             if grad is None:
                 grad = torch.zeros_like(new_grad)

@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.score import ShellCommandOutputScorer
 from pyrit.score.true_false.regex.shell_command_output_scorer import _SUBSTITUTION_COMMANDS, _normalize_substitution
 

@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.promptgen.gcg.config import (
+from pyrit.executor.promptgen.gcg import (
     GCGAlgorithmConfig,
     GCGModelConfig,
     GCGOutputConfig,
@@ -33,7 +33,7 @@ from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
     TrajectoryWorker,
 )
 
-from pyrit.executor.promptgen.gcg.generator import GCGContext, GCGGenerator, GCGResult  # noqa: E402
+from pyrit.executor.promptgen.gcg import GCGContext, GCGGenerator, GCGResult  # noqa: E402
 
 _LLAMA_2 = "meta-llama/Llama-2-7b-chat-hf"
 
@@ -66,7 +66,7 @@ class TestGCGGeneratorInit:
         """Regression: __init__ used to call torch.multiprocessing.set_start_method,
         which crashed under coverage runs when an earlier test had already pinned a
         non-spawn context. Worker spawn config now happens in _setup_async."""
-        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
+        import torch.multiprocessing as mp  # type: ignore[ty:import-not-found]
 
         with patch.object(mp, "set_start_method") as mock_set:
             GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
@@ -77,7 +77,7 @@ class TestEnsureSpawnStartMethod:
     """Tests for the lazily-applied spawn-method guard used before workers are spawned."""
 
     def test_sets_spawn_when_unset(self) -> None:
-        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
+        import torch.multiprocessing as mp  # type: ignore[ty:import-not-found]
 
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         with (
@@ -89,7 +89,7 @@ class TestEnsureSpawnStartMethod:
         mock_set.assert_called_once_with("spawn")
 
     def test_noop_when_already_spawn(self) -> None:
-        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
+        import torch.multiprocessing as mp  # type: ignore[ty:import-not-found]
 
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         with (
@@ -103,7 +103,7 @@ class TestEnsureSpawnStartMethod:
         """Used to raise 'context has already been set' — now we warn and continue."""
         import logging
 
-        import torch.multiprocessing as mp  # type: ignore[ty:unresolved-import]
+        import torch.multiprocessing as mp  # type: ignore[ty:import-not-found]
 
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         with (

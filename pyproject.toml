@@ -1,12 +1,21 @@
 [project]
 name = "pyrit"
-version = "1.2.0.dev0"
+version = "1.3.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
 ]
 readme = "README.md"
 license = "MIT"
+license-files = [
+    "LICENSE",
+    "LICENSES/Apache-2.0.txt",
+    "LICENSES/ComicJailbreak-MIT.txt",
+    "LICENSES/PromptInject-MIT.txt",
+    "THIRD_PARTY_NOTICES.txt",
+    "third_party/garak-provenance.json",
+    "third_party/promptinject-provenance.json",
+]
 keywords = [
     "llm",
     "ai-safety",
@@ -27,6 +36,7 @@ classifiers = [
 requires-python = ">=3.11, <3.15"
 dependencies = [
     "aiofiles>=24,<26",
+    "aiohttp>=3.13.4",
     "aioodbc>=0.5.0",
     "aiosqlite>=0.21.0",
     "alembic>=1.16.0",
@@ -53,7 +63,7 @@ dependencies = [
     "mcp>=2.2,<3",
     "numpy>=1.26.0; python_version < '3.14'",
     "numpy>=2.3.0; python_version >= '3.14'",
-    "openai>=2.20.0,<4",
+    "openai>=3,<4",
     "openpyxl>=3.1.5",
     "opentelemetry-sdk>=1.36,<2",
     "pillow>=12.2.0",
@@ -64,8 +74,11 @@ dependencies = [
     "pypinyin>=0.55.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
-    "regex>=2024.11.6",
+    # 2026.11.x breaks \X on Indic conjuncts (GB9c never applies, mrab-regex#636), which graphemes() relies on.
+    # Remove the upper bound once that is fixed upstream (#4308).
+    "regex>=2024.11.6,<2026.11",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy[asyncio]>=2.0.41",
@@ -79,6 +92,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
     "wcwidth>=0.2.14",
+    "filelock>=4.2.1",
 ]
 
 [dependency-groups]
@@ -150,8 +164,7 @@ litellm = [
 ]
 
 github-copilot = [
-    # Keep the last known working session API until the target is migrated (#3623).
-    "github-copilot-sdk>=1.0.11,<1.0.23",
+    "github-copilot-sdk>=1.0.28",
 ]
 a2a = [
     "a2a-sdk>=1.1.5,<2",
@@ -164,7 +177,7 @@ all = [
     "azure-ai-ml>=1.32.0",
     "azure-cognitiveservices-speech>=1.44.0",
     "flask>=3.1.3",
-    "github-copilot-sdk>=1.0.11,<1.0.23",
+    "github-copilot-sdk>=1.0.28",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
     "litellm>=1.104.2",
@@ -198,6 +211,8 @@ filterwarnings = [
     # Ordinary callers must use async memory; compatibility tests capture the warnings.
     "error:MemoryInterface\\.:DeprecationWarning",
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
+    # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
+    "error:Assigning Score\\.score_value:DeprecationWarning",
 ]
 
 [tool.ty]
@@ -318,16 +333,6 @@ backend-path = ["."]
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
 
-[tool.setuptools]
-license-files = [
-    "LICENSE",
-    "LICENSES/Apache-2.0.txt",
-    "LICENSES/PromptInject-MIT.txt",
-    "THIRD_PARTY_NOTICES.txt",
-    "third_party/garak-provenance.json",
-    "third_party/promptinject-provenance.json",
-]
-
 [tool.setuptools.package-data]
 pyrit = [
     "_compatibility.json",
@@ -408,6 +413,7 @@ select = [
     "ERA",  # https://docs.astral.sh/ruff/rules/#eradicate-era
     "EXE",  # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
     "F401",  # unused-import
+    "F821",  # undefined-name
     "FA",  # https://docs.astral.sh/ruff/rules/#flake8-future-annotations-fa
     "FLY",  # https://docs.astral.sh/ruff/rules/#flynt-fly
     "I",  # isort
@@ -422,6 +428,10 @@ select = [
     "Q",  # https://docs.astral.sh/ruff/rules/#flake8-quotes-q
     "RET",  # https://docs.astral.sh/ruff/rules/#flake8-return-ret
     "RSE",  # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "RUF006",  # asyncio-dangling-task
+    "RUF013",  # implicit-optional
+    "RUF019",  # unnecessary-key-check
+    "RUF100",  # unused-noqa
     "SIM",  # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
     "SLOT",  # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
     "T10",  # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
@@ -455,6 +465,9 @@ extend-select = [
 [tool.ruff.lint.isort]
 known-first-party = ["pyrit"]
 
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
 [tool.ruff.lint.flake8-type-checking]
 # Pydantic resolves model field annotations at runtime (the models use
 # ``from __future__ import annotations``), so imports used only as field types
@@ -462,6 +475,7 @@ known-first-party = ["pyrit"]
 # subclasses, but not models whose base is an intermediate PyRIT class, so we
 # enumerate those bases here to keep their field imports runtime-evaluated.
 runtime-evaluated-base-classes = [
+    "pyrit.models.StrategyResult",
     "pyrit.models.results.strategy_result.StrategyResult",
 ]
 
@@ -486,6 +500,22 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
 "tests/**/*.py" = ["ANN", "B017"]
+# Migration revisions are immutable once added. Keep RUF100 enabled for new
+# revisions while exempting only existing files with stale noqa directives.
+"pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/24b44ef076b6_drop_v1_deprecated_columns.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/5a1d3c7e9f04_add_score_status_and_scorable.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/5d7f9b1c3e2a_add_seed_decomposition.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/6ea3eb4b61c3_link_conversations_to_attack_results.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/9b2d4f6a8c0e_add_seed_conditions.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/9c8b7a6d5e4f_add_attribution_to_attack_results.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/a6c8e0f2b4d7_add_seed_origin.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/a8f3c1d9e620_preserve_legacy_simulation_technique_flags.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/b2f4c6a8d1e3_add_conversations_table.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/c8d3e5f7a901_add_operations_and_findings.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/d7e9f1a3b5c6_index_attack_result_recency.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/e5f7a9c1b3d2_add_identifiers_tables.py" = ["RUF100"]
+"pyrit/memory/alembic/versions/e7a1b3c5d9f0_add_seed_is_general_technique.py" = ["RUF100"]
 # Infrastructure/utility scripts — not part of the library API
 "build_scripts/**/*.py" = ["ANN"]
 "docker/**/*.py" = ["ANN"]

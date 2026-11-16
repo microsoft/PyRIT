@@ -29,10 +29,10 @@ from pyrit.score import (
     SQLInjectionOutputScorer,
     SSRFOutputScorer,
     SSTIOutputScorer,
+    TrueFalseScoreAggregator,
     XSSOutputScorer,
     XXEOutputScorer,
 )
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 
 _TEST_PATTERNS = {
     "SSN": r"\b\d{3}-\d{2}-\d{4}\b",

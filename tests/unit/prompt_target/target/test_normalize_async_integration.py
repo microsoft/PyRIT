@@ -13,15 +13,16 @@ if TYPE_CHECKING:
     from collections.abc import MutableSequence
 
 import pytest
+from httpx import Response
 from openai.types.chat import ChatCompletion
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 from unit.mocks import MockPromptTarget
 
+from pyrit.common import net_utility
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import (
     ConversationContextNormalizer,
     HistorySquashNormalizer,
@@ -31,15 +32,16 @@ from pyrit.message_normalizer import (
 )
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptResponseError
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
+    AzureMLChatTarget,
     CapabilityHandlingPolicy,
     CapabilityName,
+    OpenAIChatTarget,
+    OpenAIResponseTarget,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 
 
 def _make_message_piece(*, role: str, content: str, conversation_id: str = "conv1") -> MessagePiece:
@@ -209,6 +211,42 @@ async def test_openai_chat_target_memory_not_mutated():
     assert memory_conversation[0].get_piece().api_role == "system"
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_openai_chat_target_raises_for_unsupported_system_prompt_under_raise_policy():
+    """A system message the target cannot accept must not reach the provider under RAISE."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_editable_history=True,
+                supports_system_prompt=False,
+                input_modalities=frozenset({frozenset(["text"])}),
+            ),
+            policy=CapabilityHandlingPolicy(
+                behaviors={
+                    CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+                    CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+                }
+            ),
+        ),
+    )
+
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        return_value=[_make_message(role="system", content="Policy")]
+    )
+    target._memory = mock_memory
+    target._async_client.chat.completions.create = AsyncMock(return_value=_create_mock_chat_completion())
+
+    with pytest.raises(ValueError, match="does not support system prompts"):
+        await target.send_prompt_async(message=_make_message(role="user", content="Question"))
+
+    target._async_client.chat.completions.create.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # OpenAIResponseTarget — normalize_async is called
 # ---------------------------------------------------------------------------
@@ -264,6 +302,62 @@ async def test_openai_response_target_calls_normalize_async():
 # ---------------------------------------------------------------------------
 # AzureMLChatTarget — normalize_async is called
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("system_in_history", [True, False], ids=["history", "current_request"])
+@pytest.mark.parametrize(
+    ("supports_system_prompt", "behavior"),
+    [
+        (False, UnsupportedCapabilityBehavior.RAISE),
+        (False, UnsupportedCapabilityBehavior.ADAPT),
+        (True, UnsupportedCapabilityBehavior.RAISE),
+    ],
+    ids=["unsupported_raise", "unsupported_adapt", "native"],
+)
+async def test_azure_ml_target_enforces_system_prompt_policy(
+    *, system_in_history: bool, supports_system_prompt: bool, behavior: UnsupportedCapabilityBehavior
+) -> None:
+    token_provider = AsyncMock(return_value="test-token")
+    target = AzureMLChatTarget(
+        endpoint="https://aml.example.test/score",
+        api_key=token_provider,
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_editable_history=True,
+                supports_system_prompt=supports_system_prompt,
+            ),
+            policy=CapabilityHandlingPolicy(behaviors={CapabilityName.SYSTEM_PROMPT: behavior}),
+        ),
+    )
+    system_message = _make_message(role="system", content="Policy")
+    request = _make_message(role="user", content="Question") if system_in_history else system_message
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_message] if system_in_history else [])
+    target._memory = mock_memory
+
+    with patch.object(
+        net_utility,
+        "make_request_and_raise_if_error_async",
+        new_callable=AsyncMock,
+        return_value=Response(200, json={"output": "response"}),
+    ) as transport:
+        if not supports_system_prompt and behavior == UnsupportedCapabilityBehavior.RAISE:
+            with pytest.raises(ValueError, match="does not support system prompts"):
+                await target.send_prompt_async(message=request)
+            transport.assert_not_called()
+            token_provider.assert_not_called()
+        else:
+            responses = await target.send_prompt_async(message=request)
+            assert responses[0].get_value() == "response"
+            transport.assert_called_once()
+            messages = transport.call_args.kwargs["request_body"]["input_data"]["input_string"]
+            assert any(message["role"] == "system" for message in messages) == supports_system_prompt
+            assert "Policy" in messages[0]["content"]
+
+    assert system_message.get_piece().api_role == "system"
+    assert system_message.get_value() == "Policy"
 
 
 @pytest.mark.usefixtures("patch_central_database")

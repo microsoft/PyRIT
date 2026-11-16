@@ -303,7 +303,7 @@ describe('TechniqueRegistry', () => {
     render(tree())
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'New technique' }))
-    await screen.findByText('The registry returned an invalid page cursor.')
+    await screen.findByText('Target registry pagination did not advance')
     expect(screen.queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
     targets.listTargets.mockResolvedValue({
       items: [makeTarget({ target_registry_name: 'local' })], pagination: { limit: 200, has_more: false },

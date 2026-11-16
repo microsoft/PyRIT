@@ -9,10 +9,12 @@ import pytest
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import ComponentIdentifier
-from pyrit.score import CategoryConflictPolicy
-from pyrit.score.response_handler import (
+from pyrit.score import (
     CallableResponseHandler,
+    CategoryConflictPolicy,
     JsonSchemaResponseHandler,
+)
+from pyrit.score.response_handler import (
     NumericRangeResponseHandler,
     TrueFalseResponseHandler,
 )

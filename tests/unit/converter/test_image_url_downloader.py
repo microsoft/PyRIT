@@ -9,9 +9,9 @@ import aiohttp
 import pytest
 from PIL import Image
 
+from pyrit.converter import ImageCompressionConverter
 from pyrit.converter._image_url_downloader import _download_image_from_url_async
 from pyrit.converter.base_image_to_image_converter import BaseImageToImageConverter
-from pyrit.converter.image_compression_converter import ImageCompressionConverter
 
 
 class _OverridingImageConverter(BaseImageToImageConverter):

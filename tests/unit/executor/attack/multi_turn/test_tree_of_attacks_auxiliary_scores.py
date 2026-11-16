@@ -11,9 +11,13 @@ from unit.mocks import MockPromptTarget
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig, TreeOfAttacksWithPruningAttack
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.score import FloatScaleThresholdScorer, Scorer, SubStringScorer
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score import (
+    FloatScaleThresholdScorer,
+    MessageFloatScaleScorer,
+    Scorer,
+    ScorerPromptValidator,
+    SubStringScorer,
+)
 
 
 class _AdversarialTarget(MockPromptTarget):

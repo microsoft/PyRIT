@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent, ReactNode, RefObject } from 'react'
 
 import {
   Button,
@@ -50,6 +50,7 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
 const MIN_PANEL_WIDTH = 480
 const MAX_PANEL_WIDTH = 1200
 const DEFAULT_PANEL_WIDTH = 560
+const PANEL_RESIZE_STEP = 16
 
 interface ValuePreviewProps {
   dataType: string
@@ -69,6 +70,7 @@ interface ConverterPanelProps {
   controller: ChatConverterController
   selectedMessageCount?: number
   onApply?: (updates: PieceConversionUpdates) => void
+  resizeBoundaryRef?: RefObject<HTMLDivElement | null>
 }
 
 interface SelectedConverter extends ConverterInstance {
@@ -163,6 +165,7 @@ export default function ConverterPanel({
   controller,
   selectedMessageCount,
   onApply,
+  resizeBoundaryRef,
 }: ConverterPanelProps) {
   const { generation, ready } = useRuntime()
   const styles = useConverterPanelStyles()
@@ -202,6 +205,27 @@ export default function ConverterPanel({
   const discardTemporarySettings = controller.discardTemporarySettings
   useEffect(() => () => discardTemporarySettings?.(), [discardTemporarySettings])
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
+  const [maxPanelWidth, setMaxPanelWidth] = useState(MAX_PANEL_WIDTH)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const minPanelWidth = Math.min(MIN_PANEL_WIDTH, maxPanelWidth)
+  const visiblePanelWidth = Math.max(minPanelWidth, Math.min(maxPanelWidth, panelWidth))
+  useEffect(() => {
+    const boundary = resizeBoundaryRef?.current ?? panelRef.current?.parentElement
+    if (!boundary) return
+    const updateMaxWidth = (width: number): void => {
+      if (width <= 0) return
+      const maximum = Math.min(MAX_PANEL_WIDTH, width)
+      const minimum = Math.min(MIN_PANEL_WIDTH, maximum)
+      setMaxPanelWidth(maximum)
+      setPanelWidth((current: number) => Math.max(minimum, Math.min(maximum, current)))
+    }
+    updateMaxWidth(boundary.clientWidth)
+    const observer = new ResizeObserver((entries: ResizeObserverEntry[]) => {
+      for (const entry of entries) updateMaxWidth(entry.contentRect.width)
+    })
+    observer.observe(boundary)
+    return () => observer.disconnect()
+  }, [resizeBoundaryRef])
   const isResizing = useRef(false)
   const draggedConverterIndex = useRef<number | null>(null)
   const applyResult = (applied: PieceConversionUpdates | void): void => {
@@ -295,7 +319,7 @@ export default function ConverterPanel({
   // Offer converters that accept whatever the pipeline currently emits, so a
   // chain can legally continue past a converter that changes the data type.
   const lastSelectedConverter = selectedConverters[selectedConverters.length - 1]
-  const nextInputType = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType
+  const nextInputType: string = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType ?? ''
 
   const filteredConverters = converters.filter((converter: ConverterInstance) => {
     const supported = converter.identifier.supported_input_types ?? []
@@ -332,7 +356,9 @@ export default function ConverterPanel({
     setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => {
       const nextPipeline = [...stages]
       const [movedConverter] = nextPipeline.splice(sourceIndex, 1)
-      nextPipeline.splice(targetIndex, 0, movedConverter)
+      if (movedConverter) {
+        nextPipeline.splice(targetIndex, 0, movedConverter)
+      }
       return nextPipeline
     })
   }, [setPipeline, effectiveActiveTab, selectedStages.length])
@@ -363,10 +389,27 @@ export default function ConverterPanel({
     document.body.style.userSelect = 'none'
   }, [])
 
+  const handleResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const nextWidth: Record<string, (width: number) => number> = {
+      ArrowLeft: (width) => width - PANEL_RESIZE_STEP,
+      ArrowRight: (width) => width + PANEL_RESIZE_STEP,
+      Home: () => minPanelWidth,
+      End: () => maxPanelWidth,
+    }
+    const resize = nextWidth[event.key]
+    if (!resize) return
+    event.preventDefault()
+    setPanelWidth((width: number) => {
+      const current = Math.max(minPanelWidth, Math.min(maxPanelWidth, width))
+      return Math.max(minPanelWidth, Math.min(maxPanelWidth, resize(current)))
+    })
+  }, [minPanelWidth, maxPanelWidth])
+
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent): void => {
       if (!isResizing.current) return
-      setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, event.clientX)))
+      const left = panelRef.current?.getBoundingClientRect().left ?? 0
+      setPanelWidth(Math.max(minPanelWidth, Math.min(maxPanelWidth, event.clientX - left)))
     }
     const handleMouseUp = (): void => {
       if (!isResizing.current) return
@@ -379,11 +422,19 @@ export default function ConverterPanel({
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      // Unmounting mid drag removes the mouseup listener before it can fire,
+      // so the body wide cursor and selection lock have to be released here or
+      // they stick until a full page reload.
+      if (isResizing.current) {
+        isResizing.current = false
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
     }
-  }, [])
+  }, [minPanelWidth, maxPanelWidth])
 
   return (
-    <div className={styles.resizeContainer} style={{ width: panelWidth }}>
+    <div ref={panelRef} className={styles.resizeContainer} style={{ width: visiblePanelWidth }}>
       <aside className={styles.root} data-testid="converter-panel">
         <div className={styles.header}>
           <div className={styles.headerTitle}>
@@ -524,7 +575,7 @@ export default function ConverterPanel({
                     ))}
                     onSave={() => {
                       const stage = selectedStages[index]
-                      if (stage.temporary) setSaving({
+                      if (stage?.temporary) setSaving({
                         stage, pieceType: effectiveActiveTab, converterType: converter.identifier.class_name,
                         source: stage.temporary, generation,
                       })
@@ -589,8 +640,8 @@ export default function ConverterPanel({
                       />
                       <ValuePreview
                         label="Converted message"
-                        dataType={results[input.id].converted_value_data_type}
-                        value={results[input.id].converted_value}
+                        dataType={results[input.id]?.converted_value_data_type ?? 'text'}
+                        value={results[input.id]?.converted_value}
                         emptyText="This conversion returned an empty value."
                         testId="converter-final-result"
                       />
@@ -602,17 +653,33 @@ export default function ConverterPanel({
           )}
         </div>
       </aside>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable separator is the WAI-ARIA window splitter pattern (jsx-a11y#577) */}
       <div
         className={styles.resizeHandle}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize converters panel"
+        aria-valuenow={visiblePanelWidth}
+        aria-valuemin={minPanelWidth}
+        aria-valuemax={maxPanelWidth}
+        tabIndex={0}
         onMouseDown={handleMouseDown}
+        onKeyDown={handleResizeKeyDown}
         data-testid="converter-panel-resize"
       />
       <CreateConverterDialog
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         onCreated={(converterId: string, isCurrentOpening: boolean) => {
-          if (isCurrentOpening) setCreateDialogOpen(false)
-          void loadConverters(converterId, effectiveActiveTab)
+          if (isCurrentOpening) {
+            setCreateDialogOpen(false)
+            void loadConverters(converterId, effectiveActiveTab)
+            return
+          }
+          // A dismissed creation may still finish on the server. Refresh the
+          // registry so the converter is available, but do not mutate the
+          // pipeline the user chose after dismissing the dialog.
+          void loadConverters()
         }}
       />
       {settings && <CreateConverterDialog

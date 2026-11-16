@@ -74,11 +74,13 @@ print(transcript)
 # ## Audio to Audio
 #
 # Audio-to-audio converters modify existing audio files. All of these converters accept `audio_path` input
-# and produce `audio_path` output, preserving the original sample rate, bit depth, and channel count.
+# and produce `audio_path` output, preserving the original bit depth and channel count.
+# `AudioFrequencyConverter` increases the sample rate for nonzero shifts to prevent aliasing; a zero
+# shift preserves it. Fixed-rate PCM conversion does not accept a changed sample rate.
 #
 # Available converters:
 # - **`AudioFrequencyConverter`** — Shifts the audio frequency (pitch) higher
-# - **`AudioSpeedConverter`** — Changes playback speed without altering pitch
+# - **`AudioSpeedConverter`** — Changes playback speed (pitch shifts with the speed)
 # - **`AudioVolumeConverter`** — Scales the amplitude (louder or quieter)
 # - **`AudioEchoConverter`** — Adds an echo effect with configurable delay and decay
 # - **`AudioWhiteNoiseConverter`** — Mixes white noise into the signal
@@ -101,7 +103,7 @@ audio_frequency_converter = AudioFrequencyConverter()
 converted = await audio_frequency_converter.convert_async(prompt=prompt)  # type: ignore
 print("Frequency shift:", converted)
 
-# Speed change — speeds up (>1.0) or slows down (<1.0) without pitch change
+# Speed change — speeds up (>1.0) or slows down (<1.0); pitch shifts with it
 audio_speed_converter = AudioSpeedConverter(speed_factor=0.5)
 converted = await audio_speed_converter.convert_async(prompt=prompt)  # type: ignore
 print("Speed (0.5x):", converted)

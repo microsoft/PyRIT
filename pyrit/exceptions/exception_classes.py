@@ -304,6 +304,23 @@ class ScenarioPartialFailureException(PyritException, ValueError):  # noqa: N818
             self.__cause__ = self.incomplete_objectives[0][1]
 
 
+class ScenarioRunInProgressException(PyritException, RuntimeError):  # noqa: N818
+    """Raised when this process is already executing the same scenario result."""
+
+    def __init__(self, *, status_code: int = 409, message: str | None = None) -> None:
+        """
+        Initialize a scenario run-in-progress exception.
+
+        Args:
+            status_code (int): Status code for the error. Defaults to 409.
+            message (str | None): Error message describing the in-progress run.
+        """
+        super().__init__(
+            status_code=status_code,
+            message=message or "Scenario execution is already in progress.",
+        )
+
+
 class InvalidJsonException(PyritException):
     """Exception class for blocked content errors."""
 
