@@ -460,6 +460,34 @@ async def test_cancelling_one_scorer_neither_cancels_nor_caches_the_shared_acqui
     assert await collector.acquire_once_async(key="other", acquire=acquire) == "observation"
 
 
+async def test_a_failure_after_one_scorer_cancels_reaches_the_others_without_loop_errors_async() -> None:
+    collector = _ScoringCollector()
+    release = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    handled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: handled.append(context))
+
+    async def acquire() -> Any:
+        await release.wait()
+        raise RuntimeError("trace store down")
+
+    try:
+        first = asyncio.ensure_future(collector.acquire_once_async(key="k", acquire=acquire))
+        second = asyncio.ensure_future(collector.acquire_once_async(key="k", acquire=acquire))
+        await asyncio.sleep(0)
+        first.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(RuntimeError, match="trace store down"):
+            await second
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+
+    assert first.cancelled()
+    assert handled == []
+
+
 @pytest.mark.parametrize("loss", ["closed", "evicted"])
 async def test_stored_scores_match_only_while_their_traces_are_current_async(
     sqlite_instance: MemoryInterface, loss: str

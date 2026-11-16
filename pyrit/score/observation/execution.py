@@ -120,8 +120,10 @@ class _ScoringCollector:
             shared.add_done_callback(lambda task: task.cancelled() or task.exception())
             self._acquisitions[key] = shared
         try:
-            # Shield, so cancelling this scorer does not cancel the acquisition other scorers await.
-            return await asyncio.shield(shared)
+            # Wait without awaiting the shared future, so cancelling this scorer neither cancels the
+            # acquisition other scorers await nor, as asyncio.shield does on some versions, logs its failure.
+            await asyncio.wait([shared])
+            return shared.result()
         finally:
             if shared.cancelled() and self._acquisitions.get(key) is shared:
                 del self._acquisitions[key]
