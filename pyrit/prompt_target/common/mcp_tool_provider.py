@@ -44,15 +44,15 @@ def _advertised_tool_name(*, name: str, used: set[str]) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", name)
     if len(sanitized) <= _MAX_TOOL_NAME_LENGTH and sanitized not in used:
         return sanitized
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
-    for length in range(_TOOL_NAME_HASH_LENGTH, _MAX_TOOL_NAME_LENGTH - 1, 2):
-        candidate = f"{sanitized[: _MAX_TOOL_NAME_LENGTH - length - 1]}_{digest[:length]}"
-        if candidate not in used:
-            return candidate
-    candidate = f"_{digest[: _MAX_TOOL_NAME_LENGTH - 1]}"
-    if candidate not in used:
-        return candidate
-    raise ValueError(f"Cannot derive a unique tool name for {name!r}")
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:_TOOL_NAME_HASH_LENGTH]
+    stem = sanitized[: _MAX_TOOL_NAME_LENGTH - _TOOL_NAME_HASH_LENGTH - 2]
+    candidate = f"{stem}_{digest}"
+    counter = 1
+    while candidate in used:
+        suffix = f"_{counter}"
+        candidate = f"{stem[: _MAX_TOOL_NAME_LENGTH - _TOOL_NAME_HASH_LENGTH - len(suffix) - 1]}_{digest}{suffix}"
+        counter += 1
+    return candidate
 
 
 if TYPE_CHECKING:

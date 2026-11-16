@@ -420,8 +420,8 @@ async def test_get_tools_async_gives_every_tool_a_unique_compatible_name() -> No
     assert len(set(names)) == 3
     assert names[0] == "a_b"
     assert names[1].startswith("a_b_")
-    assert len(names[2]) == 64
-    assert names[2].startswith(f"{'x' * 55}_")
+    assert len(names[2]) == 63
+    assert names[2].startswith(f"{'x' * 54}_")
 
     session = MagicMock()
     session.call_tool = AsyncMock(return_value=CallToolResult(content=[]))
@@ -453,7 +453,7 @@ async def test_get_tools_async_disambiguates_a_generated_alias_from_an_existing_
 
     assert names[0] == "a_b"
     assert names[1] == f"a_b_{digest[:8]}"
-    assert names[2] == f"a_b_{digest[:10]}"
+    assert names[2] == f"a_b_{digest[:8]}_1"
     assert len(set(names)) == 3
 
 
