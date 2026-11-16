@@ -102,8 +102,9 @@ memory for that caller's requests only. Everyone can see and use the target, but
 sets their key, their requests through it fail with `CallerCredentialRequiredError`. Nothing falls
 back to another caller's key or to the server's environment keys, managed identity, or SDK login.
 
-Nothing may replace the caller's key. These targets reject static authentication headers and are
-not built while the server sets `OPENAI_CUSTOM_HEADERS`. A `LiteLLMChatTarget` with caller keys
+Nothing may replace the caller's key. These targets reject static authentication headers, including
+gateway subscription keys and cookies, ignore `OPENAI_ADDITIONAL_REQUEST_HEADERS`, and are not built
+while the server sets `OPENAI_CUSTOM_HEADERS`. A `LiteLLMChatTarget` with caller keys
 also accepts only generation parameters and other headers as passthrough options, and rejects
 provider-routing overrides and global LiteLLM fallbacks or model aliases.
 

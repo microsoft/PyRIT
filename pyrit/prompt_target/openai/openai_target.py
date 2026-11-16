@@ -245,7 +245,8 @@ class OpenAITarget(PromptTarget):
                 every request (see ``pyrit.auth.CallerCredential``). Defaults to ``"api_key"``, which
                 resolves the key as described above.
             headers (str, Optional): Extra headers of the endpoint (JSON). Defaults to the
-                ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable unless ``auth_mode`` is ``"none"``.
+                ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable unless ``auth_mode`` is ``"none"``
+                or ``"caller"``.
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
@@ -273,9 +274,11 @@ class OpenAITarget(PromptTarget):
         self._httpx_client_kwargs = httpx_client_kwargs or {}
         self._auth_mode = auth_mode
 
+        # A no-key or caller-key target never reads extra headers from this server, since a server
+        # header (such as a gateway subscription key) could authenticate a caller as the server.
         request_headers = (
             headers
-            if auth_mode == "none"
+            if auth_mode in ("none", "caller")
             else default_values.get_non_required_value(
                 env_var_name=self.ADDITIONAL_REQUEST_HEADERS, passed_value=headers
             )
@@ -329,6 +332,9 @@ class OpenAITarget(PromptTarget):
             )
         )
         self._validate_caller_credential_environment()
+        if self._caller_credential is not None:
+            # Refuse a passthrough header that could replace the caller's key now, not on the first send.
+            self._validate_request_headers(body=getattr(self, "_extra_body_parameters", None) or {})
 
         self._initialize_openai_client()
         if self._SUPPORTED_GENERATION_CAPABILITIES:

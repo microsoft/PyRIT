@@ -109,7 +109,10 @@ def test_caller_mode_rejects_an_explicit_key(api_key: object) -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("header", ["Authorization", "aUtHoRiZaTiOn", "api-key", "X-API-Key", "x-goog-api-key"])
+@pytest.mark.parametrize(
+    "header",
+    ["Authorization", "aUtHoRiZaTiOn", "api-key", "X-API-Key", "x-goog-api-key", "Ocp-Apim-Subscription-Key", "Cookie"],
+)
 @pytest.mark.parametrize("source", ["headers", "default_headers"])
 def test_caller_mode_rejects_static_authentication_headers(header: str, source: str) -> None:
     with pytest.raises(ValueError, match="authentication headers"):
@@ -224,32 +227,47 @@ async def test_openai_reconstructed_copy_rejects_static_authentication_async() -
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("target_cls", [OpenAIChatTarget, OpenAIResponseTarget])
 @pytest.mark.parametrize("reconstruct", [False, True])
-@pytest.mark.parametrize("header", ["Authorization", "aPi-KeY"])
-async def test_openai_request_authentication_headers_are_rejected_async(
+@pytest.mark.parametrize("header", ["Authorization", "aPi-KeY", "Ocp-Apim-Subscription-Key"])
+async def test_openai_request_authentication_headers_are_rejected_at_construction_async(
     target_cls: type[OpenAIChatTarget] | type[OpenAIResponseTarget],
     reconstruct: bool,
     header: str,
 ) -> None:
     options = {"extra_headers": {header: "static-key"}}
-    source = target_cls(**_SETTINGS, auth_mode="caller", extra_body_parameters=None if reconstruct else options)
-    target = (
-        TargetRegistry.get_registry_singleton().recreate_instance(
-            source=source, params={"extra_body_parameters": options}
-        )
-        if reconstruct
-        else source
-    )
-    message = Message.from_prompt(prompt="hello", role="user")
+    if not reconstruct:
+        with pytest.raises(ValueError, match="authentication headers"):
+            target_cls(**_SETTINGS, auth_mode="caller", extra_body_parameters=options)
+        return
+    source = target_cls(**_SETTINGS, auth_mode="caller")
     try:
         with pytest.raises(ValueError, match="authentication headers"):
-            await target._construct_request_body_async(
-                conversation=[message],
-                json_config=target._get_json_response_config(message_piece=message.message_pieces[0]),
+            TargetRegistry.get_registry_singleton().recreate_instance(
+                source=source, params={"extra_body_parameters": options}
             )
     finally:
-        await target.cleanup_target_async()
-        if target is not source:
-            await source.cleanup_target_async()
+        await source.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_caller_mode_ignores_the_servers_extra_request_headers_async() -> None:
+    # A server header such as a gateway subscription key would let callers ride on the server's account.
+    transport = _RecordingTransport()
+    transport.release_first_request.set()
+    seen: list[httpx.Headers] = []
+    original = transport.handle_async
+
+    async def record_async(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return await original(request)
+
+    environment = {"OPENAI_ADDITIONAL_REQUEST_HEADERS": json.dumps({"Ocp-Apim-Subscription-Key": "server-key"})}
+    with patch.dict("os.environ", environment):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(record_async)) as http_client:
+            target = _caller_target(http_client=http_client)
+            await _send_as_async(target=target, principal="alice")
+
+    assert seen[0]["Authorization"] == "Bearer alice-key"
+    assert "Ocp-Apim-Subscription-Key" not in seen[0]
 
 
 @pytest.mark.usefixtures("patch_central_database")

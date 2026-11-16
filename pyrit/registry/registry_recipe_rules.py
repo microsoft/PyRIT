@@ -146,8 +146,8 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any], auth_mode: 
     for name, turned_off in fallbacks.items():
         value = params.get(name)
         if value in (None, ""):
-            # "identity" and "caller" read no key from this server, and "none" reads nothing.
-            if auth_mode == "none" or (auth_mode in ("identity", "caller") and turned_off is None):
+            # "none" and "caller" read nothing from this server, and "identity" reads no key.
+            if auth_mode in ("none", "caller") or (auth_mode == "identity" and turned_off is None):
                 continue
             message = f"'{name}' is empty, so '{cls.__name__}' can use this server's credential instead."
             if turned_off is not None:

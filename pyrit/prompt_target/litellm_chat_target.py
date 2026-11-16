@@ -232,9 +232,10 @@ class LiteLLMChatTarget(PromptTarget):
     # directly keeps LiteLLM's usual routing.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "caller")
     # A copy keeps where its source sends requests and how it signs in, so a key can't be sent elsewhere.
-    # Passthrough options can also set the key, route, or base URL, so they are kept too.
+    # The model's provider prefix picks the route, and passthrough options can set the key, route, or
+    # base URL, so those are kept too.
     COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {"endpoint", "api_key", "auth_mode", "headers", "extra_body_parameters"}
+        {"model_name", "endpoint", "api_key", "auth_mode", "headers", "extra_body_parameters"}
     )
     _CALLER_CREDENTIAL_PASSTHROUGH = frozenset(
         {

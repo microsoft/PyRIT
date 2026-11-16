@@ -244,10 +244,11 @@ class TargetService:
         Returns:
             TargetInstance: The description, with ``caller_credential_configured`` set when it applies.
         """
-        credential = target_obj.caller_credential
-        if credential is None or caller is None:
+        credentials = target_obj.get_caller_credentials()
+        if not credentials or caller is None:
             return instance
-        return instance.model_copy(update={"caller_credential_configured": credential.has_credential(principal=caller)})
+        configured = all(credential.has_credential(principal=caller) for credential in credentials)
+        return instance.model_copy(update={"caller_credential_configured": configured})
 
     async def list_targets_async(
         self,
@@ -854,9 +855,10 @@ class TargetService:
         """
         credential = target_obj.caller_credential
         if credential is None:
+            inner = " Set it on the inner targets that use it." if target_obj.get_caller_credentials() else ""
             raise ValueError(
-                f"Target '{target_registry_name}' uses shared credentials and does not take your own key. Only "
-                "targets created with auth_mode 'caller' do."
+                f"Target '{target_registry_name}' does not take your own key itself. Only targets created with "
+                f"auth_mode 'caller' do.{inner}"
             )
         return credential
 

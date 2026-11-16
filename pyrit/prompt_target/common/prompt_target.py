@@ -128,9 +128,9 @@ class PromptTarget(Identifiable):
 
     # Credential parameters that, left empty, let the target fall back to a credential from this
     # server (an environment variable, or the server's Azure identity), each mapped to the value
-    # that turns that off, or None when only an auth mode does: ``"identity"`` and ``"caller"`` don't
-    # read a parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls
-    # back to this server's credentials, so a saved entry that would is refused. Choosing
+    # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
+    # parameter mapped to None, and ``"none"`` and ``"caller"`` read none of them. A saved target never
+    # falls back to this server's credentials, so a saved entry that would is refused. Choosing
     # ``"identity"`` isn't a fallback.
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
 
@@ -927,6 +927,21 @@ class PromptTarget(Identifiable):
             CallerCredential | None: The credential for ``auth_mode="caller"``, otherwise None.
         """
         return None
+
+    def get_caller_credentials(self) -> list["CallerCredential"]:
+        """
+        Return the credentials of this target and of any inner targets that use each caller's own key.
+
+        A composite target, such as ``RoundRobinTarget``, needs each caller's key for every inner target
+        that uses one.
+
+        Returns:
+            list[CallerCredential]: The credentials, or an empty list when every request uses shared credentials.
+        """
+        credentials = [self.caller_credential] if self.caller_credential is not None else []
+        for inner_target in getattr(self, "inner_targets", None) or ():
+            credentials.extend(inner_target.get_caller_credentials())
+        return credentials
 
     def _validate_caller_credential_environment(self) -> None:
         """

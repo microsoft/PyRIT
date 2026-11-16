@@ -19,7 +19,13 @@ from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import ScenarioResult, ScenarioRunSizeEstimateRequest, SeedPrompt
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
-from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration, TargetRequirements
+from pyrit.prompt_target import (
+    CapabilityName,
+    RoundRobinTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    TargetRequirements,
+)
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, Scenario, TechniqueRequirements
 from pyrit.scenario.core import (
@@ -687,6 +693,18 @@ class TestCallerKeyReadiness:
             assert scenario.get_readiness().issues == []
         with caller_principal_scope("bob"):
             assert [issue.role for issue in scenario.get_readiness().issues] == ["scoring_target"]
+
+    def test_a_composite_role_target_is_checked_through_its_inner_targets(self) -> None:
+        inner, other = _CallerKeyTarget(), _CallerKeyTarget()
+        other.caller_credential.set_credential(principal="alice", credential="alice-key")
+        composite = RoundRobinTarget(targets=[inner, other])
+        scenario = _execute_with(objective_target=composite)
+
+        with caller_principal_scope("alice"):
+            assert [issue.role for issue in scenario.get_readiness().issues] == ["objective_target"]
+        inner.caller_credential.set_credential(principal="alice", credential="alice-key")
+        with caller_principal_scope("alice"):
+            assert scenario.get_readiness().issues == []
 
     def test_work_without_a_caller_reports_no_key_issue(self) -> None:
         # Shared estimates act for no caller; the target still fails closed if it is ever sent to.

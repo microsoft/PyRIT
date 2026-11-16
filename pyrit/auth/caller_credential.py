@@ -23,7 +23,16 @@ from typing import NoReturn
 _caller_principal: contextvars.ContextVar[str | None] = contextvars.ContextVar("pyrit_caller_principal", default=None)
 
 _STATIC_AUTHENTICATION_HEADERS = frozenset(
-    {"authorization", "proxy-authorization", "api-key", "x-api-key", "x-goog-api-key"}
+    {
+        "authorization",
+        "proxy-authorization",
+        "api-key",
+        "x-api-key",
+        "x-goog-api-key",
+        "ocp-apim-subscription-key",
+        "cookie",
+        "set-cookie",
+    }
 )
 
 

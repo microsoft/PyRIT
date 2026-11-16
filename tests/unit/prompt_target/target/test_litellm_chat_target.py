@@ -1354,6 +1354,15 @@ def test_reconstruction_shares_the_callers_keys(patch_central_database, litellm_
     assert copy.caller_credential is source.caller_credential
 
 
+def test_reconstruction_keeps_the_provider_route(patch_central_database, litellm_stub) -> None:
+    source = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="server-key")
+
+    with pytest.raises(ValueError, match="model_name"):
+        TargetRegistry.get_registry_singleton().recreate_instance(
+            source=source, params={"model_name": "anthropic/claude-sonnet-4-6"}, external_input=True
+        )
+
+
 def test_reconstruction_rejects_temperature_override_when_passthrough_sets_temperature(
     patch_central_database, litellm_stub
 ) -> None:

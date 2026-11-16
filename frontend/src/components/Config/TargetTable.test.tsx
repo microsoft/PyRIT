@@ -1272,6 +1272,22 @@ describe('TargetTable', () => {
       expect(onSetKey).toHaveBeenCalledWith(needsKeyTarget)
     })
 
+    it('should point a composite that needs keys to its inner targets without offering key actions', () => {
+      const composite = makeTarget({
+        target_registry_name: 'mixed_round_robin',
+        requires_caller_credential: true,
+        caller_credential_configured: false,
+        inner_targets: [makeTarget({ target_registry_name: 'inner_own_key', requires_caller_credential: true })],
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[composite]} /></TestWrapper>)
+
+      const row = rowFor('mixed_round_robin')
+      expect(row.getByText('Yours')).toBeInTheDocument()
+      expect(row.getByLabelText('Needs your key on its inner targets')).toBeInTheDocument()
+      expect(row.queryByRole('button', { name: /Needs your key/ })).not.toBeInTheDocument()
+      expect(row.queryByRole('button', { name: /key for mixed_round_robin/ })).not.toBeInTheDocument()
+    })
+
     it('should treat an unknown key status as needing the key', () => {
       const unknown = makeTarget({
         target_registry_name: 'own_key_unknown', requires_caller_credential: true, caller_credential_configured: null,

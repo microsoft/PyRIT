@@ -85,6 +85,7 @@ interface TargetTableProps {
 }
 
 const KEY_SET_LABEL = 'Your key is set'
+const INNER_KEYS_LABEL = 'Needs your key on its inner targets'
 
 /** Format target_specific_params into a short human-readable string. */
 function formatParams(params?: Record<string, unknown> | null): string {
@@ -214,10 +215,16 @@ function AccountCell({ target, onSetKey }: {
   if (account === 'shared') {
     return <Text size={200}>{TARGET_ACCOUNT_LABELS.shared}</Text>
   }
+  // A composite takes no key itself; each inner target that uses one gets its own.
+  const composite = (target.inner_targets ?? []).length > 0
   return (
     <span className={styles.accountCell}>
       <Text size={200}>{TARGET_ACCOUNT_LABELS.yours}</Text>
-      {targetNeedsCallerKey(target) ? (
+      {targetNeedsCallerKey(target) && composite ? (
+        <Tooltip content={INNER_KEYS_LABEL} relationship="label">
+          <KeyFilled className={styles.needsKeyIcon} aria-label={INNER_KEYS_LABEL} />
+        </Tooltip>
+      ) : targetNeedsCallerKey(target) ? (
         <Tooltip content={NEEDS_CALLER_KEY_LABEL} relationship="label">
           <Button
             className={styles.rowAction}
@@ -600,7 +607,7 @@ export default function TargetTable({
                         >
                           {hidden ? 'Show' : 'Hide'}
                         </Button>
-                        {usesOwnKey && (
+                        {usesOwnKey && !expandable && (
                           <Button
                             className={styles.rowAction}
                             appearance="subtle"
@@ -613,7 +620,7 @@ export default function TargetTable({
                             {keySet ? 'Replace key' : 'Set key'}
                           </Button>
                         )}
-                        {keySet && (
+                        {keySet && !expandable && (
                           <Button
                             className={styles.rowAction}
                             appearance="subtle"

@@ -1460,8 +1460,7 @@ class Scenario(ABC):
             if target is None or id(target) in seen:
                 continue
             seen.add(id(target))
-            credential = target.caller_credential
-            if credential is None or not credential.is_missing_for_current_caller():
+            if not any(credential.is_missing_for_current_caller() for credential in target.get_caller_credentials()):
                 continue
             identifier = TargetIdentifier.from_component_identifier(target.get_identifier())
             name = identifier.model_name or identifier.class_name

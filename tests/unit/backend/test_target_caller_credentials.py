@@ -19,7 +19,7 @@ from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget, RoundRobinTarget
 from pyrit.registry import TargetRegistry
 
 _ALICE = "entra:tenant:alice"
@@ -268,9 +268,9 @@ async def test_credential_requires_a_caller_async(service: TargetService) -> Non
 async def test_caller_credential_operations_reject_shared_targets_async(service: TargetService) -> None:
     await _create_shared_async(service)
 
-    with pytest.raises(ValueError, match="uses shared credentials"):
+    with pytest.raises(ValueError, match="does not take your own key"):
         await service.set_caller_credential_async(target_registry_name="shared", caller=_ALICE, credential="key")
-    with pytest.raises(ValueError, match="uses shared credentials"):
+    with pytest.raises(ValueError, match="does not take your own key"):
         await service.remove_caller_credential_async(target_registry_name="shared", caller=_ALICE)
 
 
@@ -309,6 +309,23 @@ async def test_decision_target_keeps_shared_api_key_behavior_async(service: Targ
     assert isinstance(created, TargetInstance)
     assert not created.requires_caller_credential
     assert service.get_target_object(target_registry_name="decision")._api_key == _ALICE_KEY
+
+
+async def test_composite_reports_and_checks_its_inner_targets_keys_async(service: TargetService) -> None:
+    inner = OpenAIChatTarget(**_TARGET_PARAMS, auth_mode="caller")
+    shared = OpenAIChatTarget(**_TARGET_PARAMS, api_key="server-key")
+    service._registry.instances.register(RoundRobinTarget(targets=[inner, shared]), name="mixed")
+
+    before = await service.get_target_async(target_registry_name="mixed", caller=_ALICE)
+    assert inner.caller_credential is not None
+    inner.caller_credential.set_credential(principal=_ALICE, credential=_ALICE_KEY)
+    after = await service.get_target_async(target_registry_name="mixed", caller=_ALICE)
+
+    assert before is not None and before.requires_caller_credential
+    assert before.caller_credential_configured is False
+    assert after is not None and after.caller_credential_configured is True
+    with pytest.raises(ValueError, match="inner targets"):
+        await service.set_caller_credential_async(target_registry_name="mixed", caller=_ALICE, credential="key")
 
 
 async def test_failed_registration_leaves_no_target_async(service: TargetService) -> None:
