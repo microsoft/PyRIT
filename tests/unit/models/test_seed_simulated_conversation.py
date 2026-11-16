@@ -485,7 +485,7 @@ class TestSeedSimulatedConversationCanonicalPrompts:
         assert conv.simulated_target_system_prompt.value == "target"
         assert conv.next_message_system_prompt is not None
         assert conv.next_message_system_prompt.value == "next"
-        assert not [warning for warning in recwarn if issubclass(warning.category, DeprecationWarning)]
+        assert not recwarn
 
     def test_path_inputs_are_not_model_fields(self):
         """The deprecated path inputs never become fields, so they cannot reach persistence."""

@@ -3,6 +3,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
@@ -23,6 +24,15 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 
 
+@pytest.fixture
+async def worker_executor_async() -> AsyncGenerator[ThreadPoolExecutor, None]:
+    """Exercise request cleanup with a fixture-owned default executor."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        asyncio.get_running_loop().set_default_executor(executor)
+        yield executor
+
+
+@pytest.mark.usefixtures("worker_executor_async")
 @pytest.mark.parametrize("raise_server_exceptions", [False, True])
 async def test_contextless_client_disposes_memory_on_request_loop_async(
     *, sqlite_instance: SQLiteMemory, raise_server_exceptions: bool

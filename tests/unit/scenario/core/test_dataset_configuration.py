@@ -153,7 +153,7 @@ def test_canonical_dataset_selection_does_not_warn(recwarn: pytest.WarningsRecor
     assert config.dataset_names == ["d1"]
     assert config.max_total == 2
     assert config.fetch is DatasetFetchPolicy.NEVER
-    assert not [warning for warning in recwarn if issubclass(warning.category, DeprecationWarning)]
+    assert not recwarn
 
 
 @pytest.mark.parametrize(
@@ -255,10 +255,10 @@ class TestDatasetConfigurationInit:
         assert config._seed_groups is not None
         assert len(config._seed_groups) == 3
 
-    def test_init_copies_dataset_names_to_prevent_mutation(self) -> None:
-        names = ["d1", "d2"]
-        config = DatasetConfiguration(sources=[DatasetSource(name=name) for name in names])
-        names.append("d3")
+    def test_init_copies_sources_to_prevent_mutation(self) -> None:
+        sources = [DatasetSource(name="d1"), DatasetSource(name="d2")]
+        config = DatasetConfiguration(sources=sources)
+        sources.append(DatasetSource(name="d3"))
         assert config.dataset_names == ["d1", "d2"]
 
     def test_init_copies_seeds_to_prevent_mutation(self) -> None:

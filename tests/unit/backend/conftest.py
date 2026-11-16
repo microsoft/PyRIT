@@ -34,10 +34,11 @@ def close_test_client_memory_before_loop_shutdown(request: pytest.FixtureRequest
     if "sqlite_instance" not in request.fixturenames:
         yield
         return
-    memory: SQLiteMemory = request.getfixturevalue("sqlite_instance")
 
     @contextmanager
     def memory_portal(*args: Any, **kwargs: Any) -> Generator[BlockingPortal, None, None]:
+        # Preserve normal fixture ordering so memory tears down before fixture-owned executors.
+        memory: SQLiteMemory = request.getfixturevalue("sqlite_instance")
         with start_blocking_portal(*args, **kwargs) as portal:
             try:
                 yield portal
