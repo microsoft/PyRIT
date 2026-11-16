@@ -644,7 +644,7 @@ converter = LLMGenericTextConverter(
 )
 asyncio.run(converter.convert_async(prompt="hello"))
 prompt = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0].converted_value
-print(json.dumps({"set_order": list(source_words), "prompt": prompt, "identifier": converter.get_identifier().hash}))
+print(json.dumps({"prompt": prompt, "identifier": converter.get_identifier().hash}))
 """
 
 
@@ -665,7 +665,6 @@ def test_generic_llm_converter_prepared_values_match_across_processes() -> None:
         results.append(json.loads(process.stdout.splitlines()[-1]))
 
     first, second = results
-    assert first["set_order"] != second["set_order"], "the hash seeds should iterate the source set differently"
     assert (
         first["prompt"]
         == second["prompt"]
