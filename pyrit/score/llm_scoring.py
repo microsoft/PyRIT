@@ -113,6 +113,10 @@ def _judgment_repeats_scored_text(*, response_text: str, scored_text: str) -> bo
     ``_MAX_DECODE_ATTEMPTS`` attempts per text, and is skipped for verdicts longer than
     ``_MAX_DECODED_VERDICT_LENGTH`` characters.
 
+    A copied verdict is rejected and the judge is asked again. If the judge returns a copied
+    verdict on every attempt, scoring fails and no score is stored, rather than storing an object
+    taken from the target's output.
+
     Returns:
         bool: True when the verdict is found in ``scored_text``.
     """
@@ -361,6 +365,10 @@ async def _run_llm_scoring_async(
                 response_text=text_piece.converted_value, scored_text=scored_piece.converted_value
             )
         ):
+            logger.warning(
+                "The judge's verdict for scored prompt %s was copied from the scored content.",
+                request.scored_prompt_id,
+            )
             raise InvalidJsonException(
                 message=(
                     "Invalid JSON response, the verdict was copied from the scored content: "
