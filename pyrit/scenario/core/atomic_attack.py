@@ -41,6 +41,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def compute_atomic_group_id(
+    *,
+    atomic_attack_name: str,
+    technique_eval_hash: str,
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None,
+) -> str:
+    """
+    Compute the stable ID of an atomic group from its name, technique, and scorer selection.
+
+    Pool runs also key the group by its selected objective scorer and evaluation, so a
+    different selection is a different unit of work. Single-scorer runs keep their IDs.
+
+    Args:
+        atomic_attack_name (str): The group's name.
+        technique_eval_hash (str): The technique's evaluation hash.
+        objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection, or
+            None for single-scorer runs.
+
+    Returns:
+        str: The atomic-group ID.
+    """
+    key: dict[str, Any] = {
+        "atomic_attack_name": atomic_attack_name,
+        "technique_eval_hash": str(technique_eval_hash),
+    }
+    if objective_scorer_binding is not None:
+        key["objective_scorer"] = {
+            "candidate_index": objective_scorer_binding.candidate_index,
+            "evaluation": objective_scorer_binding.evaluation,
+            "scorer_hash": objective_scorer_binding.scorer_hash,
+        }
+    return config_hash(key)
+
+
 class AtomicAttack:
     """
     Represents a single atomic attack test combining an attack strategy and dataset.
@@ -282,12 +316,15 @@ class AtomicAttack:
 
     @property
     def logical_group_id(self) -> str:
-        """The stable identity of this planned atomic-attack group."""
-        return config_hash(
-            {
-                "atomic_attack_name": self.atomic_attack_name,
-                "technique_eval_hash": self.technique_eval_hash,
-            }
+        """
+        The stable identity of this planned atomic-attack group.
+
+        The run plan, the workers' active-group tracking, and adaptation metadata all use this ID.
+        """
+        return compute_atomic_group_id(
+            atomic_attack_name=self.atomic_attack_name,
+            technique_eval_hash=self.technique_eval_hash,
+            objective_scorer_binding=self._objective_scorer_binding,
         )
 
     @property

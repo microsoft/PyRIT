@@ -26,6 +26,7 @@ from pyrit.executor.attack import (
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialAttackResult,
+    TreeOfAttacksWithPruningAttack,
 )
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -39,8 +40,11 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    MessageScorable,
     RequestTraceContext,
+    Scorable,
     Score,
+    ScoringExpectation,
     SeedGroupRequirements,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -56,7 +60,7 @@ from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.technique import Execute
 from pyrit.scenario.scenarios.technique.execute import _build_execute_technique
-from pyrit.score import SubStringScorer, TrueFalseScorer
+from pyrit.score import FloatScaleScorer, FloatScaleThresholdScorer, SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -84,6 +88,16 @@ def catalog(patch_central_database: MagicMock) -> Iterator[AttackTechniqueRegist
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
     reset_dynamic_technique_caches()
+
+
+class _Scale(FloatScaleScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return []
 
 
 @pytest.fixture
@@ -778,6 +792,26 @@ class TestExecute:
     async def test_tap_needs_a_scorer_that_keeps_float_feedback_async(self) -> None:
         scenario = _scenario(scorer=SubStringScorer(substring="x"), scenario_techniques=["tap"])
         with pytest.raises(IncompatibleTechniqueError, match="'tap' ranks by float feedback"):
+            await scenario.initialize_async()
+
+    async def test_tap_judges_with_the_scenario_scorer_async(self) -> None:
+        scorer = FloatScaleThresholdScorer(scorer=_Scale(), threshold=0.7)
+        with override_default_adversarial_target(MockPromptTarget()):
+            scenario = _scenario(scorer=scorer, scenario_techniques=["tap"])
+            await scenario.initialize_async()
+
+        attack = scenario._atomic_attacks[0].attack_technique.attack
+        assert isinstance(attack, TreeOfAttacksWithPruningAttack)
+        # A plain config is dropped for an attack that narrows its config type, which would
+        # leave TAP judging with its own default scorer.
+        assert attack._objective_scorer is scorer
+
+    async def test_a_config_type_that_cannot_carry_the_scorer_is_rejected_async(self, scorer: MagicMock) -> None:
+        scenario = _scenario(scorer=scorer)
+        with (
+            patch("pyrit.scenario.scenarios.technique.execute.build_technique_scoring_config", return_value=None),
+            pytest.raises(IncompatibleTechniqueError, match="cannot carry the objective scorer"),
+        ):
             await scenario.initialize_async()
 
     @pytest.mark.parametrize("retries", [0, 2])
