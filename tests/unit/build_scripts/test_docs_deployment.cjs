@@ -24,10 +24,15 @@ const deploymentJob = {
   steps: [{ name: "Deploy to GitHub Pages", started_at: "2026-11-13T10:00:00Z", conclusion: "failure" }]
 };
 const deploymentLog = `2026-11-13T10:00:00.0000000Z Created deployment for ${context.sha}, ID: ${deploymentId}\n`;
+const previous = { ...current, id: 122, run_number: 49 };
+const preflightJob = {
+  ...deploymentJob, id: 988,
+  steps: [{ name: "Deploy to GitHub Pages", started_at: null, conclusion: "skipped" }]
+};
 
 function fixture({
   attempt = 1, run = {}, pages, previousRuns = [[current]], status = "deployment_cancelled", errorRoute, errorStatus,
-  jobPages = [[deploymentJob]], log = deploymentLog, logs
+  jobPages = [[deploymentJob]], jobsByRun, log = deploymentLog, logs
 } = {}) {
   const calls = [];
   const messages = [];
@@ -67,7 +72,8 @@ function fixture({
         if (route === jobsRoute) {
           assert.equal(options.filter, "all");
           assert.equal(options.per_page, 100);
-          for (const data of jobPages) yield { data };
+          if (jobsByRun) assert.ok(Object.hasOwn(jobsByRun, options.run_id));
+          for (const data of jobsByRun ? jobsByRun[options.run_id] : jobPages) yield { data };
           return;
         }
         assert.equal(route, listRoute);
@@ -96,7 +102,7 @@ test("first publication uses run history, not an ambiguous Pages response", asyn
 });
 
 test("a new run may publish an updated release tree after a successful same-SHA deployment", async () => {
-  const f = fixture({ status: "succeed", previousRuns: [[{ ...current, id: 122 }]] });
+  const f = fixture({ status: "succeed", previousRuns: [[previous]] });
   await check(f.options);
   assert.equal(f.calls.at(-1).route, statusRoute);
   assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, 122);
@@ -104,7 +110,7 @@ test("a new run may publish an updated release tree after a successful same-SHA 
 
 for (const status of ["syncing_files", ""]) {
   test(`a new run cannot bypass an active or unknown same-SHA deployment: ${JSON.stringify(status)}`, async () => {
-    const f = fixture({ status, previousRuns: [[{ ...current, id: 122 }]] });
+    const f = fixture({ status, previousRuns: [[previous]] });
     await assert.rejects(check(f.options), /Refusing Pages retry/);
   });
 }
@@ -112,7 +118,7 @@ for (const status of ["syncing_files", ""]) {
 test("same-SHA history paginates past non-production runs", async () => {
   const f = fixture({ status: "", previousRuns: [
     [{ ...current, id: 120, event: "pull_request" }],
-    [{ ...current, id: 122 }]
+    [previous]
   ] });
   await assert.rejects(check(f.options), /Refusing Pages retry/);
 });
@@ -129,7 +135,7 @@ for (const status of [
   test(`confirmed terminal ${status} permits a manual failed-job retry`, async () => {
     const f = fixture({ attempt: 2, status });
     await check(f.options);
-    assert.deepEqual(f.calls.map(call => call.route), [runRoute, listRoute, jobsRoute, logsRoute, statusRoute]);
+    assert.deepEqual(f.calls.map(call => call.route), [runRoute, listRoute, listRoute, jobsRoute, logsRoute, statusRoute]);
     assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, context.runId);
   });
 }
@@ -225,12 +231,115 @@ test("retry uses the latest actual deployment, not current or preflight-only att
 
 test("new runs check the latest deployment attempt of the previous same-SHA run", async () => {
   const f = fixture({
-    previousRuns: [[{ ...current, id: 122, run_attempt: 3 }]],
+    previousRuns: [[{ ...previous, run_attempt: 3 }]],
     jobPages: [[{ ...deploymentJob, id: 986 }], [{ ...deploymentJob, run_attempt: 3 }]]
   });
   await check(f.options);
   assert.equal(f.calls.find(call => call.route === jobsRoute).options.run_id, 122);
   assert.equal(f.calls.find(call => call.route === logsRoute).options.job_id, deploymentJob.id);
+});
+
+for (const attempt of [1, 2]) {
+  test(`preflight-only runs do not hide an older failed deployment on attempt ${attempt}`, async () => {
+    const preflightRun = { ...(attempt === 1 ? previous : current), event: "workflow_dispatch" };
+    const failedRun = attempt === 1 ? { ...previous, id: 121, run_number: 48 } : previous;
+    const f = fixture({
+      attempt, previousRuns: [[preflightRun], [failedRun]],
+      run: attempt === 2 ? { event: "workflow_dispatch" } : {},
+      jobsByRun: { [preflightRun.id]: [[preflightJob]], [failedRun.id]: [[deploymentJob]] }
+    });
+    if (attempt === 2) f.options.context = { ...context, eventName: "workflow_dispatch" };
+    await check(f.options);
+    assert.deepEqual(f.calls.filter(call => call.route === jobsRoute).map(call => call.options.run_id),
+      [preflightRun.id, failedRun.id]);
+    assert.equal(f.calls.find(call => call.route === logsRoute).options.job_id, deploymentJob.id);
+    assert.equal(f.calls.at(-1).options.pages_deployment_id, deploymentId);
+  });
+}
+
+test("recovery crosses multiple positively skipped attempts and runs", async () => {
+  const failedRun = { ...previous, id: 121, run_number: 48 };
+  const f = fixture({
+    attempt: 3, previousRuns: [[failedRun], [{ ...previous, run_attempt: 2 }]],
+    jobsByRun: {
+      [current.id]: [[preflightJob], [{ ...preflightJob, id: 989, run_attempt: 2 }]],
+      [previous.id]: [[{ ...preflightJob, id: 990, run_attempt: 2 }], [preflightJob]],
+      [failedRun.id]: [[deploymentJob]]
+    }
+  });
+  await check(f.options);
+  assert.deepEqual(f.calls.filter(call => call.route === jobsRoute).map(call => call.options.run_id),
+    [current.id, previous.id, failedRun.id]);
+  assert.equal(f.calls.filter(call => call.route === logsRoute).length, 1);
+});
+
+for (const job of [
+  preflightJob,
+  { ...preflightJob, conclusion: "skipped", steps: [] }
+]) {
+  test(`confirmed preflight-only history permits the first actual deployment: ${JSON.stringify(job)}`, async () => {
+    const f = fixture({ attempt: 2, previousRuns: [[previous]], jobPages: [[job]], errorRoute: statusRoute });
+    await check(f.options);
+    assert.equal(f.calls.filter(call => call.route === jobsRoute).length, 2);
+    assert.equal(f.calls.some(call => call.route === logsRoute), false);
+  });
+}
+
+for (const jobPages of [
+  [[]],
+  [[{ ...preflightJob, status: "in_progress" }]],
+  [[{ ...preflightJob, steps: [] }]],
+  [[{ ...preflightJob, steps: undefined }]],
+  [[{ ...preflightJob, run_attempt: undefined }]],
+  [[{ ...preflightJob, steps: [{ name: "Deploy to GitHub Pages", started_at: null, conclusion: null }] }]],
+  [[{ ...preflightJob, steps: [...preflightJob.steps, ...preflightJob.steps] }]],
+  [[preflightJob, { ...preflightJob, id: 989 }]]
+]) {
+  test(`unconfirmed newer history cannot fall back to an older run: ${JSON.stringify(jobPages)}`, async () => {
+    const f = fixture({
+      attempt: 2, previousRuns: [[previous]],
+      jobsByRun: { [current.id]: jobPages, [previous.id]: [[deploymentJob]] }
+    });
+    await assert.rejects(check(f.options), /Cannot identify a completed/);
+    assert.deepEqual(f.calls.filter(call => call.route === jobsRoute).map(call => call.options.run_id), [current.id]);
+    assert.equal(f.calls.some(call => call.route === logsRoute), false);
+  });
+}
+
+test("a missing intervening attempt is not evidence that Pages never started", async () => {
+  const f = fixture({ attempt: 4, jobPages: [[{ ...preflightJob, run_attempt: 3 }], [deploymentJob]] });
+  await assert.rejects(check(f.options), /Cannot identify a completed/);
+  assert.equal(f.calls.some(call => call.route === logsRoute), false);
+});
+
+for (const status of ["syncing_files", "", "unexpected", "succeed"]) {
+  test(`an older deployment still blocks a preflight-only run's retry with status ${JSON.stringify(status)}`, async () => {
+    const f = fixture({
+      attempt: 2, previousRuns: [[previous]], status,
+      jobsByRun: { [current.id]: [[preflightJob]], [previous.id]: [[deploymentJob]] }
+    });
+    await assert.rejects(check(f.options), /Refusing Pages retry/);
+    assert.equal(f.calls.at(-1).options.pages_deployment_id, deploymentId);
+  });
+}
+
+for (const errorRoute of [jobsRoute, logsRoute, statusRoute]) {
+  test(`unavailable evidence cannot be skipped when recovering across runs: ${errorRoute}`, async () => {
+    const f = fixture({
+      previousRuns: [[previous], [{ ...previous, id: 121, run_number: 48 }]], errorRoute
+    });
+    await assert.rejects(check(f.options), /API unavailable/);
+    assert.deepEqual(f.calls.filter(call => call.route === jobsRoute).map(call => call.options.run_id), [previous.id]);
+  });
+}
+
+test("the newest actual deployment blocks fallback to an older run when its ID is unavailable", async () => {
+  const f = fixture({
+    previousRuns: [[previous], [{ ...previous, id: 121, run_number: 48 }]], log: ""
+  });
+  await assert.rejects(check(f.options), /Cannot identify the Pages deployment ID/);
+  assert.deepEqual(f.calls.filter(call => call.route === jobsRoute).map(call => call.options.run_id), [previous.id]);
+  assert.equal(f.calls.some(call => call.route === statusRoute), false);
 });
 
 test("a missing latest deployment ID cannot fall back to an older terminal deployment", async () => {

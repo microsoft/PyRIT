@@ -15,18 +15,35 @@ module.exports = async function docsDeployment({ github, context, core, mode, ru
       "GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
       { ...options, run_id: runId, filter: "all", per_page: 100 }
     )) {
-      jobs.push(...data.filter(job =>
-        job.name === "Deploy" && Number.isSafeInteger(job.run_attempt) &&
-        (exactAttempt ? job.run_attempt === attempt : job.run_attempt <= attempt) &&
-        job.steps?.some(step =>
-          step.name === "Deploy to GitHub Pages" && step.started_at && step.conclusion !== "skipped"
-        )
-      ));
+      for (const job of data.filter(job => job.name === "Deploy")) {
+        if (!Number.isSafeInteger(job.run_attempt) || job.run_attempt < 1) {
+          throw new Error("Cannot identify a completed Pages deployment job; refusing to guess its ID");
+        }
+        if (exactAttempt ? job.run_attempt === attempt : job.run_attempt <= attempt) jobs.push(job);
+      }
     }
-    jobs.sort((a, b) => b.run_attempt - a.run_attempt);
-    const job = jobs[0];
-    if (!job || job.status !== "completed" || jobs[1]?.run_attempt === job.run_attempt) {
-      throw new Error("Cannot identify a completed Pages deployment job; refusing to guess its ID");
+    let job;
+    for (let candidate = attempt; candidate >= (exactAttempt ? attempt : 1); candidate--) {
+      const matches = jobs.filter(item => item.run_attempt === candidate);
+      if (matches.length !== 1 || matches[0].status !== "completed") {
+        throw new Error("Cannot identify a completed Pages deployment job; refusing to guess its ID");
+      }
+      const steps = matches[0].steps?.filter(step => step.name === "Deploy to GitHub Pages");
+      if ((matches[0].conclusion === "skipped" && matches[0].steps?.length === 0) ||
+        (steps?.length === 1 && steps[0].conclusion === "skipped")) {
+        continue;
+      }
+      if (steps?.length !== 1 || !steps[0].started_at) {
+        throw new Error("Cannot identify a completed Pages deployment job; refusing to guess its ID");
+      }
+      job = matches[0];
+      break;
+    }
+    if (!job) {
+      if (exactAttempt) {
+        throw new Error("Cannot identify a completed Pages deployment job; refusing to guess its ID");
+      }
+      return null;
     }
     // deploy-pages does not expose the ID as an output. Its retained job log
     // records the exact ID it uses, including its status_url/buildVersion fallbacks.
@@ -95,29 +112,33 @@ module.exports = async function docsDeployment({ github, context, core, mode, ru
     }
   }
   if (!found) throw new Error("Cannot verify production run ordering; refusing deployment");
-  let recovery = runAttempt > 1;
-  let previous = current;
-  if (!recovery) {
-    // The Pages status API can return an empty status even for nonexistent IDs.
-    // Use workflow history, not that response, to identify first publications.
-    for await (const { data } of github.paginate.iterator(runsRoute, { ...runsOptions, head_sha: context.sha })) {
-      for (const run of data.filter(run =>
-        run.id !== context.runId && ["push", "workflow_dispatch"].includes(run.event)
-      )) {
-        recovery = true;
-        if (previous === current || run.run_number > previous.run_number) previous = run;
+  const previousRuns = [];
+  // A preflight-only run is not a deployment. Check older same-SHA runs even on
+  // retries, but only pass over attempts whose jobs explicitly confirm a skip.
+  for await (const { data } of github.paginate.iterator(runsRoute, { ...runsOptions, head_sha: context.sha })) {
+    for (const run of data.filter(run =>
+      run.id !== context.runId && ["push", "workflow_dispatch"].includes(run.event)
+    )) {
+      if (!Number.isSafeInteger(run.run_number) || !Number.isSafeInteger(run.run_attempt) ||
+        run.run_attempt < 1) throw new Error("Cannot verify production run ordering; refusing deployment");
+      if (run.run_number >= current.run_number) {
+        throw new Error("A newer production docs run exists. Recover that run instead of publishing this artifact.");
       }
+      previousRuns.push(run);
     }
   }
-  if (recovery) {
-    const { status } = await deploymentStatus(
-      previous.id, previous === current ? runAttempt - 1 : previous.run_attempt
-    );
+  previousRuns.sort((a, b) => b.run_number - a.run_number);
+  if (runAttempt > 1) previousRuns.unshift({ ...current, run_attempt: runAttempt - 1 });
+  for (const previous of previousRuns) {
+    const deployment = await deploymentStatus(previous.id, previous.run_attempt);
+    if (!deployment) continue;
+    const { status } = deployment;
     if (!RETRYABLE.has(status) && !(runAttempt === 1 && status === "succeed")) {
       throw new Error(`Refusing Pages retry with status ${JSON.stringify(status)}. ` +
         "Require a confirmed terminal state; unknown or active states cannot be retried, " +
         "and a successful deployment does not need a failed-job retry.");
     }
+    break;
   }
   core.info(`Pages preflight passed for run ${context.runId}, attempt ${runAttempt}, SHA ${context.sha}`);
 };

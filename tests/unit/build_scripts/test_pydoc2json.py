@@ -125,6 +125,23 @@ def test_data_fields_are_rendered_as_attributes(
     assert "does not appear in the function signature" not in caplog.text
 
 
+def test_prompt_memory_attributes_document_existing_converter_fields() -> None:
+    path = Path("pyrit") / "memory" / "memory_models.py"
+    module = griffe.visit("sample", filepath=path, code=path.read_text(encoding="utf-8"))
+    model = module["PromptMemoryEntry"]
+    result = class_to_dict(model)
+    attributes = {item["name"] for item in result["docstring"]["attributes"]}
+    markdown = render_class(result, module="sample")
+    for field in ("converter_identifiers", "converter_identifier_links"):
+        assert field in model.members
+        assert field in attributes
+        assert f"| `{field}` |" in markdown
+    for field in ("labels", "converters", "prompt_target"):
+        assert field not in model.members
+        assert field not in attributes
+        assert f"| `{field}` |" not in markdown
+
+
 @pytest.mark.parametrize(
     ("method", "parameter", "continuation"),
     [
