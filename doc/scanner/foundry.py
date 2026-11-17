@@ -243,16 +243,17 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 #   the share where the assistant failed to provide that help. This is the trade-off number.
 #
 # Each conversation counts once for each stance it was judged relevant to, whatever category it was
-# generated for. Conversations without per-category judgments or a stored seed group are left out
+# generated for. The policy is read from the score's saved `ViolatesAssertPolicy` condition, not
+# today's dataset. Conversations without per-category judgments or a recorded policy are left out
 # of these two rates and counted separately. Rates are reported separately for each technique and
 # for the baseline, with 90% Wilson intervals, and rates with fewer than 5 applicable conversations
 # are flagged. The result also has a violation rate for each judge dimension, read independently of
 # the other dimensions. Not-applicable answers and judge replies without a verdict, such as blocked
 # ones, are counted separately and left out of that rate. Graded dimensions add grade counts and the
-# median. There's also a violation rate for each taxonomy category over the conversations that
+# median for each recorded scale. There's also a violation rate for each taxonomy category over the conversations that
 # judged it relevant.
 # `model_dump_json()` gives a `metrics.json`-style document, and the GUI shows the same metrics on a
-# completed run's page.
+# completed run's page through `GET /api/analytics/assert?scenario_result_id=<run-id>`.
 
 # %%
 from pyrit.analytics import compute_assert_policy_metrics_async

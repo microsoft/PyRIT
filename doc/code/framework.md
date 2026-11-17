@@ -297,7 +297,6 @@ These modules support every component.
 - Work after the fact, on stored results. Decisions during an attack are a scorer's job.
 - Implement each statistic once and share it across the SDK, backend, reports, and GUI (for example, `compute_outcome_statistics` and `compute_scenario_statistics`). When memory must also aggregate in SQL for performance, a parity test keeps the two in step.
 - Get data from memory; analytics owns the calculations. Don't duplicate them in the backend, CLI, GUI, or elsewhere in the SDK.
-- `compute_assert_policy_metrics_async` owns ASSERT's permissible/impermissible split, judge-dimension rates, and per-category rates for `foundry.assert_policy` results, reading stored scores and seed metadata over the same execution units. The scenario and scorers only record judgments; the GUI backend serializes the SDK result.
 
 ## Auth
 

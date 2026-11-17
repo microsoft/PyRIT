@@ -218,42 +218,30 @@ because small and constant paired samples need careful uncertainty treatment.
 
 ### ASSERT policy metrics
 
-`compute_assert_policy_metrics_async` reports ASSERT's headline rates for a
-`foundry.assert_policy` result: **impermissible behavior violated** and
-**permissible behavior violated**. Each counts a judged conversation once, as
-flagged when any relevant category with that permissibility was violated, and
-as not applicable when none was relevant. Relevance comes from the judge's
-per-category judgments in `category_validated` mode, and permissibility from
-the conversation's own stored taxonomy, not the category it was generated for.
-Rows are the effective execution units that `compute_scenario_statistics`
-counts. Rates are reported separately for each attack technique, by name, and
-for the baseline, and are never pooled. Each technique also reports a violation
-rate for each judge dimension, read independently of the others: not-applicable
-answers and judge replies without a verdict are counted outside its denominator,
-and graded dimensions add grade counts and the median. It also reports a violation
-rate for each taxonomy category over the conversations that judged it relevant,
-kept separate for each policy the judge used (its taxonomy, application context,
-and target instructions), even when policies share a behavior or category name, and why
-unjudged conversations have no verdict. Every rate is an `AssertBinaryRate`
-with ASSERT's 90% Wilson interval and a flag for fewer than 5 applicable
-conversations.
+`compute_assert_policy_metrics_async(result)` reports **impermissible behavior
+violated** and **permissible behavior violated** for a `foundry.assert_policy` run.
+It counts the same latest execution units as `compute_scenario_statistics`,
+separately for each technique and the baseline. Each conversation counts once
+per stance the judge found relevant, as violated if any relevant category of that
+stance was violated, and as not applicable if none was relevant.
 
-The result must come from `foundry.assert_policy`: its saved registry name
-decides, and an older result without one must come from PyRIT's `AssertPolicy`
-class and module, not another class with the same name. A conversation's policy
-comes from the stored seed group with exactly the seeds the result recorded, and
-only when that group's taxonomy matches the one ASSERT's built-in policy judge
-recorded in its saved scorer identifier. Otherwise, for example after the dataset
-is replaced or its policy edited, or when the policy score has no such record,
-the conversation is counted as having no matching stored policy and left out of
-the stance and category rates; its dimension rates still count it. The judge
-recomputes `policy_violation` from its category judgments, so every violation
-names a violated category; unlike ASSERT, no violation is attributed to the
-category a conversation was generated for, which the stored seeds alone can't
-prove. A policy score whose verdict disagrees with its category judgments is
-rejected as malformed. A supplied `objective_scorer`'s verdicts are reported as the `objective`
-dimension, whatever its score category. See the [Foundry scenarios](../../scanner/foundry.ipynb) page for
-an example.
+Category relevance comes from `AssertCategoryJudgment`; permissibility comes
+from the `ViolatesAssertPolicy` in the policy score's saved `scored_expectation`.
+Analytics never rereads today's seed datasets. Scores without that recorded
+policy or per-category judgments are counted as exclusions, not guessed from
+their generated category. A verdict that contradicts its category judgments
+is rejected.
+
+The result includes independent dimension rates, per-policy category rates,
+and exclusion counts. N/A and missing verdicts stay outside rate denominators.
+Grade counts and medians remain separate for each recorded scale. Rates use
+ASSERT's 90% Wilson interval and flag fewer than five applicable conversations.
+A supplied unmarked objective scorer is reported as `objective`.
+
+The run page exposes the same result through
+`GET /api/analytics/assert?scenario_result_id=<run-id>`. The filter selects a
+saved run, not a scenario catalog entry. See the
+[Foundry notebook](../../scanner/foundry.ipynb) for an executed example.
 
 ### Scenario producer accounting
 

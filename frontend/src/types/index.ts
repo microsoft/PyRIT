@@ -2734,6 +2734,7 @@ export interface AssertCategoryMetrics {
 
 /** Grade counts in declared scale order and the median grade for a graded judge dimension. */
 export interface AssertGradeDistribution {
+  scale: Array<number | string>
   counts: Record<string, number>
   median: number | string | null
 }
@@ -2759,7 +2760,7 @@ export interface AssertTechniqueMetrics {
   dimensions: Record<string, AssertBinaryRate>
   /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
   dimension_no_verdict: Record<string, number>
-  dimension_grades: Record<string, AssertGradeDistribution>
+  dimension_grades: Record<string, AssertGradeDistribution[]>
   categories: AssertCategoryMetrics[]
 }
 

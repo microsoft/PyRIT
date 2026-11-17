@@ -537,7 +537,9 @@ count, and a clipping flag. These use the same metadata model as the generic att
 Use the saved-conversation APIs above for reference continuation and all transcript
 bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
 
-`GET /api/scenarios/runs/{scenario_result_id}/assert-metrics` returns the SDK's
+### ASSERT analytics
+
+`GET /api/analytics/assert?scenario_result_id=<run-id>` returns the SDK's
 `AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
 return 400 with problem type `/errors/not-assert-policy-run`, runs that haven't
 completed return 409, and saved results that can't be read as ASSERT metrics return
