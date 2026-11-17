@@ -38,6 +38,12 @@ server, including when the `litellm` or `all` extra is installed. Real adapter
 and outgoing-header checks run separately as
 [loopback integration tests](./6_integration_tests.md#litellm-loopback-integration-tests).
 
+Backend tests that use `sqlite_instance` dispose its async pools on each
+`TestClient` portal's owning event loop before that portal closes. Context-managed
+clients keep their pool throughout the application lifespan. Tests must still
+finish their background work before leaving the client or fixture; this cleanup
+does not suppress worker exceptions or replace production shutdown.
+
 ### CodeQL merge-group uploads
 
 CodeQL still analyzes all three languages on PRs, merge groups, main/release pushes,

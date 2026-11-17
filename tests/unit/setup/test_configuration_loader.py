@@ -3,11 +3,12 @@
 
 import pathlib
 import tempfile
+from collections.abc import Iterator
 from unittest import mock
 
 import pytest
 
-from pyrit.registry import InitializerRegistry
+from pyrit.registry import InitializerRegistry, Registry
 from pyrit.setup import (
     ConfigurationLoader,
     initialize_from_config_async,
@@ -464,7 +465,16 @@ class TestConfigurationLoaderResolvers:
             )
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.fixture
+def isolated_configuration_registries(tmp_path: pathlib.Path) -> Iterator[None]:
+    with (
+        mock.patch.dict(Registry._singletons, {}, clear=True),
+        mock.patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path),
+    ):
+        yield
+
+
+@pytest.mark.usefixtures("patch_central_database", "isolated_configuration_registries")
 class TestConfigurationLoaderInitialization:
     """Tests for ConfigurationLoader.initialize_pyrit_async method."""
 

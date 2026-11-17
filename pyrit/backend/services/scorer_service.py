@@ -187,7 +187,7 @@ class ScorerService:
         def create() -> ScorerInstance | UnregisteredScorer:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
-            if not request.register:
+            if not request.register_instance:
                 if request.private:
                     raise ValueError("A private scorer must be registered; set register=true.")
                 scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)

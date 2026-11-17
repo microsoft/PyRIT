@@ -15,7 +15,7 @@ composite ``inner_targets`` (full instances, not bare identifiers), and a curate
 from typing import Any
 
 from pyrit.models import CapabilityName, TargetIdentifier
-from pyrit.models.catalog import TargetInstance
+from pyrit.models.catalog import RegistryEntryOrigin, TargetInstance
 from pyrit.prompt_target import PromptTarget
 
 # Capability flag names that should never be surfaced as identifier-level params:
@@ -53,7 +53,11 @@ def _target_specific_params(target_identifier: TargetIdentifier) -> dict[str, An
 
 
 def target_object_to_instance(
-    target_registry_name: str, target_obj: PromptTarget, *, private: bool = False
+    target_registry_name: str,
+    target_obj: PromptTarget,
+    *,
+    private: bool = False,
+    origin: RegistryEntryOrigin | None = None,
 ) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.
@@ -66,6 +70,7 @@ def target_object_to_instance(
         target_registry_name: The human-friendly target registry name.
         target_obj: The domain PromptTarget object from the registry.
         private: Whether only the target's creator can see and use it. Defaults to False.
+        origin: Where the registered target comes from, or None for an inner target.
 
     Returns:
         TargetInstance DTO with metadata derived from the object.
@@ -88,6 +93,7 @@ def target_object_to_instance(
         inner_targets=_build_inner_targets(target_obj),
         private=private,
         credentials_rejected=target_obj.credentials_rejected,
+        origin=origin,
     )
 
 

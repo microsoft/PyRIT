@@ -63,6 +63,19 @@ def _method_anchor(module: str, class_name: str, method_name: str) -> str:
     return f"api-{_module_slug(module)}-{class_name}-{method_name}"
 
 
+# A raw `|` inside a Markdown table cell is parsed as a column separator,
+# even inside a backtick code span (markdown-it/MyST, the engine that renders
+# the published docs). Escape it so union types like `Sequence[Path | str]`
+# stay in one cell instead of splitting the Type and Description columns.
+def _escape_table_cell(text: str) -> str:
+    return text.replace("|", "\\|")
+
+
+# Matches prose that already states the parameter's default, e.g.
+# "Defaults to (2, 2)." or "When None (default), ...".
+_DEFAULT_ALREADY_STATED_RE = re.compile(r"defaults?\s+to|\(default\)", re.IGNORECASE)
+
+
 def render_params(params: list[dict]) -> str:
     """Render parameter list as a markdown table."""
     if not params:
@@ -70,11 +83,11 @@ def render_params(params: list[dict]) -> str:
     lines = ["| Parameter | Type | Description |", "|---|---|---|"]
     for p in params:
         name = f"`{p['name']}`"
-        ptype = p.get("type", "")
-        desc = p.get("desc", "").replace("\n", " ")
+        ptype = _escape_table_cell(p.get("type", ""))
+        desc = _escape_table_cell(p.get("desc", "").replace("\n", " "))
         default = p.get("default", "")
-        if default:
-            desc += f" Defaults to `{default}`."
+        if default and not _DEFAULT_ALREADY_STATED_RE.search(desc):
+            desc += f" Defaults to `{_escape_table_cell(default)}`."
         lines.append(f"| {name} | `{ptype}` | {desc} |")
     return "\n".join(lines)
 
