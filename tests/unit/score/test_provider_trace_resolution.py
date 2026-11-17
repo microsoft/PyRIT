@@ -327,6 +327,79 @@ async def test_no_provider_references_skips_the_resolver(sqlite_instance: SQLite
     assert resolver.calls == []
 
 
+@pytest.mark.parametrize("answer", [None, _TRACE_B])
+async def test_a_resolver_cannot_drop_or_replace_a_trace_the_provider_reported(
+    sqlite_instance: SQLiteMemory, answer: str | None
+) -> None:
+    conversation = str(uuid.uuid4())
+    await _store_async(
+        memory=sqlite_instance,
+        conversation=conversation,
+        reference=ProviderTraceReference(provider="gateway", request_id="r-1", trace_id=_TRACE_A),
+    )
+    await _store_async(
+        memory=sqlite_instance,
+        conversation=conversation,
+        reference=ProviderTraceReference(provider="gateway", request_id="r-2"),
+    )
+    resolver = _FixedResolver([answer])
+
+    links = await resolve_conversation_trace_links_async(
+        conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
+    )
+
+    assert links[0].trace_id == _TRACE_A
+    assert links[0].linked
+    assert (links[1].trace_id, links[1].linked) == (answer, answer is not None)
+    # Only the request without a reported trace is put to the resolver.
+    assert resolver.calls == [(ProviderTraceReference(provider="gateway", request_id="r-2"),)]
+
+
+async def test_a_backend_that_cannot_be_read_leaves_requests_unlinked(sqlite_instance: SQLiteMemory) -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_model_span(trace_id=_TRACE_A, response_id="chatcmpl-1"))
+    client.add_span(_tool_span(trace_id=_TRACE_A, tool="lookup"))
+    client.mark_complete(trace_ids=(_TRACE_A,))
+    conversation = str(uuid.uuid4())
+    await _store_async(
+        memory=sqlite_instance,
+        conversation=conversation,
+        reference=ProviderTraceReference(provider="openai", request_id="chatcmpl-1"),
+    )
+    response = await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant")
+    resolver = SpanAttributeTraceResolver(trace_client=client)
+    client.close()
+
+    links = await resolve_conversation_trace_links_async(
+        conversation_id=conversation, memory=sqlite_instance, provider_resolver=resolver
+    )
+    assert [(link.trace_id, link.linked) for link in links] == [(None, False)]
+
+    # Scoring reports that it cannot tell, instead of failing.
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client), provider_trace_resolver=resolver)
+    score = (
+        await scorer.score_async(scorable=MessageScorable.from_message(response), expectation=_expectation("lookup"))
+    )[0]
+    assert score.is_undetermined
+
+
+async def test_a_resolver_error_that_is_not_an_acquisition_failure_propagates(sqlite_instance: SQLiteMemory) -> None:
+    class _Broken(_FixedResolver):
+        async def resolve_trace_ids_async(self, *, references: Sequence[ProviderTraceReference]) -> tuple:
+            raise RuntimeError("misconfigured resolver")
+
+    conversation = str(uuid.uuid4())
+    await _store_async(
+        memory=sqlite_instance,
+        conversation=conversation,
+        reference=ProviderTraceReference(provider="openai", request_id="r-1"),
+    )
+    with pytest.raises(RuntimeError, match="misconfigured resolver"):
+        await resolve_conversation_trace_links_async(
+            conversation_id=conversation, memory=sqlite_instance, provider_resolver=_Broken([])
+        )
+
+
 @pytest.mark.parametrize("answers", [[], [_TRACE_A, _TRACE_B]])
 async def test_resolver_must_answer_each_reference_once(sqlite_instance: SQLiteMemory, answers: list) -> None:
     conversation = str(uuid.uuid4())

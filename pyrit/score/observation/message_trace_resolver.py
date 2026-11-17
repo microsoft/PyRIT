@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from pyrit.models import MessagePiece, MessageScorable, ProviderTraceReference, RequestTraceContext, TraceScorable
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.observation.trace_client import TraceAcquisitionError
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
     from pyrit.score.observation.provider_trace_resolver import ProviderTraceResolver
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -95,16 +99,26 @@ async def _link_through_providers_async(
     Raises:
         ValueError: If the resolver does not answer each reference exactly once.
     """
-    pending = [index for index, link in enumerate(links) if link.trace_id is None and link.provider_reference]
-    if not pending:
+    pending: dict[int, ProviderTraceReference] = {}
+    for index, link in enumerate(links):
+        reference = link.provider_reference
+        if link.trace_id is not None or reference is None:
+            continue
+        if reference.trace_id is not None:
+            # The provider named its trace, so no resolver can drop or replace the link.
+            links[index] = replace(link, trace_id=reference.trace_id, linked=True)
+        else:
+            pending[index] = reference
+    if not pending or provider_resolver is None:
         return tuple(links)
-    references = [links[index].provider_reference for index in pending]
-    if provider_resolver is None:
-        resolved = tuple(reference.trace_id if reference else None for reference in references)
-    else:
-        resolved = await provider_resolver.resolve_trace_ids_async(references=[r for r in references if r])
-        if len(resolved) != len(references):
-            raise ValueError("A provider trace resolver must answer each reference once.")
+    try:
+        resolved = await provider_resolver.resolve_trace_ids_async(references=list(pending.values()))
+    except TraceAcquisitionError:
+        # Like a failed trace query, a backend that cannot be read leaves the requests unlinked.
+        logger.warning("Provider trace resolution failed; the affected requests stay unlinked.")
+        return tuple(links)
+    if len(resolved) != len(pending):
+        raise ValueError("A provider trace resolver must answer each reference once.")
     for index, trace_id in zip(pending, resolved, strict=True):
         if trace_id is not None:
             links[index] = replace(links[index], trace_id=trace_id, linked=True)

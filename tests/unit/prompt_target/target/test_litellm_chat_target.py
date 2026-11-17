@@ -1303,6 +1303,30 @@ async def test_provider_ids_reach_the_stored_request_when_normalization_copies_i
     )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("provider_identity", [False, True])
+async def test_rejected_resend_does_not_keep_the_earlier_provider_ids_async(
+    litellm_stub: types.ModuleType, provider_identity: bool
+) -> None:
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", trace_config=TargetTraceConfig(provider_identity=provider_identity)
+    )
+    original = _user_message()
+    original.get_piece().prompt_metadata.update(
+        ProviderTraceReference(provider="openai", request_id="chatcmpl-earlier").to_metadata()
+    )
+    duplicate = original.duplicate()
+    with (
+        patch.object(Message, "validate", side_effect=ValueError("invalid message")),
+        pytest.raises(ValueError, match="invalid message"),
+    ):
+        await target.send_prompt_async(message=duplicate)
+
+    litellm_stub.acompletion.assert_not_called()
+    assert ProviderTraceReference.METADATA_KEY not in duplicate.get_piece().prompt_metadata
+    assert ProviderTraceReference.from_metadata(original.get_piece().prompt_metadata) is not None
+
+
 async def test_parse_failure_keeps_provider_ids_on_the_request_only_async(
     sqlite_instance: SQLiteMemory, patch_central_database, litellm_stub: types.ModuleType
 ) -> None:
