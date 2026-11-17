@@ -84,7 +84,7 @@ class ExactTextMatching(TextMatching):
             text = text.strip()
         if self._case_sensitive:
             return target in text
-        return target.lower() in text.lower()
+        return target.casefold() in text.casefold()
 
 
 class ApproximateTextMatching(TextMatching):
@@ -163,8 +163,8 @@ class ApproximateTextMatching(TextMatching):
         if len(target) < self._n:
             return 0.0
 
-        target_str = target if self._case_sensitive else target.lower()
-        text_str = text if self._case_sensitive else text.lower()
+        target_str = target if self._case_sensitive else target.casefold()
+        text_str = text if self._case_sensitive else text.casefold()
 
         target_ngrams = {target_str[i : i + self._n] for i in range(len(target_str) - (self._n - 1))}
 
