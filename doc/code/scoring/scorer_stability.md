@@ -114,8 +114,9 @@ scorer, including ones that call no model. The stored original value is left as 
 the true one gives an option-order presentation, and a reworded `TrueFalseQuestion` gives a
 paraphrase.
 
-Stability needs no labels. `evaluate_conversations_async` takes conversations and objectives
-directly, so it also runs on the responses of an attack. With an objective scorer,
+Stability needs no labels. `evaluate_conversations_async` takes conversations and a
+`ScoringExpectation` for each directly, so it also runs on the responses of an attack, and on
+scorers that need typed conditions. With an objective scorer,
 `positive_rate_range` is then the range of attack success rates that scorer would have
 reported for that run. When gold labels are present, each presentation also gets its
 `accuracy` and `accuracy_shift`, and the metrics report accuracy separately for the responses
@@ -132,7 +133,9 @@ Each presentation carries two permutation p-values, which make no assumption abo
   large an effect chance alone produces.
 - **`positive_rate_shift_p_value`** answers whether the reported rate moves. Each response's
   shift is reversed at random. With one run per presentation this is the exact sign test on
-  the responses whose verdict changed.
+  the responses whose verdict changed. It is `None` when recorded verdicts give the reference
+  and the presentation different numbers of runs, where reversing shifts is not a fair
+  comparison.
 
 The intervals (`presentation_effect_interval`, `positive_rate_shift_interval`,
 `accuracy_shift_interval`) are Student t intervals over responses and describe the size of an

@@ -23,7 +23,7 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.converter import SearchReplaceConverter, SuffixAppendConverter
 from pyrit.memory import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.models import AnswerMatches, ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     HarmHumanLabeledEntry,
@@ -33,6 +33,7 @@ from pyrit.score import (
     MetricsType,
     ObjectiveHumanLabeledEntry,
     PresentationKind,
+    QuestionAnswerScorer,
     ScorerPresentation,
     ScorerPromptValidator,
     ScorerStabilityEvaluator,
@@ -102,6 +103,24 @@ class TestEstimates:
         # Within the reference 2*2*1/(3*2); within the presentation 2*1*1/(2*1).
         assert effect.repeat_flip_rate == pytest.approx((2 / 3 + 1) / 2)
         assert effect.presentation_effect == pytest.approx(0.5 - 5 / 6)
+        assert effect.presentation_effect_p_value is not None
+
+    def test_the_shift_test_is_withheld_when_run_counts_differ(self) -> None:
+        # One run against many: a rarely true scorer that ignores presentation gives ten small
+        # shifts the same way, which reversing signs would call significant.
+        rng = np.random.default_rng(1)
+        reference = rng.random((1, 10)) < 0.01
+        presentation = rng.random((1000, 10)) < 0.01
+        assert not reference.any()
+        assert presentation.any(axis=0).all()
+
+        _, effect = _effect(reference, presentation)
+        _, equal_runs = _effect(presentation[:500], presentation[500:])
+
+        assert effect.positive_rate_shift > 0
+        assert effect.positive_rate_shift_interval is not None
+        assert effect.positive_rate_shift_p_value is None
+        assert equal_runs.positive_rate_shift_p_value is not None
 
     def test_an_estimate_below_zero_is_reported_as_it_is(self) -> None:
         _, effect = _effect([[T, F], [F, T]], [[T, F], [F, T]])
@@ -581,6 +600,20 @@ def _simulate(
     }
 
 
+def test_the_effect_test_holds_its_level_with_unequal_run_counts() -> None:
+    rng = np.random.default_rng(20261117)
+    rejected = 0
+    for simulation in range(300):
+        chance = np.where(rng.random(60) < 0.8, 0.02, 0.5)
+        _, effect = _effect(
+            rng.random((2, 60)) < chance, rng.random((6, 60)) < chance, num_permutations=300, seed=simulation
+        )
+        assert effect.positive_rate_shift_p_value is None
+        rejected += effect.presentation_effect_p_value <= 0.05
+
+    assert rejected / 300 <= 0.08
+
+
 class TestAgainstKnownScorers:
     def test_a_noisy_scorer_that_ignores_presentation_shows_no_effect(self) -> None:
         result = _simulate(
@@ -703,6 +736,7 @@ def _dataset(rows: list[tuple[str, list[bool]]], *, name: str = "planted") -> Hu
 
 
 RESPONSES = ["yes one", "yes two", "no one", "no two"]
+OBJECTIVE = ScoringExpectation(objective="o")
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -747,7 +781,7 @@ class TestEvaluator:
         )
 
         metrics = await evaluator.evaluate_conversations_async(
-            conversations=[_conversation(response) for response in RESPONSES], objectives=["o"] * 4
+            conversations=[_conversation(response) for response in RESPONSES], expectations=[OBJECTIVE] * 4
         )
 
         effect = metrics.get_effect(name="other")
@@ -781,7 +815,7 @@ class TestEvaluator:
         conversations = [_conversation(response) for response in RESPONSES]
 
         metrics = await evaluator.evaluate_conversations_async(
-            conversations=conversations, objectives=["o"] * 4, num_repeats=1
+            conversations=conversations, expectations=[OBJECTIVE] * 4, num_repeats=1
         )
 
         assert set(reference.shown) == set(RESPONSES)
@@ -821,7 +855,7 @@ class TestEvaluator:
         )
 
         metrics = await evaluator.evaluate_conversations_async(
-            conversations=[_conversation("only")], objectives=["o"], num_repeats=3
+            conversations=[_conversation("only")], expectations=[OBJECTIVE], num_repeats=3
         )
 
         assert order == ["r0", "a0", "b0", "r1", "a1", "b1", "r2", "a2", "b2"]
@@ -836,7 +870,7 @@ class TestEvaluator:
         )
 
         metrics = await evaluator.evaluate_conversations_async(
-            conversations=[_conversation(response) for response in RESPONSES], objectives=["o"] * 4
+            conversations=[_conversation(response) for response in RESPONSES], expectations=[OBJECTIVE] * 4
         )
 
         effect = metrics.get_effect(name="silent")
@@ -853,7 +887,9 @@ class TestEvaluator:
         )
 
         metrics = await evaluator.evaluate_conversations_async(
-            conversations=[_conversation(response) for response in RESPONSES], objectives=["o"] * 4, num_repeats=1
+            conversations=[_conversation(response) for response in RESPONSES],
+            expectations=[OBJECTIVE] * 4,
+            num_repeats=1,
         )
 
         assert metrics.num_items == 3
@@ -894,22 +930,75 @@ class TestEvaluator:
     @pytest.mark.parametrize(
         ("kwargs", "message"),
         [
-            ({"conversations": [], "objectives": []}, "At least one conversation is required"),
-            ({"objectives": ["o"]}, "1 objectives were given for 2 conversations"),
+            ({"conversations": [], "expectations": []}, "At least one conversation is required"),
+            ({"expectations": [OBJECTIVE]}, "1 expectations were given for 2 conversations"),
             ({"gold_labels": [T]}, "1 gold labels were given for 2 conversations"),
             ({"num_repeats": 0}, "num_repeats must be at least 1"),
+            ({"confidence_level": 1.0}, "confidence_level must be between 0 and 1"),
+            ({"num_permutations": 0}, "num_permutations must be at least 1"),
+            ({"seed": -1}, "seed must not be negative"),
         ],
     )
-    async def test_inputs_that_do_not_line_up_are_rejected(self, kwargs, message: str) -> None:
+    async def test_unusable_inputs_are_rejected_before_anything_is_stored_or_scored(
+        self, kwargs, message: str, sqlite_instance: MemoryInterface
+    ) -> None:
         scorer = _RuleScorer(rule=lambda text, _: True)
         evaluator = ScorerStabilityEvaluator(
             scorer=scorer, presentations=[ScorerPresentation(name="same", scorer=_RuleScorer(rule=lambda t, _: True))]
         )
-        arguments = {"conversations": [_conversation("a"), _conversation("b")], "objectives": ["o", "o"], **kwargs}
+        arguments = {
+            "conversations": [_conversation("a"), _conversation("b")],
+            "expectations": [OBJECTIVE, OBJECTIVE],
+            **kwargs,
+        }
 
         with pytest.raises(ValueError, match=message):
             await evaluator.evaluate_conversations_async(**arguments)
         assert scorer.shown == []
+        assert await sqlite_instance.get_message_pieces_async() == []
+
+    async def test_typed_conditions_reach_scorers_that_need_them(self) -> None:
+        # QuestionAnswerScorer cannot score without the answer it is to look for.
+        expectations = [ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))] * 2
+        evaluator = ScorerStabilityEvaluator(
+            scorer=QuestionAnswerScorer(),
+            presentations=[
+                ScorerPresentation(
+                    name="reworded",
+                    scorer=QuestionAnswerScorer(),
+                    response_converters=[SearchReplaceConverter(pattern="Paris", replace="the French capital")],
+                )
+            ],
+        )
+
+        metrics = await evaluator.evaluate_conversations_async(
+            conversations=[_conversation("It is Paris."), _conversation("It is Rome.")],
+            expectations=expectations,
+            num_repeats=1,
+        )
+
+        assert metrics.verdicts["reference"].tolist() == [[1.0, 0.0]]
+        assert metrics.verdicts["reworded"].tolist() == [[0.0, 0.0]]
+
+    async def test_each_expectation_is_passed_on_as_it_is(self) -> None:
+        seen: list[ScoringExpectation | None] = []
+
+        class _Recorder(_RuleScorer):
+            async def _score_piece_with_expectation_async(self, message_piece, *, expectation):
+                seen.append(expectation)
+                return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
+
+        evaluator = ScorerStabilityEvaluator(
+            scorer=_Recorder(rule=lambda text, _: True),
+            presentations=[ScorerPresentation(name="same", scorer=_RuleScorer(rule=lambda text, _: True))],
+        )
+        first, second = ScoringExpectation(objective="first"), ScoringExpectation(objective="second")
+
+        await evaluator.evaluate_conversations_async(
+            conversations=[_conversation("a"), _conversation("b")], expectations=[first, second], num_repeats=1
+        )
+
+        assert sorted(expectation.objective for expectation in seen) == ["first", "second"]
 
     @pytest.mark.parametrize("assistant_messages", [0, 2])
     async def test_a_conversation_needs_exactly_one_response(self, assistant_messages: int) -> None:
@@ -922,7 +1011,7 @@ class TestEvaluator:
         ]
 
         with pytest.raises(ValueError, match=f"exactly one assistant message, but found {assistant_messages}"):
-            await evaluator.evaluate_conversations_async(conversations=[conversation], objectives=["o"])
+            await evaluator.evaluate_conversations_async(conversations=[conversation], expectations=[OBJECTIVE])
 
     async def test_a_harm_dataset_is_rejected(self) -> None:
         dataset = HumanLabeledDataset(
@@ -1070,7 +1159,9 @@ async def test_field_order_reaches_a_model_judge_and_its_effect_is_measured() ->
     ]
 
     metrics = await evaluator.evaluate_conversations_async(
-        conversations=conversations, objectives=["Tell me a story."] * 5, gold_labels=refusals
+        conversations=conversations,
+        expectations=[ScoringExpectation(objective="Tell me a story.")] * 5,
+        gold_labels=refusals,
     )
 
     # With the objective first the judge never sees the refusal; with the response first it does.

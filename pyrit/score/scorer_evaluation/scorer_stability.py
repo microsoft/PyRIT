@@ -147,9 +147,11 @@ class PresentationEffect:
             reported rate moves, and it equals ``flip_to_true_rate - flip_to_false_rate``.
         positive_rate_shift_interval (tuple[float, float] | None): Interval for the shift. None
             with fewer than two responses.
-        positive_rate_shift_p_value (float): Two-sided permutation p-value for a shift this far
-            from zero when the presentation moves verdicts in either direction equally. With
-            single runs it is the exact sign test on the responses whose verdict changed.
+        positive_rate_shift_p_value (float | None): Two-sided permutation p-value for a shift this
+            far from zero when the presentation moves verdicts in either direction equally. With
+            single runs it is the exact sign test on the responses whose verdict changed. None
+            when the presentation and the reference ran a different number of times, where a
+            response's shift is not symmetric about zero even if the presentation changes nothing.
         flip_rate (float): Share of run pairs whose verdicts differ. It includes the scorer's
             ordinary run-to-run noise.
         flip_to_true_rate (float): Share of run pairs that are false under the reference and
@@ -184,7 +186,7 @@ class PresentationEffect:
     positive_rate: float
     positive_rate_shift: float
     positive_rate_shift_interval: tuple[float, float] | None
-    positive_rate_shift_p_value: float
+    positive_rate_shift_p_value: float | None
     flip_rate: float
     flip_to_true_rate: float
     flip_to_false_rate: float
@@ -407,7 +409,7 @@ def _permutation_p_values(
     repeats: int,
     num_permutations: int,
     rng: np.random.Generator,
-) -> tuple[float, float | None]:
+) -> tuple[float | None, float | None]:
     """
     Test the shift in the positive rate and the presentation effect by permutation.
 
@@ -419,7 +421,9 @@ def _permutation_p_values(
     The shift is tested against a presentation that moves verdicts in either direction equally,
     by reversing each response's shift at random. This is the weaker claim that the reported
     rate does not move, which can hold while verdicts change, and with single runs it is the
-    exact sign test on the responses whose verdict changed.
+    exact sign test on the responses whose verdict changed. It needs the same number of runs
+    under both: with one run against many, a rarely true verdict gives mostly small shifts
+    one way and a few large ones the other, so reversing them is not a fair comparison.
 
     Args:
         reference_counts (np.ndarray): True verdicts per response under the reference.
@@ -430,13 +434,14 @@ def _permutation_p_values(
         rng (np.random.Generator): Source of the permutations.
 
     Returns:
-        tuple[float, float | None]: The two-sided p-value for the shift in the positive rate,
-            and the p-value for the presentation effect, which is None when the noise floor
-            was not measured.
+        tuple[float | None, float | None]: The two-sided p-value for the shift in the positive
+            rate, which is None when the run counts differ, and the p-value for the presentation
+            effect, which is None when the noise floor was not measured.
     """
     to_true, to_false, noise = _flips(
         reference_counts=reference_counts, counts=counts, reference_repeats=reference_repeats, repeats=repeats
     )
+    test_shift = reference_repeats == repeats
     shifts = to_true - to_false
     shifts = shifts[shifts != 0.0]
     observed_shift = abs(float(shifts.sum()))
@@ -450,8 +455,9 @@ def _permutation_p_values(
     effect_hits = 0
     for start in range(0, num_permutations, _PERMUTATION_BLOCK):
         block = min(_PERMUTATION_BLOCK, num_permutations - start)
-        signs = rng.integers(0, 2, size=(block, shifts.size)) * 2 - 1
-        shift_hits += int(np.count_nonzero(np.abs((signs * shifts).sum(axis=1)) >= observed_shift - _TIE_TOLERANCE))
+        if test_shift:
+            signs = rng.integers(0, 2, size=(block, shifts.size)) * 2 - 1
+            shift_hits += int(np.count_nonzero(np.abs((signs * shifts).sum(axis=1)) >= observed_shift - _TIE_TOLERANCE))
         if observed_effect is None:
             continue
         drawn_reference = (
@@ -467,7 +473,7 @@ def _permutation_p_values(
         )
         drawn_effect = (drawn_to_true + drawn_to_false - cast("np.ndarray", drawn_noise)).sum(axis=1)
         effect_hits += int(np.count_nonzero(drawn_effect >= observed_effect - _TIE_TOLERANCE))
-    shift_p_value = (1 + shift_hits) / (1 + num_permutations)
+    shift_p_value = (1 + shift_hits) / (1 + num_permutations) if test_shift else None
     effect_p_value = (1 + effect_hits) / (1 + num_permutations) if observed_effect is not None else None
     return shift_p_value, effect_p_value
 
@@ -484,6 +490,26 @@ def _alpha(*, runs: np.ndarray) -> float | None:
     """
     alpha = float(krippendorff_alpha(reliability_data=runs, level_of_measurement="ordinal"))
     return alpha if np.isfinite(alpha) else None
+
+
+def _validate_settings(*, confidence_level: float, num_permutations: int, seed: int) -> None:
+    """
+    Reject settings that cannot be used, before any scoring is paid for.
+
+    Args:
+        confidence_level (float): The level of each interval.
+        num_permutations (int): Random reassignments for each p-value.
+        seed (int): Seed for the reassignments.
+
+    Raises:
+        ValueError: If a setting is out of range.
+    """
+    if num_permutations < 1:
+        raise ValueError("num_permutations must be at least 1.")
+    if not 0.0 < confidence_level < 1.0:
+        raise ValueError("confidence_level must be between 0 and 1.")
+    if seed < 0:
+        raise ValueError("seed must not be negative.")
 
 
 def compute_scorer_stability(
@@ -527,12 +553,7 @@ def compute_scorer_stability(
         raise ValueError(f"The reference presentation '{reference}' has no verdicts.")
     if len(verdicts) < 2:
         raise ValueError("At least one presentation besides the reference is required.")
-    if num_permutations < 1:
-        raise ValueError("num_permutations must be at least 1.")
-    if not 0.0 < confidence_level < 1.0:
-        raise ValueError("confidence_level must be between 0 and 1.")
-    if seed < 0:
-        raise ValueError("seed must not be negative.")
+    _validate_settings(confidence_level=confidence_level, num_permutations=num_permutations, seed=seed)
 
     matrices = {name: _as_verdict_matrix(name=name, runs=runs) for name, runs in verdicts.items()}
     num_input_items = matrices[reference].shape[1]
@@ -735,7 +756,7 @@ class ScorerStabilityEvaluator:
         entries = [cast("ObjectiveHumanLabeledEntry", entry) for entry in labeled_dataset.entries]
         metrics = await self.evaluate_conversations_async(
             conversations=[entry.conversation for entry in entries],
-            objectives=[entry.objective for entry in entries],
+            expectations=[ScoringExpectation(objective=entry.objective) for entry in entries],
             gold_labels=[
                 bool(np.round(np.median([float(score) for score in entry.human_scores]))) for entry in entries
             ],
@@ -751,7 +772,7 @@ class ScorerStabilityEvaluator:
         self,
         *,
         conversations: Sequence[Sequence[Message]],
-        objectives: Sequence[str],
+        expectations: Sequence[ScoringExpectation],
         gold_labels: Sequence[bool] | None = None,
         num_repeats: int = 2,
         max_concurrency: int = 10,
@@ -764,11 +785,14 @@ class ScorerStabilityEvaluator:
 
         Stability needs no labels, so this also runs on the responses of an attack run. Each
         conversation must hold exactly one assistant message, which is the response scored; the
-        other messages give context to scorers that read the conversation.
+        other messages give context to scorers that read the conversation. For a scorer that
+        judges against an objective, pass ``ScoringExpectation(objective=...)`` for each response.
 
         Args:
             conversations (Sequence[Sequence[Message]]): The conversations to score.
-            objectives (Sequence[str]): The objective each response is scored against.
+            expectations (Sequence[ScoringExpectation]): What each response is scored against:
+                its objective, and any conditions the scorers need. Each is passed to every
+                presentation's scorer as it is.
             gold_labels (Sequence[bool] | None): The gold label of each response. Defaults to None.
             num_repeats (int): Times each presentation scores each response. Defaults to 2, the
                 fewest that measure the scorer's run-to-run noise.
@@ -782,14 +806,16 @@ class ScorerStabilityEvaluator:
 
         Raises:
             ValueError: If there is no conversation, the inputs do not line up, a conversation
-                does not hold exactly one assistant message, or ``num_repeats`` is below 1.
+                does not hold exactly one assistant message, or a setting is out of range. Settings
+                are checked before anything is stored or scored.
         """
+        _validate_settings(confidence_level=confidence_level, num_permutations=num_permutations, seed=seed)
         if num_repeats < 1:
             raise ValueError("num_repeats must be at least 1.")
         if not conversations:
             raise ValueError("At least one conversation is required.")
-        if len(objectives) != len(conversations):
-            raise ValueError(f"{len(objectives)} objectives were given for {len(conversations)} conversations.")
+        if len(expectations) != len(conversations):
+            raise ValueError(f"{len(expectations)} expectations were given for {len(conversations)} conversations.")
         if gold_labels is not None and len(gold_labels) != len(conversations):
             raise ValueError(f"{len(gold_labels)} gold labels were given for {len(conversations)} conversations.")
 
@@ -806,7 +832,7 @@ class ScorerStabilityEvaluator:
                     await self._score_run_async(
                         scorer=presentation.scorer,
                         responses=responses[presentation.name],
-                        objectives=objectives,
+                        expectations=expectations,
                         max_concurrency=max_concurrency,
                     )
                 )
@@ -872,7 +898,11 @@ class ScorerStabilityEvaluator:
 
     @staticmethod
     async def _score_run_async(
-        *, scorer: TrueFalseScorer, responses: Sequence[Message], objectives: Sequence[str], max_concurrency: int
+        *,
+        scorer: TrueFalseScorer,
+        responses: Sequence[Message],
+        expectations: Sequence[ScoringExpectation],
+        max_concurrency: int,
     ) -> list[float]:
         """
         Score every response once and read each verdict.
@@ -880,7 +910,7 @@ class ScorerStabilityEvaluator:
         Args:
             scorer (TrueFalseScorer): The scorer for this presentation.
             responses (Sequence[Message]): The responses as this presentation shows them.
-            objectives (Sequence[str]): The objective each response is scored against.
+            expectations (Sequence[ScoringExpectation]): What each response is scored against.
             max_concurrency (int): Maximum concurrent scoring requests.
 
         Returns:
@@ -894,7 +924,7 @@ class ScorerStabilityEvaluator:
             batch_size=max_concurrency,
             items_to_batch=[
                 [MessageScorable.from_message(response) for response in responses],
-                [ScoringExpectation(objective=objective) for objective in objectives],
+                list(expectations),
             ],
         )
         run: list[float] = []
