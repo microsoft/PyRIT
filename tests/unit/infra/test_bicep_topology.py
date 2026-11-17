@@ -70,6 +70,14 @@ class TestBicepCiContract(unittest.TestCase):
         assert "merge_group:" in workflow
         assert "workflow_dispatch:" in workflow
 
+    def test_workflow_prioritizes_installed_bicep_over_runner_binary(self) -> None:
+        workflow = BICEP_TOPOLOGY_WORKFLOW.read_text(encoding="utf-8")
+
+        install = workflow.index("az bicep install --version v0.46.1")
+        export_path = workflow.index('echo "$AZURE_CONFIG_DIR/bin" >> "$GITHUB_PATH"')
+        compile_step = workflow.index("- name: Compile and test Bicep topology")
+        assert install < export_path < compile_step
+
 
 @unittest.skipIf(BICEP_CLI is None and not BICEP_REQUIRED, "Bicep CLI is not already installed")
 class TestBicepTopology(unittest.TestCase):
