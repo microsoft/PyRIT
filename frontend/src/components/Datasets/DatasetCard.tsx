@@ -44,6 +44,20 @@ function StoredValues({ values, unlabeled = false }: StoredValuesProps) {
   )
 }
 
+function DatasetCounts({ dataset }: Pick<DatasetCardProps, 'dataset'>) {
+  const styles = useDatasetCardStyles()
+  return <dl className={styles.counts} aria-label="Counts">
+    {([
+      ['Logical examples', dataset.logical_examples],
+      ['Seed pieces', dataset.seed_pieces],
+      ['Objectives', dataset.objectives],
+    ] as const).map(([label, count]) => <div key={label} className={styles.count}>
+      <dt className={styles.countTerm}>{label}</dt>
+      <dd className={styles.countValue}>{formatDatasetCount(count)}</dd>
+    </div>)}
+  </dl>
+}
+
 /** Summary card built only from one catalog record. */
 export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
   const styles = useDatasetCardStyles()
@@ -80,20 +94,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
         {dataset.loaded && <Badge appearance="outline">In memory</Badge>}
         {dataset.provider_available && <Badge appearance="outline">Available</Badge>}
       </div>
-      {(!linked || dataset.loaded) && <dl className={styles.counts} aria-label="Counts">
-        <div className={styles.count}>
-          <dt className={styles.countTerm}>Logical examples</dt>
-          <dd className={styles.countValue}>{formatDatasetCount(dataset.logical_examples)}</dd>
-        </div>
-        <div className={styles.count}>
-          <dt className={styles.countTerm}>Seed pieces</dt>
-          <dd className={styles.countValue}>{formatDatasetCount(dataset.seed_pieces)}</dd>
-        </div>
-        <div className={styles.count}>
-          <dt className={styles.countTerm}>Objectives</dt>
-          <dd className={styles.countValue}>{formatDatasetCount(dataset.objectives)}</dd>
-        </div>
-      </dl>}
+      {linked && dataset.loaded && <DatasetCounts dataset={dataset} />}
       {dataset.provider && <section className={styles.providerMetadata} aria-label="Provider metadata">
         {!linked && <Text weight="semibold">Default provider</Text>}
         <p className={linked ? styles.descriptionPreview : undefined}>
@@ -129,6 +130,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
               Configuring credentials does not establish permission to access the source.</>}
         </p>}
       </section>}
+      {!linked && <DatasetCounts dataset={dataset} />}
       {(!linked || dataset.loaded) && <><div className={styles.metaBlock}>
         <Text size={200} weight="semibold" className={styles.metaLabel}>Modalities</Text>
         <StoredValues values={dataset.modalities} />
