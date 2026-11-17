@@ -294,13 +294,23 @@ class PyRITApiClient:
         self._raise_for_status(resp)
         return TargetInstance.model_validate(resp.json())
 
-    async def set_target_credential_async(self, *, target_registry_name: str, credential: str) -> TargetInstance:
+    async def set_target_credential_async(
+        self,
+        *,
+        target_registry_name: str,
+        credential: str,
+        header: str | None = None,
+        expected_private: bool | None = None,
+    ) -> TargetInstance:
         """
-        Replace the API key of a shared target or this caller's private target.
+        Replace the API key, or one request header, of a target that allows credential updates.
 
         Args:
             target_registry_name: The registry name of the target.
-            credential: The new API key or access token. It is sent only in the request body.
+            credential: The new API key, access token, or header value. It is sent only in the request body.
+            header: The request header to set, or None to set the API key. Defaults to None.
+            expected_private: Whether the target is expected to be private; the server refuses the update
+                with 409 when it isn't. None skips the check. Defaults to None.
 
         Returns:
             TargetInstance: The updated target.
@@ -308,10 +318,13 @@ class PyRITApiClient:
         from pyrit.models.catalog import TargetInstance
 
         self._require_secure_credential_transport()
+        body: dict[str, Any] = {"headers": {header: credential}} if header else {"api_key": credential}
+        if expected_private is not None:
+            body["private"] = expected_private
         resp = await self._send_async(
             method="PUT",
             path=f"{self._target_path(target_registry_name)}/credentials",
-            json={"params": {"api_key": credential}},
+            json=body,
         )
         self._raise_for_status(resp)
         return TargetInstance.model_validate(resp.json())

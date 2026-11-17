@@ -24,7 +24,7 @@ from functools import lru_cache
 from typing import Any
 from weakref import WeakKeyDictionary
 
-from pyrit.auth import get_caller_principal
+from pyrit.auth import clean_credential_value, get_caller_principal
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
     CreateTargetRequest,
@@ -63,13 +63,20 @@ from pyrit.registry import (
     RegistryEntry,
     SavedEntryConflictError,
     TargetRegistry,
+    allows_credential_updates,
     creator_metadata,
+    credential_update_metadata,
     is_private_entry,
     prepare_saved_params_async,
     record_private_references,
     save_then_register_async,
 )
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
+from pyrit.registry.instance_registry import (
+    PRIVATE_METADATA_KEY,
+    SAVED_ENTRY_METADATA_KEY,
+    RegistryNameTakenError,
+    registry_entry_origin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +237,7 @@ class TargetService:
             entry.name,
             entry.instance,
             private=is_private_entry(entry),
+            allow_credential_updates=allows_credential_updates(entry),
             origin=origin if origin is not None else registry_entry_origin(entry.metadata),
         )
 
@@ -634,6 +642,7 @@ class TargetService:
             params.pop("api_key", None)
 
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        self._clean_credentials(target_type=request.type, params=params)
         self._apply_upload_directory(
             target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
         )
@@ -744,7 +753,13 @@ class TargetService:
                     recipes_source=recipes_source,
                     creator=creator,
                 )
-            entry = RegistryEntry(name=target_registry_name, instance=target_obj, metadata=creator)
+            allowed = self._credential_updates_allowed(
+                requested=request.allow_credential_updates,
+                target=target_obj,
+                private=bool(creator.get(PRIVATE_METADATA_KEY)),
+            )
+            metadata = {**creator, **credential_update_metadata(allowed=allowed)}
+            entry = RegistryEntry(name=target_registry_name, instance=target_obj, metadata=metadata)
             target = self._build_instance_from_entry(entry, origin=RegistryEntryOrigin.TEMPORARY)
             self._registry.instances.register(target_obj, name=target_registry_name, metadata=entry.metadata)
             return target
@@ -753,106 +768,96 @@ class TargetService:
             raise
 
     async def update_credentials_async(
-        self, *, target_registry_name: str, request: UpdateTargetCredentialsRequest, is_admin: bool = False
+        self, *, target_registry_name: str, request: UpdateTargetCredentialsRequest
     ) -> TargetInstance | None:
         """
-        Rebuild a target with new credentials, and replace it under the same name.
+        Replace a target's API key or request headers in place.
 
-        Any signed-in caller may update a shared target; only its owner can see, and so update, a private
-        one. Targets from saved configuration are changed there instead. Any parameter the create
-        API accepts may change, except ``auth_mode`` and parameters that are part of the target's identity:
-        the rebuilt target must keep the same identifier. Credentials are never part of an identifier, so
-        keys, tokens, and headers can change. The entry keeps its owner and privacy, and the new target
-        starts with its credentials accepted. Work already running keeps using the old target, which is
-        not closed. Values are never included in errors.
+        Only a target created with credential updates allowed can be updated: a private one by its owner (no
+        one else can see it), and a shared one by anyone signed in. Saved targets can't be updated. The
+        registered target keeps its name, identity, configuration, detected capabilities, and authentication
+        mode; everything holding it, such as a round robin or a scorer, sends the new values with its next
+        request. Whether the provider accepted the credentials becomes unknown until the next request. Values
+        are never included in errors.
 
         Args:
             target_registry_name: The registry name of the target.
-            request: The parameters to replace.
-            is_admin: Whether the caller may run model repository code or use the server's stored credentials.
+            request: The new API key and headers, and the visibility the caller expects.
 
         Returns:
             TargetInstance | None: The updated target, or None if the caller can't see a target by that name.
 
         Raises:
-            ValueError: If the target can't be rebuilt, a value is empty, a credential isn't a nonblank
-                string, ``auth_mode`` is set, a parameter is invalid, or the change would alter the
-                target's identity.
-            PermissionError: If no caller is signed in, the target comes from saved
-                configuration, or the new settings need administrator access the caller doesn't have.
+            ValueError: If a value is blank or can't be sent, a header controls how requests are sent, the target
+                type can't update its credentials, or the change would alter how the target authenticates.
+            PermissionError: If no caller is signed in, the target is saved, or it doesn't allow credential
+                updates.
+            CredentialUpdateConflictError: If the target's visibility isn't the one the request expects.
         """
         entry = self._registry.instances.get_entry(target_registry_name)
         if entry is None:
             return None
-        if SAVED_ENTRY_METADATA_KEY in entry.metadata:
-            raise PermissionError(
-                f"Target '{target_registry_name}' comes from saved configuration. Change it there instead."
-            )
         if get_caller_principal() is None:
             raise PermissionError("Updating a target's credentials needs a signed-in caller.")
-        params = dict(request.params)
-        source = entry.instance
-        target_type = type(source).__name__
-        self._validate_credential_update(target_type=target_type, params=params)
-        rebuilt: PromptTarget | None = None
-        replaced = False
-        try:
-            merged = {**self._registry.get_reconstruction_parameters(source), **params}
-            await self._enforce_code_execution_permission_async(
-                target_type=target_type, params=merged, is_admin=is_admin
+        if SAVED_ENTRY_METADATA_KEY in entry.metadata:
+            raise PermissionError(f"Target '{target_registry_name}' is saved, so its credentials can't be updated.")
+        if not allows_credential_updates(entry):
+            raise PermissionError(
+                f"Target '{target_registry_name}' doesn't allow credential updates. Ask whoever created it, or "
+                "create your own target."
             )
-            self._enforce_server_credential_permission(target_type=target_type, params=merged, is_admin=is_admin)
-            rebuilt = await construct_component_async(
-                self._registry.rebuild_instance,
-                source=source,
-                params=params,
-                allowed_path_params=type(source).caller_path_parameters,
+        private = is_private_entry(entry)
+        if request.private is not None and request.private != private:
+            visibility = "private" if private else "shared"
+            raise CredentialUpdateConflictError(
+                f"Target '{target_registry_name}' is {visibility}, not the target you expected, so its credentials "
+                "weren't changed."
             )
-            if rebuilt.get_identifier().hash != source.get_identifier().hash:
-                raise _UpdateRefusedError("This changes the target's identity. Create a new target instead.")
-            if self._registry.instances.get_entry(target_registry_name) is not entry:
-                raise _UpdateRefusedError(
-                    f"Target '{target_registry_name}' changed. Refresh the target registry and try again."
-                )
-            self._registry.instances.register(
-                rebuilt, name=target_registry_name, tags=entry.tags, metadata=entry.metadata, replace=True
-            )
-            replaced = True
-            return self._build_instance_from_entry(
-                RegistryEntry(name=target_registry_name, instance=rebuilt, tags=entry.tags, metadata=entry.metadata)
-            )
-        except (PermissionError, _UpdateRefusedError):
-            raise
-        except Exception:
-            # Errors from validation and construction can quote submitted values, such as a credential.
-            raise ValueError(
-                f"Target '{target_registry_name}' can't be rebuilt with the given {', '.join(sorted(params))}. "
-                "Check their values."
-            ) from None
-        finally:
-            if rebuilt is not None and not replaced:
-                await release_component_async(rebuilt)
+        entry.instance.update_credentials(api_key=request.api_key, headers=request.headers)
+        return self._build_instance_from_entry(entry)
 
-    def _validate_credential_update(self, *, target_type: str, params: Mapping[str, Any]) -> None:
+    @staticmethod
+    def _credential_updates_allowed(*, requested: bool | None, target: PromptTarget, private: bool) -> bool:
         """
-        Refuse update parameters that would change how the target authenticates or let it use the server's credentials.
+        Decide whether a new target's credentials can be updated through the API.
+
+        Args:
+            requested (bool | None): The request's choice, or None for the default.
+            target (PromptTarget): The new target.
+            private (bool): Whether the new target is private.
+
+        Returns:
+            bool: The request's choice, or by default whether the target is private and its type can update.
 
         Raises:
-            ValueError: If ``auth_mode`` is set, a value is empty, or a credential isn't a nonblank string.
+            ValueError: If the request allows updates for a target that can't make them.
         """
-        if _AUTH_MODE_PARAM in params:
-            raise ValueError("The authentication mode can't change. Create a new target instead.")
-        empty = sorted(name for name, value in params.items() if value is None or value == "")
-        if empty:
-            raise ValueError(f"Parameters need a value: {', '.join(empty)}")
-        credentials = self._registry.get_credential_parameter_names(target_type)
-        invalid = sorted(
-            name
-            for name, value in params.items()
-            if name in credentials and not (isinstance(value, str) and value.strip())
-        )
-        if invalid:
-            raise ValueError(f"Credentials must be nonblank strings: {', '.join(invalid)}")
+        if requested is None:
+            return private and target.supports_credential_updates
+        if requested and not target.supports_credential_updates:
+            raise ValueError(
+                f"This {type(target).__name__} can't update its credentials, so allow_credential_updates can't be true."
+            )
+        return requested
+
+    def _clean_credentials(self, *, target_type: str, params: dict[str, Any]) -> None:
+        """
+        Strip surrounding whitespace from supplied credentials and refuse ones that can't be sent.
+
+        A pasted key often ends with a newline, which can't go into an HTTP header; the HTTP library's error
+        would quote the key into results everyone can read. Blank values are left for the target to handle.
+
+        Args:
+            target_type (str): Registered target class name.
+            params (dict[str, Any]): Constructor parameters, updated in place.
+
+        Raises:
+            ValueError: If a credential contains a control character. The message names only the parameter.
+        """
+        for name in self._registry.get_credential_parameter_names(target_type):
+            value = params.get(name)
+            if isinstance(value, str) and value.strip():
+                params[name] = clean_credential_value(value, name=name)
 
     async def _save_and_register_async(
         self,
@@ -979,8 +984,8 @@ class TargetService:
             )
 
 
-class _UpdateRefusedError(ValueError):
-    """A credential update refused for a reason whose message quotes no submitted value."""
+class CredentialUpdateConflictError(ValueError):
+    """A credential update refused because the target isn't the one the caller expected."""
 
 
 @lru_cache(maxsize=1)

@@ -49,7 +49,6 @@ from pyrit.prompt_target import (
     discover_target_capabilities_async,
 )
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
-from pyrit.registry import TargetRegistry
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
@@ -1281,92 +1280,6 @@ async def test_resolve_api_key_async_callable(patch_central_database, litellm_st
 
     t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=provider)
     assert await t._resolve_api_key_async() == "atok"
-
-
-# ---------------------------------------------------------------------------
-# Copies and credential status
-# ---------------------------------------------------------------------------
-
-
-def test_reconstruction_keeps_the_provider_route(patch_central_database, litellm_stub) -> None:
-    source = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="server-key")
-
-    with pytest.raises(ValueError, match="model_name"):
-        TargetRegistry.get_registry_singleton().recreate_instance(
-            source=source, params={"model_name": "anthropic/claude-sonnet-4-6"}, external_input=True
-        )
-
-
-def test_reconstruction_rejects_temperature_override_when_passthrough_sets_temperature(
-    patch_central_database, litellm_stub
-) -> None:
-    source = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="k", extra_body_parameters={"temperature": 0.9})
-
-    with pytest.raises(ValueError, match="extra_body_parameters sets temperature"):
-        TargetRegistry.get_registry_singleton().recreate_instance(
-            source=source, params={"temperature": 0.2}, external_input=True
-        )
-
-
-def test_reconstruction_keeps_resolved_settings_and_changes_only_temperature(
-    patch_central_database, litellm_stub
-) -> None:
-    with patch.dict(
-        "os.environ",
-        {"LITELLM_MODEL": "openai/gpt-4o", "LITELLM_ENDPOINT": "https://gateway.test/v1", "LITELLM_API_KEY": "k1"},
-    ):
-        source = LiteLLMChatTarget(
-            headers={"x-team": "red"}, temperature=0.4, extra_body_parameters={"reasoning_effort": "low"}
-        )
-    with patch.dict(
-        "os.environ",
-        {"LITELLM_MODEL": "openai/other", "LITELLM_ENDPOINT": "https://other.test/v1", "LITELLM_API_KEY": "k2"},
-    ):
-        copy = TargetRegistry.get_registry_singleton().recreate_instance(
-            source=source, params={"temperature": 0.7}, external_input=True
-        )
-
-    assert isinstance(copy, LiteLLMChatTarget)
-    assert copy._model_name == "openai/gpt-4o"
-    assert copy._endpoint == "https://gateway.test/v1"
-    assert copy._api_key == "k1"
-    assert copy._headers == {"x-team": "red"}
-    assert copy._extra_body_parameters == {"reasoning_effort": "low"}
-    source_params = dict(source.get_identifier().params)
-    copy_params = dict(copy.get_identifier().params)
-    assert copy_params.pop("temperature") == 0.7
-    assert source_params.pop("temperature") == 0.4
-    assert copy_params == source_params
-    body = copy._construct_request_body(
-        messages=[{"role": "user", "content": "hi"}], json_config=JsonResponseConfig(enabled=False), api_key="k1"
-    )
-    assert body["temperature"] == 0.7
-    assert body["reasoning_effort"] == "low"
-    assert body["api_base"] == "https://gateway.test/v1"
-
-
-@pytest.mark.parametrize("status_code", [401, 403])
-async def test_rejected_credentials_on_a_copy_are_reported_on_its_source(
-    patch_central_database, litellm_stub, status_code: int
-) -> None:
-    source = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="expired-key")
-    copy = TargetRegistry.get_registry_singleton().recreate_instance(
-        source=source, params={"temperature": 0.2}, external_input=True
-    )
-    litellm_stub.acompletion = AsyncMock(
-        side_effect=litellm_stub.exceptions.AuthenticationError("bad key", status_code=status_code)
-    )
-
-    with pytest.raises(PyritException):
-        await copy.send_prompt_async(message=_user_message())
-
-    assert source.credentials_rejected
-    assert copy.credentials_rejected
-
-    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
-    await copy.send_prompt_async(message=_user_message())
-
-    assert not source.credentials_rejected
 
 
 # ---------------------------------------------------------------------------

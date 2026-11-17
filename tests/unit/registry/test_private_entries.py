@@ -21,7 +21,12 @@ from pyrit.registry import (
     owner_metadata,
     record_private_references,
 )
-from pyrit.registry.instance_registry import OWNER_METADATA_KEY, PRIVATE_METADATA_KEY, RegistryNameTakenError
+from pyrit.registry.instance_registry import (
+    OWNER_METADATA_KEY,
+    PRIVATE_METADATA_KEY,
+    PrivateEntryReplacementError,
+    RegistryNameTakenError,
+)
 from pyrit.registry.resolution import reference_name, resolve_reference_value
 from unit.mocks import MockPromptTarget
 
@@ -104,11 +109,13 @@ def test_owner_is_recorded_separately_from_privacy(instances: DefaultInstanceReg
         owner_metadata(None, private=True)
 
 
-@pytest.mark.parametrize("replace", [False, True])
+@pytest.mark.parametrize(
+    ("replace", "error_type"), [(False, RegistryNameTakenError), (True, PrivateEntryReplacementError)]
+)
 def test_a_name_another_caller_holds_is_taken_without_naming_the_owner(
-    instances: DefaultInstanceRegistry[_Item], replace: bool
+    instances: DefaultInstanceRegistry[_Item], replace: bool, error_type: type[Exception]
 ) -> None:
-    with caller_principal_scope("bob"), pytest.raises(RegistryNameTakenError) as error:
+    with caller_principal_scope("bob"), pytest.raises(error_type) as error:
         instances.register(_Item("bob"), name="alice-private", replace=replace)
 
     assert "alice" not in str(error.value).replace("alice-private", "")
@@ -285,3 +292,62 @@ def test_a_technique_clash_with_a_hidden_technique_names_no_one_elses_selector(n
         assert "is taken" in str(error.value)
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_techniques_of_different_owners_can_share_a_tag() -> None:
+    from pyrit.executor.attack import PromptSendingAttack
+    from pyrit.scenario.core import AttackTechniqueFactory
+
+    AttackTechniqueRegistry.reset_registry_singleton()
+    try:
+        instances = AttackTechniqueRegistry.get_registry_singleton().instances
+        hidden = AttackTechniqueFactory(
+            name="secret_plan", attack_class=PromptSendingAttack, technique_tags=["shared_tag"]
+        )
+        instances.register(hidden, name="secret_plan", metadata=owner_metadata("alice", private=True))
+
+        with caller_principal_scope("bob"):
+            instances.register_runtime(
+                AttackTechniqueFactory(name="mine", attack_class=PromptSendingAttack, technique_tags=["shared_tag"])
+            )
+            assert instances.get("mine") is not None
+        instances.register_runtime(
+            AttackTechniqueFactory(name="configured", attack_class=PromptSendingAttack, technique_tags=["shared_tag"])
+        )
+        assert instances.get("configured") is not None
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("name", "tags"), [("mine", ["Shared_Tag"]), ("mine", ["secret_plan"]), ("shared_tag", [])])
+def test_a_hidden_technique_still_blocks_name_and_spelling_clashes(name: str, tags: list[str]) -> None:
+    from pyrit.executor.attack import PromptSendingAttack
+    from pyrit.scenario.core import AttackTechniqueFactory
+
+    AttackTechniqueRegistry.reset_registry_singleton()
+    try:
+        instances = AttackTechniqueRegistry.get_registry_singleton().instances
+        hidden = AttackTechniqueFactory(
+            name="secret_plan", attack_class=PromptSendingAttack, technique_tags=["shared_tag"]
+        )
+        instances.register(hidden, name="secret_plan", metadata=owner_metadata("alice", private=True))
+
+        with caller_principal_scope("bob"), pytest.raises(RegistryNameTakenError, match="is taken"):
+            instances.register_runtime(
+                AttackTechniqueFactory(name=name, attack_class=PromptSendingAttack, technique_tags=tags)
+            )
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+def test_replacing_a_name_a_private_entry_holds_reports_a_clear_conflict(
+    instances: DefaultInstanceRegistry[_Item],
+) -> None:
+    with pytest.raises(PrivateEntryReplacementError, match="a user's private entry uses") as error:
+        instances.register(_Item("configured"), name="alice-private", replace=True)
+
+    assert "alice" not in str(error.value).replace("alice-private", "")
+    with caller_principal_scope("alice"):
+        assert instances.get("alice-private").value == "alice"  # type: ignore[union-attr]

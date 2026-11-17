@@ -51,8 +51,9 @@ def _is_credential_rejection(error: BaseException) -> bool:
     Check whether a send failed because the provider rejected the target's credentials.
 
     OpenAI SDK errors (``AuthenticationError``, ``PermissionDeniedError``), LiteLLM's errors, and
-    PyRIT exceptions carry the provider's ``status_code``. Targets that translate an error keep the
-    original as its cause, so the whole chain is checked.
+    PyRIT exceptions carry the provider's ``status_code``; ``httpx.HTTPStatusError`` keeps it on its
+    ``response``. Targets that translate an error keep the original as its cause, so the whole chain
+    is checked.
 
     Args:
         error (BaseException): The error a send raised.
@@ -64,7 +65,10 @@ def _is_credential_rejection(error: BaseException) -> bool:
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if getattr(current, "status_code", None) in _CREDENTIAL_REJECTION_STATUS_CODES:
+        status_code = getattr(current, "status_code", None) or getattr(
+            getattr(current, "response", None), "status_code", None
+        )
+        if status_code in _CREDENTIAL_REJECTION_STATUS_CODES:
             return True
         current = current.__cause__ or current.__context__
     return False
@@ -91,8 +95,9 @@ class PromptTarget(Identifiable):
 
     _identifier: ComponentIdentifier | None = None
 
-    # Whether the provider rejected the credentials on the last request through this target.
-    _credentials_rejected: bool = False
+    # Whether the provider rejected the credentials on the last request through this target, or None
+    # until a request through it completes or fails authentication.
+    _credentials_rejected: bool | None = None
     # The target a copy reports credential rejections into, so its registered source reflects the copy's requests.
     _credential_status_source: "PromptTarget | None" = None
 
@@ -628,14 +633,39 @@ class PromptTarget(Identifiable):
         return self._credential_status_source or self
 
     @property
-    def credentials_rejected(self) -> bool:
+    def credentials_rejected(self) -> bool | None:
         """
         Whether the provider rejected this target's credentials on the last request through it.
 
         Requests through copies built from this target, such as a chat's temperature override, count too.
-        False until a request fails authentication, and again after a later request completes.
+        None until a request completes or fails authentication, and again after the credentials change.
         """
         return self._credential_status_owner()._credentials_rejected
+
+    @property
+    def supports_credential_updates(self) -> bool:
+        """Whether ``update_credentials`` can replace this target's API key or request headers in place."""
+        return False
+
+    def update_credentials(self, *, api_key: str | None = None, headers: Mapping[str, str] | None = None) -> None:
+        """
+        Replace this target's API key or request headers in place, without changing anything else about it.
+
+        Everything holding this target, such as a round robin or a scorer, sends the new values with its next
+        request. Targets that can do this override this method and ``supports_credential_updates``.
+
+        Args:
+            api_key (str | None): The new API key or access token, or None to keep the current one.
+            headers (Mapping[str, str] | None): Request headers to set, replacing any of the same name.
+
+        Raises:
+            ValueError: Always, because this target type can't update its credentials in place.
+        """
+        raise ValueError(f"{type(self).__name__} can't update its credentials. Create a new target instead.")
+
+    def _reset_credential_status(self) -> None:
+        """Forget whether the provider accepted the credentials, because they just changed."""
+        self._credential_status_owner()._credentials_rejected = None
 
     def attach_reconstruction_source(self, source: object) -> None:
         """

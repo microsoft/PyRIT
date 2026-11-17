@@ -167,19 +167,23 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
             entries = self.get_all_instances()
-            # Names and tags are global, so a technique can't take one that another caller's private technique uses.
+            # Names are global, so a technique can't take a name, or a tag spelled like one, that another caller's
+            # private technique uses. A tag groups techniques, so the exact same tag can be used by every caller.
             every_entry = self.get_all_instances_of_every_owner()
             names = {entry.name.casefold(): entry.name for entry in every_entry}
             tags = {tag.casefold(): tag for entry in every_entry for tag in entry.instance.technique_tags}
-            visible = {entry.name.casefold() for entry in entries} | {
-                tag.casefold() for entry in entries for tag in entry.instance.technique_tags
-            }
+            visible_names = {entry.name.casefold() for entry in entries}
+            visible_tags = {tag.casefold() for entry in entries for tag in entry.instance.technique_tags}
+            hidden_names = names.keys() - visible_names
+            hidden_tags = {folded: tag for folded, tag in tags.items() if folded not in visible_tags}
             # A clash with a technique the caller can't see says only that the selector is taken.
-            for selector in (factory.name, *factory.technique_tags):
-                folded = selector.casefold()
-                if (folded in names or folded in tags) and folded not in visible:
-                    raise TechniqueSelectorConflictError(f"The technique name or tag '{selector}' is taken.")
             folded_name = factory.name.casefold()
+            if folded_name in hidden_names or folded_name in hidden_tags:
+                raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
+            for tag in factory.technique_tags:
+                folded = tag.casefold()
+                if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
+                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
             if folded_name in names:
                 # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
                 _record_saved_entry_refusal(self._registry_items.get(names[folded_name]))

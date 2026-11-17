@@ -2983,6 +2983,71 @@ describe("CreateTargetDialog", () => {
       expect(onlyMeSwitch()).not.toBeChecked();
     });
 
+    const updatesSwitch = (): HTMLElement => screen.getByRole("switch", { name: /Allow updates/ });
+
+    it("should allow credential updates by default only for a private target", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await chooseOpenAiChatTarget();
+      expect(updatesSwitch()).not.toBeChecked();
+
+      await user.click(onlyMeSwitch());
+
+      expect(updatesSwitch()).toBeChecked();
+      expect(screen.getByText(/You can replace its key or headers later/)).toBeInTheDocument();
+      await createAndExpect(user, { type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: true });
+    });
+
+    it("should send allow_credential_updates when you allow updates for a shared target", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await chooseOpenAiChatTarget();
+
+      await user.click(updatesSwitch());
+
+      expect(screen.getByText(/Anyone signed in can replace its key or headers/)).toBeInTheDocument();
+      await createAndExpect(user, {
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: false, allow_credential_updates: true,
+      });
+    });
+
+    it("should send allow_credential_updates false when you turn updates off for a private target", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await chooseOpenAiChatTarget();
+      await user.click(onlyMeSwitch());
+
+      await user.click(updatesSwitch());
+
+      expect(updatesSwitch()).not.toBeChecked();
+      await createAndExpect(user, {
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: true, allow_credential_updates: false,
+      });
+    });
+
+    it("should not offer credential updates for a target type that can't make them", async () => {
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await flushTargetTypesFetch();
+
+      await selectTargetType("AzureMLChatTarget");
+
+      expect(screen.getByRole("radiogroup", { name: /Who can use it/ })).toBeInTheDocument();
+      expect(screen.queryByRole("switch", { name: /Allow updates/ })).not.toBeInTheDocument();
+    });
+
+    it("should send a pasted API key without surrounding whitespace", async () => {
+      const user = userEvent.setup();
+      render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+      await chooseOpenAiChatTarget();
+      fireEvent.change(screen.getByPlaceholderText("API key (stored in memory only)"), {
+        target: { value: " sk-pasted-key \n" },
+      });
+
+      await createAndExpect(user, {
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT, api_key: "sk-pasted-key" }, private: false,
+      });
+    });
+
     async function selectRoundRobinMembers(names: string[]): Promise<ReturnType<typeof userEvent.setup>> {
       const user = userEvent.setup();
       const member = (name: string, isPrivate: boolean) => makeTarget({

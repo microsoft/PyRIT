@@ -194,17 +194,20 @@ function ModelCell({ target }: { target: TargetInstance }) {
   return <Text size={200}>{displayName}</Text>
 }
 
-function credentialsRejectedMessage(name: string): string {
-  return 'The last request was rejected. The credentials may be expired or invalid. Update them through the API '
-    + `(PUT /api/targets/${name}/credentials) or with pyrit_scan set-target-credential ${name}.`
+function credentialsRejectedMessage(name: string, canUpdate: boolean): string {
+  const rejected = 'The last request was rejected. The credentials may be expired or invalid. '
+  return canUpdate
+    ? rejected + `Update them through the API (PUT /api/targets/${name}/credentials) or with `
+      + `pyrit_scan set-target-credential ${name}.`
+    : rejected + "This target doesn't allow credential updates, so ask whoever set it up to update them."
 }
 
 /** A red lock that explains, on click, how to update credentials the provider rejected. */
-function RejectedCredentialsButton({ name }: { name: string }) {
+function RejectedCredentialsButton({ name, canUpdate }: { name: string; canUpdate: boolean }) {
   const styles = useTargetTableStyles()
   const [infoOpen, setInfoOpen] = useState(false)
   const [hoverVisible, setHoverVisible] = useState(false)
-  const message = credentialsRejectedMessage(name)
+  const message = credentialsRejectedMessage(name, canUpdate)
   return (
     <Popover withArrow open={infoOpen} onOpenChange={(_, data) => {
       setInfoOpen(data.open)
@@ -223,19 +226,36 @@ function RejectedCredentialsButton({ name }: { name: string }) {
         </Tooltip>
       </PopoverTrigger>
       <PopoverSurface className={styles.credentialsHelp}>
-        The last request was rejected. The credentials may be expired or invalid. Update them through the API
-        (<code>PUT /api/targets/{name}/credentials</code>) or with{' '}
-        <code>pyrit_scan set-target-credential {name}</code>.
+        The last request was rejected. The credentials may be expired or invalid.{' '}
+        {canUpdate ? (
+          <>
+            Update them through the API (<code>PUT /api/targets/{name}/credentials</code>) or with{' '}
+            <code>pyrit_scan set-target-credential {name}</code>.
+          </>
+        ) : (
+          <>This target doesn&apos;t allow credential updates, so ask whoever set it up to update them.</>
+        )}
       </PopoverSurface>
     </Popover>
   )
 }
 
-/** Whether the provider accepted the target's credentials; the icon's shape carries that, not only its color. */
+/**
+ * Whether the provider accepted the target's credentials; the icon's shape carries that, not only its color.
+ * A target that hasn't been used shows no icon, because nothing has checked its credentials yet.
+ */
 function CredentialsStatus({ target }: { target: TargetInstance }) {
   const styles = useTargetTableStyles()
   if (target.credentials_rejected === true) {
-    return <RejectedCredentialsButton name={target.target_registry_name} />
+    return (
+      <RejectedCredentialsButton
+        name={target.target_registry_name}
+        canUpdate={target.allow_credential_updates === true}
+      />
+    )
+  }
+  if (target.credentials_rejected !== false) {
+    return null
   }
   return (
     <Tooltip content={CREDENTIALS_ACCEPTED_LABEL} relationship="label">

@@ -52,19 +52,21 @@ class CredentialSource:
         return "the prompt"
 
 
-async def read_target_credential_async(*, source: CredentialSource, target_name: str) -> str:
+async def read_target_credential_async(*, source: CredentialSource, target_name: str, header: str | None = None) -> str:
     """
     Read a credential from its source.
 
     Args:
         source (CredentialSource): Where to read the credential.
         target_name (str): The target the credential is for, shown in the prompt.
+        header (str | None): The request header the credential is for, or None for an API key. A header
+            value may contain spaces, such as ``Bearer <token>`` or a cookie string. Defaults to None.
 
     Returns:
         str: The credential, without surrounding whitespace.
 
     Raises:
-        TargetCredentialError: If the source is unavailable or yields no credential.
+        TargetCredentialError: If the source is unavailable or yields no credential, or an unusable one.
     """
     if source.kind is CredentialSourceKind.PROMPT:
         credential = await _read_prompt_async(target_name=target_name)
@@ -72,7 +74,9 @@ async def read_target_credential_async(*, source: CredentialSource, target_name:
         credential = _read_environment(variable=source.environment_variable)
     else:
         credential = await _read_ant_async(profile=source.ant_profile)
-    return _require_single_token(credential=credential, source=source)
+    if header is None:
+        return _require_single_token(credential=credential, source=source)
+    return _require_header_value(credential=credential, source=source)
 
 
 async def _read_prompt_async(*, target_name: str) -> str:
@@ -122,6 +126,15 @@ async def _read_ant_async(*, profile: str | None) -> str:
         login = f"ant auth login --profile {profile}" if profile else "ant auth login"
         raise TargetCredentialError(f"ant could not print a credential{hint}. Run '{login}' and try again.")
     return stdout.decode(errors="replace")
+
+
+def _require_header_value(*, credential: str, source: CredentialSource) -> str:
+    value = credential.strip()
+    if not value:
+        raise TargetCredentialError(f"No credential was read from {source.description}.")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise TargetCredentialError(f"The credential from {source.description} contains a line break.")
+    return value
 
 
 def _require_single_token(*, credential: str, source: CredentialSource) -> str:

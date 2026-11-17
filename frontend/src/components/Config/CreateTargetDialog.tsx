@@ -290,6 +290,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [authMode, setAuthMode] = useState<TargetAuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
   const [onlyMeChoice, setOnlyMeChoice] = useState(false)
+  // Null follows the default: updates are allowed for a private target and not for a shared one.
+  const [credentialUpdatesChoice, setCredentialUpdatesChoice] = useState<boolean | null>(null)
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -436,25 +438,49 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     ))?.registryName
     : undefined
   const onlyMe = privateMemberName !== undefined || onlyMeChoice
+  // OpenAI-family targets can replace their key or headers in place; Realtime sessions keep their connections.
+  const canUpdateCredentials = isOpenAi && targetType !== 'RealtimeTarget'
+  const allowCredentialUpdates = canUpdateCredentials && (credentialUpdatesChoice ?? onlyMe)
   // Who can use the target is the last decision about it, so it follows the connection and sign-in fields.
   const visibilityField = targetType !== '' && (
-    <HelpField
-      className={styles.formField}
-      label="Who can use it"
-      help={HELP_DEFINITIONS.privateTarget}
-      hint={privateMemberName !== undefined
-        ? `Only me, because it uses ${privateMemberName}, which only you can use.`
-        : undefined}
-    >
-      <RadioGroup
-        value={onlyMe ? 'private' : 'shared'}
-        disabled={submitting || privateMemberName !== undefined}
-        onChange={(_, data) => setOnlyMeChoice(data.value === 'private')}
+    <>
+      <HelpField
+        className={styles.formField}
+        label="Who can use it"
+        help={HELP_DEFINITIONS.privateTarget}
+        hint={privateMemberName !== undefined
+          ? `Only me, because it uses ${privateMemberName}, which only you can use.`
+          : undefined}
       >
-        <Radio value="shared" label="Everyone" />
-        <Radio value="private" label="Only me" />
-      </RadioGroup>
-    </HelpField>
+        <RadioGroup
+          value={onlyMe ? 'private' : 'shared'}
+          disabled={submitting || privateMemberName !== undefined}
+          onChange={(_, data) => setOnlyMeChoice(data.value === 'private')}
+        >
+          <Radio value="shared" label="Everyone" />
+          <Radio value="private" label="Only me" />
+        </RadioGroup>
+      </HelpField>
+      {canUpdateCredentials && (
+        <HelpField
+          className={styles.formField}
+          label="Credential updates"
+          help={HELP_DEFINITIONS.credentialUpdates}
+          hint={allowCredentialUpdates
+            ? onlyMe
+              ? 'You can replace its key or headers later, for example when a token expires.'
+              : "Anyone signed in can replace its key or headers, and everyone's requests then use them."
+            : undefined}
+        >
+          <Switch
+            label="Allow updates"
+            checked={allowCredentialUpdates}
+            disabled={submitting}
+            onChange={(_, data) => setCredentialUpdatesChoice(data.checked)}
+          />
+        </HelpField>
+      )}
+    </>
   )
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
@@ -561,6 +587,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setAuthMode('api_key')
     setApiKey('')
     setOnlyMeChoice(false)
+    setCredentialUpdatesChoice(null)
     setParameterValues({})
     setError(null)
     setHttpRequestError(null)
@@ -631,7 +658,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (underlyingModelRequired && !underlyingModel) {
       errors.underlyingModel = 'Please provide the underlying model'
     }
-    if (apiKeyRequired && !apiKey) errors.apiKey = 'Please provide an API key'
+    if (apiKeyRequired && !apiKey.trim()) errors.apiKey = 'Please provide an API key'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return
@@ -661,7 +688,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
+      // A pasted key often ends with a newline, which can't be sent in a request header.
+      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey.trim()) params.api_key = apiKey.trim()
 
       if (
         (underlyingModelRequired || hasDifferentUnderlying)
@@ -677,6 +705,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
         ...(isNoKey ? { auth_mode: 'none' as const } : {}),
         private: onlyMe,
+        // The server applies the same default, so the choice is sent only when the user changed it.
+        ...(canUpdateCredentials && credentialUpdatesChoice !== null
+          ? { allow_credential_updates: allowCredentialUpdates }
+          : {}),
       })
 
       resetForm()
@@ -1208,7 +1240,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   : (endpointRequired && !endpoint) || showIdentityEndpointError)
                   || (modelNameRequired && !modelName)
                   || (underlyingModelRequired && !underlyingModel)
-                  || (apiKeyRequired && !apiKey)
+                  || (apiKeyRequired && !apiKey.trim())
                   || requiredMetadataParameterMissing
               }
             >

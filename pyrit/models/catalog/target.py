@@ -75,11 +75,19 @@ class TargetInstance(BaseModel):
         False,
         description="Whether the target is private: only the user who created it can see and use it",
     )
-    credentials_rejected: bool = Field(
+    allow_credential_updates: bool = Field(
         False,
         description=(
+            "Whether the target's API key and request headers can be updated in place through "
+            "PUT /api/targets/{name}/credentials: by its owner when it is private, by anyone signed in when it is "
+            "shared"
+        ),
+    )
+    credentials_rejected: bool | None = Field(
+        None,
+        description=(
             "Whether the provider rejected the target's credentials (HTTP 401 or 403) on the last request "
-            "through it; false when it has not been used"
+            "through it; null until a request completes or fails authentication, and after the credentials change"
         ),
     )
     origin: RegistryEntryOrigin | None = Field(

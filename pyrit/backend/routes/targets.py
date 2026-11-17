@@ -24,6 +24,7 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
+from pyrit.backend.services.target_service import CredentialUpdateConflictError
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError
@@ -173,8 +174,10 @@ async def create_target(
     optional; unregistered responses contain no reusable object handle.
 
     Note: Sensitive parameters (API keys, tokens) are filtered from the response. A
-    target is private (only its creator can see and use it) when ``private`` is true, or
-    by default when the request supplies its credentials.
+    target is shared unless ``private`` is true or it is built on the caller's private
+    targets; supplying credentials doesn't make it private. A private target's credentials
+    can be updated later by its creator, a shared target's only when
+    ``allow_credential_updates`` is true.
 
     Returns:
         TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
@@ -242,37 +245,43 @@ async def get_target(
     "/{target_registry_name}/credentials",
     response_model=TargetInstance,
     responses={
-        400: {"model": ProblemDetail, "description": "Invalid parameters, or a change to the target's identity"},
+        400: {
+            "model": ProblemDetail,
+            "description": "A value can't be sent, or the change would alter how the target authenticates",
+        },
         403: {
             "model": ProblemDetail,
-            "description": "No signed-in caller, or the target comes from saved configuration",
+            "description": "No signed-in caller, or the target is saved or doesn't allow credential updates",
         },
         404: {"model": ProblemDetail, "description": "Target not found"},
+        409: {"model": ProblemDetail, "description": "The target isn't private or shared as the request expects"},
     },
 )
 async def update_target_credentials(
     *,
     target_registry_name: IdentifierStr,
     body: UpdateTargetCredentialsRequest,
-    request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
-    Update the credentials of a shared target, or of a private target the caller owns.
+    Replace a target's API key or request headers in place.
 
-    Rebuilds the target with the given parameters and replaces it under the same name. Any
-    parameter the create API accepts may change except ones that are part of the target's
-    identity, such as its endpoint or model. Values are never returned. Work already running
-    keeps using the previous target.
+    Works on a target created with credential updates allowed: your private target (private
+    targets allow them by default), or a shared target that allows them, which anyone signed in
+    can update. Everything using the target sends the new values with its next request; the
+    target's identity, configuration, and authentication mode don't change. Values are never
+    returned.
 
     Returns:
         TargetInstance: The updated target.
     """
     try:
         target = await get_target_service().update_credentials_async(
-            target_registry_name=target_registry_name, request=body, is_admin=has_admin_access(request)
+            target_registry_name=target_registry_name, request=body
         )
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except CredentialUpdateConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     if target is None:

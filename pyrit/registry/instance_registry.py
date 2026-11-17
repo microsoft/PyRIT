@@ -66,6 +66,13 @@ OWNER_METADATA_KEY = "owner"
 #: Entry metadata marking an entry with an owner as private: only its owner can see and use it.
 PRIVATE_METADATA_KEY = "private"
 
+#: Entry metadata marking a target whose credentials can be updated in place through the API: by its owner when
+#: it is private, and by anyone signed in when it is shared. Entries without it can't be updated.
+CREDENTIAL_UPDATES_METADATA_KEY = "credential_updates"
+
+#: The refusal kind recorded when code tries to replace a name a private entry it can't see uses.
+PRIVATE_ENTRY_REFUSAL_KIND = "private"
+
 # The owners of private entries looked up in this context, while a build records them.
 _private_references: ContextVar[dict[str, str] | None] = ContextVar("_private_references", default=None)
 
@@ -126,6 +133,36 @@ def is_private_entry(entry: RegistryEntry[Any]) -> bool:
         bool: True if the entry has an owner and is marked private.
     """
     return bool(entry.metadata.get(PRIVATE_METADATA_KEY)) and get_entry_owner(entry) is not None
+
+
+def allows_credential_updates(entry: RegistryEntry[Any]) -> bool:
+    """
+    Check whether an entry's credentials can be updated in place through the API.
+
+    Args:
+        entry (RegistryEntry[Any]): The entry.
+
+    Returns:
+        bool: True if whoever created the entry allowed credential updates.
+    """
+    return entry.metadata.get(CREDENTIAL_UPDATES_METADATA_KEY) is True
+
+
+def credential_update_metadata(*, allowed: bool) -> dict[str, Any]:
+    """
+    Return the entry metadata that decides whether a target's credentials can be updated through the API.
+
+    Pass it to ``register`` with the target, for example from an initializer that registers a shared target
+    whose token expires: ``registry.instances.register(target, name=..., metadata=credential_update_metadata(
+    allowed=True))``. Anyone signed in can then update the shared target's API key or request headers.
+
+    Args:
+        allowed (bool): Whether the target's credentials can be updated.
+
+    Returns:
+        dict[str, Any]: The metadata.
+    """
+    return {CREDENTIAL_UPDATES_METADATA_KEY: allowed}
 
 
 def owner_metadata(owner: str | None, *, private: bool) -> dict[str, Any]:
@@ -237,6 +274,28 @@ class SavedEntryReplacementError(RuntimeError):
         """
         super().__init__(f"Saved {kind.removesuffix('s')} '{name}' can't be replaced.")
         self.kind = kind
+        self.name = name
+
+
+class PrivateEntryReplacementError(RuntimeError):
+    """
+    Raised when code replaces an entry under a name that a private entry it can't see uses.
+
+    It isn't a ``ValueError``, so a launch script that skips the entries it can't build doesn't swallow
+    it. The message doesn't say whose entry it is.
+    """
+
+    def __init__(self, *, name: str) -> None:
+        """
+        Describe the name that couldn't be replaced.
+
+        Args:
+            name (str): The entry's name.
+        """
+        super().__init__(
+            f"'{name}' can't be replaced: a user's private entry uses that name until the server restarts or "
+            "its owner deletes it."
+        )
         self.name = name
 
 
@@ -611,8 +670,9 @@ class DefaultInstanceRegistry(Generic[T]):
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
             ValueError: If the name is reserved.
-            RegistryNameTakenError: If the name is already registered and ``replace`` is False,
-                or the name belongs to a private entry the caller in scope can't see.
+            RegistryNameTakenError: If the name is already registered and ``replace`` is False.
+            PrivateEntryReplacementError: If ``replace`` would replace a private entry the caller in scope
+                can't see.
             SavedEntryReplacementError: If ``replace`` would replace an entry rebuilt
                 from a saved recipe.
         """
@@ -641,7 +701,12 @@ class DefaultInstanceRegistry(Generic[T]):
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             previous = self._registry_items.get(name)
-            if not replace or (previous is not None and not is_visible_to_caller(previous)):
+            if replace and previous is not None and not is_visible_to_caller(previous):
+                refusals = _saved_entry_refusals.get()
+                if refusals is not None:
+                    refusals.append((PRIVATE_ENTRY_REFUSAL_KIND, name))
+                raise PrivateEntryReplacementError(name=name)
+            if not replace:
                 self.validate_name_available(name)
             else:
                 refuse_saved_entry(previous)

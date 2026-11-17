@@ -57,6 +57,7 @@ def target_object_to_instance(
     target_obj: PromptTarget,
     *,
     private: bool = False,
+    allow_credential_updates: bool = False,
     origin: RegistryEntryOrigin | None = None,
 ) -> TargetInstance:
     """
@@ -70,6 +71,7 @@ def target_object_to_instance(
         target_registry_name: The human-friendly target registry name.
         target_obj: The domain PromptTarget object from the registry.
         private: Whether only the target's creator can see and use it. Defaults to False.
+        allow_credential_updates: Whether the target's credentials can be updated through the API. Defaults to False.
         origin: Where the registered target comes from, or None for an inner target.
 
     Returns:
@@ -92,6 +94,7 @@ def target_object_to_instance(
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
         private=private,
+        allow_credential_updates=allow_credential_updates,
         credentials_rejected=target_obj.credentials_rejected,
         origin=origin,
     )

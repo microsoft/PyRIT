@@ -531,8 +531,10 @@ export interface TargetInstance {
   inner_targets?: TargetInstance[] | null
   /** True when only the requesting user, who created it, can see and use the target. */
   private?: boolean
-  /** True when the provider rejected the target's credentials on the last request through it. */
-  credentials_rejected?: boolean
+  /** True when the target's API key or request headers can be updated in place. */
+  allow_credential_updates?: boolean
+  /** Whether the provider rejected the target's credentials on the last request; null until it is used. */
+  credentials_rejected?: boolean | null
 }
 
 export interface TargetListResponse {
@@ -546,6 +548,8 @@ export interface CreateTargetRequest {
   auth_mode?: TargetAuthMode
   /** Makes the target visible to and usable by only its creator. */
   private?: boolean
+  /** Lets the target's API key or request headers be updated later; defaults to true only when private. */
+  allow_credential_updates?: boolean
 }
 
 // --- Initializers ---

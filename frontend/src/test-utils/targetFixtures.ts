@@ -23,7 +23,8 @@ export interface FlatTargetInput {
   target_specific_params?: Record<string, unknown> | null
   inner_targets?: FlatTargetInput[] | null
   private?: boolean
-  credentials_rejected?: boolean
+  allow_credential_updates?: boolean
+  credentials_rejected?: boolean | null
 }
 
 export function makeTarget(flat: FlatTargetInput): TargetInstance {
@@ -47,6 +48,9 @@ export function makeTarget(flat: FlatTargetInput): TargetInstance {
     target_specific_params: flat.target_specific_params ?? null,
     inner_targets: flat.inner_targets ? flat.inner_targets.map(makeTarget) : null,
     ...(flat.private !== undefined ? { private: flat.private } : {}),
+    ...(flat.allow_credential_updates !== undefined
+      ? { allow_credential_updates: flat.allow_credential_updates }
+      : {}),
     ...(flat.credentials_rejected !== undefined ? { credentials_rejected: flat.credentials_rejected } : {}),
   }
 }

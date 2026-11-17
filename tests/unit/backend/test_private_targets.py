@@ -3,9 +3,10 @@
 
 """Private targets: who can see and use a target, and who can update its credentials."""
 
+import json
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI, Request, Response
@@ -24,6 +25,7 @@ from pyrit.backend.routes.targets import router
 from pyrit.backend.services import ConverterService, TargetService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scorer_service import ScorerService
+from pyrit.backend.services.target_service import CredentialUpdateConflictError
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.converter import Base64Converter
 from pyrit.models.component_spec import SourceInstanceSpec
@@ -32,6 +34,7 @@ from pyrit.registry import (
     ConverterRegistry,
     Registry,
     TargetRegistry,
+    credential_update_metadata,
     get_entry_owner,
     is_private_entry,
     owner_metadata,
@@ -81,7 +84,11 @@ async def test_a_target_is_shared_by_default_and_records_its_creator_async(
 
     created = await _create_async("alice", _request(**params))
 
-    assert (created.private, created.credentials_rejected) == (False, False)
+    assert (created.private, created.allow_credential_updates, created.credentials_rejected) == (
+        False,
+        False,
+        None,
+    )
     entry = _entry("bob", "mine")
     assert (get_entry_owner(entry), is_private_entry(entry)) == ("alice", False)
 
@@ -326,70 +333,150 @@ async def test_a_technique_using_a_private_converter_is_private_async() -> None:
 # ============================================================================
 
 
-async def _update_async(caller: str | None, name: str = "mine", **params: Any) -> Any:
+async def _update_async(caller: str | None, name: str = "mine", **fields: Any) -> Any:
     with caller_principal_scope(caller):
         return await TargetService().update_credentials_async(
-            target_registry_name=name, request=UpdateTargetCredentialsRequest(params=params)
+            target_registry_name=name, request=UpdateTargetCredentialsRequest(**fields)
         )
 
 
+def _shared_request(name: str, **params: Any) -> CreateTargetRequest:
+    return _request(name, **params).model_copy(update={"allow_credential_updates": True})
+
+
 @pytest.mark.parametrize(
-    "params", [{"api_key": "new-key"}, {"headers": '{"Authorization": "Bearer new-token", "X-Team": "red"}'}]
+    ("fields", "expected_key", "expected_headers"),
+    [
+        ({"api_key": "new-key"}, "new-key", {}),
+        (
+            {"headers": {"Authorization": "Bearer new-token", "Cookie": "session=abc; theme=dark"}},
+            _SECRET,
+            {"Authorization": "Bearer new-token", "Cookie": "session=abc; theme=dark"},
+        ),
+    ],
 )
-async def test_the_creator_can_update_credentials_without_changing_identity_async(params: dict[str, Any]) -> None:
-    await _create_async("alice", _request(private=True, api_key=_SECRET))
-    old = _entry("alice", "mine")
-    old.instance._credentials_rejected = True
+async def test_the_owner_updates_a_private_target_in_place_async(
+    fields: dict[str, Any], expected_key: str, expected_headers: dict[str, str]
+) -> None:
+    created = await _create_async("alice", _request(private=True, api_key=_SECRET))
+    entry = _entry("alice", "mine")
+    target = entry.instance
+    identifier = target.get_identifier().hash
+    target._credentials_rejected = True
 
-    updated = await _update_async("alice", **params)
+    updated = await _update_async("alice", **fields)
 
-    new = _entry("alice", "mine")
-    assert new.instance is not old.instance
-    assert isinstance(new.instance, OpenAIChatTarget)
-    assert new.instance.get_identifier().hash == old.instance.get_identifier().hash
-    assert new.metadata == old.metadata
-    assert (updated.private, updated.credentials_rejected) == (True, False)
-    assert old.instance._api_key == _SECRET
-    if "api_key" in params:
-        assert new.instance._api_key == "new-key"
+    assert created.allow_credential_updates is True
+    assert _entry("alice", "mine").instance is target
+    assert target.get_identifier().hash == identifier
+    assert _entry("alice", "mine").metadata == entry.metadata
+    assert (updated.private, updated.allow_credential_updates, updated.credentials_rejected) == (True, True, None)
+    assert target._api_key == expected_key
+    assert target._headers == expected_headers
+    for name, value in expected_headers.items():
+        assert target._client.default_headers[name] == value
     assert "new-key" not in updated.model_dump_json() and "new-token" not in updated.model_dump_json()
 
 
-@pytest.mark.parametrize("params", [{"endpoint": "https://other.example/v1"}, {"model_name": "gpt-4o-mini"}])
-async def test_an_update_that_changes_identity_is_refused_and_keeps_the_target_async(params: dict[str, Any]) -> None:
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"endpoint": "https://other.example/v1"},
+        {"model_name": "gpt-4o-mini"},
+        {"auth_mode": "identity"},
+        {"params": {"api_key": "k"}},
+        {"headers": {}},
+    ],
+)
+def test_an_update_request_takes_only_credentials(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        UpdateTargetCredentialsRequest(**fields)
+
+
+async def test_a_header_replaces_one_configured_with_other_casing_wherever_it_was_set_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
+    monkeypatch.setenv("OPENAI_ADDITIONAL_REQUEST_HEADERS", json.dumps({"X-Team-Token": "old", "X-Route": "blue"}))
+    await _create_async(None, _shared_request("ops"))
+    target = _entry("bob", "ops").instance
+
+    await _update_async("bob", "ops", headers={"x-team-token": "fresh"})
+
+    assert target._headers == {"X-Team-Token": "fresh", "X-Route": "blue"}
+    sent = {name.lower(): value for name, value in target._client.default_headers.items() if isinstance(value, str)}
+    assert (sent["x-team-token"], sent["x-route"]) == ("fresh", "blue")
+    assert [name for name in target._client.default_headers if name.lower() == "x-team-token"] == ["X-Team-Token"]
+
+
+async def test_a_copy_built_after_an_update_uses_the_new_credentials_async() -> None:
     await _create_async("alice", _request(private=True, api_key=_SECRET))
-    old = _entry("alice", "mine").instance
+    source = _entry("alice", "mine").instance
+    await _update_async("alice", api_key="new-key", headers={"X-Team-Token": "fresh"})
 
-    with pytest.raises(ValueError, match="changes the target's identity") as error:
-        await _update_async("alice", **params)
+    copy = TargetRegistry.get_registry_singleton().recreate_instance(source=source, params={}, external_input=True)
 
-    assert _entry("alice", "mine").instance is old
-    assert next(iter(params.values())) not in str(error.value)
+    assert (copy._api_key, copy._headers) == ("new-key", {"X-Team-Token": "fresh"})
+
+
+async def test_a_no_key_target_takes_headers_but_not_a_key_async() -> None:
+    request = _request(private=True).model_copy(update={"auth_mode": "none"})
+    await _create_async("alice", request)
+    target = _entry("alice", "mine").instance
+
+    await _update_async("alice", headers={"X-Gateway-Key": "team-secret"})
+    with pytest.raises(ValueError, match="can't take an API key"):
+        await _update_async("alice", api_key="new-key")
+
+    assert target._headers == {"X-Gateway-Key": "team-secret"}
+    assert target._auth_mode == "none"
+
+
+async def test_an_identity_target_takes_other_headers_but_not_authorization_async() -> None:
+    provider = AsyncMock(return_value="entra-token")
+    request = CreateTargetRequest(
+        name="mine",
+        type="OpenAIChatTarget",
+        params={"endpoint": "https://example.openai.azure.com/openai/v1", "model_name": "gpt-4o"},
+        auth_mode="identity",
+        private=True,
+    )
+    with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=provider), caller_principal_scope("alice"):
+        await TargetService().create_target_async(request=request, is_admin=True)
+
+    await _update_async("alice", headers={"Ocp-Apim-Subscription-Key": "team-key"})
+    with pytest.raises(ValueError, match="Authorization header"):
+        await _update_async("alice", headers={"authorization": "Bearer mine"})
+
+    assert _entry("alice", "mine").instance._headers == {"Ocp-Apim-Subscription-Key": "team-key"}
 
 
 @pytest.mark.parametrize(
-    "params",
+    ("headers", "match"),
     [
-        {"headers": f"not json {_SECRET}"},
-        {"api_key": [f"Bearer {_SECRET}"]},
-        {"max_requests_per_minute": {"x": _SECRET}},
-        {"temperature": [_SECRET]},
-        {"extra_body_parameters": {"api_key": _SECRET}, "max_tokens": f"{_SECRET}x"},
+        ({"Host": "elsewhere.example"}, "control how a request is sent"),
+        ({"Transfer-Encoding": "chunked"}, "control how a request is sent"),
+        ({"X-Team-Token": " "}, "nonblank"),
+        ({f"Bad Name {_SECRET}": "v"}, "header name"),
+        ({"X-Team-Token": f"{_SECRET}\nX-Injected: 1"}, "control character"),
     ],
 )
-async def test_an_update_never_echoes_a_rejected_value_async(params: dict[str, Any]) -> None:
+async def test_a_header_update_that_cannot_be_sent_is_refused_without_echoing_it_async(
+    headers: dict[str, str], match: str
+) -> None:
     await _create_async("alice", _request(private=True, api_key="old-key"))
-    old = _entry("alice", "mine").instance
+    target = _entry("alice", "mine").instance
 
-    with pytest.raises(ValueError) as error:
-        await _update_async("alice", **params)
+    with pytest.raises(ValueError, match=match) as error:
+        await _update_async("alice", headers=headers)
 
     assert _SECRET not in str(error.value)
-    assert _entry("alice", "mine").instance is old
+    assert (target._api_key, target._headers) == ("old-key", {})
 
 
-@pytest.mark.parametrize("value", ["", " ", None, [], {}, 0, False, ["key"]])
-async def test_a_credential_update_needs_a_nonblank_string_async(value: Any) -> None:
+@pytest.mark.parametrize("value", ["", " ", "\n"])
+async def test_a_key_update_needs_a_nonblank_value_async(value: str) -> None:
     await _create_async("alice", _request(private=True, api_key=_SECRET))
 
     with pytest.raises(ValueError, match="api_key"):
@@ -398,58 +485,83 @@ async def test_a_credential_update_needs_a_nonblank_string_async(value: Any) -> 
     assert _entry("alice", "mine").instance._api_key == _SECRET
 
 
-async def test_an_update_cannot_change_the_authentication_mode_async() -> None:
-    await _create_async("alice", _request(private=True, api_key=_SECRET))
-
-    with pytest.raises(ValueError, match="authentication mode"):
-        await _update_async("alice", auth_mode="identity")
-
-
-async def test_a_refused_update_releases_the_rebuilt_target_async() -> None:
-    await _create_async("alice", _request(private=True, api_key=_SECRET))
-    released: list[Any] = []
-
-    async def release_async(component: Any) -> None:
-        released.append(component)
-
-    with (
-        patch("pyrit.backend.services.target_service.release_component_async", side_effect=release_async),
-        pytest.raises(ValueError, match="identity"),
-    ):
-        await _update_async("alice", model_name="gpt-4o-mini")
-
-    assert len(released) == 1
-    assert released[0] is not _entry("alice", "mine").instance
-
-
-async def test_the_creator_can_add_a_key_to_a_shared_target_async(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_anyone_signed_in_can_update_a_shared_target_that_allows_it_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
-    await _create_async("alice", _request())
+    created = await _create_async("alice", _shared_request("team"))
 
-    updated = await _update_async("alice", api_key="alice-key")
+    updated = await _update_async("bob", "team", api_key="bob-key")
 
-    assert updated.private is False
-    assert _entry("bob", "mine").instance._api_key == "alice-key"
+    assert (created.private, created.allow_credential_updates) == (False, True)
+    assert (updated.private, updated.allow_credential_updates) == (False, True)
+    entry = _entry("carol", "team")
+    assert (entry.instance._api_key, get_entry_owner(entry)) == ("bob-key", "alice")
+
+
+async def test_an_initializer_can_register_a_shared_target_that_allows_updates_async() -> None:
+    target = OpenAIChatTarget(
+        endpoint=_ENDPOINT, model_name="gpt-4o", api_key="unused", headers=json.dumps({"X-Team-Token": "expired"})
+    )
+    TargetRegistry.get_registry_singleton().instances.register(
+        target, name="ops", metadata=credential_update_metadata(allowed=True)
+    )
+
+    updated = await _update_async("bob", "ops", headers={"X-Team-Token": "fresh"})
+
+    assert (updated.private, updated.allow_credential_updates) == (False, True)
+    assert target._headers == {"X-Team-Token": "fresh"}
+
+
+async def test_a_target_that_cannot_update_its_credentials_is_refused_async() -> None:
+    TargetRegistry.get_registry_singleton().instances.register(
+        MockPromptTarget(), name="mock", metadata=credential_update_metadata(allowed=True)
+    )
+
+    with pytest.raises(ValueError, match="can't update its credentials"):
+        await _update_async("alice", "mock", api_key="alice-key")
+
+
+async def test_updates_cannot_be_allowed_for_a_type_that_cannot_make_them_async() -> None:
+    request = CreateTargetRequest(
+        name="mine",
+        type="RealtimeTarget",
+        params={"endpoint": "wss://example.openai.azure.com/openai/v1", "model_name": "gpt-4o", "api_key": "k"},
+        allow_credential_updates=True,
+    )
+
+    with pytest.raises(ValueError, match="allow_credential_updates"):
+        await _create_async("alice", request)
+
+    assert _entry("alice", "mine") is None
+
+
+async def test_a_private_composite_does_not_allow_updates_by_default_async() -> None:
+    await _create_async("alice", _request(private=True, api_key=_SECRET))
+    await _create_async("alice", _request("team", private=False, api_key="team-key"))
+    created = await _create_async("alice", _composite())
+
+    assert (created.private, created.allow_credential_updates) == (True, False)
+
+
+def test_a_saved_target_cannot_allow_credential_updates() -> None:
+    with pytest.raises(ValueError, match="allow_credential_updates"):
+        CreateTargetRequest(
+            name="mine",
+            type="OpenAIChatTarget",
+            params={"endpoint": _ENDPOINT, "model_name": "gpt-4o"},
+            auth_mode="none",
+            persist=True,
+            allow_credential_updates=True,
+        )
 
 
 async def test_a_saved_target_cannot_be_updated_through_the_api_async() -> None:
     with saved_entry_registration(kind="targets", name="saved"):
-        await _create_async(None, _request("saved", api_key=_SECRET))
+        await _create_async(None, _shared_request("saved", api_key=_SECRET))
 
-    with pytest.raises(PermissionError, match="saved configuration"):
+    with pytest.raises(PermissionError, match="is saved"):
         await _update_async("alice", "saved", api_key="alice-key")
-
-
-async def test_anyone_signed_in_can_update_a_shared_target_async(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
-    await _create_async("alice", _request("shared-one"))
-    await _create_async(None, _request("from-initializer"))
-
-    assert (await _update_async("bob", "shared-one", api_key="bob-key")).private is False
-    assert (await _update_async("bob", "from-initializer", api_key="bob-key")).private is False
-
-    entry = _entry("carol", "shared-one")
-    assert (entry.instance._api_key, get_entry_owner(entry)) == ("bob-key", "alice")
 
 
 async def test_another_user_cannot_see_or_update_a_private_target_async() -> None:
@@ -461,17 +573,25 @@ async def test_another_user_cannot_see_or_update_a_private_target_async() -> Non
 
 async def test_an_update_needs_a_signed_in_caller_async(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
-    await _create_async("alice", _request("shared-one"))
+    await _create_async("alice", _shared_request("team"))
 
     with pytest.raises(PermissionError, match="signed-in caller"):
-        await _update_async(None, "shared-one", api_key="key")
+        await _update_async(None, "team", api_key="key")
 
 
-async def test_a_target_that_cannot_be_rebuilt_is_refused_cleanly_async() -> None:
-    TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="from-initializer")
+@pytest.mark.parametrize(("name", "expected_private"), [("mine", False), ("team", True)])
+async def test_an_update_for_a_target_that_is_not_as_expected_changes_nothing_async(
+    monkeypatch: pytest.MonkeyPatch, name: str, expected_private: bool
+) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
+    await _create_async("alice", _request(private=True, api_key=_SECRET))
+    await _create_async("alice", _shared_request("team"))
+    before = _entry("alice", name).instance._api_key
 
-    with pytest.raises(ValueError, match="can't be rebuilt"):
-        await _update_async("alice", "from-initializer", api_key="alice-key")
+    with pytest.raises(CredentialUpdateConflictError, match="not the target you expected"):
+        await _update_async("alice", name, api_key="new-key", private=expected_private)
+
+    assert _entry("alice", name).instance._api_key == before
 
 
 def _client_as(caller: str) -> TestClient:
@@ -488,23 +608,118 @@ def _client_as(caller: str) -> TestClient:
 
 
 @pytest.mark.parametrize(
-    ("caller", "name", "params", "status_code"),
+    ("caller", "name", "body", "status_code"),
     [
         ("alice", "mine", {"api_key": "new-key"}, 200),
-        ("alice", "mine", {"model_name": "gpt-4o-mini"}, 400),
+        ("alice", "mine", {"api_key": "new-key", "private": True}, 200),
+        ("alice", "mine", {"api_key": "new-key", "private": False}, 409),
+        ("alice", "mine", {"headers": {"Host": "new-key.example"}}, 400),
+        ("alice", "mine", {"model_name": "new-key"}, 422),
         ("bob", "mine", {"api_key": "new-key"}, 404),
-        ("bob", "team", {"api_key": "new-key"}, 200),
+        ("bob", "team", {"api_key": "new-key"}, 403),
+        ("bob", "open-team", {"api_key": "new-key"}, 200),
     ],
 )
 async def test_update_credentials_route_maps_each_outcome(
-    monkeypatch: pytest.MonkeyPatch, caller: str, name: str, params: dict[str, Any], status_code: int
+    monkeypatch: pytest.MonkeyPatch, caller: str, name: str, body: dict[str, Any], status_code: int
 ) -> None:
     monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
     await _create_async("alice", _request(private=True, api_key=_SECRET))
     await _create_async("alice", _request("team"))
+    await _create_async("alice", _shared_request("open-team"))
 
     with patch("pyrit.backend.routes.targets.get_target_service", return_value=TargetService()):
-        response = _client_as(caller).put(f"/api/targets/{name}/credentials", json={"params": params})
+        response = _client_as(caller).put(f"/api/targets/{name}/credentials", json=body)
 
     assert response.status_code == status_code
-    assert "new-key" not in response.text
+    if status_code != 422:
+        assert "new-key" not in response.text
+
+
+# ============================================================================
+# Regressions: credentials change in place, only where the creator allowed it
+# ============================================================================
+
+
+async def test_a_component_holding_the_target_uses_updated_credentials_async() -> None:
+    await _create_async("alice", _request(private=True, api_key=_SECRET))
+    held = _entry("alice", "mine").instance
+
+    await _update_async("alice", api_key="new-key")
+
+    assert _entry("alice", "mine").instance is held
+    assert held._api_key == "new-key"
+
+
+async def test_an_identity_target_cannot_switch_to_a_key_async() -> None:
+    provider = AsyncMock(return_value="entra-token")
+    request = CreateTargetRequest(
+        name="mine",
+        type="OpenAIChatTarget",
+        params={"endpoint": "https://example.openai.azure.com/openai/v1", "model_name": "gpt-4o"},
+        auth_mode="identity",
+        private=True,
+    )
+    with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=provider), caller_principal_scope("alice"):
+        await TargetService().create_target_async(request=request, is_admin=True)
+
+    with pytest.raises(ValueError, match="authenticat"):
+        await _update_async("alice", api_key="new-key")
+
+    target = _entry("alice", "mine").instance
+    assert (target._auth_mode, target._api_key) == ("identity", provider)
+
+
+async def test_a_shared_target_can_be_updated_only_when_its_creator_allowed_it_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_KEY", "server-key")
+    await _create_async(None, _request("from-initializer"))
+    await _create_async("alice", _request("shared-one"))
+
+    for name in ("from-initializer", "shared-one"):
+        with pytest.raises(PermissionError, match="doesn't allow credential updates"):
+            await _update_async("bob", name, api_key="bob-key")
+        assert _entry("bob", name).instance._api_key == "server-key"
+
+
+async def test_a_pasted_key_loses_surrounding_whitespace_async() -> None:
+    await _create_async("alice", _request(private=True, api_key=" sk-created \n"))
+    assert _entry("alice", "mine").instance._api_key == "sk-created"
+
+    await _update_async("alice", api_key="sk-updated \n")
+    assert _entry("alice", "mine").instance._api_key == "sk-updated"
+
+
+@pytest.mark.parametrize("value", [f"{_SECRET}\x00", f"{_SECRET}\r\nX-Injected: 1", f"sk\t{_SECRET}"])
+async def test_a_key_with_a_control_character_is_refused_without_echoing_it_async(value: str) -> None:
+    with pytest.raises(ValueError) as created:
+        await _create_async("alice", _request(private=True, api_key=value))
+    assert _SECRET not in str(created.value)
+
+    await _create_async("alice", _request(private=True, api_key="old-key"))
+    with pytest.raises(ValueError) as updated:
+        await _update_async("alice", api_key=value)
+    assert _SECRET not in str(updated.value)
+    assert _entry("alice", "mine").instance._api_key == "old-key"
+
+
+async def test_a_header_value_with_a_line_break_is_refused_without_echoing_it_async() -> None:
+    headers = json.dumps({"X-Team-Token": f"{_SECRET}\r\nX-Injected: 1"})
+
+    with pytest.raises(ValueError) as error:
+        await _create_async("alice", _request(private=True, api_key="key", headers=headers))
+
+    assert _SECRET not in str(error.value)
+
+
+def test_a_private_target_cannot_be_saved() -> None:
+    with pytest.raises(ValueError, match="private"):
+        CreateTargetRequest(
+            name="mine",
+            type="OpenAIChatTarget",
+            params={"endpoint": _ENDPOINT, "model_name": "gpt-4o"},
+            auth_mode="none",
+            private=True,
+            persist=True,
+        )

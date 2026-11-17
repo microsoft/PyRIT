@@ -111,6 +111,8 @@ from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.instance_registry import (
+    PRIVATE_ENTRY_REFUSAL_KIND,
+    PrivateEntryReplacementError,
     SavedEntryReplacementError,
     record_saved_entry_refusals,
     registration_origin,
@@ -205,7 +207,7 @@ class ScenarioRunConflictError(ValueError):
 
 
 class SavedEntryLaunchConflictError(ScenarioRunConflictError):
-    """A launch script would replace an entry rebuilt from a saved recipe."""
+    """A launch script would replace an entry rebuilt from a saved recipe, or a name a user's private entry uses."""
 
 
 class ScenarioRunNotFoundError(ValueError):
@@ -1713,13 +1715,15 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            # The registries refuse to replace a saved entry; the record also catches a refusal
-            # that the script itself caught, which would leave the saved entry in its place.
+            # The registries refuse to replace a saved entry or a user's private entry; the record also
+            # catches a refusal that the script itself caught, which would leave that entry in its place.
             with record_saved_entry_refusals() as refusals, registration_origin(RegistryEntryOrigin.TEMPORARY):
                 try:
                     await instance.initialize_async()
                 except SavedEntryReplacementError as error:
                     refusals.append((error.kind, error.name))
+                except PrivateEntryReplacementError as error:
+                    refusals.append((PRIVATE_ENTRY_REFUSAL_KIND, error.name))
                 except Exception as error:
                     # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
                     if refusals:
@@ -1735,20 +1739,30 @@ class ScenarioRunService:
         *, initializer_name: str, refusals: list[tuple[str, str]]
     ) -> SavedEntryLaunchConflictError:
         """
-        Describe the saved entries a launch script would have replaced.
+        Describe the saved entries, and names private entries use, that a launch script would have replaced.
 
         Args:
             initializer_name (str): The launch script's name.
-            refusals (list[tuple[str, str]]): The kind and name of each saved entry that was refused.
+            refusals (list[tuple[str, str]]): The kind and name of each refused entry; the kind is
+                ``PRIVATE_ENTRY_REFUSAL_KIND`` for a name a user's private entry uses.
 
         Returns:
             SavedEntryLaunchConflictError: The error to raise.
         """
-        entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
-        return SavedEntryLaunchConflictError(
-            f"The launch script '{initializer_name}' would replace the saved {entries}. "
-            "Leave that script out of the launch."
-        )
+        unique = list(dict.fromkeys(refusals))
+        saved = [(kind, name) for kind, name in unique if kind != PRIVATE_ENTRY_REFUSAL_KIND]
+        private = [name for kind, name in unique if kind == PRIVATE_ENTRY_REFUSAL_KIND]
+        reasons: list[str] = []
+        if saved:
+            entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in saved)
+            reasons.append(f"The launch script '{initializer_name}' would replace the saved {entries}.")
+        if private:
+            names = ", ".join(f"'{name}'" for name in private)
+            reasons.append(
+                f"The launch script '{initializer_name}' can't replace {names}, which a user's private entry uses "
+                "until the server restarts or its owner deletes it."
+            )
+        return SavedEntryLaunchConflictError(f"{' '.join(reasons)} Leave that script out of the launch.")
 
     async def _initialize_scenario_async(
         self,

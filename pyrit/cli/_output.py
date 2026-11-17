@@ -235,10 +235,17 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
         if identifier.endpoint:
             print(f"    Endpoint: {identifier.endpoint}")
         print(f"    Account: {'Yours' if tgt.private else 'Shared'}")
-        if tgt.credentials_rejected:
+        if tgt.allow_credential_updates:
+            print("    Credential updates: allowed")
+        if tgt.credentials_rejected and tgt.allow_credential_updates:
             print(
                 "    Credentials rejected by the provider on the last request; update them with "
                 f"'pyrit_scan set-target-credential {tgt.target_registry_name}'"
+            )
+        elif tgt.credentials_rejected:
+            print(
+                "    Credentials rejected by the provider on the last request; this target doesn't allow "
+                "credential updates, so ask whoever set it up"
             )
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")

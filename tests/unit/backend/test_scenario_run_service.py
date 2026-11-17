@@ -73,6 +73,7 @@ from pyrit.registry import (
     ScenarioMetadata,
     ScenarioRegistry,
     TargetRegistry,
+    owner_metadata,
 )
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.scenario import (
@@ -390,6 +391,27 @@ async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
         assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "script",
+    [_LaunchScript(name="rot13"), _LaunchScript(name="rot13", swallow=True), _LaunchScript(name="rot13", wrap=True)],
+)
+async def test_launch_scripts_report_a_name_a_private_entry_holds_async(
+    converter_registry: ConverterRegistry, script: Any
+) -> None:
+    private = ROT13Converter()
+    converter_registry.instances.register(private, name="rot13", metadata=owner_metadata("alice", private=True))
+
+    with pytest.raises(
+        SavedEntryLaunchConflictError, match="'converters' can't replace 'rot13', which a user's private entry uses"
+    ) as raised:
+        await _run_launch_scripts_async({"converters": script})
+
+    assert "alice" not in str(raised.value)
+    with caller_principal_scope("alice"):
+        assert converter_registry.instances.get("rot13") is private
 
 
 class _FailingLaunchScript:

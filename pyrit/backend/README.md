@@ -61,7 +61,7 @@ its database collation.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 - `POST /api/targets` - Create (and optionally register) a target
-- `PUT /api/targets/{id}/credentials` - Update the credentials of a shared target or your private target
+- `PUT /api/targets/{id}/credentials` - Update the API key or request headers of a target that allows it
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -129,7 +129,8 @@ the file is fixed or deleted, so nothing runs without the saved target.
 A target, scorer, converter, or technique created through the API is **shared** by default:
 everyone can see and use it. Send `"private": true` to make it **private**, so only the signed-in
 user who created it can see and use it. A private entry needs a signed-in caller (local mode has
-one) and `"register": true`. Entries from initializers and saved configuration are always shared.
+one) and `"register": true`, and can't be saved with `"persist": true`. Entries from initializers and
+saved configuration are always shared.
 
 ```http
 POST /api/targets
@@ -137,7 +138,7 @@ POST /api/targets
  "params": {"endpoint": "https://api.anthropic.com/v1", "model_name": "<model>", "api_key": "<your key>"}}
 
 PUT /api/targets/my-claude/credentials
-{"params": {"api_key": "<new key or access token>"}}
+{"api_key": "<new key or access token>", "private": true}
 ```
 
 - To everyone else, a private target doesn't exist: lists leave it out, and naming it anywhere
@@ -146,19 +147,36 @@ PUT /api/targets/my-claude/credentials
 - Anything built on your private target is private too, so a shared component never uses a
   private one; `"private": false` then fails with 400 and registers nothing.
 - Results, such as attack and scenario results and conversations, stay visible to everyone.
-- Any signed-in user can call `PUT /api/targets/{id}/credentials` on a shared target, so everyone's
-  requests then use the new credentials; only the owner can update a private target (others get
-  404). Targets from saved configuration can't be updated this way (403). The body's `params` may change
-  any parameter the create API accepts, except `auth_mode` and settings that are part of the
-  target's identity, such as its endpoint or model (400; create a new target instead). A
-  credential must be a nonblank string. Credentials, including keys, tokens, and headers, are
-  never part of the identity. The target is rebuilt under the same name; work already running
-  keeps using the previous one. Values are never returned.
-- Target responses report `private` and `credentials_rejected`: the provider answered the last
-  request through the target, or a chat copy of it, with 401 or 403. It is false until then, and
-  again after a later success or a credential update.
-- `pyrit_scan set-target-credential` updates a target's `api_key` from a prompt, an environment
-  variable, or the `ant` CLI.
+- Whoever creates a target decides whether its credentials can be updated later
+  (`"allow_credential_updates"`). A private target allows it by default, so its owner can keep a
+  short-lived token fresh; a shared target doesn't unless its creator sends `true`. An
+  initializer can allow it for a shared target it registers, for example one whose gateway
+  token expires, with `credential_update_metadata(allowed=True)` from `pyrit.registry`.
+  Responses report `allow_credential_updates`.
+- `PUT /api/targets/{id}/credentials` takes an `api_key`, `headers`, or both. Only the owner can
+  update a private target (others get 404), and anyone signed in can update a shared target that
+  allows it, so everyone's requests then use the new credentials. A target that doesn't allow
+  updates, or a saved target, returns 403. A header replaces any header of the same name, whatever
+  its case and wherever the target was configured with it (`headers`,
+  `OPENAI_ADDITIONAL_REQUEST_HEADERS`, or `httpx_client_kwargs`), so a target behind any auth
+  scheme can be kept fresh: `Authorization`, `x-api-key`, a team's own header, or `Cookie` (the
+  whole cookie string). Send `"private"` with the visibility you expect; when the target isn't
+  private or shared as expected, nothing changes and the request returns 409.
+- The update changes the registered target in place: its identity, configuration, detected
+  capabilities, and authentication mode stay the same, and everything using it, such as a round
+  robin, a scorer, or a running scenario, sends the new values with its next request. A target
+  that authenticates with Microsoft Entra ID or with no key can't take an `api_key`, and one using
+  Entra ID can't take an `Authorization` header (400). Headers that frame or route a request, such as
+  `Host` or `Content-Length`, can't be set (400). OpenAI-family targets other than `RealtimeTarget`
+  can update in place; other target types can't allow updates. Values are never returned.
+- Keys, sensitive parameters, and header values lose surrounding whitespace when a target is
+  created or updated; one containing a line break or another control character is refused (400),
+  and the error names only the parameter or header.
+- Target responses report `private` and `credentials_rejected`: whether the provider answered the
+  last request through the target, or a chat copy of it, with 401 or 403. It is `null` until a
+  request completes or fails authentication, and again after the credentials change.
+- `pyrit_scan set-target-credential` updates a target's `api_key`, or a request header with
+  `--header`, from a prompt, an environment variable, or the `ant` CLI.
 - Like other targets created through the API, private targets are gone after the backend
   restarts or reinitializes.
 

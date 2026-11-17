@@ -159,6 +159,9 @@ Examples:
   # Or replace it with a key from an environment variable
   pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
 
+  # Or set a request header instead, such as a gateway token or a cookie
+  pyrit_scan set-target-credential team-model --prompt --header X-Team-Token
+
   # Connect to a remote server
   pyrit_scan list-scenarios --server-url http://remote:8000
 
@@ -461,9 +464,17 @@ def _add_target_credential_parser(*, subparsers: Any, client_parents: list[Argum
     set_parser = subparsers.add_parser(
         "set-target-credential",
         parents=client_parents,
-        help="Replace the API key of a shared target or your private target",
+        help="Replace the API key or a request header of a target that allows credential updates",
     )
     set_parser.add_argument("target", type=str, help="Registry name of the target")
+    set_parser.add_argument(
+        "--header",
+        metavar="NAME",
+        help=(
+            "Set the credential as this request header instead of the API key, such as X-Api-Key, "
+            "Authorization (include the scheme, such as 'Bearer ...'), or Cookie (the whole cookie string)"
+        ),
+    )
     _add_credential_source_arguments(parser=set_parser)
 
 
@@ -1260,16 +1271,32 @@ def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource:
     return CredentialSource(kind=CredentialSourceKind.ANT, ant_profile=parsed_args.ant_profile)
 
 
-async def _send_target_credential_async(*, client: Any, target_name: str, source: CredentialSource) -> None:
-    """Read a key from its source and set it as the API key of a target."""
+async def _send_target_credential_async(
+    *, client: Any, target_name: str, source: CredentialSource, header: str | None, expected_private: bool
+) -> None:
+    """
+    Read a credential from its source and set it as a target's API key, or as one of its request headers.
+
+    The request names the visibility the target had when the command started, so the server refuses it if a
+    different target has since taken the name.
+    """
     from pyrit.cli._target_credentials import read_target_credential_async
 
-    credential = await read_target_credential_async(source=source, target_name=target_name)
-    await client.set_target_credential_async(target_registry_name=target_name, credential=credential)
+    credential = await read_target_credential_async(source=source, target_name=target_name, header=header)
+    await client.set_target_credential_async(
+        target_registry_name=target_name, credential=credential, header=header, expected_private=expected_private
+    )
 
 
 async def _keep_target_credential_fresh_async(
-    *, client: Any, target_name: str, target_hash: str, source: CredentialSource, refresh_minutes: int
+    *,
+    client: Any,
+    target_name: str,
+    target_hash: str,
+    private: bool,
+    source: CredentialSource,
+    header: str | None,
+    refresh_minutes: int,
 ) -> int:
     """
     Re-send a fresh credential on an interval until the user stops the command.
@@ -1277,13 +1304,16 @@ async def _keep_target_credential_fresh_async(
     Temporary failures (an unavailable credential source, sign-in, or backend, a timeout, a 429 or a 5xx
     response) are reported and retried at the next interval. The command stops when the target is gone
     or is no longer the one the credential was set for, such as after the backend restarts and removes a
-    target created through the API, or when the backend rejects the credential.
+    target created through the API and someone else takes its name, or when the backend refuses the
+    credential. The server also refuses an update for a target that isn't private or shared as expected.
 
     Args:
         client: The open API client.
         target_name: The target's registry name.
         target_hash: The identifier hash of the target the credential was first set for.
+        private: Whether the target the credential was first set for is private.
         source: Where to re-read the credential.
+        header: The request header the credential is set as, or None for the API key.
         refresh_minutes: Minutes between refreshes.
 
     Returns:
@@ -1305,14 +1335,16 @@ async def _keep_target_credential_fresh_async(
             await asyncio.sleep(refresh_minutes * 60)
             try:
                 target = await client.get_target_async(target_registry_name=target_name)
-                if target is None or target.identifier.hash != target_hash:
+                if target is None or target.identifier.hash != target_hash or target.private != private:
                     print(
                         f"Error: '{target_name}' is no longer the target you set your credential for, so refreshing "
                         f"stopped. {recreate_hint}",
                         file=sys.stderr,
                     )
                     return 1
-                await _send_target_credential_async(client=client, target_name=target_name, source=source)
+                await _send_target_credential_async(
+                    client=client, target_name=target_name, source=source, header=header, expected_private=private
+                )
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
                 if status_code != 429 and status_code < 500:
@@ -1347,7 +1379,7 @@ def _response_detail(response: Any) -> str:
 
 async def _handle_set_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
     """
-    Handle ``set-target-credential``: replace the API key of a shared target or the caller's private one.
+    Handle ``set-target-credential``: replace the API key or a request header of a target that allows it.
 
     Returns:
         int: Exit code (``0`` on success, ``1`` on failure).
@@ -1369,15 +1401,24 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
     if target is None:
         print(f"Error: Target '{target_name}' not found on server.")
         return 1
+    if not target.allow_credential_updates:
+        print(
+            f"Error: Target '{target_name}' doesn't allow credential updates. Ask whoever created it, or create "
+            "your own target."
+        )
+        return 1
     if not target.private:
         print(f"Warning: Target '{target_name}' is shared; everyone's requests will use this credential.")
+    header = parsed_args.header
     try:
-        await _send_target_credential_async(client=client, target_name=target_name, source=source)
+        await _send_target_credential_async(
+            client=client, target_name=target_name, source=source, header=header, expected_private=target.private
+        )
     except TargetCredentialError as exc:
         print(f"Error: {exc}")
         return 1
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 403:
+        if exc.response.status_code not in {400, 403, 409}:
             raise
         print(f"Error: {_response_detail(exc.response)}")
         return 1
@@ -1388,7 +1429,9 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
         client=client,
         target_name=target_name,
         target_hash=target.identifier.hash,
+        private=target.private,
         source=source,
+        header=header,
         refresh_minutes=parsed_args.refresh_minutes,
     )
 

@@ -117,7 +117,17 @@ class CreateTargetRequest(RegistrationRequest):
         description=(
             "Whether only the signed-in user who creates the target can see and use it, and anything built with "
             "it. Omitted, it is shared, unless it is built on your private targets; then it is private and false "
-            "is refused. A private target requires register=true."
+            "is refused. A private target requires register=true and can't be saved with persist."
+        ),
+    )
+    allow_credential_updates: bool | None = Field(
+        None,
+        description=(
+            "Whether the target's API key and request headers can be updated in place later, through "
+            "PUT /api/targets/{name}/credentials: by you alone when the target is private, and by anyone signed in "
+            "when it is shared. Omitted, a private target allows updates if its type can make them (OpenAI-family "
+            "targets other than RealtimeTarget), and a shared target doesn't. True is refused for a type that "
+            "can't, and for a saved target."
         ),
     )
 
@@ -141,6 +151,13 @@ class CreateTargetRequest(RegistrationRequest):
             raise ValueError("persist requires register=true")
         if self.name is None:
             raise ValueError("persist requires a name")
+        # A saved target is restored with no caller, so it would come back shared, and its credentials can't change.
+        if self.private:
+            raise ValueError("A private target can't be saved; leave out persist or private")
+        if self.allow_credential_updates:
+            raise ValueError(
+                "A saved target's credentials can't be updated; leave out persist or allow_credential_updates"
+            )
         validate_registry_name(self.name)
         return self
 
@@ -157,17 +174,41 @@ class UnregisteredTarget(BaseModel):
 
 
 class UpdateTargetCredentialsRequest(BaseModel):
-    """Request to update the credentials of a private target the caller owns."""
+    """
+    Request to update a target's API key or request headers in place.
+
+    Only targets created with credential updates allowed accept it: a private one from its owner, a shared one
+    from anyone signed in.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    params: dict[IdentifierStr, JSONValue] = Field(
-        ...,
+    api_key: str | None = Field(
+        None,
+        max_length=16_384,
+        description="The new API key or access token. Never returned.",
+    )
+    headers: dict[str, str] | None = Field(
+        None,
         min_length=1,
         max_length=MAX_ITEMS,
         description=(
-            "Constructor parameters to replace, such as api_key or headers. Any parameter the create API accepts "
-            "may change except ones that are part of the target's identity, such as its endpoint or model. Values "
-            "are never returned."
+            "Request headers to set, each replacing any header of the same name (case-insensitive), wherever the "
+            "target was configured with it. Any header that carries credentials can be set, such as Authorization, "
+            "x-api-key, or Cookie (the whole cookie string). Values are never returned."
         ),
     )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether you expect the target to be private. When set and the target's visibility differs, nothing "
+            "changes and the request fails with 409, so a token meant for your private target never reaches a "
+            "shared target that took its name."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_a_credential(self) -> "UpdateTargetCredentialsRequest":
+        if self.api_key is None and not self.headers:
+            raise ValueError("Set api_key, headers, or both")
+        return self

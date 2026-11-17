@@ -9,7 +9,6 @@ from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
-from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -206,12 +205,6 @@ class LiteLLMChatTarget(PromptTarget):
     """
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
-    # A copy keeps where its source sends requests and how it signs in, so a key can't be sent elsewhere.
-    # The model's provider prefix picks the route, and passthrough options can set the key, route, or
-    # base URL, so those are kept too.
-    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {"model_name", "endpoint", "api_key", "headers", "extra_body_parameters"}
-    )
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
@@ -227,7 +220,6 @@ class LiteLLMChatTarget(PromptTarget):
         )
     )
 
-    @capture_constructor_parameters
     def __init__(
         self,
         *,
@@ -320,37 +312,6 @@ class LiteLLMChatTarget(PromptTarget):
                 derived = self._derive_capabilities_from_litellm(resolved_model)
                 if derived is not None:
                     self._configuration = TargetConfiguration(capabilities=derived)
-
-    def get_reconstruction_parameters(self) -> dict[str, object]:
-        """
-        Return server-only constructor inputs, including resolved environment defaults and the key.
-
-        Returns:
-            dict[str, object]: Constructor inputs with the resolved model, endpoint, and key or token provider,
-                so a copy never reads the environment again.
-
-        Raises:
-            ValueError: If the target's constructor did not retain its inputs, or ``extra_body_parameters``
-                sets a temperature that would replace a copy's own.
-        """
-        parameters = cast("dict[str, object] | None", vars(self).get("_reconstruction_parameters"))
-        if parameters is None:
-            raise ValueError(f"{type(self).__name__} cannot be reconstructed")
-        if "temperature" in (self._extra_body_parameters or {}):
-            raise ValueError(
-                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
-            )
-        return {**parameters, "model_name": self._model_name, "endpoint": self._endpoint, "api_key": self._api_key}
-
-    def attach_reconstruction_source(self, source: object) -> None:
-        """
-        Share request pacing and credential status, not clients or behavioral configuration.
-
-        Args:
-            source (object): The registered target this copy was built from.
-        """
-        super().attach_reconstruction_source(source)
-        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     @staticmethod
     def _import_litellm() -> Any:

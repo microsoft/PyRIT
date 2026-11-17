@@ -1015,49 +1015,6 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             if parameter.name in inputs
         }
 
-    def rebuild_instance(
-        self,
-        *,
-        source: InstanceT,
-        params: Mapping[str, object],
-        allowed_path_params: frozenset[str] = frozenset(),
-    ) -> InstanceT:
-        """
-        Build a replacement for a registered component with external overrides; never change or register the source.
-
-        Unlike ``recreate_instance``, any external input may be overridden, including credentials and the
-        settings a copy keeps. The caller decides what the replacement may change, for example by
-        comparing identifiers.
-
-        Args:
-            source (InstanceT): The registered component to rebuild.
-            params (Mapping[str, object]): Constructor overrides from an external caller.
-            allowed_path_params (frozenset[str]): External overrides that can name a server file or folder
-                but that the caller has made safe. Defaults to none.
-
-        Returns:
-            InstanceT: The new component, owned by the caller.
-
-        Raises:
-            ValueError: If the source can't be reconstructed, an override is unknown or not external input,
-                or the source class is unavailable.
-        """
-        inputs = self.get_reconstruction_parameters(source)
-        overrides = resolve_constructor_args(
-            cls=type(source),
-            raw_args=dict(params),
-            identifier_type=self._identifier_type(),
-            external_input=True,
-            seam_base_type=self._seam_base_type(),
-            allowed_path_params=allowed_path_params,
-        )
-        with self._catalog_lock:
-            self._ensure_discovered()
-            names = sorted(name for name, cls in self._classes.items() if cls is type(source))
-        if not names:
-            raise ValueError("The source component's class is no longer registered")
-        return self.create_instance(names[0], **{**inputs, **overrides})
-
     def recreate_instance(
         self,
         *,

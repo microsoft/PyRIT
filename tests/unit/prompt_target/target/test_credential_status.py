@@ -92,3 +92,30 @@ async def test_a_copy_reports_into_its_source() -> None:
     await _send_async(copy, _status_error(openai.AuthenticationError, 401))
 
     assert source.credentials_rejected
+
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://ml.example.test/score")
+    return httpx.HTTPStatusError("rejected", request=request, response=httpx.Response(status_code, request=request))
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("status_code", [401, 403])
+async def test_an_http_status_error_from_the_provider_marks_credentials_rejected(status_code: int) -> None:
+    target = _FailingTarget()
+
+    await _send_async(target, _http_status_error(status_code))
+
+    assert target.credentials_rejected is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_the_credential_status_is_unknown_until_a_request_completes() -> None:
+    target = _FailingTarget()
+    assert target.credentials_rejected is None
+
+    await _send_async(target, ValueError("bad"))
+    assert target.credentials_rejected is None
+
+    await _send_async(target, None)
+    assert target.credentials_rejected is False
