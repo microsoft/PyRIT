@@ -136,7 +136,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
     # Crescendo relies on native live history for both gradual escalation and
     # backtracking. Squashed or non-editable history changes those semantics.
-    # Each turn's response drives the next escalation step, so the target must reply.
+    # Each turn's response drives the next escalation step.
     TARGET_REQUIREMENTS = TargetRequirements(
         native_required=frozenset(
             {CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN, CapabilityName.RESPONSES}
@@ -677,12 +677,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         if not response:
             raise ValueError("No response received from objective target")
-
-        if PromptNormalizer.is_write_only_delivery(response):
-            raise ValueError(
-                "The objective target returned no response. Crescendo needs a target response "
-                "for each turn, so it cannot run against a write-only target."
-            )
 
         return response
 

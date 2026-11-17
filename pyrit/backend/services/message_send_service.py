@@ -61,7 +61,7 @@ from pyrit.models import (
 )
 from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 from pyrit.score import Scorer
 
@@ -791,8 +791,14 @@ class MessageSendService:
                 )
             if progress is not None:
                 progress.state = MessageSendState.FINALIZING
-            response = await self._stored_response_async(
-                conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
+            # A target that never replies hands back the sent request or a delivery receipt, which
+            # is not a response to report or score, whatever role it carries.
+            response = (
+                await self._stored_response_async(
+                    conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
+                )
+                if target.configuration.includes(capability=CapabilityName.RESPONSES)
+                else None
             )
             last_response = response.message_pieces[0] if response is not None else None
             if response is not None and validated.scoring is not None:
@@ -836,10 +842,6 @@ class MessageSendService:
         Returns:
             The response, or None when the send stored no assistant response.
         """
-        if isinstance(delivered, Message) and PromptNormalizer.is_write_only_delivery(delivered):
-            # A write-only target returned the sent request, which is never a response to score,
-            # whatever role the request carries.
-            return None
         if isinstance(delivered, Message) and delivered.api_role == "assistant":
             return delivered
         messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)

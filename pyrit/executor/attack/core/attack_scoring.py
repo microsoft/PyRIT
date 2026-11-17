@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pyrit.models import ScoringExpectation, SurfaceScorable, TraceScorable
+from pyrit.models import ScoringExpectation
 from pyrit.score import MessageScorer
 
 if TYPE_CHECKING:
@@ -71,16 +71,6 @@ def prepare_attack_scoring(
     return prepared
 
 
-# Evidence of what the target did (written files, invoked tools), acquired from a source rather
-# than read from message text.
-_SIDE_EFFECT_SCORABLE_TYPES = frozenset({SurfaceScorable, TraceScorable})
-
-
-def _judges_side_effects(scorer: Scorer) -> bool:
-    # Every leaf must read side effects; leaves of a composite may read different kinds.
-    return all(not _SIDE_EFFECT_SCORABLE_TYPES.isdisjoint(types) for types in scorer.get_leaf_scorable_types())
-
-
 async def score_attack_response_async(
     *,
     response: Message,
@@ -97,9 +87,9 @@ async def score_attack_response_async(
         objective_scorer (Scorer | None): The scorer that decides the attack outcome.
         auxiliary_scorers (Sequence[Scorer] | None): Additional scorers whose results are stored.
         expectation (ScoringExpectation | None): The scoring question.
-        side_effect_evidence_only (bool): Run only scorers that judge side-effect evidence (written
-            files or invoked tools) rather than message text. Use this when ``response`` is a
-            delivered request with no target response, so the request is never judged as response text.
+        side_effect_evidence_only (bool): Run only scorers that judge side effects (see
+            ``Scorer.judges_side_effects``). Use this for a target that never replies, so the
+            message it handed back is never judged as a response.
 
     Returns:
         dict[str, list[Score]]: The ``objective_scores`` and ``auxiliary_scores``.
@@ -109,9 +99,9 @@ async def score_attack_response_async(
     )
     auxiliary = list(zip(prepared.auxiliary_scorers, prepared.auxiliary_expectations, strict=True))
     if side_effect_evidence_only:
-        if objective_scorer is not None and not _judges_side_effects(objective_scorer):
+        if objective_scorer is not None and not objective_scorer.judges_side_effects():
             objective_scorer = None
-        auxiliary = [(scorer, selected) for scorer, selected in auxiliary if _judges_side_effects(scorer)]
+        auxiliary = [(scorer, selected) for scorer, selected in auxiliary if scorer.judges_side_effects()]
         if objective_scorer is None and not auxiliary:
             return {"objective_scores": [], "auxiliary_scores": []}
     return await MessageScorer.score_response_async(

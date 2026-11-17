@@ -132,9 +132,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
     # conversation state between them. History-squash adaptation would collapse
     # them into one message and silently break the attack's sequencing
     # semantics. Declare MULTI_TURN as ``native_required`` so adaptation is
-    # rejected at construction time.
+    # rejected at construction time. The final response is what gets scored.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.RESPONSES}),
     )
 
     FIXED_PARAMS_TYPE = MultiPromptSendingAttackParameters
@@ -257,7 +257,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         response = None
         score = None
-        delivered_without_response = False
 
         for message_index, current_message in enumerate(context.params.user_messages):
             logger.info(f"Processing message {message_index + 1}/{len(context.params.user_messages)}")
@@ -267,18 +266,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 current_message=current_message, context=context
             )
 
-            # Only the final send is judged, so each send replaces what the previous one left.
-            response = response_message
-            delivered_without_response = response_message is not None and PromptNormalizer.is_write_only_delivery(
-                response_message
-            )
-            if delivered_without_response:
-                # Keep delivering the sequence; the returned request is not a response.
-                context.executed_turns += 1
-                continue
-
             # Update context with latest response (may be None if sending failed)
             if response_message:
+                response = response_message
                 context.last_response = response
                 context.executed_turns += 1
 
@@ -292,33 +282,26 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                     )
                     break
             else:
+                response = None
                 self._logger.warning(f"Failed to send message {message_index + 1}, terminating")
                 break
 
-        # Score the last response including auxiliary and objective scoring. A delivered request is
-        # judged only by scorers that read side-effect evidence, never as response text.
+        # Score the last response including auxiliary and objective scoring
         if response is not None:
             score = await self._evaluate_response_async(
-                response=response,
-                objective=context.objective,
-                expectation=context.expectation,
-                side_effect_evidence_only=delivered_without_response,
+                response=response, objective=context.objective, expectation=context.expectation
             )
         else:
             score = None
 
         # Determine the outcome
-        if delivered_without_response and score is None:
-            outcome, outcome_reason = AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
-        else:
-            outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
+        outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
 
-        last_response = None if delivered_without_response else response
         return AttackResult(
             conversation_id=context.session.conversation_id,
             objective=context.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
-            last_response=last_response.get_piece() if last_response else None,
+            last_response=response.get_piece() if response else None,
             automated_score=score,
             related_conversations=context.related_conversations,
             outcome=outcome,
@@ -411,12 +394,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             )
 
     async def _evaluate_response_async(
-        self,
-        *,
-        response: Message,
-        objective: str,
-        expectation: ScoringExpectation,
-        side_effect_evidence_only: bool = False,
+        self, *, response: Message, objective: str, expectation: ScoringExpectation
     ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
@@ -428,8 +406,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
             expectation (ScoringExpectation): The effective scoring question.
-            side_effect_evidence_only (bool): Run only scorers that judge side-effect evidence, for a
-                delivered request with no target response. Defaults to False.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -446,7 +422,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
                 expectation=expectation,
-                side_effect_evidence_only=side_effect_evidence_only,
             )
 
         objective_scores = scoring_results["objective_scores"]

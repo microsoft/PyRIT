@@ -75,7 +75,9 @@ async def test_saved_capabilities_scope_cannot_declare_response_support():
             message=Message.from_prompt(prompt="hello", role="user"), target=target
         )
 
-    assert PromptNormalizer.is_write_only_delivery(response)
+    # The normalizer hands back the request instead of fabricating an empty error response.
+    assert response.api_role == "user"
+    assert response.get_value() == "hello"
 
 
 @pytest.mark.usefixtures("patch_central_database")

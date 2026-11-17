@@ -66,7 +66,14 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
     The strategy supports customization through prepended conversations, converters,
     and multiple scorer types for comprehensive evaluation.
+
+    A target that never replies (``supports_responses=False``, e.g. ``TextTarget``) is
+    supported: the sent request is never scored as a response, and only scorers that judge
+    side effects (e.g. a written file or invoked tools) decide the outcome.
     """
+
+    # Unlike other attacks, prompt sending also works against targets that never reply.
+    TARGET_REQUIREMENTS = TargetRequirements()
 
     @apply_defaults
     def __init__(
@@ -225,7 +232,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Execute with retries
         response = None
         score = None
-        delivered_without_response = False
+        # A target that never replies hands back the sent request (or a delivery receipt), which
+        # must not be judged as a response; only side-effect scorers can judge such a turn.
+        target_responds = self._objective_target_responds()
 
         # Attack execution steps:
         # 1) Construct the seed prompt(s) that will be injected into the conversation
@@ -240,7 +249,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         for attempt in range(self._max_attempts_on_failure + 1):
             self._logger.debug(f"Attempt {attempt + 1}/{self._max_attempts_on_failure + 1}")
             score = None
-            delivered_without_response = False
 
             # Prepare a fresh message for each attempt to avoid duplicate ID errors in database
             message = self._get_message(context)
@@ -255,20 +263,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 self._logger.warning(f"No response received on attempt {attempt + 1} (likely filtered)")
                 continue  # Retry if no response (filtered or error)
 
-            # A write-only target returns the delivered request instead of a response. The request is
-            # never judged as response text, but scorers that read side-effect evidence (e.g., a
-            # written file) still judge what the turn did.
-            delivered_without_response = PromptNormalizer.is_write_only_delivery(response)
-
             # Score the response including auxiliary and objective scoring
             score = await self._evaluate_response_async(
                 response=response,
                 objective=context.objective,
                 expectation=context.expectation,
-                side_effect_evidence_only=delivered_without_response,
+                side_effect_evidence_only=not target_responds,
             )
 
-            if delivered_without_response and score is None:
+            if not target_responds and score is None:
                 # Nothing judged the turn, and retrying would only deliver the request again.
                 break
 
@@ -291,14 +294,11 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 await self._setup_async(context=context)  # Reset conversation for next attempt
 
         # Determine the outcome
-        if delivered_without_response and score is None:
-            outcome, outcome_reason = AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
-        else:
-            outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
+        outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
 
         return self._create_attack_result(
             context=context,
-            response=None if delivered_without_response else response,
+            response=response if target_responds else None,
             score=score,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -354,6 +354,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
+        if score is None and not self._objective_target_responds():
+            # The objective scorer judges responses, and this target never replies.
+            return AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
+
         if score:
             outcome = attack_outcome_from_score(score)
             if outcome is AttackOutcome.SUCCESS:
@@ -374,6 +378,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         # No response at all (all attempts filtered/failed)
         return AttackOutcome.FAILURE, "All attempts were filtered or failed to get a response"
+
+    def _objective_target_responds(self) -> bool:
+        """
+        Check whether the objective target replies to the requests it receives.
+
+        Returns:
+            bool: False for a target that only delivers requests, such as ``TextTarget``.
+        """
+        return self._objective_target.configuration.includes(capability=CapabilityName.RESPONSES)
 
     async def _teardown_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """Clean up after attack execution."""
@@ -456,7 +469,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             objective (str): The natural-language description of the attack's objective.
             expectation (ScoringExpectation): The effective scoring question.
             side_effect_evidence_only (bool): Run only scorers that judge side-effect evidence, for a
-                delivered request with no target response. Defaults to False.
+                target that never replies. Defaults to False.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if

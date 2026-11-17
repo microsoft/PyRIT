@@ -93,8 +93,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
     allowing for various attack techniques and scenarios.
     """
 
-    # Each turn's response drives the next adversarial prompt, so a write-only target cannot run this attack.
-    TARGET_REQUIREMENTS = TargetRequirements(native_required=frozenset({CapabilityName.RESPONSES}))
     ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
@@ -601,12 +599,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             raise ValueError(
                 "Received no response from the target system. "
                 "Please check the target configuration and ensure it is reachable."
-            )
-
-        if PromptNormalizer.is_write_only_delivery(response):
-            raise ValueError(
-                "The objective target returned no response. Red teaming needs a target response "
-                "for each turn, so it cannot run against a write-only target."
             )
 
         return response

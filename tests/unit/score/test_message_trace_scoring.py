@@ -157,7 +157,6 @@ class _WriteOnlyTracedAgent(HTTPTarget):
         return []
 
 
-@pytest.mark.parametrize("multi_prompt", [False, True])
 @pytest.mark.parametrize(
     ("acts", "outcome"),
     [(True, AttackOutcome.SUCCESS), (False, AttackOutcome.FAILURE)],
@@ -166,7 +165,6 @@ async def test_composite_of_file_and_trace_scorers_judges_write_only_target_asyn
     sqlite_instance: SQLiteMemory,
     capture: tuple[InMemoryTraceClient, TracerProvider],
     tmp_path: Path,
-    multi_prompt: bool,
     acts: bool,
     outcome: AttackOutcome,
 ) -> None:
@@ -190,9 +188,7 @@ async def test_composite_of_file_and_trace_scorers_judges_write_only_target_asyn
         http_request="POST / HTTP/1.1\nHost: agent.test\n\n{PROMPT}",
         transport=httpx.MockTransport(respond),
         trace_config=TargetTraceConfig(enabled=True),
-        custom_configuration=TargetConfiguration(
-            capabilities=TargetCapabilities(supports_multi_turn=True, supports_responses=False)
-        ),
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_responses=False)),
     )
     # Neither leaf reads the request text, but together they accept only a MessageScorable.
     objective_scorer = TrueFalseCompositeScorer(
@@ -210,18 +206,9 @@ async def test_composite_of_file_and_trace_scorers_judges_write_only_target_asyn
         )
     )
 
-    if multi_prompt:
-        result = await MultiPromptSendingAttack(
-            objective_target=target, attack_scoring_config=scoring_config
-        ).execute_async(
-            objective="exfiltrated",
-            expectation=expectation,
-            user_messages=[Message.from_prompt(prompt="exfiltrated", role="user")],
-        )
-    else:
-        result = await PromptSendingAttack(
-            objective_target=target, attack_scoring_config=scoring_config, max_attempts_on_failure=0
-        ).execute_async(objective="exfiltrated", expectation=expectation)
+    result = await PromptSendingAttack(
+        objective_target=target, attack_scoring_config=scoring_config, max_attempts_on_failure=0
+    ).execute_async(objective="exfiltrated", expectation=expectation)
 
     assert result.outcome is outcome
     assert result.last_response is None

@@ -4,40 +4,48 @@
 """
 Regression tests for attacks against write-only objective targets.
 
-A write-only target (e.g., TextTarget) delivers the request without producing a response, and the
-prompt normalizer hands the request back. These tests run real attacks, targets, scorers, and memory
-to verify that the delivered request is never scored as response evidence.
+A write-only target (e.g., TextTarget) delivers the request without producing a response. Prompt sending
+attacks run against it without scoring the request as response evidence, using real targets, scorers, and
+memory; every other attack requires responses and rejects such a target at construction.
 """
 
 import base64
+import importlib
+import inspect
 import io
 import json
-import uuid
+import pkgutil
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from unit.mocks import MockPromptTarget
 
+import pyrit.executor.attack
 from pyrit.converter import Base64Converter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    AttackStrategy,
     ChunkedRequestAttack,
     CrescendoAttack,
+    ManyShotJailbreakAttack,
     MultiPromptSendingAttack,
     PromptSendingAttack,
     RedTeamingAttack,
+    SequentialAttack,
+    SkeletonKeyAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackOutcome, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import AttackOutcome, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import TargetCapabilities, TargetConfiguration, TextTarget
-from pyrit.score import FloatScaleThresholdScorer, MessageScorer, RegexScorer
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget
+from pyrit.score import MessageScorer, RegexScorer
 
 _NO_RESPONSE_REASON = "Objective target returned no response to score"
 
@@ -107,15 +115,6 @@ class _ScriptedTarget(MockPromptTarget):
                 conversation_id=message.message_pieces[0].conversation_id,
             ).to_message()
         ]
-
-
-def _multi_turn_text_target(text_stream: io.StringIO) -> TextTarget:
-    # Multi-prompt and chunked attacks require native multi-turn support, which a custom
-    # write-only target may declare while still returning no response.
-    return TextTarget(
-        text_stream=text_stream,
-        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
-    )
 
 
 def _matching_scorer() -> RegexScorer:
@@ -198,7 +197,7 @@ class TestPromptSendingAttackWriteOnlyTarget:
         result = await attack.execute_async(objective="Hello QA")
 
         assert result.outcome is AttackOutcome.UNDETERMINED
-        assert result.outcome_reason == _NO_RESPONSE_REASON
+        assert result.outcome_reason == "No objective scorer configured"
         assert result.last_response is None
         assert result.automated_score is None
         await _assert_only_requests_persisted(
@@ -259,117 +258,16 @@ class TestPromptSendingAttackWriteOnlyTarget:
         assert result.automated_score is not None
         assert result.automated_score.get_value() is True
 
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestMultiPromptSendingAttackWriteOnlyTarget:
-    async def test_write_only_target_delivers_every_message_and_is_undetermined(
-        self, sqlite_instance: SQLiteMemory
-    ) -> None:
-        text_stream = io.StringIO()
-        attack = MultiPromptSendingAttack(
-            objective_target=_multi_turn_text_target(text_stream),
-            attack_scoring_config=AttackScoringConfig(
-                objective_scorer=_matching_scorer(),
-                auxiliary_scorers=[_matching_scorer()],
-            ),
+    async def test_delivery_receipt_from_write_only_target_is_not_scored(self, sqlite_instance: SQLiteMemory) -> None:
+        # Like AzureBlobStorageTarget, the target returns a receipt that matches the scorer but is not a reply.
+        target = _ScriptedTarget(replies=["Hello receipt"])
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
+            max_attempts_on_failure=2,
         )
 
         with _no_message_scoring() as mock_score:
-            result = await attack.execute_async(
-                objective="Hello QA",
-                user_messages=[
-                    Message.from_prompt(prompt="Hello first", role="user"),
-                    Message.from_prompt(prompt="Hello second", role="user"),
-                ],
-            )
-
-        mock_score.assert_not_awaited()
-        assert result.outcome is AttackOutcome.UNDETERMINED
-        assert result.outcome_reason == _NO_RESPONSE_REASON
-        assert result.last_response is None
-        assert result.automated_score is None
-        assert result.executed_turns == 2
-        assert text_stream.getvalue().count("Hello first") == 1
-        assert text_stream.getvalue().count("Hello second") == 1
-        await _assert_only_requests_persisted(
-            memory=sqlite_instance, conversation_id=result.conversation_id, expected_count=2
-        )
-
-    async def test_final_response_after_earlier_delivery_is_scored(self) -> None:
-        target = _ScriptedTarget(replies=[None, "Hello final"])
-        attack = MultiPromptSendingAttack(
-            objective_target=target,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-        )
-
-        result = await attack.execute_async(
-            objective="Hello QA",
-            user_messages=[
-                Message.from_prompt(prompt="first", role="user"),
-                Message.from_prompt(prompt="second", role="user"),
-            ],
-        )
-
-        assert result.outcome is AttackOutcome.SUCCESS
-        assert result.last_response is not None
-        assert result.last_response.converted_value == "Hello final"
-        assert result.automated_score is not None
-        assert result.automated_score.get_value() is True
-        assert result.executed_turns == 2
-
-    async def test_final_delivery_after_earlier_response_is_undetermined(self, sqlite_instance: SQLiteMemory) -> None:
-        target = _ScriptedTarget(replies=["Hello first", None])
-        attack = MultiPromptSendingAttack(
-            objective_target=target,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-        )
-
-        result = await attack.execute_async(
-            objective="Hello QA",
-            user_messages=[
-                Message.from_prompt(prompt="first", role="user"),
-                Message.from_prompt(prompt="second", role="user"),
-            ],
-        )
-
-        assert result.outcome is AttackOutcome.UNDETERMINED
-        assert result.outcome_reason == _NO_RESPONSE_REASON
-        # The earlier response must not stand in for the unanswered final turn.
-        assert result.last_response is None
-        assert result.automated_score is None
-        assert result.executed_turns == 2
-        assert target.prompt_sent == ["first", "second"]
-        assert await _all_scores_async(sqlite_instance) == []
-
-    async def test_responding_target_with_same_scorer_succeeds(self) -> None:
-        attack = MultiPromptSendingAttack(
-            objective_target=_EchoTarget(),
-            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-        )
-
-        result = await attack.execute_async(
-            objective="Hello QA",
-            user_messages=[Message.from_prompt(prompt="Hello first", role="user")],
-        )
-
-        assert result.outcome is AttackOutcome.SUCCESS
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestChunkedRequestAttackWriteOnlyTarget:
-    async def test_write_only_target_does_not_score_requests_as_chunks(self, sqlite_instance: SQLiteMemory) -> None:
-        text_stream = io.StringIO()
-        attack = ChunkedRequestAttack(
-            objective_target=_multi_turn_text_target(text_stream),
-            chunk_size=10,
-            total_length=30,
-            attack_scoring_config=AttackScoringConfig(
-                objective_scorer=_matching_scorer(),
-                auxiliary_scorers=[_matching_scorer()],
-            ),
-        )
-
-        with patch.object(attack, "_score_combined_value_async", new_callable=AsyncMock) as mock_score:
             result = await attack.execute_async(objective="Hello QA")
 
         mock_score.assert_not_awaited()
@@ -377,223 +275,92 @@ class TestChunkedRequestAttackWriteOnlyTarget:
         assert result.outcome_reason == _NO_RESPONSE_REASON
         assert result.last_response is None
         assert result.automated_score is None
-        assert result.executed_turns == 3
-        assert result.metadata == {"combined_chunks": "\n\n", "chunk_count": 3}
-        assert text_stream.getvalue().count("Hello QA") == 3
-        await _assert_only_requests_persisted(
-            memory=sqlite_instance, conversation_id=result.conversation_id, expected_count=3
-        )
+        assert target.prompt_sent == ["Hello QA"]
+        assert await _all_scores_async(sqlite_instance) == []
 
-    async def test_received_chunks_are_scored_when_other_chunks_were_only_delivered(self) -> None:
-        attack = ChunkedRequestAttack(
-            objective_target=_ScriptedTarget(replies=[None, "Hello", None]),
-            chunk_size=10,
-            total_length=30,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-        )
 
-        result = await attack.execute_async(objective="Hello QA")
+def _text_target(text_stream: io.StringIO, **capabilities: bool) -> TextTarget:
+    # Declares the other capabilities an attack needs, so only the missing response support fails.
+    return TextTarget(
+        text_stream=text_stream,
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(**capabilities)),
+    )
 
-        assert result.outcome is AttackOutcome.SUCCESS
-        assert result.automated_score is not None
-        assert result.automated_score.get_value() is True
-        assert result.metadata == {"combined_chunks": "\nHello\n", "chunk_count": 3}
-        assert result.executed_turns == 3
 
-    async def test_responding_target_with_same_scorer_succeeds(self) -> None:
-        attack = ChunkedRequestAttack(
-            objective_target=_EchoTarget(),
-            chunk_size=10,
-            total_length=30,
-            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-        )
+def _adversarial_config() -> AttackAdversarialConfig:
+    return AttackAdversarialConfig(target=_JsonAdversarialChat())
 
-        result = await attack.execute_async(objective="Hello QA")
 
-        assert result.outcome is AttackOutcome.SUCCESS
+_MULTI_TURN = {"supports_multi_turn": True}
+_CHAT_HISTORY = {"supports_multi_turn": True, "supports_editable_history": True}
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestCrescendoAttackWriteOnlyTarget:
-    def test_write_only_target_is_rejected_before_sending(self) -> None:
-        text_stream = io.StringIO()
-        # Declares every other capability Crescendo needs, so only the missing response support fails.
-        target = TextTarget(
-            text_stream=text_stream,
-            custom_configuration=TargetConfiguration(
-                capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=True)
+@pytest.mark.parametrize(
+    ("build", "capabilities"),
+    [
+        pytest.param(
+            lambda target: RedTeamingAttack(objective_target=target, attack_adversarial_config=_adversarial_config()),
+            {},
+            id="red-teaming",
+        ),
+        pytest.param(
+            lambda target: TreeOfAttacksWithPruningAttack(
+                objective_target=target, attack_adversarial_config=_adversarial_config()
             ),
-        )
+            {},
+            id="tree-of-attacks",
+        ),
+        pytest.param(
+            lambda target: CrescendoAttack(objective_target=target, attack_adversarial_config=_adversarial_config()),
+            _CHAT_HISTORY,
+            id="crescendo",
+        ),
+        pytest.param(lambda target: MultiPromptSendingAttack(objective_target=target), _MULTI_TURN, id="multi-prompt"),
+        pytest.param(
+            lambda target: ChunkedRequestAttack(objective_target=target, chunk_size=10, total_length=30),
+            _MULTI_TURN,
+            id="chunked-request",
+        ),
+    ],
+)
+def test_attack_that_needs_responses_rejects_write_only_target_at_construction(
+    build: Callable[[PromptTarget], AttackStrategy[Any, Any]], capabilities: dict[str, bool]
+) -> None:
+    text_stream = io.StringIO()
 
-        with pytest.raises(ValueError, match="supports_responses") as exc_info:
-            CrescendoAttack(
-                objective_target=target,
-                attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
-            )
+    with pytest.raises(ValueError, match="supports_responses") as exc_info:
+        build(_text_target(text_stream, **capabilities))
 
-        assert "1 required capability" in str(exc_info.value)
-        assert text_stream.getvalue() == ""
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestRedTeamingAttackWriteOnlyTarget:
-    def test_write_only_target_is_rejected_before_sending(self) -> None:
-        text_stream = io.StringIO()
-
-        with pytest.raises(ValueError, match="supports_responses"):
-            RedTeamingAttack(
-                objective_target=TextTarget(text_stream=text_stream),
-                attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
-                attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-            )
-
-        assert text_stream.getvalue() == ""
-
-    async def test_target_made_write_only_after_construction_raises_instead_of_scoring_the_request(
-        self, sqlite_instance: SQLiteMemory
-    ) -> None:
-        target = _ScriptedTarget(replies=[None])
-        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": True}))
-        adversarial_chat = _JsonAdversarialChat()
-        attack = RedTeamingAttack(
-            objective_target=target,
-            attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
-            attack_scoring_config=AttackScoringConfig(objective_scorer=_matching_scorer()),
-            max_turns=2,
-        )
-        # Capabilities can change after the construction check, so the send itself must still be guarded.
-        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
-
-        with pytest.raises(RuntimeError, match="cannot run against a write-only target") as exc_info:
-            await attack.execute_async(objective="Hello QA")
-
-        assert isinstance(exc_info.value.__cause__, ValueError)
-        assert len(adversarial_chat.prompt_sent) == 1
-        assert target.prompt_sent == ["Hello from adversary"]
-        assert await _all_scores_async(sqlite_instance) == []
+    assert "1 required capability" in str(exc_info.value)
+    assert text_stream.getvalue() == ""
 
 
-def _always_true_threshold_scorer() -> MagicMock:
-    # Reports success for anything it is given, so scoring a delivered request would be a false SUCCESS.
-    objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-    objective_scorer.threshold = 0.8
-    objective_scorer.get_identifier.return_value = ComponentIdentifier(
-        class_name="FloatScaleThresholdScorer", class_module="test_module"
+# Attacks that support targets that never reply. Every other attack must require responses.
+_WRITE_ONLY_CAPABLE_ATTACKS = {PromptSendingAttack, ManyShotJailbreakAttack, SkeletonKeyAttack, SequentialAttack}
+
+
+def _concrete_attack_classes() -> list[type[AttackStrategy[Any, Any]]]:
+    for module in pkgutil.walk_packages(pyrit.executor.attack.__path__, "pyrit.executor.attack."):
+        importlib.import_module(module.name)
+    pending: list[type[AttackStrategy[Any, Any]]] = [AttackStrategy]
+    found: set[type[AttackStrategy[Any, Any]]] = set()
+    while pending:
+        for subclass in pending.pop().__subclasses__():
+            pending.append(subclass)
+            if subclass.__module__.startswith("pyrit.") and not inspect.isabstract(subclass):
+                found.add(subclass)
+    return sorted(found, key=lambda attack_class: attack_class.__qualname__)
+
+
+def test_attack_discovery_finds_known_attacks() -> None:
+    assert {RedTeamingAttack, TreeOfAttacksWithPruningAttack, *_WRITE_ONLY_CAPABLE_ATTACKS} <= set(
+        _concrete_attack_classes()
     )
-    objective_scorer.score_async = AsyncMock(
-        return_value=[
-            Score(
-                score_type="true_false",
-                score_value="true",
-                score_category=["test"],
-                score_value_description="Objective achieved",
-                score_rationale="Matched",
-                score_metadata={},
-                message_piece_id=str(uuid.uuid4()),
-                scorer_class_identifier=objective_scorer.get_identifier.return_value,
-            )
-        ]
-    )
-    return objective_scorer
 
 
-@pytest.mark.usefixtures("patch_central_database")
-class TestTreeOfAttacksWriteOnlyTarget:
-    @pytest.mark.parametrize("tree_width", [1, 2])
-    async def test_write_only_target_is_undetermined_and_never_scored(
-        self, sqlite_instance: SQLiteMemory, tree_width: int
-    ) -> None:
-        objective_scorer = _always_true_threshold_scorer()
-        text_stream = io.StringIO()
-        attack = TreeOfAttacksWithPruningAttack(
-            objective_target=TextTarget(text_stream=text_stream),
-            attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
-            attack_scoring_config=TAPAttackScoringConfig(objective_scorer=objective_scorer),
-            tree_width=tree_width,
-            tree_depth=2,
-            branching_factor=1,
-            on_topic_checking_enabled=False,
-        )
+@pytest.mark.parametrize("attack_class", _concrete_attack_classes(), ids=lambda attack_class: attack_class.__name__)
+def test_only_prompt_sending_attacks_accept_write_only_targets(attack_class: type[AttackStrategy[Any, Any]]) -> None:
+    requires_responses = CapabilityName.RESPONSES in attack_class.TARGET_REQUIREMENTS.native_required
 
-        result = await attack.execute_async(objective="Hello QA")
-
-        objective_scorer.score_async.assert_not_awaited()
-        assert result.outcome is AttackOutcome.UNDETERMINED
-        assert result.outcome_reason == _NO_RESPONSE_REASON
-        assert result.last_response is None
-        assert result.automated_score is None
-        assert text_stream.getvalue().count("Hello from adversary") == tree_width
-        # Each branch's objective conversation holds only its delivered request, with no fabricated response.
-        delivered = [
-            piece
-            for piece in await sqlite_instance.get_message_pieces_async()
-            if piece.converted_value == "Hello from adversary"
-        ]
-        assert [piece.role for piece in delivered] == ["user"] * tree_width
-        for piece in delivered:
-            objective_pieces = await sqlite_instance.get_message_pieces_async(conversation_id=piece.conversation_id)
-            assert [objective_piece.role for objective_piece in objective_pieces] == ["user"]
-        # Pruning removes every unanswered branch, but the result still points at a delivered conversation.
-        assert result.conversation_id in {piece.conversation_id for piece in delivered}
-        assert await _all_scores_async(sqlite_instance) == []
-
-    @pytest.mark.parametrize(
-        "replies",
-        [["Hello actual response", None], [None, "Hello actual response"]],
-        ids=["answered-first", "unanswered-first"],
-    )
-    async def test_unanswered_branch_does_not_discard_scored_sibling(
-        self, sqlite_instance: SQLiteMemory, replies: list[str | None]
-    ) -> None:
-        objective_scorer = _always_true_threshold_scorer()
-        target = _ScriptedTarget(replies=replies)
-        attack = TreeOfAttacksWithPruningAttack(
-            objective_target=target,
-            attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
-            attack_scoring_config=TAPAttackScoringConfig(objective_scorer=objective_scorer),
-            tree_width=2,
-            tree_depth=1,
-            branching_factor=1,
-            batch_size=1,
-            on_topic_checking_enabled=False,
-        )
-
-        result = await attack.execute_async(objective="Hello QA")
-
-        assert result.outcome is AttackOutcome.SUCCESS
-        assert result.automated_score is not None
-        # The selected conversation is the answered branch, not the unanswered one.
-        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
-        assert [(piece.role, piece.converted_value) for piece in pieces][-1] == ("assistant", "Hello actual response")
-        # Only the answered branch was scored.
-        assert objective_scorer.score_async.await_count == 1
-        assert len(target.prompt_sent) == 2
-
-    async def test_failed_branch_with_unanswered_sibling_is_error_on_delivered_conversation(
-        self, sqlite_instance: SQLiteMemory
-    ) -> None:
-        objective_scorer = _always_true_threshold_scorer()
-        target = _ScriptedTarget(replies=[RuntimeError("Hello target failure"), None])
-        attack = TreeOfAttacksWithPruningAttack(
-            objective_target=target,
-            attack_adversarial_config=AttackAdversarialConfig(target=_JsonAdversarialChat()),
-            attack_scoring_config=TAPAttackScoringConfig(objective_scorer=objective_scorer),
-            tree_width=2,
-            tree_depth=1,
-            branching_factor=1,
-            batch_size=1,
-            on_topic_checking_enabled=False,
-        )
-
-        result = await attack.execute_async(objective="Hello QA")
-
-        # The crash is reported, and the unanswered delivery is not counted as a second failure.
-        assert result.outcome is AttackOutcome.ERROR
-        assert result.outcome_reason is not None
-        assert "1 branch failed to execute" in result.outcome_reason
-        assert result.last_response is None
-        assert result.automated_score is None
-        objective_scorer.score_async.assert_not_awaited()
-        # The result points at the unanswered branch's conversation, which holds only its delivered request.
-        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
-        assert [(piece.role, piece.converted_value) for piece in pieces] == [("user", "Hello from adversary")]
+    assert requires_responses is (attack_class not in _WRITE_ONLY_CAPABLE_ATTACKS)

@@ -76,6 +76,9 @@ class PromptTarget(Identifiable):
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
     _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
+    # Adapters that only deliver content (e.g. to a stream or a blob) and never reply set this to
+    # False. ``supports_responses`` is then False under every configuration, including saved ones.
+    _SUPPORTS_RESPONSES: ClassVar[bool] = True
     _DISPATCH_CAPABILITIES: ClassVar[ContextVar[tuple["PromptTarget", TargetCapabilities] | None]] = ContextVar(
         "target_dispatch_capabilities", default=None
     )
@@ -258,7 +261,7 @@ class PromptTarget(Identifiable):
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
-        capabilities = self._mask_generation_capabilities(capabilities=self.capabilities)
+        capabilities = self._mask_unimplemented_capabilities(capabilities=self.capabilities)
         if capabilities is not self.capabilities:
             self.apply_capabilities(capabilities=capabilities)
         if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
@@ -940,7 +943,7 @@ class PromptTarget(Identifiable):
         """
         configuration = self.configuration
         scoped = TargetConfiguration(
-            capabilities=capabilities,
+            capabilities=self._mask_unimplemented_capabilities(capabilities=capabilities),
             policy=configuration.policy,
             normalizer_overrides=configuration.normalizer_overrides,
         )
@@ -1007,24 +1010,29 @@ class PromptTarget(Identifiable):
                 this instance.
         """
         self._configuration = TargetConfiguration(
-            capabilities=self._mask_generation_capabilities(capabilities=capabilities),
+            capabilities=self._mask_unimplemented_capabilities(capabilities=capabilities),
             policy=self._configuration.policy,
             normalizer_overrides=self._configuration.normalizer_overrides,
         )
 
     @classmethod
-    def _mask_generation_capabilities(cls, *, capabilities: TargetCapabilities) -> TargetCapabilities:
+    def _mask_unimplemented_capabilities(cls, *, capabilities: TargetCapabilities) -> TargetCapabilities:
         """
-        Disable generation options that this adapter does not implement.
+        Disable capabilities that this adapter does not implement.
+
+        These are generation options outside ``_SUPPORTED_GENERATION_CAPABILITIES`` and, for an
+        adapter with ``_SUPPORTS_RESPONSES = False``, responses.
 
         Returns:
-            TargetCapabilities: Capabilities restricted to the adapter's implemented generation options.
+            TargetCapabilities: Capabilities restricted to what the adapter implements.
         """
         unsupported = {
             capability.value: False
             for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
             if capability not in cls._SUPPORTED_GENERATION_CAPABILITIES and capabilities.includes(capability=capability)
         }
+        if not cls._SUPPORTS_RESPONSES and capabilities.supports_responses:
+            unsupported[CapabilityName.RESPONSES.value] = False
         return capabilities.model_copy(update=unsupported) if unsupported else capabilities
 
     @classmethod
@@ -1046,7 +1054,7 @@ class PromptTarget(Identifiable):
             known = get_known_capabilities(underlying_model)
             if known is not None:
                 return TargetConfiguration(
-                    capabilities=cls._mask_generation_capabilities(
+                    capabilities=cls._mask_unimplemented_capabilities(
                         capabilities=known.model_copy(
                             update={
                                 "supports_prefill": cls._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
@@ -1066,7 +1074,7 @@ class PromptTarget(Identifiable):
                 cls.__name__,
             )
         configuration = cls._DEFAULT_CONFIGURATION
-        capabilities = cls._mask_generation_capabilities(capabilities=configuration.capabilities)
+        capabilities = cls._mask_unimplemented_capabilities(capabilities=configuration.capabilities)
         if capabilities is configuration.capabilities:
             return configuration
         return TargetConfiguration(

@@ -222,20 +222,23 @@ class TestScorableTypeDeclarations:
         )
         assert scorer.get_condition_types() == frozenset({ProgramBehaves})
 
-    def test_leaf_types_report_each_leaf_of_a_wrapper_separately(self) -> None:
+    def test_judges_side_effects_requires_every_leaf_to_read_side_effects(self) -> None:
         file_scorer = FileWriteScorer(source=MagicMock(spec=ObservationSource))
         trace_scorer = OtelToolCallScorer(source=MagicMock(spec=ObservationSource))
-        composite = TrueFalseCompositeScorer(
+        text_scorer = SubStringScorer(substring="x")
+        side_effects = TrueFalseCompositeScorer(
             scorers=[file_scorer, TrueFalseInverterScorer(scorer=trace_scorer)],
             aggregator=TrueFalseScoreAggregator.AND,
         )
+        mixed = TrueFalseCompositeScorer(scorers=[file_scorer, text_scorer], aggregator=TrueFalseScoreAggregator.AND)
 
-        assert composite.get_supported_scorable_types() == frozenset({MessageScorable})
-        assert composite.get_leaf_scorable_types() == (
-            file_scorer.get_supported_scorable_types(),
-            trace_scorer.get_supported_scorable_types(),
-        )
-        assert file_scorer.get_leaf_scorable_types() == (file_scorer.get_supported_scorable_types(),)
+        # Leaves reading different side effects share only MessageScorable, yet still qualify.
+        assert side_effects.get_supported_scorable_types() == frozenset({MessageScorable})
+        assert file_scorer.judges_side_effects()
+        assert trace_scorer.judges_side_effects()
+        assert side_effects.judges_side_effects()
+        assert not text_scorer.judges_side_effects()
+        assert not mixed.judges_side_effects()
 
 
 class TestNoAmbientExpectation:

@@ -563,10 +563,7 @@ class TestAttackExecution:
             result = await attack._perform_async(context=basic_context)
 
             mock_evaluate.assert_called_once_with(
-                response=sample_response,
-                objective=basic_context.objective,
-                expectation=basic_context.expectation,
-                side_effect_evidence_only=False,
+                response=sample_response, objective=basic_context.objective, expectation=basic_context.expectation
             )
             assert result.last_score == success_score
 

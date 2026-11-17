@@ -337,7 +337,11 @@ class TestAddMessage:
             patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
         ):
             mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            target = _make_matching_target_mock()
+            # Unlike the TextTarget the mock stands in for, this target replies.
+            target.configuration.includes.side_effect = None
+            target.configuration.includes.return_value = True
+            mock_target_svc.get_target_object.return_value = target
             mock_get_target_svc.return_value = mock_target_svc
 
             mock_normalizer = MagicMock()

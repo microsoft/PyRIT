@@ -46,10 +46,6 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-class _WriteOnlyDelivery(Message[MessagePiece]):
-    """The sent request, returned in place of a response when a write-only target produces none."""
-
-
 class _TargetInvocationContext:
     """Track dispatch without changing caller-independent history selection."""
 
@@ -113,23 +109,6 @@ class PromptNormalizer:
         self._converter_guard = converter_guard
         self.id = str(uuid4())
 
-    @staticmethod
-    def is_write_only_delivery(message: Message) -> bool:
-        """
-        Check whether ``send_prompt_async`` returned the sent request instead of a target response.
-
-        Write-only targets (e.g., TextTarget) declare ``supports_responses=False`` and deliver the
-        request without replying, so the normalizer hands the request back. The normalizer marks
-        that case explicitly, so the check does not depend on the request's role.
-
-        Args:
-            message (Message): The message returned by ``send_prompt_async``.
-
-        Returns:
-            bool: True if the message is the delivered request rather than a target response.
-        """
-        return isinstance(message, _WriteOnlyDelivery)
-
     async def send_prompt_async(
         self,
         *,
@@ -157,9 +136,8 @@ class PromptNormalizer:
                 history selection and send lifecycle state.
 
         Returns:
-            Message: The response received from the target. For a write-only target that returns
-                no response, this is the sent request; check it with ``is_write_only_delivery``
-                before treating it as a response.
+            Message: The response received from the target. A target without
+                ``supports_responses`` may return nothing, and then this is the sent request.
 
         Raises:
             Exception: If an error occurs during the request processing.
@@ -255,10 +233,10 @@ class PromptNormalizer:
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            # A write-only target (e.g., TextTarget) declares that it never replies, so no response
-            # is a successful delivery. Return the request, marked as a delivery.
+            # A target that declares it never replies (e.g., TextTarget) delivered the request, so
+            # return it as-is. Any other target returning nothing gets an empty error response.
             if not target.configuration.includes(capability=CapabilityName.RESPONSES):
-                return _WriteOnlyDelivery(message_pieces=request.message_pieces)
+                return request
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],
                 response_text_pieces=[""],
