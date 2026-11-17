@@ -143,8 +143,9 @@ class ToolExecution(_TraceInterval):
     """
     Safe immutable execution evidence; results and raw arguments are not retained.
 
-    ``arguments`` holds only the arguments a source was configured to keep, redacting the rest
-    at write time. It is None when the source kept no arguments or could not read them.
+    ``arguments`` holds only the arguments a source was configured to keep, nested as they were
+    in the call, redacting the rest at write time. It is None when the source kept no arguments
+    or could not read them.
     """
 
     name: ToolName

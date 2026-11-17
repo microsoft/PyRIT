@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from pyrit.models.score._argument_paths import is_argument_kept, read_argument
 from pyrit.score.text_matching import match_text
 
 if TYPE_CHECKING:
@@ -53,12 +54,14 @@ def match_tool_arguments(
 
     A requirement without argument constraints is satisfied by any call. Arguments that were not
     retained cannot show a match, so they leave the call undetermined. A missing argument, or one
-    that does not match, decides the call.
+    that does not match, decides the call. A dotted name reads a nested field; a key that is
+    missing, or a value on the way that is not an object, means the field is missing.
 
     ``kept`` names the arguments the evidence kept when the rest were redacted at write time;
     None means every argument was retained. A redacted argument is unknown, not absent: a
     constraint on it can neither match nor fail, so the call is undetermined unless another,
-    kept argument refutes it.
+    kept argument refutes it. A constraint is decided only by a kept path or one that contains
+    it, because keeping a nested field keeps only part of its parent.
 
     Returns:
         bool | None: True when every constraint matches, false when one fails, otherwise None.
@@ -69,11 +72,11 @@ def match_tool_arguments(
         return None
     verdict: bool | None = True
     for constraint in requirement.arguments:
-        if kept is not None and constraint.name not in kept:
+        if kept is not None and not is_argument_kept(constraint.name, kept=kept):
             verdict = None
-        elif constraint.name not in arguments or not match_text(
-            matcher=constraint.matcher, text=_argument_text(arguments[constraint.name])
-        ):
+            continue
+        found, value = read_argument(arguments, constraint.name)
+        if not found or not match_text(matcher=constraint.matcher, text=_argument_text(value)):
             return False
     return verdict
 

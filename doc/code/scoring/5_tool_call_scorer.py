@@ -459,6 +459,12 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # and `true`, and `"null"` and `null`. One execution of the tool must satisfy every
 # argument requirement.
 #
+# Arguments are often nested JSON. A dotted name such as `recipient.email` reads
+# a nested field, one exact object key per segment. A key that is missing, or a
+# value on the way that is not an object, means the field is missing. Paths do not
+# index arrays and cannot name a key that itself contains a dot; to check inside
+# an array, match the array's compact JSON text with `Contains` or `Regex`.
+#
 # ```python
 # ToolCallRequirement(
 #     name="send_email",
@@ -479,7 +485,10 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # ```
 #
 # The source reads each span's `gen_ai.tool.call.arguments` attribute, keeps the
-# named top-level arguments, and redacts the rest before the evidence is stored.
+# named arguments, and redacts the rest before the evidence is stored. A dotted
+# path keeps only that nested field: `kept_arguments=("recipient.email",)` keeps
+# the email and redacts the recipient's other fields, so it can decide
+# `recipient.email` but leaves `recipient` and `recipient.name` undetermined.
 # A redacted argument is unknown, not absent: a requirement on it can neither
 # confirm nor refute a call, so the score stays undetermined even when the trace
 # evidence is complete, and the rationale names the arguments the source did not

@@ -113,6 +113,62 @@ def test_requirement_description_names_constrained_arguments() -> None:
 @pytest.mark.parametrize(
     ("arguments", "expected"),
     [
+        ({"recipient": {"email": "a@example.com", "name": "A"}}, True),
+        ({"recipient": {"email": "b@example.com"}}, False),
+        ({"recipient": {"name": "A"}}, False),
+        ({"recipient": "a@example.com"}, False),
+        ({"recipient": [{"email": "a@example.com"}]}, False),
+        ({"recipient": None}, False),
+        ({"recipient.email": "a@example.com"}, False),
+        ({}, False),
+    ],
+)
+def test_a_dotted_name_reads_a_nested_field(arguments: dict[str, JsonValue], expected: bool) -> None:
+    requirement = _requirement(**{"recipient.email": Equals(value="a@example.com")})
+
+    assert match_tool_arguments(requirement=requirement, arguments=arguments) is expected
+
+
+@pytest.mark.parametrize("name", ["attachments.0.name", "attachments.0", "attachments.name"])
+def test_a_path_does_not_index_arrays(name: str) -> None:
+    requirement = _requirement(**{name: Equals(value="report.pdf")})
+
+    assert match_tool_arguments(requirement=requirement, arguments={"attachments": [{"name": "report.pdf"}]}) is False
+
+
+def test_a_nested_object_compares_as_compact_json() -> None:
+    requirement = _requirement(recipient=Equals(value='{"email":"a@example.com","name":"A"}', case_sensitive=True))
+
+    assert (
+        match_tool_arguments(requirement=requirement, arguments={"recipient": {"name": "A", "email": "a@example.com"}})
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    ("kept", "name", "expected"),
+    [
+        (("recipient.email",), "recipient.email", True),
+        (("recipient",), "recipient.email", True),
+        (("recipient.email",), "recipient", None),
+        (("recipient.email",), "recipient.name", None),
+        (("recipient.email",), "recipient.email.domain", False),
+        (("recipient.name",), "recipient.email", None),
+        (("recipient.e",), "recipient.email", None),
+    ],
+)
+def test_only_a_kept_path_or_one_containing_it_decides_a_nested_field(
+    kept: tuple[str, ...], name: str, expected: bool | None
+) -> None:
+    requirement = _requirement(**{name: Equals(value="a@example.com")})
+    arguments = {"recipient": {"email": "a@example.com"}}
+
+    assert match_tool_arguments(requirement=requirement, arguments=arguments, kept=kept) is expected
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
         ({"to": "a@example.com"}, None),
         ({"to": "b@example.com"}, False),
         ({}, False),

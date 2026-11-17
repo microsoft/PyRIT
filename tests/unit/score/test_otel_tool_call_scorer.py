@@ -414,6 +414,66 @@ def test_source_identity_records_kept_arguments_only_when_set() -> None:
     assert OtelTraceSource(trace_client=client, kept_arguments=()).get_identifier().hash == default.hash
 
 
+_NESTED_ARGUMENTS = '{"recipient": {"email": "a@example.com", "name": "private-name"}, "body": "private-body"}'
+
+
+async def test_source_keeps_only_the_nested_field_a_path_names_async(sqlite_instance: SQLiteMemory) -> None:
+    scorer = _kept_argument_scorer(_NESTED_ARGUMENTS, kept=("recipient.email",))
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)),
+            expectation=_send_email_expectation(**{"recipient.email": "a@example.com"}),
+        )
+    )[0]
+
+    assert score.get_value() is True
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.payload.events[0].arguments == {"recipient": {"email": "a@example.com"}}
+    assert "private-" not in observation.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("kept", "matchers", "expected"),
+    [
+        (("recipient.email",), {"recipient.email": "b@example.com"}, False),
+        (("recipient.email",), {"recipient.name": "private-name"}, None),
+        (("recipient.email",), {"recipient": '{"email":"a@example.com"}'}, None),
+        (("recipient",), {"recipient.name": "private-name"}, True),
+        (("recipient.phone",), {"recipient.phone": "1"}, False),
+        (("body.text",), {"body.text": "private-body"}, False),
+    ],
+)
+async def test_complete_evidence_decides_a_nested_field_only_through_a_kept_path_async(
+    sqlite_instance: SQLiteMemory, kept: tuple[str, ...], matchers: dict[str, str], expected: bool | None
+) -> None:
+    scorer = _kept_argument_scorer(_NESTED_ARGUMENTS, kept=kept)
+    expectation = _send_email_expectation(**matchers)
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.score_value == (None if expected is None else str(expected).lower())
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+    assert replay.score_value == score.score_value
+
+
+async def test_rationale_names_only_the_nested_arguments_that_were_not_kept_async() -> None:
+    scorer = _kept_argument_scorer(_NESTED_ARGUMENTS, kept=("recipient",))
+    expectation = _send_email_expectation(**{"recipient.email": "a@example.com", "body": "private-body"})
+
+    score = (await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=expectation))[0]
+
+    assert score.is_undetermined
+    assert score.score_rationale.endswith("The trace source did not keep these arguments: body.")
+
+
+@pytest.mark.parametrize("kept_arguments", [("recipient", "recipient.email"), ("recipient..email",), ("recipient.",)])
+def test_source_rejects_overlapping_or_malformed_kept_paths(kept_arguments: tuple[str, ...]) -> None:
+    with pytest.raises(ValueError, match="none inside another"):
+        OtelTraceSource(trace_client=InMemoryTraceClient(), kept_arguments=kept_arguments)
+
+
 @pytest.mark.parametrize("kept_arguments", ["to", ("",), ("to", "to"), (3,)])
 def test_source_rejects_invalid_kept_arguments(kept_arguments: object) -> None:
     with pytest.raises(ValueError, match="kept_arguments"):

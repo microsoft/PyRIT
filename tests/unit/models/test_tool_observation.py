@@ -142,6 +142,36 @@ def test_tool_payload_rejects_arguments_it_does_not_declare_kept(
         ToolEventsObservationPayload(scope=SCOPE, events=(_kept_event(arguments),), kept_arguments=kept_arguments)
 
 
+def test_tool_payload_round_trips_nested_kept_arguments() -> None:
+    payload = ToolEventsObservationPayload(
+        scope=SCOPE,
+        events=(_kept_event({"recipient": {"email": "a@example.com"}}),),
+        kept_arguments=("recipient.email", "to"),
+    )
+
+    assert ToolEventsObservationPayload.model_validate_json(payload.model_dump_json()) == payload
+    assert payload.model_dump(mode="json")["events"][0]["arguments"] == {"recipient": {"email": "a@example.com"}}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"recipient": {"email": "a@example.com", "name": "secret"}},
+        {"recipient": "a@example.com"},
+        {"recipient.email": "a@example.com"},
+    ],
+)
+def test_tool_payload_rejects_nested_arguments_beyond_the_kept_path(arguments: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="declares kept"):
+        ToolEventsObservationPayload(scope=SCOPE, events=(_kept_event(arguments),), kept_arguments=("recipient.email",))
+
+
+@pytest.mark.parametrize("kept_arguments", [("recipient", "recipient.email"), ("a..b",)])
+def test_tool_payload_rejects_overlapping_or_malformed_kept_paths(kept_arguments: tuple[str, ...]) -> None:
+    with pytest.raises(ValidationError, match="none inside another"):
+        ToolEventsObservationPayload(scope=SCOPE, kept_arguments=kept_arguments)
+
+
 @pytest.mark.parametrize("kept_arguments", [("",), ("to", "to")])
 def test_tool_payload_rejects_blank_or_repeated_kept_arguments(kept_arguments: tuple[str, ...]) -> None:
     with pytest.raises(ValidationError, match="distinct, nonempty"):

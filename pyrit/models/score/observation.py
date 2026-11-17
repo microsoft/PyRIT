@@ -17,6 +17,7 @@ from pyrit.models.identifiers.component_identifier import (
     ComponentIdentifier,  # noqa: TC001  (runtime-required by Pydantic field annotations)
 )
 from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
+from pyrit.models.score._argument_paths import holds_only_kept_arguments, validate_kept_argument_paths
 from pyrit.models.score.scorable import (
     ContentEntryScorable,
     ContentScorable,
@@ -310,8 +311,9 @@ class ToolEventsObservationPayload(BaseModel):
     """
     An immutable allowlisted tool snapshot, with raw arguments and results not retained.
 
-    ``kept_arguments`` names the arguments the source kept at write time. Every other argument
-    was redacted, so a matcher treats it as unknown, never as absent.
+    ``kept_arguments`` names the arguments the source kept at write time, each a top-level key or
+    a dotted path to a nested field. Every other argument was redacted, so a matcher treats it as
+    unknown, never as absent.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -375,10 +377,11 @@ class ToolEventsObservationPayload(BaseModel):
             raise ValueError("Tool events must belong to the declared trace scope.")
         if self.coverage.complete and any(event.end_time is None for event in self.events):
             raise ValueError("Complete coverage cannot contain unfinished tool events.")
-        if any(not name for name in self.kept_arguments) or len(set(self.kept_arguments)) != len(self.kept_arguments):
-            raise ValueError("Kept tool arguments must be distinct, nonempty names.")
-        kept = set(self.kept_arguments)
-        if any(event.arguments is not None and (not kept or not set(event.arguments) <= kept) for event in self.events):
+        kept = validate_kept_argument_paths(self.kept_arguments)
+        if any(
+            event.arguments is not None and (not kept or not holds_only_kept_arguments(event.arguments, kept=kept))
+            for event in self.events
+        ):
             raise ValueError("Tool events can only retain the arguments the payload declares kept.")
         return self
 

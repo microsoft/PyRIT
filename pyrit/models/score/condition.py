@@ -12,6 +12,7 @@ from pyrit.models.code_execution import (  # runtime-required by Pydantic
     _ProgramInvocation,
     _RuntimeProfileName,
 )
+from pyrit.models.score._argument_paths import ArgumentPath  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
@@ -171,13 +172,15 @@ class ToolArgumentRequirement(BaseModel):
     """
     One argument a tool call must have been made with, compared by a text matcher.
 
-    ``name`` is an exact, case-sensitive top-level argument key. A string value is compared
-    as it is; any other JSON value is compared as its compact JSON text, with sorted keys.
+    ``name`` is an exact, case-sensitive top-level argument key, or a dotted path of object keys
+    into a nested argument, such as ``recipient.email``. A path does not index arrays and cannot
+    name a key that itself contains a dot. A string value is compared as it is; any other JSON
+    value is compared as its compact JSON text, with sorted keys.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str = Field(min_length=1, strict=True)
+    name: ArgumentPath
     matcher: TextMatcher
 
 

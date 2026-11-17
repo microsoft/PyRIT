@@ -273,6 +273,23 @@ def test_tool_argument_requirement_rejects_invalid_input(argument: dict[str, obj
         ToolCallRequirement.model_validate({"name": "send_email", "arguments": [argument]})
 
 
+def test_argument_requirement_names_a_nested_field_by_dotted_path() -> None:
+    requirement = ToolCallRequirement(
+        name="send_email",
+        arguments=(ToolArgumentRequirement(name="recipient.email", matcher=Equals(value="a@example.com")),),
+    )
+    condition = ToolsCalled(tools=(requirement,))
+
+    assert condition.model_dump(mode="json")["tools"][0]["arguments"][0]["name"] == "recipient.email"
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+
+
+@pytest.mark.parametrize("name", [".", "recipient.", ".email", "recipient..email"])
+def test_argument_requirement_rejects_a_path_with_an_empty_key(name: str) -> None:
+    with pytest.raises(ValidationError, match="single dots"):
+        ToolArgumentRequirement(name=name, matcher=Equals(value="x"))
+
+
 @pytest.mark.parametrize("arguments", [True, "to", {"to": "a@example.com"}])
 def test_tool_call_requirement_rejects_unstructured_arguments(arguments: object) -> None:
     with pytest.raises(ValidationError):

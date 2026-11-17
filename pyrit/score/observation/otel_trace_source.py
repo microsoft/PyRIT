@@ -20,6 +20,7 @@ from pyrit.models import (
     TraceCoverage,
     TraceQuery,
 )
+from pyrit.models.score._argument_paths import keep_argument_paths, validate_kept_argument_paths
 from pyrit.score.observation.trace_client import TraceAcquisitionError
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 #: The GenAI semantic-convention attribute that carries a tool call's arguments.
 _ARGUMENTS_ATTRIBUTE = "gen_ai.tool.call.arguments"
+_KEPT_ARGUMENTS_ERROR = "kept_arguments must be a sequence of distinct, nonempty argument paths, none inside another."
 
 
 def _reject_constant(constant: str) -> None:
@@ -42,7 +44,7 @@ def _reject_constant(constant: str) -> None:
 
 def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[str, JsonValue] | None:
     """
-    Keep only the named top-level arguments of one call, redacting the rest.
+    Keep only the named arguments of one call, nested as they were, redacting the rest.
 
     Returns:
         dict[str, JsonValue] | None: The kept arguments the call has, or None if its arguments
@@ -55,7 +57,7 @@ def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[s
             return None
     if not isinstance(value, dict):
         return None
-    return {name: value[name] for name in kept if name in value}
+    return keep_argument_paths(value, kept=kept)
 
 
 class OtelTraceSource:
@@ -63,9 +65,10 @@ class OtelTraceSource:
     Normalize explicit GenAI/OpenInference execution spans into safe evidence.
 
     Tool arguments are redacted at write time. By default none are kept. ``kept_arguments`` opts in
-    to keeping the named top-level arguments from the span's ``gen_ai.tool.call.arguments``
-    attribute; every other argument, and the raw attribute, is discarded before the evidence is
-    stored. Spans that do not carry that attribute keep no arguments.
+    to keeping the named arguments from the span's ``gen_ai.tool.call.arguments`` attribute: a
+    top-level key, or a dotted path such as ``recipient.email`` that keeps only that nested field.
+    Every other argument, and the raw attribute, is discarded before the evidence is stored. Spans
+    that do not carry that attribute keep no arguments.
     """
 
     def __init__(
@@ -81,16 +84,16 @@ class OtelTraceSource:
 
         Raises:
             ValueError: If the retrieval limit or timeout is not positive and finite, or the kept
-                argument names are not distinct and nonempty.
+                argument paths are not distinct, nonempty, and apart from one another.
         """
         if max_spans < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("max_spans and timeout_seconds must be positive.")
-        if (
-            isinstance(kept_arguments, str)
-            or not all(isinstance(name, str) and name for name in kept_arguments)
-            or len(set(kept_arguments)) != len(kept_arguments)
-        ):
-            raise ValueError("kept_arguments must be a sequence of distinct, nonempty argument names.")
+        if isinstance(kept_arguments, str):
+            raise ValueError(_KEPT_ARGUMENTS_ERROR)
+        try:
+            validate_kept_argument_paths(kept_arguments)
+        except ValueError:
+            raise ValueError(_KEPT_ARGUMENTS_ERROR) from None
         self._client = trace_client
         self._max_spans = max_spans
         self._timeout_seconds = timeout_seconds

@@ -22,6 +22,7 @@ from pyrit.models import (
     ToolsCalledInOrder,
     TraceScorable,
 )
+from pyrit.models.score._argument_paths import is_argument_kept
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
 from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope_async
 from pyrit.score.tool_argument_matching import describe_tool_requirement, match_tool_requirement
@@ -341,7 +342,7 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
                 argument.name
                 for tool in condition.tools
                 for argument in tool.arguments
-                if argument.name not in evidence.kept_arguments
+                if not is_argument_kept(argument.name, kept=evidence.kept_arguments)
             }
         )
         if redacted and not evidence.kept_arguments:
