@@ -174,6 +174,28 @@ def test_moving_a_finding_rejects_cycles_and_path_steps(client: TestClient, find
     assert [item["id"] for item in nested] == [grandchild["id"]]
 
 
+def test_omitting_the_parent_promotes_a_sub_finding_to_the_top_level(client: TestClient, findings_path: str) -> None:
+    parent = _create(client, findings_path, "Parent")
+    child = _create(client, findings_path, "Child", parent_finding_id=parent["id"])
+    grandchild = _create(client, findings_path, "Grandchild", parent_finding_id=child["id"])
+    fields = {key: value for key, value in _editable(child).items() if key != "parent_finding_id"}
+
+    client.put(f"{findings_path}/{parent['id']}/paths", json={"paths": [{"name": "Only way", "steps": [child["id"]]}]})
+    step_promoted = client.put(f"{findings_path}/{child['id']}", json=fields)
+    assert step_promoted.status_code == 409
+    assert "Only way" in step_promoted.json()["detail"]
+
+    client.put(f"{findings_path}/{parent['id']}/paths", json={"paths": []})
+    promoted = client.put(f"{findings_path}/{child['id']}", json=fields)
+
+    assert promoted.status_code == 200
+    assert promoted.json()["parent_finding_id"] is None
+    top_level = client.get(findings_path, params={"top_level": True}).json()["items"]
+    assert {item["id"]: item["child_count"] for item in top_level} == {parent["id"]: 0, child["id"]: 1}
+    nested = client.get(findings_path, params={"parent_finding_id": child["id"]}).json()["items"]
+    assert [item["id"] for item in nested] == [grandchild["id"]]
+
+
 async def test_delete_cascades_to_sub_findings_and_their_evidence(
     sqlite_instance: SQLiteMemory, client: TestClient, findings_path: str
 ) -> None:

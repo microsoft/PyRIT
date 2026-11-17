@@ -10,7 +10,7 @@ import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { FindingListItem } from '@/types'
 import { generateClientId } from '@/utils/clientId'
-import { findingPathName } from '@/utils/findingTree'
+import { findingPathName, subFindingNumbers } from '@/utils/findingTree'
 
 import { useFindingPathsDialogStyles } from './FindingPathsDialog.styles'
 
@@ -26,14 +26,18 @@ interface PathDraft {
 interface FindingPathsDialogProps {
   operationId: string
   finding: FindingListItem
-  /** The finding's direct sub-findings: the only findings a step can be. */
+  /** The finding's number in the exported report, which numbers its sub-findings. */
+  parentNumber: string
+  /** The finding's direct sub-findings, in report order: the only findings a step can be. */
   subFindings: readonly FindingListItem[]
   onSaved: (saved: FindingListItem) => void
   onClose: () => void
 }
 
 /** Add, rename, reorder, and remove the ordered paths through a finding's sub-findings, then save them together. */
-export default function FindingPathsDialog({ operationId, finding, subFindings, onSaved, onClose }: FindingPathsDialogProps) {
+export default function FindingPathsDialog({
+  operationId, finding, parentNumber, subFindings, onSaved, onClose,
+}: FindingPathsDialogProps) {
   const styles = useFindingPathsDialogStyles()
   const [drafts, setDrafts] = useState<PathDraft[]>(() => finding.paths.map(path => ({
     key: path.id, id: path.id, name: path.name ?? '', description: path.description ?? '', steps: [...path.steps],
@@ -42,6 +46,7 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
   const [saving, setSaving] = useState(false)
   const submitting = useRef(false)
   const byId = new Map(subFindings.map(subFinding => [subFinding.id, subFinding]))
+  const numbers = subFindingNumbers(parentNumber, subFindings)
   const canSave = drafts.every(draft => draft.steps.length > 0)
 
   const update = (key: string, change: (draft: PathDraft) => PathDraft): void => {
@@ -81,7 +86,12 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
     }
   }
 
-  const stepTitle = (step: string): string => byId.get(step)?.title ?? 'Unknown sub-finding'
+  // Numbered like the report, so sub-findings with the same title stay distinguishable.
+  const stepLabel = (step: string): string => {
+    const title = byId.get(step)?.title ?? 'Unknown sub-finding'
+    const number = numbers.get(step)
+    return number ? `${number} ${title}` : title
+  }
 
   const renderPath = (draft: PathDraft, index: number): React.ReactNode => {
     const label = findingPathName(draft, index)
@@ -98,7 +108,7 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
         {draft.steps.length === 0 ? <Text className={styles.muted}>Add at least one step.</Text> : (
           <ol className={styles.steps} aria-label={`Steps of ${label}`}>
             {draft.steps.map((step, position) => {
-              const title = stepTitle(step)
+              const title = stepLabel(step)
               return (
                 <li key={step} className={styles.step}><div className={styles.stepRow}>
                   <Text className={styles.stepTitle}>
@@ -132,7 +142,9 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
               if (byId.has(step)) update(draft.key, value => ({ ...value, steps: [...value.steps, step] }))
             }}>
               <option value="">Choose a sub-finding…</option>
-              {available.map(subFinding => <option key={subFinding.id} value={subFinding.id}>{subFinding.title}</option>)}
+              {available.map(subFinding => (
+                <option key={subFinding.id} value={subFinding.id}>{stepLabel(subFinding.id)}</option>
+              ))}
             </Select>
           </Field>
           <Button className={styles.button} disabled={saving} aria-label={`Remove path: ${label}`}
@@ -148,10 +160,7 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
         <DialogTitle>Edit paths</DialogTitle>
         <DialogContent>
           <form className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
-            <Text>
-              Each path is one ordered way the sub-findings of “{finding.title}” demonstrate it. A path is complete
-              when every step was demonstrated; a partial path shows which steps are missing.
-            </Text>
+            <Text>Order the sub-findings that demonstrate “{finding.title}”.</Text>
             {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>
               Could not save paths: {error}
             </MessageBarBody></MessageBar>}

@@ -187,14 +187,22 @@ async def test_move_keeps_sub_findings_and_rejects_cycles(sqlite_instance: SQLit
     moved = await sqlite_instance.update_finding_async(
         operation_id=operation.id, finding_id=child.id, request=_edit(child, parent_finding_id=second.id)
     )
-    promoted = await sqlite_instance.update_finding_async(
-        operation_id=operation.id, finding_id=second.id, request=_edit(second, parent_finding_id=None)
-    )
 
     assert moved.parent_finding_id == second.id
-    assert promoted.parent_finding_id is None
     assert [f.id for f in await sqlite_instance.get_findings_async(parent_finding_id=child.id)] == [grandchild.id]
     assert await sqlite_instance.get_finding_child_counts_async(finding_ids=[first.id, second.id]) == {second.id: 1}
+
+    promoted = await sqlite_instance.update_finding_async(
+        operation_id=operation.id, finding_id=child.id, request=_edit(moved, parent_finding_id=None)
+    )
+
+    assert promoted.parent_finding_id is None
+    stored = await sqlite_instance.get_finding_async(operation_id=operation.id, finding_id=child.id)
+    assert stored.parent_finding_id is None
+    assert [f.id for f in await sqlite_instance.get_findings_async(parent_finding_id=child.id)] == [grandchild.id]
+    assert await sqlite_instance.get_finding_child_counts_async(finding_ids=[second.id, child.id]) == {child.id: 1}
+    top_level = await sqlite_instance.get_findings_async(operation_id=operation.id, top_level_only=True)
+    assert {finding.id for finding in top_level} == {first.id, second.id, child.id}
 
 
 async def test_a_path_step_cannot_move_or_be_deleted_until_the_paths_change(sqlite_instance: SQLiteMemory) -> None:

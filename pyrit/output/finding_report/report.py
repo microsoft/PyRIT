@@ -9,7 +9,14 @@ from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
 
-from pyrit.models import DecompositionNode, DecompositionPath, DecompositionTree, Finding, FindingSeverity
+from pyrit.models import (
+    DecompositionNode,
+    DecompositionPath,
+    DecompositionTree,
+    Finding,
+    FindingSeverity,
+    is_finding_path_complete,
+)
 from pyrit.models.harm_category import HarmCategory
 
 EVIDENCE_NOTE = "Evidence is listed as references with links to the PyRIT dashboard; transcripts are not included."
@@ -78,16 +85,17 @@ class FindingReportStep:
 
 @dataclass(frozen=True)
 class FindingReportPath:
-    """One ordered chain of a finding's sub-findings that together demonstrate it."""
+    """
+    One ordered chain of a finding's sub-findings that together demonstrate it.
+
+    ``complete`` is whether every step was demonstrated, as ``is_finding_path_complete`` decides it. A partial path
+    shows which steps are missing.
+    """
 
     name: str
     steps: tuple[FindingReportStep, ...]
+    complete: bool
     description: str = ""
-
-    @property
-    def complete(self) -> bool:
-        """Whether every step was demonstrated. A partial path shows which steps are missing."""
-        return all(step.demonstrated for step in self.steps)
 
     @property
     def status(self) -> str:
@@ -212,6 +220,9 @@ def _project_path(
 ) -> FindingReportPath:
     return FindingReportPath(
         name=path.name if path.name and path.name.strip() else f"Path {index}",
+        complete=is_finding_path_complete(
+            path=path, demonstrated={step: findings[step].demonstrated for step in path.steps}
+        ),
         description=path.description,
         steps=tuple(
             FindingReportStep(

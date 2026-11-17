@@ -601,17 +601,21 @@ describe('sub-findings and paths', () => {
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 100, offset: 0, parent_finding_id: 'parent' })
+    const parent = screen.getByRole('heading', { level: 2, name: PARENT.title }).closest('li') as HTMLElement
+    expect(within(parent).getAllByText('1')[0]).toBeInTheDocument()
     const creds = within(region).getByRole('heading', { level: 3, name: CREDS.title }).closest('li') as HTMLElement
     expect(within(creds).getByText('Not demonstrated')).toBeInTheDocument()
+    expect(within(creds).getByText('1.2')).toBeInTheDocument()
     const recon = within(region).getByRole('heading', { level: 3, name: RECON.title }).closest('li') as HTMLElement
     expect(within(recon).queryByText('Not demonstrated')).not.toBeInTheDocument()
+    expect(within(recon).getByText('1.1')).toBeInTheDocument()
     const panel = within(region).getByRole('region', { name: 'Paths of Data theft' })
     expect(within(panel).getByText('Paths (2)')).toBeInTheDocument()
     const credentialTheft = within(panel).getByRole('list', { name: 'Steps of Credential theft' })
     expect(within(credentialTheft).getAllByRole('listitem').map(item => item.textContent))
-      .toEqual(['Recon', '→Obtain creds(not demonstrated)'])
+      .toEqual(['1.1 Recon', '→1.2 Obtain creds(not demonstrated)'])
     const unnamed = within(panel).getByRole('list', { name: 'Steps of Path 2' })
-    expect(within(unnamed).getAllByRole('listitem').map(item => item.textContent)).toEqual(['Recon', '→Pivot'])
+    expect(within(unnamed).getAllByRole('listitem').map(item => item.textContent)).toEqual(['1.1 Recon', '→1.3 Pivot'])
     expect(within(panel).getByText('Partial')).toBeInTheDocument()
     expect(within(panel).getByText('Complete')).toBeInTheDocument()
 
@@ -648,7 +652,9 @@ describe('sub-findings and paths', () => {
     }))
     const toggle = await screen.findByRole('button', { name: `Sub-findings (1): ${FINDING.title}` })
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(await screen.findByRole('heading', { level: 3, name: RECON.title })).toBeInTheDocument()
+    const recon = (await screen.findByRole('heading', { level: 3, name: RECON.title })).closest('li') as HTMLElement
+    expect(within(recon).getByText('21.1')).toBeInTheDocument()
+    expect(screen.getByText('21')).toBeInTheDocument()
     expect(screen.getByText('Page 2')).toBeInTheDocument()
   })
 
@@ -730,14 +736,12 @@ describe('sub-findings and paths', () => {
     const dialog = screen.getByRole('dialog', { name: 'Edit paths' })
 
     const credentialTheft = within(dialog).getByRole('group', { name: /Credential theft/ })
-    expect(within(credentialTheft).getByText('Partial')).toBeInTheDocument()
-    await user.click(within(credentialTheft).getByRole('button', { name: `Move up: ${CREDS.title}` }))
+    await user.click(within(credentialTheft).getByRole('button', { name: `Move up: 1.2 ${CREDS.title}` }))
     expect(within(within(credentialTheft).getByRole('list')).getAllByRole('listitem')[0])
       .toHaveTextContent(CREDS.title)
-    await user.click(within(credentialTheft).getByRole('button', { name: `Remove step: ${RECON.title}` }))
+    await user.click(within(credentialTheft).getByRole('button', { name: `Remove step: 1.1 ${RECON.title}` }))
 
     const unnamed = within(dialog).getByRole('group', { name: /Path 2/ })
-    expect(within(unnamed).getByText('Complete')).toBeInTheDocument()
     await user.type(within(unnamed).getByRole('textbox', { name: 'Name' }), 'Lateral movement')
     expect(within(dialog).getByRole('group', { name: /Lateral movement/ })).toBe(unnamed)
 
@@ -747,9 +751,9 @@ describe('sub-findings and paths', () => {
     expect(within(dialog).getByRole('button', { name: 'Save paths' })).toBeDisabled()
     const addStep = within(added).getByRole('combobox', { name: 'Add step' })
     expect(within(addStep).getAllByRole('option').map(option => option.textContent))
-      .toEqual(['Choose a sub-finding…', RECON.title, CREDS.title, PIVOT.title])
-    await user.selectOptions(addStep, PIVOT.title)
-    expect(within(added).getByText('Complete')).toBeInTheDocument()
+      .toEqual(['Choose a sub-finding…', `1.1 ${RECON.title}`, `1.2 ${CREDS.title}`, `1.3 ${PIVOT.title}`])
+    await user.selectOptions(addStep, `1.3 ${PIVOT.title}`)
+    expect(within(within(added).getByRole('list')).getByText(`1.3 ${PIVOT.title}`)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Save paths' }))
 
     expect(await screen.findByText(`Paths saved: ${PARENT.title}`)).toBeInTheDocument()

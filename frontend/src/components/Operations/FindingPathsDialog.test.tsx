@@ -23,7 +23,7 @@ const PARENT: FindingListItem = {
 function renderDialog(props: Partial<React.ComponentProps<typeof FindingPathsDialog>> = {}): void {
   render(
     <FluentProvider theme={webLightTheme}>
-      <FindingPathsDialog operationId="op-1" finding={PARENT} subFindings={[RECON, CREDS]} onSaved={jest.fn()}
+      <FindingPathsDialog operationId="op-1" finding={PARENT} parentNumber="2" subFindings={[RECON, CREDS]} onSaved={jest.fn()}
         onClose={jest.fn()} {...props} />
     </FluentProvider>,
   )
@@ -42,13 +42,13 @@ describe('FindingPathsDialog', () => {
     const path = screen.getByRole('group', { name: /Only way/ })
     expect(within(path).queryByText(/^(Complete|Partial)$/)).not.toBeInTheDocument()
 
-    await user.selectOptions(within(path).getByRole('combobox', { name: 'Add step' }), CREDS.title)
+    await user.selectOptions(within(path).getByRole('combobox', { name: 'Add step' }), `2.2 ${CREDS.title}`)
     expect(within(path).queryByText(/^(Complete|Partial)$/)).not.toBeInTheDocument()
     expect(within(path).getByText('(not demonstrated)', { exact: false })).toBeInTheDocument()
     expect(within(path).getByRole('combobox', { name: 'Add step' })).toBeDisabled()
     expect(within(path).getByText('Every sub-finding is already a step of this path.')).toBeInTheDocument()
-    expect(within(path).getByRole('button', { name: `Move up: ${RECON.title}` })).toBeDisabled()
-    expect(within(path).getByRole('button', { name: `Move down: ${CREDS.title}` })).toBeDisabled()
+    expect(within(path).getByRole('button', { name: `Move up: 2.1 ${RECON.title}` })).toBeDisabled()
+    expect(within(path).getByRole('button', { name: `Move down: 2.2 ${CREDS.title}` })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Save paths' }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(PARENT))
@@ -62,7 +62,7 @@ describe('FindingPathsDialog', () => {
     jest.mocked(operationsApi.replaceFindingPaths).mockResolvedValue({ ...PARENT, paths: [] })
     renderDialog()
     const path = screen.getByRole('group', { name: /Only way/ })
-    await user.click(within(path).getByRole('button', { name: `Remove step: ${RECON.title}` }))
+    await user.click(within(path).getByRole('button', { name: `Remove step: 2.1 ${RECON.title}` }))
     expect(within(path).getByText('Add at least one step.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save paths' })).toBeDisabled()
 
@@ -94,6 +94,19 @@ describe('FindingPathsDialog', () => {
     expect(operationsApi.replaceFindingPaths).toHaveBeenCalledTimes(2)
     await act(async () => { pending.resolve(PARENT) })
     expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells sub-findings with the same title apart by their report numbers', async () => {
+    const user = userEvent.setup()
+    const twin: FindingListItem = { ...RECON, id: 'twin' }
+    renderDialog({ subFindings: [RECON, CREDS, twin] })
+    const path = screen.getByRole('group', { name: /Only way/ })
+    const addStep = within(path).getByRole('combobox', { name: 'Add step' })
+    expect(within(addStep).getAllByRole('option').map(option => option.textContent))
+      .toEqual(['Choose a sub-finding…', `2.2 ${CREDS.title}`, `2.3 ${RECON.title}`])
+    await user.selectOptions(addStep, `2.3 ${RECON.title}`)
+    expect(within(path).getByRole('button', { name: `Remove step: 2.1 ${RECON.title}` })).toBeInTheDocument()
+    expect(within(path).getByRole('button', { name: `Remove step: 2.3 ${RECON.title}` })).toBeInTheDocument()
   })
 
   it('closes on Cancel without saving', async () => {

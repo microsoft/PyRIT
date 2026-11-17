@@ -312,7 +312,9 @@ together.
 A finding can be broken into sub-findings, at any depth, to record a
 decomposition such as a multi-step attack. Use **Add sub-finding** on a
 finding, and expand **Sub-findings** to see them, oldest first in the order
-they were added. Each finding keeps its own severity, and turning off
+they were added. Findings are numbered the way an export of all the findings
+numbers them, so sub-finding *1.2* is the second sub-finding of finding *1*, and
+paths refer to their steps by those numbers. Each finding keeps its own severity, and turning off
 **Demonstrated** marks a step that was attempted but not achieved. **Edit
 paths** records the ordered ways a finding's direct sub-findings demonstrate
 it, for example *recon → obtain credentials → pull records* and *recon →
@@ -324,7 +326,7 @@ you remove it from that path.
 :::{div}
 :class: col-page-right
 
-![A finding with four sub-findings, numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the direct sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. Memory stores one row per finding with parent, demonstrated, and paths columns; deleting a finding deletes its sub-findings, and a path step can't be deleted or moved. Markdown and Word exports number and nest the sub-findings and mark each path complete or partial.](../assets/finding-decomposition.svg)
+![A finding with four sub-findings, numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the direct sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. The exported report numbers and nests the sub-findings and marks each path complete or partial.](../assets/finding-decomposition.svg)
 
 :::
 

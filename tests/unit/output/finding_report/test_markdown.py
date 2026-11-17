@@ -416,8 +416,12 @@ async def test_sub_findings_nest_under_their_parent_with_paths() -> None:
         evidence=(),
         number="1",
         paths=(
-            FindingReportPath(name="Credential theft", steps=(_step(recon), _step(creds), _step(records))),
-            FindingReportPath(name="Lateral movement", steps=(_step(recon), _step(pivot), _step(records))),
+            FindingReportPath(
+                name="Credential theft", steps=(_step(recon), _step(creds), _step(records)), complete=False
+            ),
+            FindingReportPath(
+                name="Lateral movement", steps=(_step(recon), _step(pivot), _step(records)), complete=True
+            ),
         ),
         children=(recon, creds, pivot, records),
     )
@@ -494,7 +498,7 @@ async def test_hostile_path_names_and_steps_stay_inside_their_item() -> None:
     parent = _sub_finding(
         number="1",
         title="Parent",
-        paths=(FindingReportPath(name="- item\n1. Forged *path*", steps=(_step(hostile),)),),
+        paths=(FindingReportPath(name="- item\n1. Forged *path*", steps=(_step(hostile),), complete=False),),
         children=(hostile,),
     )
     report = FindingReport(operation_name="Synthetic evaluation", findings=(parent,))

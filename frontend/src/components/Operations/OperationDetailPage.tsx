@@ -34,6 +34,7 @@ interface FindingDialogTarget {
 /** A finding whose paths are being edited, with the sub-findings its steps choose from. */
 interface PathsTarget {
   finding: FindingListItem
+  number: string
   subFindings: FindingListItem[]
 }
 
@@ -182,9 +183,9 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       setDeleteError('')
       setDeleting(finding)
     },
-    onEditPaths: (finding, subFindings, trigger) => {
+    onEditPaths: (finding, number, subFindings, trigger) => {
       returnFocusRef.current = trigger
-      setPathsTarget({ finding, subFindings })
+      setPathsTarget({ finding, number, subFindings })
     },
     onEvidenceDetached: () => { setEvidenceRevision(value => value + 1) },
   }
@@ -254,7 +255,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           } : undefined}
           onSave={save} onClose={() => { setDialog(null) }} />}
         {pathsTarget && <FindingPathsDialog operationId={operationId} finding={pathsTarget.finding}
-          subFindings={pathsTarget.subFindings} onClose={() => { setPathsTarget(null) }}
+          parentNumber={pathsTarget.number} subFindings={pathsTarget.subFindings} onClose={() => { setPathsTarget(null) }}
           onSaved={saved => {
             setNotice(`Paths saved: ${saved.title}`)
             setPathsTarget(null)
@@ -297,8 +298,10 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
       ) : (
         <>
           {page.items.length === 0 ? <Text>No findings in this operation yet. Create one to record an assessment.</Text>
-            : <ul className={styles.list}>{page.items.map(finding => (
-              <FindingTreeItem key={finding.id} operationId={operationId} finding={finding} depth={0}
+            : <ul className={styles.list}>{page.items.map((finding, index) => (
+              // Numbered across pages, in the order the report lists top-level findings.
+              <FindingTreeItem key={finding.id} operationId={operationId} finding={finding}
+                number={String(offset + index + 1)} depth={0}
                 revision={revision + evidenceRevision} expanded={expanded} actions={treeActions} />
             ))}</ul>}
           <div className={styles.header}>

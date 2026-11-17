@@ -75,6 +75,14 @@ export function findingDescendantIds<T extends FindingNode>(
   return descendants
 }
 
+/**
+ * The numbers the report gives a finding's direct sub-findings: the parent's number, then each one's position in the
+ * order listed, so "1.2" is the second sub-finding of finding 1.
+ */
+export function subFindingNumbers(parentNumber: string, subFindings: ReadonlyArray<{ readonly id: string }>): Map<string, string> {
+  return new Map(subFindings.map((subFinding, index) => [subFinding.id, `${parentNumber}.${index + 1}`]))
+}
+
 /** A path's name, or its position when it has none. */
 export function findingPathName(path: Pick<FindingPath, 'name'>, index: number): string {
   return path.name?.trim() || `Path ${index + 1}`

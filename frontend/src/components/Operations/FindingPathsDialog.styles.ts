@@ -24,18 +24,19 @@ export const useFindingPathsDialogStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
     overflowWrap: 'anywhere',
   },
-  steps: { margin: 0, paddingInlineStart: tokens.spacingHorizontalXL },
-  // The list item keeps its number marker; its content lays out in a row inside it.
+  // Each step shows its sub-finding's report number, so the list drops its own markers to avoid two numbers.
+  steps: { margin: 0, padding: 0, listStyleType: 'none' },
   step: { paddingBlock: tokens.spacingVerticalXXS, overflowWrap: 'anywhere' },
+  // The controls stay beside their step on narrow screens; a long title wraps instead.
   stepRow: {
     display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
+    flexWrap: 'nowrap',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: tokens.spacingHorizontalS,
   },
-  stepTitle: { minWidth: 0 },
-  stepActions: { display: 'flex', gap: tokens.spacingHorizontalXS },
+  stepTitle: { flex: '1 1 auto', minWidth: 0 },
+  stepActions: { display: 'flex', flexShrink: 0, gap: tokens.spacingHorizontalXS },
   missing: { color: tokens.colorStatusWarningForeground1 },
   muted: { color: tokens.colorNeutralForeground3 },
   row: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: tokens.spacingHorizontalS },

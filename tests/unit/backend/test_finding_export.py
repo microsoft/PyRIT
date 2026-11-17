@@ -1101,10 +1101,9 @@ async def test_report_nests_each_selected_subtree_once(sqlite_instance: SQLiteMe
         FindingReportStep(number=e.number, title=e.title, demonstrated=e.demonstrated) for e in root.children
     )
     assert root.paths == (
-        FindingReportPath(name="Credential theft", steps=(recon, creds, records)),
-        FindingReportPath(name="Path 2", steps=(recon, records)),
+        FindingReportPath(name="Credential theft", steps=(recon, creds, records), complete=False),
+        FindingReportPath(name="Path 2", steps=(recon, records), complete=True),
     )
-    assert [path.complete for path in root.paths] == [False, True]
     # Only a sub-finding listed without its parent names the finding it is part of.
     assert lone.fields == (FindingReportField(label="Part of", value="Separate"),)
     assert root.children[0].fields == ()

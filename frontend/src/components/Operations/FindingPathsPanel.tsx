@@ -9,11 +9,13 @@ interface FindingPathsPanelProps {
   parent: FindingListItem
   /** The parent's direct sub-findings, which name the steps. */
   subFindings: readonly FindingListItem[]
+  /** Each sub-finding's number in the exported report, keyed by ID. */
+  numbers: ReadonlyMap<string, string>
   onEdit: (trigger: HTMLElement) => void
 }
 
 /** Each ordered way a finding's sub-findings demonstrate it, and whether every step of that way was demonstrated. */
-export default function FindingPathsPanel({ parent, subFindings, onEdit }: FindingPathsPanelProps) {
+export default function FindingPathsPanel({ parent, subFindings, numbers, onEdit }: FindingPathsPanelProps) {
   const styles = useFindingPathsPanelStyles()
   const byId = new Map(subFindings.map(finding => [finding.id, finding]))
   return (
@@ -44,7 +46,10 @@ export default function FindingPathsPanel({ parent, subFindings, onEdit }: Findi
                   return (
                     <li key={step} className={styles.step}>
                       {position > 0 && <span aria-hidden="true" className={styles.arrow}>→</span>}
-                      <Text>{subFinding?.title ?? 'Unknown sub-finding'}</Text>
+                      <Text>
+                        {numbers.has(step) && <span className={styles.number}>{numbers.get(step)} </span>}
+                        {subFinding?.title ?? 'Unknown sub-finding'}
+                      </Text>
                       {subFinding?.demonstrated === false && <Text className={styles.missing}>(not demonstrated)</Text>}
                     </li>
                   )

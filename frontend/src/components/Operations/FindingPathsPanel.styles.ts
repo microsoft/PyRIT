@@ -29,6 +29,7 @@ export const useFindingPathsPanelStyles = makeStyles({
   },
   step: { display: 'inline-flex', alignItems: 'baseline', gap: tokens.spacingHorizontalS, minWidth: 0 },
   arrow: { color: tokens.colorNeutralForeground3 },
+  number: { color: tokens.colorNeutralForeground3, fontVariantNumeric: 'tabular-nums' },
   missing: { color: tokens.colorStatusWarningForeground1 },
   muted: { color: tokens.colorNeutralForeground3 },
   button: { ...mobileTouchTargetHeight },

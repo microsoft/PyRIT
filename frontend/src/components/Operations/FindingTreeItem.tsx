@@ -6,6 +6,7 @@ import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { FindingListItem } from '@/types'
+import { subFindingNumbers } from '@/utils/findingTree'
 
 import FindingEvidenceList from './FindingEvidenceList'
 import FindingPathsPanel from './FindingPathsPanel'
@@ -23,13 +24,15 @@ export interface FindingTreeActions {
   onEdit: (finding: FindingListItem, parentTitle: string | undefined, trigger: HTMLElement) => void
   onAddSubFinding: (parent: FindingListItem, trigger: HTMLElement) => void
   onDelete: (finding: FindingListItem, trigger: HTMLElement) => void
-  onEditPaths: (parent: FindingListItem, subFindings: FindingListItem[], trigger: HTMLElement) => void
+  onEditPaths: (parent: FindingListItem, parentNumber: string, subFindings: FindingListItem[], trigger: HTMLElement) => void
   onEvidenceDetached: () => void
 }
 
 interface FindingTreeItemProps {
   operationId: string
   finding: FindingListItem
+  /** The finding's number in the exported report: 1, 2, … for top-level findings, 1.1, 1.2, … below them. */
+  number: string
   depth: number
   /** The parent's title, when this is a sub-finding. */
   parentTitle?: string
@@ -45,7 +48,7 @@ type ChildrenLoad =
 
 /** One finding, its evidence and actions, and its sub-findings and paths when expanded. */
 export default function FindingTreeItem({
-  operationId, finding, depth, parentTitle, revision, expanded, actions,
+  operationId, finding, number, depth, parentTitle, revision, expanded, actions,
 }: FindingTreeItemProps) {
   const styles = useOperationsStyles()
   const treeStyles = useFindingTreeItemStyles()
@@ -54,7 +57,10 @@ export default function FindingTreeItem({
   const childCount = finding.child_count
   return (
     <li className={styles.item}>
-      <Heading className={styles.title}>{finding.title}</Heading>
+      <div className={treeStyles.titleRow}>
+        <Text className={treeStyles.number}>{number}</Text>
+        <Heading className={styles.title}>{finding.title}</Heading>
+      </div>
       <div className={styles.metadata}>
         <FindingSeverityBadge finding={finding} />
         {!finding.demonstrated && (
@@ -80,7 +86,7 @@ export default function FindingTreeItem({
           onClick={() => { actions.onToggle(finding.id) }}>Sub-findings ({childCount})</Button>
       )}
       {childCount > 0 && isExpanded && (
-        <FindingChildren operationId={operationId} parent={finding} depth={depth + 1} revision={revision}
+        <FindingChildren operationId={operationId} parent={finding} parentNumber={number} depth={depth + 1} revision={revision}
           expanded={expanded} actions={actions} />
       )}
     </li>
@@ -90,6 +96,7 @@ export default function FindingTreeItem({
 interface FindingChildrenProps {
   operationId: string
   parent: FindingListItem
+  parentNumber: string
   depth: number
   revision: number
   expanded: ReadonlySet<string>
@@ -97,7 +104,7 @@ interface FindingChildrenProps {
 }
 
 /** A finding's paths and every one of its direct sub-findings, which the paths choose their steps from. */
-function FindingChildren({ operationId, parent, depth, revision, expanded, actions }: FindingChildrenProps) {
+function FindingChildren({ operationId, parent, parentNumber, depth, revision, expanded, actions }: FindingChildrenProps) {
   const treeStyles = useFindingTreeItemStyles()
   const [retry, setRetry] = useState(0)
   const [load, setLoad] = useState<ChildrenLoad | null>(null)
@@ -134,6 +141,8 @@ function FindingChildren({ operationId, parent, depth, revision, expanded, actio
   }, [operationId, parent.id, requestKey])
 
   const current = load?.key === requestKey ? load : null
+  // The server lists sub-findings in report order, so their positions are their report numbers.
+  const numbers = current?.status === 'loaded' ? subFindingNumbers(parentNumber, current.children) : new Map<string, string>()
   return (
     <div role="region" aria-label={`Sub-findings of ${parent.title}`} className={treeStyles.children}>
       {current === null ? <Spinner size="small" label="Loading sub-findings…" /> : current.status === 'error' ? (
@@ -143,11 +152,12 @@ function FindingChildren({ operationId, parent, depth, revision, expanded, actio
         </MessageBarBody></MessageBar>
       ) : (
         <>
-          <FindingPathsPanel parent={parent} subFindings={current.children}
-            onEdit={trigger => { actions.onEditPaths(parent, current.children, trigger) }} />
+          <FindingPathsPanel parent={parent} subFindings={current.children} numbers={numbers}
+            onEdit={trigger => { actions.onEditPaths(parent, parentNumber, current.children, trigger) }} />
           <ul className={treeStyles.childList}>
             {current.children.map(child => (
-              <FindingTreeItem key={child.id} operationId={operationId} finding={child} depth={depth}
+              <FindingTreeItem key={child.id} operationId={operationId} finding={child}
+                number={numbers.get(child.id) ?? ''} depth={depth}
                 parentTitle={parent.title} revision={revision} expanded={expanded} actions={actions} />
             ))}
           </ul>

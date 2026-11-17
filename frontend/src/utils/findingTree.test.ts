@@ -1,5 +1,5 @@
 import {
-  findingChildren, findingDescendantIds, findingPathName, flattenFindingTree,
+  findingChildren, findingDescendantIds, findingPathName, flattenFindingTree, subFindingNumbers,
 } from './findingTree'
 
 const AT = (minute: number): string => `2026-11-06T12:${String(minute).padStart(2, '0')}:00Z`
@@ -53,5 +53,10 @@ describe('findingTree', () => {
     expect(findingPathName({ name: 'Credential theft' }, 0)).toBe('Credential theft')
     expect(findingPathName({ name: '  ' }, 1)).toBe('Path 2')
     expect(findingPathName({ name: null }, 2)).toBe('Path 3')
+  })
+
+  it('numbers sub-findings under their parent in the order listed', () => {
+    expect([...subFindingNumbers('2', [SECOND, FIRST])]).toEqual([['second', '2.1'], ['first', '2.2']])
+    expect([...subFindingNumbers('1.3', [NESTED])]).toEqual([['nested', '1.3.1']])
   })
 })
