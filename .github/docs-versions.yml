@@ -8,6 +8,9 @@
 # To add a new release version: insert an entry at the top of `versions:`, immediately
 # after `latest`, and update `default:` / `stable:` if the new release should become the
 # landing page. The picker renders this list in file order, so the newest release goes first.
+#
+# Each template is an immutable archive. Historical lockfiles pin Jupyter Book/MyST, but an
+# unqualified `book-theme` otherwise downloads the mutable upstream main branch.
 
 default: "1.2.0"  # served at the site root (microsoft.github.io/PyRIT/)
 stable: "1.2.0"   # served at /stable/ and shown as "(stable)" in the picker
@@ -16,21 +19,28 @@ versions:
   - slug: latest
     name: "latest (dev, main)"
     ref: main
+    template: https://github.com/myst-templates/book-theme/archive/39551f85e7540f44b3b7e1341b4fd4ca236621dc.zip
   - slug: "1.2.0"
     name: "1.2.0"
     ref: releases/v1.2.0
+    template: https://github.com/myst-templates/book-theme/archive/39551f85e7540f44b3b7e1341b4fd4ca236621dc.zip
   - slug: "1.1.0"
     name: "1.1.0"
     ref: releases/v1.1.0
+    template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip
   - slug: "1.0.1"
     name: "1.0.1"
     ref: releases/v1.0.1
+    template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip
   - slug: "0.14.0"
     name: "0.14.0"
     ref: releases/v0.14.0
+    template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip
   - slug: "0.13.0"
     name: "0.13.0"
     ref: releases/v0.13.0
+    template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip
   - slug: "0.12.1"
     name: "0.12.1"
     ref: releases/v0.12.1
+    template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip

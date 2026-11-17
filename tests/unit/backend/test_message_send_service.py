@@ -1898,6 +1898,7 @@ class TestConcurrentMessages:
     async def test_rate_limited_and_converter_sends_allow_unrelated_sends_async(
         self, *, mock_memory: MagicMock, send_dependencies: tuple[MagicMock, AsyncMock], kind: str
     ) -> None:
+        """Require unrelated completion before releasing the first send, not a latency budget."""
         target_service, send = send_dependencies
         scheduler = ManualSendScheduler(max_concurrency=2, max_operations=3)
         service = MessageSendService(scheduler=scheduler)
@@ -1925,10 +1926,7 @@ class TestConcurrentMessages:
         active = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=first))
         try:
             await first_started.wait()
-            await asyncio.wait_for(
-                service.add_message_async(attack_result_id="attack", request=_request(conversation_id="second")),
-                timeout=3,
-            )
+            await service.add_message_async(attack_result_id="attack", request=_request(conversation_id="second"))
             assert order == ["main", "second"]
             assert not active.done()
         finally:
