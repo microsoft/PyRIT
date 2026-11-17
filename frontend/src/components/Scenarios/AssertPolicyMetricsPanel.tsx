@@ -108,7 +108,7 @@ function MetricsBody({ metrics }: { metrics: AssertPolicyMetrics }) {
         </MessageBar>
       )}
       <div className={styles.tableScroll}>
-        <Table aria-label="ASSERT rates" size="small">
+        <Table className={styles.table} aria-label="ASSERT rates" size="small">
           <TableHeader>
             <TableRow>
               <TableHeaderCell>Technique</TableHeaderCell>
@@ -190,7 +190,7 @@ function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] })
   }
   return (
     <div className={styles.tableScroll}>
-      <Table aria-label="Rates by policy category" size="small">
+      <Table className={styles.table} aria-label="Rates by policy category" size="small">
         <TableHeader>
           <TableRow>
             <TableHeaderCell>Category</TableHeaderCell>
