@@ -507,7 +507,10 @@ class MatrixAtomicAttackBuilder:
                 ConverterConfiguration.from_converters(converters=extra_converters) if extra_converters else None
             )
             # Select each dataset's scorer once; the adversarial-target axis does not change it.
-            cells: dict[str, tuple[list[AttackSeedGroup], TrueFalseScorer, ScenarioRunPlanScorerBinding | None]] = {}
+            cells: dict[
+                str,
+                tuple[list[AttackSeedGroup], TrueFalseScorer, ScenarioRunPlanScorerBinding | None, AttackScoringConfig],
+            ] = {}
             for dataset_name, compatible_groups in compatible_datasets.items():
                 if not compatible_groups:
                     continue
@@ -521,6 +524,17 @@ class MatrixAtomicAttackBuilder:
                 if selection is _SKIPPED:
                     continue
                 if isinstance(selection, ScorerSelection):
+                    scoring_config = self._scoring_config_for(factory=factory, objective_scorer=selection.scorer)
+                    if scoring_config is None:
+                        # Checked before the selection is recorded, so no binding or baseline names
+                        # a scorer the attack would not use.
+                        self._reject(
+                            message=(
+                                f"Technique '{technique_name}', dataset '{dataset_name}': the attack's scoring "
+                                f"config type cannot carry the selected scorer {selection.candidate.label}."
+                            )
+                        )
+                        continue
                     binding = _binding(selection) if self._is_pool else None
                     if self._is_pool:
                         key = (
@@ -529,17 +543,22 @@ class MatrixAtomicAttackBuilder:
                             selection.candidate_index,
                         )
                         pool_baselines.setdefault(key, (list(compatible_groups), selection))
-                    cells[dataset_name] = (compatible_groups, selection.scorer, binding)
+                    cells[dataset_name] = (compatible_groups, selection.scorer, binding, scoring_config)
                 else:
-                    cells[dataset_name] = (compatible_groups, cast("TrueFalseScorer", self._objective_scorer), None)
+                    legacy_scorer = cast("TrueFalseScorer", self._objective_scorer)
+                    cells[dataset_name] = (
+                        compatible_groups,
+                        legacy_scorer,
+                        None,
+                        AttackScoringConfig(objective_scorer=legacy_scorer),
+                    )
             for target_name, target_instance in target_axis:
-                for dataset_name, (compatible_groups, objective_scorer, binding) in cells.items():
+                for dataset_name, (compatible_groups, objective_scorer, binding, scoring_config) in cells.items():
                     combo = MatrixCombo(
                         technique_name=technique_name,
                         dataset_name=dataset_name,
                         target_name=target_name,
                     )
-                    scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
                     per_group = any(group.adversarial_prompts is not None for group in compatible_groups) or len(
                         {group.objective.value for group in compatible_groups}
                     ) != len(compatible_groups)
@@ -579,7 +598,16 @@ class MatrixAtomicAttackBuilder:
             if isinstance(self._objective_scorer, CompatibleScorers):
                 baselines = self._build_pool_baselines(pool_baselines=pool_baselines)
             else:
-                all_seed_groups = [group for groups in dataset_groups.values() for group in groups]
+                all_seed_groups = [
+                    group
+                    for dataset_name, groups in dataset_groups.items()
+                    if self._baseline_can_judge(
+                        dataset_name=dataset_name,
+                        seed_groups=groups,
+                        dataset_requirements=dataset_scorer_requirements.get(dataset_name),
+                    )
+                    for group in groups
+                ]
                 baselines = build_baseline_atomic_attacks(
                     objective_target=self._objective_target,
                     objective_scorer=self._objective_scorer,
@@ -589,6 +617,79 @@ class MatrixAtomicAttackBuilder:
             atomic_attacks = [*baselines, *atomic_attacks]
 
         return atomic_attacks
+
+    def _reject(self, *, message: str) -> None:
+        """
+        Apply the incompatible technique policy to one cell or baseline population.
+
+        Raises:
+            IncompatibleTechniqueError: If the policy is RAISE.
+        """
+        if self._incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
+            raise IncompatibleTechniqueError(message)
+        logger.warning("Skipping %s", message)
+
+    def _scoring_config_for(
+        self, *, factory: AttackTechniqueFactory, objective_scorer: TrueFalseScorer
+    ) -> AttackScoringConfig | None:
+        """
+        Build the scoring config the technique's attack accepts, carrying the chosen scorer.
+
+        An attack that narrows its config type, as TAP does with ``TAPAttackScoringConfig``,
+        drops a plain config and judges with its own default scorer. A pool run records which
+        scorer it selected, so the narrowed type is built around that scorer instead.
+        Single-scorer runs keep the plain config.
+
+        Returns:
+            AttackScoringConfig | None: The config to pass to ``factory.create``, or None when
+                the attack's config type cannot carry the scorer.
+        """
+        required = factory.scoring_config_type
+        if (
+            not self._is_pool
+            or not isinstance(required, type)
+            or required is AttackScoringConfig
+            or not issubclass(required, AttackScoringConfig)
+        ):
+            return AttackScoringConfig(objective_scorer=objective_scorer)
+        try:
+            return required(objective_scorer=objective_scorer)
+        except (TypeError, ValueError):
+            return None
+
+    def _baseline_can_judge(
+        self,
+        *,
+        dataset_name: str,
+        seed_groups: Sequence[AttackSeedGroup],
+        dataset_requirements: ScorerRequirements | None,
+    ) -> bool:
+        """
+        Check a single scorer against one dataset's baseline population.
+
+        The baseline sends each objective unmodified, so the inputs are checked as given and
+        technique requirements do not apply. A dataset the scorer cannot judge follows the
+        incompatible technique policy, as its technique cells do.
+
+        Returns:
+            bool: Whether the dataset stays in the baseline. Scorers that are not true/false
+                scorers keep the legacy path, where execution validates them.
+
+        Raises:
+            IncompatibleTechniqueError: If the scorer cannot judge the dataset and the policy is RAISE.
+        """
+        if self._pool is None or not seed_groups:
+            return True
+        try:
+            self._pool.select(
+                requirements=ScorerRequirements.combine(self._scorer_requirements, dataset_requirements),
+                scorable_type=MessageScorable,
+                expectations=[group.scoring_expectation for group in seed_groups],
+            )
+        except NoCompatibleScorerError as exc:
+            self._reject(message=f"Baseline, dataset '{dataset_name}': {exc}")
+            return False
+        return True
 
     def _select_objective_scorer(
         self,
