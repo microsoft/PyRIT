@@ -22,6 +22,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ProviderTraceReference,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -46,7 +47,11 @@ from pyrit.prompt_target.common.target_capabilities import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
+from pyrit.prompt_target.common.target_trace_config import (
+    TargetTraceConfig,
+    record_provider_trace_reference,
+    request_trace_headers,
+)
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -140,6 +145,31 @@ def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
     return headers
 
 
+def _provider_trace_reference(response: Any) -> ProviderTraceReference | None:
+    """
+    Read the identifiers LiteLLM returned for a completion.
+
+    The response id is the provider's id for the completion, the value OpenTelemetry's GenAI
+    conventions record as ``gen_ai.response.id``. LiteLLM also assigns its own call id. An
+    identifier that is missing or not a usable string is left out rather than failing the send.
+
+    Returns:
+        ProviderTraceReference | None: The identifiers, or None when the response carries none.
+    """
+    hidden = getattr(response, "_hidden_params", None)
+    hidden = hidden if isinstance(hidden, dict) else {}
+
+    def usable(value: Any) -> str | None:
+        return value if isinstance(value, str) and 0 < len(value) <= 256 else None
+
+    provider = usable(hidden.get("custom_llm_provider")) or "litellm"
+    request_id = usable(getattr(response, "id", None))
+    run_id = usable(hidden.get("litellm_call_id"))
+    if request_id is None and run_id is None:
+        return None
+    return ProviderTraceReference(provider=provider[:128], request_id=request_id, run_id=run_id)
+
+
 class LiteLLMChatTarget(PromptTarget):
     """
     Chat target that uses the LiteLLM SDK to access 100+ LLM providers.
@@ -201,7 +231,9 @@ class LiteLLMChatTarget(PromptTarget):
         trace_config: Request tracing configuration. Tracing is disabled by default because a
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
-            sends a fresh ``traceparent`` in ``extra_headers``.
+            sends a fresh ``traceparent`` in ``extra_headers``. Pass ``provider_identity=True`` to
+            record the provider's response id, LiteLLM's call id, and the provider name with each
+            request instead of, or as well as, sending W3C context.
     """
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
@@ -449,6 +481,9 @@ class LiteLLMChatTarget(PromptTarget):
             response = await litellm.acompletion(**body)
         except Exception as exc:
             return self._handle_litellm_exception(exc=exc, request=request_piece)
+        record_provider_trace_reference(
+            config=self._trace_config, request=message, reference=_provider_trace_reference(response)
+        )
 
         # Content filtering is red-team critical: surface it as an error Message (not an
         # exception) so attacks can continue and blocked-content scorers can still score.

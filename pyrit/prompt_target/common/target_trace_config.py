@@ -11,15 +11,26 @@ from dataclasses import dataclass
 from opentelemetry.context import Context
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, Tracer, use_span
 
-from pyrit.models import Message, RequestTraceContext
+from pyrit.models import Message, ProviderTraceReference, RequestTraceContext
 
 
 @dataclass(frozen=True, kw_only=True)
 class TargetTraceConfig:
-    """Configure propagation and optional capture with a caller-owned tracer."""
+    """
+    Configure propagation and optional capture with a caller-owned tracer.
+
+    ``enabled`` sends a fresh W3C ``traceparent`` with each request and records it.
+    ``provider_identity`` records the identifiers the provider returns for each request, such as
+    a response id or a run id, as a ``ProviderTraceReference``. The two are independent, so a
+    provider that does not accept W3C context can still be linked to its trace by a backend that
+    resolves its own identifiers. A request with a W3C link is resolved through that link, so for a
+    provider that does not continue W3C context, set ``enabled=False`` and rely on
+    ``provider_identity``. Targets that do not report provider identifiers ignore it.
+    """
 
     enabled: bool = True
     tracer: Tracer | None = None
+    provider_identity: bool = False
 
 
 @contextmanager
@@ -35,6 +46,7 @@ def target_trace_context(
     for message in (request, normalized_request):
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            piece.prompt_metadata.pop(ProviderTraceReference.METADATA_KEY, None)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
     if not config.enabled:
         yield
@@ -93,3 +105,23 @@ def request_trace_headers(
             )
     result["traceparent"] = link.traceparent
     return result
+
+
+def record_provider_trace_reference(
+    *, config: TargetTraceConfig, request: Message, reference: ProviderTraceReference | None
+) -> None:
+    """
+    Record the identifiers a provider returned for this request, when the target is configured to.
+
+    The base target copies the record from the normalized request to the stored request.
+
+    Args:
+        config (TargetTraceConfig): The target's tracing configuration.
+        request (Message): The normalized request that was sent.
+        reference (ProviderTraceReference | None): The identifiers, or None when the provider
+            returned none.
+    """
+    if not config.provider_identity or reference is None:
+        return
+    for piece in request.message_pieces:
+        piece.prompt_metadata.update(reference.to_metadata())
