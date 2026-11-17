@@ -397,7 +397,7 @@ class ChatScoringService:
             if message_fields is not None:
                 fields.update(message_fields(attack))
             if current:
-                fields.update(self._evaluation_fields(attack=attack, evaluation=evaluation))
+                fields.update(await self._evaluation_fields_async(attack=attack, evaluation=evaluation))
             try:
                 await memory.update_attack_result_conditionally_async(
                     attack_result_id=attack_result_id,
@@ -588,7 +588,7 @@ class ChatScoringService:
         )
         return next((score for score in matches if not score.is_undetermined), None)
 
-    def _evaluation_fields(self, *, attack: AttackResult, evaluation: ChatEvaluation) -> dict[str, Any]:
+    async def _evaluation_fields_async(self, *, attack: AttackResult, evaluation: ChatEvaluation) -> dict[str, Any]:
         """
         Prepare the attack fields that record an evaluation for the current selection.
 
@@ -604,6 +604,15 @@ class ChatScoringService:
         fields: dict[str, Any] = {"attack_metadata": {AttackResult.SCORING_ERRORS_KEY: errors}}
         if not self.is_latest_response(attack=attack, piece=piece):
             return fields
+        if evaluation.side_effect_evidence_only:
+            newer = await CentralMemory.get_memory_instance().get_message_pieces_async(
+                attack_result_id=attack.attack_result_id,
+                sent_after=max(anchor.timestamp for anchor in evaluation.response.message_pieces),
+            )
+            conversations = attack.get_active_conversation_ids()
+            anchor_ids = {anchor.id for anchor in evaluation.response.message_pieces}
+            if any(message.id not in anchor_ids and str(message.conversation_id) in conversations for message in newer):
+                return fields
         score = evaluation.score
         fields["automated_score_id"] = score.id if score else None
         if not evaluation.side_effect_evidence_only:
@@ -628,6 +637,7 @@ class ChatScoringService:
             "attack_metadata": attack.metadata,
             "human_score_id": attack.human_score.id if attack.human_score else None,
             "last_response_id": attack.last_response.id if attack.last_response else None,
+            "automated_score_id": attack.automated_score.id if attack.automated_score else None,
         }
 
     async def _apply_context_async(

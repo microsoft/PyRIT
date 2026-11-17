@@ -1958,7 +1958,17 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
         )
 
     with patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async):
-        await service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+        await service.add_message_async(
+            attack_result_id=attack.attack_result_id,
+            request=chat_request(attack).model_copy(
+                update={
+                    "pieces": [
+                        MessagePieceRequest(original_value="Write the result"),
+                        MessagePieceRequest(original_value="Keep this request as one multipart turn"),
+                    ]
+                }
+            ),
+        )
 
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.last_response is None
@@ -1968,6 +1978,75 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
     assert stored.automated_score.observation_ids
     assert stored.outcome == (AttackOutcome.SUCCESS if writes_file else AttackOutcome.FAILURE)
     assert stored.get_scoring_failure(attack.conversation_id) is None
+
+
+async def test_older_write_only_evaluation_cannot_replace_newer_conversation_score_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+) -> None:
+    service, attack, target, _ = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="ordered-file-judge")
+    reference = RegisteredComponentReference(
+        registry_name="ordered-file-judge", identifier_hash=scorer.get_identifier().hash
+    )
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={
+            "attack_metadata": AttackScoringInputs(
+                scorer=reference,
+                revision="ordered-file",
+                expectation=ScoringExpectation(conditions=(ContentWritten(uri="/result.txt"),)),
+            ).to_metadata()
+        },
+    )
+    branch = await AttackService().create_related_conversation_async(
+        attack_result_id=attack.attack_result_id, request=CreateConversationRequest()
+    )
+    assert branch is not None
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = scorer.score_async
+
+    async def deliver_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if normalized_conversation[-1].get_piece().conversation_id == branch.conversation_id:
+            await asyncio.to_thread((tmp_path / "result.txt").write_text, "delivered", encoding="utf-8")
+        return []
+
+    async def delay_old_score_async(**kwargs: Any) -> list[Score]:
+        scores = await original(**kwargs)
+        if scores[0].get_value() is False:
+            entered.set()
+            await release.wait()
+        return scores
+
+    with (
+        patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async),
+        patch.object(scorer, "score_async", side_effect=delay_old_score_async),
+    ):
+        older = asyncio.create_task(
+            service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+        )
+        try:
+            await wait_for_event_async(event=entered, tasks=[older])
+            await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=chat_request(attack).model_copy(update={"target_conversation_id": branch.conversation_id}),
+            )
+            [newer] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+            assert newer.automated_score is not None and newer.automated_score.get_value() is True
+            release.set()
+            await wait_for_completion_async(future=older)
+        finally:
+            release.set()
+            await drain_tasks_async(older)
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.last_response is None
+    assert stored.automated_score is not None and stored.automated_score.id == newer.automated_score.id
+    assert stored.outcome == AttackOutcome.SUCCESS
 
 
 @pytest.mark.parametrize("scoring_failure", [False, True])
