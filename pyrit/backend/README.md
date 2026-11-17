@@ -165,8 +165,9 @@ PUT /api/targets/my-claude/credentials
 - The update changes the registered target in place: its identity, configuration, detected
   capabilities, and authentication mode stay the same, and everything using it, such as a round
   robin, a scorer, or a running scenario, sends the new values with its next request. A target
-  that authenticates with Microsoft Entra ID or with no key can't take an `api_key`, and one using
-  Entra ID can't take an `Authorization` header (400). Headers that frame or route a request, such as
+  that gets its tokens from a token provider, such as Microsoft Entra ID (`"auth_mode": "identity"`,
+  or a provider an initializer passes as `api_key`), can't take an `api_key` or an `Authorization`
+  header, and one that needs no key can't take an `api_key` (400). Headers that frame or route a request, such as
   `Host` or `Content-Length`, can't be set (400). OpenAI-family targets other than `RealtimeTarget`
   can update in place; other target types can't allow updates. Values are never returned.
 - Keys, sensitive parameters, and header values lose surrounding whitespace when a target is

@@ -526,8 +526,9 @@ class OpenAITarget(PromptTarget):
         ``headers``, ``OPENAI_ADDITIONAL_REQUEST_HEADERS``, or ``httpx_client_kwargs``. A cookie is the
         ``Cookie`` header. The new SDK client shares the old one's connections, and requests already
         running finish with the old values. How the target authenticates never changes: a target that
-        authenticates with Microsoft Entra ID or with no key can't take an API key, and one that uses
-        Entra ID can't take an ``Authorization`` header. Errors never include a value.
+        gets its tokens from a token provider, such as Microsoft Entra ID (with ``auth_mode="identity"``
+        or a provider passed as ``api_key``), can't take an API key or an ``Authorization`` header, and a
+        target that needs no key can't take an API key. Errors never include a value.
 
         Args:
             api_key (str | None): The new API key or access token, or None to keep the current one.
@@ -539,9 +540,17 @@ class OpenAITarget(PromptTarget):
         """
         if not self.supports_credential_updates:
             raise ValueError(f"This {type(self).__name__} can't update its credentials. Create a new target instead.")
+        # A token provider, such as Entra ID passed as api_key by an initializer, is how the target authenticates
+        # even when its auth_mode says "api_key"; a static key or Authorization header would replace it.
+        uses_token_provider = self._auth_mode == "identity" or not isinstance(self._api_key, str)
         if api_key is not None and self._auth_mode != "api_key":
             raise ValueError(
                 f"This target authenticates with auth_mode '{self._auth_mode}', so it can't take an API key. "
+                "Create a new target instead."
+            )
+        if api_key is not None and uses_token_provider:
+            raise ValueError(
+                "This target authenticates with a token provider, so it can't take an API key. "
                 "Create a new target instead."
             )
         updates = clean_request_headers(headers or {})
@@ -551,10 +560,10 @@ class OpenAITarget(PromptTarget):
         framing = sorted(name for name in updates if name.lower() in FRAMING_HEADER_NAMES)
         if framing:
             raise ValueError(f"These headers control how a request is sent and can't be set: {', '.join(framing)}")
-        if self._auth_mode == "identity" and any(name.lower() == "authorization" for name in updates):
+        if uses_token_provider and any(name.lower() == "authorization" for name in updates):
             raise ValueError(
-                "This target authenticates with Microsoft Entra ID, so its Authorization header can't be set. "
-                "Create a new target instead."
+                "This target authenticates with a token provider, such as Microsoft Entra ID, so its Authorization "
+                "header can't be set. Create a new target instead."
             )
         key = clean_credential_value(api_key, name="api_key") if api_key is not None else None
         # Keep the configured spelling, so the new value replaces a header instead of being sent beside it.

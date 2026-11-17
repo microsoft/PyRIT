@@ -513,6 +513,26 @@ async def test_an_initializer_can_register_a_shared_target_that_allows_updates_a
     assert target._headers == {"X-Team-Token": "fresh"}
 
 
+async def test_a_target_with_a_token_provider_keeps_it_when_its_initializer_allows_updates_async() -> None:
+    provider = AsyncMock(return_value="entra-token")
+    target = OpenAIChatTarget(
+        endpoint="https://example.openai.azure.com/openai/v1", model_name="gpt-4o", api_key=provider
+    )
+    TargetRegistry.get_registry_singleton().instances.register(
+        target, name="ops", metadata=credential_update_metadata(allowed=True)
+    )
+
+    with pytest.raises(ValueError, match="token provider, so it can't take an API key"):
+        await _update_async("bob", "ops", api_key="static-key")
+    with pytest.raises(ValueError, match="Authorization header"):
+        await _update_async("bob", "ops", headers={"Authorization": "Bearer static"})
+    await _update_async("bob", "ops", headers={"Ocp-Apim-Subscription-Key": "gateway-key"})
+
+    assert target._api_key is provider
+    assert target._client._api_key_provider is not None
+    assert target._headers == {"Ocp-Apim-Subscription-Key": "gateway-key"}
+
+
 async def test_a_target_that_cannot_update_its_credentials_is_refused_async() -> None:
     TargetRegistry.get_registry_singleton().instances.register(
         MockPromptTarget(), name="mock", metadata=credential_update_metadata(allowed=True)

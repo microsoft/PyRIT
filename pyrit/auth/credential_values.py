@@ -22,8 +22,11 @@ FRAMING_HEADER_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _has_control_character(value: str) -> bool:
-    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+def _has_control_character(value: str, *, allow_tab: bool = False) -> bool:
+    return any(
+        (ord(character) < 0x20 and not (allow_tab and character == "\t")) or ord(character) == 0x7F
+        for character in value
+    )
 
 
 def clean_credential_value(value: str, *, name: str) -> str:
@@ -52,7 +55,7 @@ def clean_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
     """
     Check header names, and strip surrounding whitespace from values and refuse control characters in them.
 
-    An empty value is allowed, since HTTP allows it.
+    An empty value and a tab inside a value are allowed, since HTTP allows them.
 
     Args:
         headers (Mapping[str, str]): Header names and values.
@@ -69,7 +72,7 @@ def clean_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
         if not _HEADER_NAME.fullmatch(stripped):
             raise ValueError("A request header name may contain only letters, digits, and !#$%&'*+-.^_`|~.")
         value = value.strip()
-        if _has_control_character(value):
+        if _has_control_character(value, allow_tab=True):
             raise ValueError(f"Header '{stripped}' contains a line break or another control character.")
         cleaned[stripped] = value
     return cleaned
