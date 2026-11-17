@@ -55,6 +55,18 @@ def policy() -> ViolatesAssertPolicy:
     return ViolatesAssertPolicy(taxonomy=metadata.taxonomy, target_instructions="You help.")
 
 
+@pytest.fixture
+def legacy_judge_identifier() -> ComponentIdentifier:
+    return ComponentIdentifier(
+        class_name="_AssertJudgedScorer",
+        class_module=_MODULE,
+        params={"skipped_target_replies": [reason.value for reason in AssertSkipReason]},
+        children={
+            "sub_scorers": [ComponentIdentifier(class_name="TrueFalseConversationScorer", class_module="pyrit.score")]
+        },
+    )
+
+
 def _score(
     policy: ViolatesAssertPolicy | None,
     *,
@@ -237,6 +249,33 @@ async def test_unmarked_supplied_objective_is_not_a_policy_judge(policy: Violate
     technique = (await _metrics({"t": [_attack(score)]})).techniques["t"]
     assert list(technique.dimensions) == ["objective"]
     assert technique.categories == []
+
+
+async def test_legacy_native_judge_keeps_owned_dimensions_without_a_recorded_policy(
+    legacy_judge_identifier: ComponentIdentifier,
+) -> None:
+    objective = _score(None).model_copy(update={"scorer_class_identifier": legacy_judge_identifier})
+    auxiliary = _score(None, dimension="overrefusal", value=False, piece_id=objective.message_piece_id).model_copy(
+        update={"scorer_class_identifier": legacy_judge_identifier}
+    )
+    technique = (await _metrics({"t": [_attack(objective)]}, extra=[auxiliary])).techniques["t"]
+    assert _counts(technique.dimensions["policy_violation"]) == (1, 1, 0)
+    assert _counts(technique.dimensions["overrefusal"]) == (0, 1, 0)
+    assert "objective" not in technique.dimensions
+    assert technique.unresolved_policy == 1
+    assert technique.policy_violation_on_permissible is None
+
+
+@pytest.mark.parametrize("reason", list(AssertSkipReason))
+async def test_legacy_native_judge_keeps_owned_target_skips(
+    legacy_judge_identifier: ComponentIdentifier, reason: AssertSkipReason
+) -> None:
+    objective = _score(None, value=None, skip=reason).model_copy(
+        update={"scorer_class_identifier": legacy_judge_identifier}
+    )
+    technique = (await _metrics({"t": [_attack(objective)]})).techniques["t"]
+    assert getattr(technique.not_judged, reason.value) == 1
+    assert technique.not_judged.judge_no_verdict == 0
 
 
 @pytest.mark.parametrize("mode", [AssertJudgmentMode.DIRECT, AssertJudgmentMode.CATEGORY_VALIDATED])

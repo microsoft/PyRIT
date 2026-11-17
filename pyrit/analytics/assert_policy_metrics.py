@@ -385,9 +385,14 @@ def _dimension_result(score: Score) -> AssertDimensionResult | None:
         ValueError: If the score's ASSERT dimension metadata is malformed.
     """
     identifier = score.scorer_class_identifier
-    if identifier is not None and identifier.get_child_list("sub_scorers"):
-        # A wrapper can copy its child's metadata while changing the verdict.
-        return None
+    if identifier is not None:
+        # This historical native wrapper owns the markers; its child was only the parser.
+        legacy_judge = (
+            identifier.class_name == "_AssertJudgedScorer" and identifier.class_module in ASSERT_SCENARIO_MODULES
+        )
+        if identifier.get_child_list("sub_scorers") and not legacy_judge:
+            # A supplied composition can copy its child's metadata while changing the verdict.
+            return None
     try:
         return AssertDimensionResult.from_metadata(metadata=score.score_metadata)
     except ValueError as error:
