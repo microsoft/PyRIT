@@ -140,12 +140,19 @@ class TraceQueryResult(BaseModel):
 
 
 class ToolExecution(_TraceInterval):
-    """Safe immutable name-only execution evidence; arguments and results are not retained."""
+    """
+    Safe immutable execution evidence; results and raw arguments are not retained.
+
+    ``arguments`` holds only the arguments a source was configured to keep, redacting the rest
+    at write time. It is None when the source kept no arguments or could not read them.
+    """
 
     name: ToolName
     parent_span_id: SpanId | None = None
     call_id: str | None = Field(default=None, min_length=1)
     status: TraceSpanStatus = TraceSpanStatus.UNSET
+    #: Left out of serialization while None, so name-only evidence keeps its stored form.
+    arguments: dict[str, JsonValue] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ExecutionStepKind(str, Enum):

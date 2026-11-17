@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 from typing import TYPE_CHECKING
@@ -24,33 +25,88 @@ from pyrit.score.observation.trace_client import TraceAcquisitionError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pydantic import JsonValue
+
     from pyrit.models import TraceQueryResult, TraceScorable, TraceSpan
     from pyrit.score.observation.trace_client import TraceClient
 
 logger = logging.getLogger(__name__)
 
+#: The GenAI semantic-convention attribute that carries a tool call's arguments.
+_ARGUMENTS_ATTRIBUTE = "gen_ai.tool.call.arguments"
+
+
+def _reject_constant(constant: str) -> None:
+    raise ValueError(f"Non-finite JSON constant {constant} is not argument evidence.")
+
+
+def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[str, JsonValue] | None:
+    """
+    Keep only the named top-level arguments of one call, redacting the rest.
+
+    Returns:
+        dict[str, JsonValue] | None: The kept arguments the call has, or None if its arguments
+            are missing or are not a JSON object.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value, parse_constant=_reject_constant)
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    return {name: value[name] for name in kept if name in value}
+
 
 class OtelTraceSource:
-    """Normalize explicit GenAI/OpenInference execution spans into safe evidence."""
+    """
+    Normalize explicit GenAI/OpenInference execution spans into safe evidence.
 
-    def __init__(self, *, trace_client: TraceClient, max_spans: int = 10000, timeout_seconds: float = 30) -> None:
+    Tool arguments are redacted at write time. By default none are kept. ``kept_arguments`` opts in
+    to keeping the named top-level arguments from the span's ``gen_ai.tool.call.arguments``
+    attribute; every other argument, and the raw attribute, is discarded before the evidence is
+    stored. Spans that do not carry that attribute keep no arguments.
+    """
+
+    def __init__(
+        self,
+        *,
+        trace_client: TraceClient,
+        max_spans: int = 10000,
+        timeout_seconds: float = 30,
+        kept_arguments: Sequence[str] = (),
+    ) -> None:
         """
         Initialize bounded acquisition through a caller-owned client.
 
         Raises:
-            ValueError: If the retrieval limit or timeout is not positive and finite.
+            ValueError: If the retrieval limit or timeout is not positive and finite, or the kept
+                argument names are not distinct and nonempty.
         """
         if max_spans < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("max_spans and timeout_seconds must be positive.")
+        if (
+            isinstance(kept_arguments, str)
+            or not all(isinstance(name, str) and name for name in kept_arguments)
+            or len(set(kept_arguments)) != len(kept_arguments)
+        ):
+            raise ValueError("kept_arguments must be a sequence of distinct, nonempty argument names.")
         self._client = trace_client
         self._max_spans = max_spans
         self._timeout_seconds = timeout_seconds
+        self._kept_arguments = tuple(kept_arguments)
 
     def get_identifier(self) -> ComponentIdentifier:
         """Return parser version and source identity without serializing the client."""
         return ComponentIdentifier.of(
             self,
-            params={"normalization_version": 1, "max_spans": self._max_spans, "timeout_seconds": self._timeout_seconds},
+            params={
+                "normalization_version": 1,
+                "max_spans": self._max_spans,
+                "timeout_seconds": self._timeout_seconds,
+                # Omitted while empty, so a source that keeps no arguments keeps its identity.
+                "kept_arguments": list(self._kept_arguments) or None,
+            },
             children={"trace_client": self._client.get_identifier()},
         )
 
@@ -75,7 +131,7 @@ class OtelTraceSource:
             )
 
         spans, reasons = _scoped_spans(result=result, scope=scorable, max_spans=self._max_spans)
-        events, normalization_reasons = self._normalize(spans=spans)
+        events, normalization_reasons = self._normalize(spans=spans, kept=self._kept_arguments)
         reasons.extend(normalization_reasons)
         acquisition = Acquisition.PARTIAL if reasons else Acquisition.COMPLETE
         return self._observation(
@@ -101,11 +157,12 @@ class OtelTraceSource:
                 scope=scorable,
                 events=events,
                 coverage=TraceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
+                kept_arguments=self._kept_arguments,
             ),
         )
 
     @staticmethod
-    def _normalize(*, spans: Sequence[TraceSpan]) -> tuple[tuple[ToolExecution, ...], list[str]]:
+    def _normalize(*, spans: Sequence[TraceSpan], kept: tuple[str, ...]) -> tuple[tuple[ToolExecution, ...], list[str]]:
         events: list[ToolExecution] = []
         reasons: list[str] = []
         for span in spans:
@@ -130,6 +187,7 @@ class OtelTraceSource:
                     start_time=span.start_time,
                     end_time=span.end_time,
                     status=span.status,
+                    arguments=_keep_arguments(span.attributes.get(_ARGUMENTS_ATTRIBUTE), kept=kept) if kept else None,
                 )
             )
         events.sort(key=lambda event: (event.start_time, event.trace_id, event.span_id))
