@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from openai.types.responses import ResponseOutputText
 
@@ -29,7 +30,8 @@ from pyrit.models import (
     ToolExecutionMetadata,
     ToolsCalled,
 )
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target import HTTPTarget, OpenAIResponseTarget
 from pyrit.score import (
     InMemoryTraceClient,
     MessageToolCallScorer,
@@ -985,3 +987,153 @@ async def test_hosted_tools_keep_a_missing_tool_undetermined_through_an_attack_a
         result = await attack.execute_async(objective="look it up", expectation=_expectation("lookup"))
 
     assert result.outcome is outcome
+
+
+# ---------------------------------------------------------------------------
+# Coverage cannot be inherited, pending calls block absence, unreadable arguments stay unknown
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_a_request_cannot_pass_coverage_on_to_a_target_that_records_none_async(
+    sqlite_instance: SQLiteMemory, fails: bool
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if fails:
+            raise httpx.ConnectError("No connection", request=request)
+        return httpx.Response(200, text="done")
+
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: agent.test\n\n{PROMPT}", transport=httpx.MockTransport(respond)
+    )
+    request = Message.from_prompt(prompt="look it up", role="user")
+    request.get_piece().prompt_metadata.update(_COMPLETE)
+
+    if fails:
+        with pytest.raises(Exception, match="Error sending prompt"):
+            await PromptNormalizer().send_prompt_async(message=request, target=target)
+    else:
+        await PromptNormalizer().send_prompt_async(message=request, target=target)
+
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id=request.get_piece().conversation_id)
+    response = next(piece for piece in pieces if piece.role == "assistant")
+    assert ToolCaptureCoverage.METADATA_KEY not in response.prompt_metadata
+    assert all(ToolCaptureCoverage.METADATA_KEY not in piece.prompt_metadata for piece in pieces)
+    score = await _score(response.to_message(), "lookup")
+    assert score.status == ScoreStatus.UNDETERMINED
+
+
+async def test_a_call_without_its_result_in_scope_blocks_absence_verdicts_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    conversation = await _CapturedConversation.create_async(memory=sqlite_instance)
+    call = await conversation.call_async(_responses_call("call_1", "lookup"))
+
+    # Scored at the response that asked for the call, before its result exists: the tool may still run.
+    assert (await _score(call, "lookup")).status == ScoreStatus.UNDETERMINED
+    assert (await _score_exhaustive_async(call)).status == ScoreStatus.UNDETERMINED
+
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    assert (await _score(call, "lookup")).status == ScoreStatus.UNDETERMINED
+    assert (await _score(reply, "lookup")).get_value() is True
+    assert (await _score_exhaustive_async(reply)).get_value() is False
+
+
+async def test_a_call_answered_as_not_invoked_counts_as_answered_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _CapturedConversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_responses_call("call_1", "lookup"))
+    await conversation.add_async(
+        "tool",
+        "function_call_output",
+        _output("call_1", {"error": "tool_not_executed"}),
+        metadata=ToolExecutionMetadata(invoked=False).to_metadata(),
+    )
+    reply = await conversation.reply_async()
+
+    assert (await _score(reply, "lookup")).get_value() is False
+    assert (await _score_exhaustive_async(reply)).get_value() is True
+
+
+def test_capture_gaps_name_a_call_without_a_result() -> None:
+    call = _piece(1, "assistant", metadata=dict(_COMPLETE))
+    call.original_value = call.converted_value = json.dumps(_responses_call("call_1", "lookup"))
+    call.original_value_data_type = call.converted_value_data_type = "function_call"
+    output = _piece(2, "tool")
+    output.original_value = output.converted_value = json.dumps(_output("call_1", "ok"))
+    output.original_value_data_type = output.converted_value_data_type = "function_call_output"
+
+    assert message_tool_capture_gaps(pieces=[_piece(0, "user"), call]) == ("unanswered_tool_call",)
+    assert message_tool_capture_gaps(pieces=[_piece(0, "user"), call, output]) == ()
+
+
+async def test_unreadable_arguments_stay_unknown_under_complete_capture_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _CapturedConversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", "not json"))
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    score = await _score_arguments(reply, to="a@example.com")
+
+    assert score.status == ScoreStatus.UNDETERMINED
+    assert "could not be read" in score.score_rationale
+
+
+async def test_unreadable_arguments_do_not_hide_a_tool_that_never_ran_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _CapturedConversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", "not json"))
+    await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+    expectation = ScoringExpectation(
+        conditions=(
+            ToolsCalled(
+                tools=(
+                    ToolCallRequirement(
+                        name="send_email",
+                        arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),),
+                    ),
+                    ToolCallRequirement(name="lookup"),
+                )
+            ),
+        )
+    )
+
+    score = (
+        await MessageToolCallScorer().score_async(scorable=MessageScorable.from_message(reply), expectation=expectation)
+    )[0]
+
+    assert score.get_value() is False
+    assert "no execution of: lookup" in score.score_rationale
+
+
+@pytest.mark.parametrize(("extra_tool", "expected"), [(False, None), (True, False)])
+async def test_exhaustive_keeps_unreadable_arguments_unknown_under_complete_capture_async(
+    sqlite_instance: SQLiteMemory, extra_tool: bool, expected: bool | None
+) -> None:
+    conversation = await _CapturedConversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_send_email(_responses_call, "call_1", "not json"))
+    await conversation.output_async("call_1")
+    if extra_tool:
+        await conversation.call_async(_responses_call("call_2", "delete"))
+        await conversation.output_async("call_2")
+    reply = await conversation.reply_async()
+    expectation = ScoringExpectation(
+        conditions=(
+            ToolsCalled(
+                tools=(
+                    ToolCallRequirement(
+                        name="send_email",
+                        arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),),
+                    ),
+                ),
+                exhaustive=True,
+            ),
+        )
+    )
+
+    score = (
+        await MessageToolCallScorer().score_async(scorable=MessageScorable.from_message(reply), expectation=expectation)
+    )[0]
+
+    assert score.score_value == (None if expected is None else str(expected).lower())

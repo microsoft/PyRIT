@@ -21,6 +21,7 @@ from pyrit.models import (
     MessagePiece,
     RequestTraceContext,
     Score,
+    ToolCaptureCoverage,
     construct_response_from_request,
     flatten_to_message_pieces,
     group_conversation_message_pieces_by_sequence,
@@ -787,13 +788,27 @@ def test_construct_response_from_request_combines_metadata():
     assert response_piece.prompt_metadata["key1"] == "value1"  # Original value preserved
     assert response_piece.prompt_metadata["key2"] == 3  # Overridden by additional metadata
     assert response_piece.prompt_metadata["key3"] == "value3"  # Added from additional metadata
-
     assert response_piece.api_role == "assistant"
     assert response_piece.original_value == "test response"
     assert response_piece.conversation_id == "123"
     assert response_piece.original_value_data_type == "text"
     assert response_piece.converted_value_data_type == "text"
     assert response_piece.response_error == "none"
+
+
+def test_construct_response_from_request_does_not_inherit_tool_capture_coverage():
+    """Coverage is a target's statement about its own response, so a request cannot pass it on."""
+    request = MessagePiece(
+        role="user",
+        original_value="test prompt",
+        conversation_id="123",
+        prompt_metadata={"key1": "value1", **ToolCaptureCoverage().to_metadata()},
+    )
+
+    response = construct_response_from_request(request=request, response_text_pieces=["test response"])
+
+    assert response.message_pieces[0].prompt_metadata == {"key1": "value1"}
+    assert ToolCaptureCoverage.from_metadata(metadata=request.prompt_metadata) == ToolCaptureCoverage()
 
 
 def test_construct_response_from_request_no_metadata():
