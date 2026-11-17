@@ -367,7 +367,13 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_trace_context import RequestTraceContext
-    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
+    from pyrit.models.target.tool_execution_metadata import (
+        ToolCaptureCoverage,
+        ToolCaptureGap,
+        ToolExecutionMetadata,
+        ToolLoopStop,
+        ToolLoopStopReason,
+    )
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
@@ -433,6 +439,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
+    "ToolCaptureCoverage": "pyrit.models.target.tool_execution_metadata",
+    "ToolCaptureGap": "pyrit.models.target.tool_execution_metadata",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
     "ToolLoopStopReason": "pyrit.models.target.tool_execution_metadata",

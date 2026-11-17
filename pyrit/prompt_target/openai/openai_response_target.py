@@ -36,6 +36,8 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
+    ToolCaptureCoverage,
+    ToolCaptureGap,
     ToolExecutionMetadata,
     ToolLoopStop,
     ToolLoopStopReason,
@@ -102,6 +104,20 @@ class MessagePieceType(str, Enum):
     MCP_LIST_TOOLS = "mcp_list_tools"
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
+
+# Output sections that run no tool, or whose function calls PyRIT runs and stores itself.
+_CAPTURED_SECTION_TYPES = frozenset(
+    {
+        MessagePieceType.MESSAGE.value,
+        MessagePieceType.REASONING.value,
+        MessagePieceType.FUNCTION_CALL.value,
+        "custom_tool_call",
+    }
+)
+# Tools the provider runs itself. Their results never reach PyRIT as function_call_output pieces.
+_HOSTED_TOOL_SECTION_TYPES = frozenset(
+    piece_type.value for piece_type in MessagePieceType if piece_type.value not in _CAPTURED_SECTION_TYPES
+)
 
 # Fields of a web_search_call input item (all required); the output item has the same ones.
 _WEB_SEARCH_CALL_INPUT_FIELDS: tuple[str, ...] = ("id", "type", "status", "action")
@@ -752,11 +768,45 @@ class OpenAIResponseTarget(OpenAITarget):
         # there, since the whole budget may have been spent on hidden reasoning with no visible
         # answer.
         self._capture_response_metadata(response=response, pieces=extracted_response_pieces)
+        extracted_response_pieces[0].prompt_metadata.update(self._tool_capture_coverage(response).to_metadata())
 
         if truncated and extracted_response_pieces:
             extracted_response_pieces[0].mark_as_truncated()
 
         return Message(message_pieces=extracted_response_pieces)
+
+    @staticmethod
+    def _tool_capture_coverage(response: Response) -> ToolCaptureCoverage:
+        """
+        Record whether the stored messages will show every tool that ran for this response.
+
+        Function calls are run and stored by this target. A tool the provider runs itself, or an
+        output section PyRIT does not model, may have run without a stored output.
+
+        Returns:
+            ToolCaptureCoverage: The coverage, with a gap for each kind of unstored section.
+        """
+        gaps: list[ToolCaptureGap] = []
+        for section in response.output or []:
+            section_type = str(getattr(section, "type", ""))
+            if section_type in _CAPTURED_SECTION_TYPES:
+                continue
+            gap = (
+                ToolCaptureGap.HOSTED_TOOL_CALL
+                if section_type in _HOSTED_TOOL_SECTION_TYPES
+                else ToolCaptureGap.UNRECOGNIZED_OUTPUT
+            )
+            if gap not in gaps:
+                gaps.append(gap)
+        return ToolCaptureCoverage(gaps=tuple(gaps))
+
+    @staticmethod
+    def _add_tool_capture_gap(*, response: Message, gap: ToolCaptureGap) -> None:
+        """Add a gap to the coverage recorded on a model response."""
+        metadata = response.message_pieces[0].prompt_metadata
+        recorded = ToolCaptureCoverage.from_metadata(metadata=metadata) or ToolCaptureCoverage()
+        if gap not in recorded.gaps:
+            metadata.update(ToolCaptureCoverage(gaps=(*recorded.gaps, gap)).to_metadata())
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -823,6 +873,8 @@ class OpenAIResponseTarget(OpenAITarget):
 
             result = await self._send_model_request_async(body=body, request=message)
             if not self._execute_tools:
+                if self._find_pending_tool_calls(result):
+                    self._add_tool_capture_gap(response=result, gap=ToolCaptureGap.CALLS_NOT_EXECUTED)
                 return [result]
 
             # Add result to conversation and responses list
@@ -956,13 +1008,16 @@ class OpenAIResponseTarget(OpenAITarget):
             An error response, which history replay skips.
         """
         logger.error(detail)
-        return construct_response_from_request(
+        error = construct_response_from_request(
             request=request_piece,
             response_text_pieces=[detail],
             response_type="error",
             prompt_metadata=ToolLoopStop(reason=reason).to_metadata(),
             error="processing",
         )
+        # Every call is answered with its dispatch status before the turn ends, so nothing ran unstored.
+        error.message_pieces[0].prompt_metadata.update(ToolCaptureCoverage().to_metadata())
+        return error
 
     @pyrit_target_retry
     @limit_requests_per_minute
