@@ -32,7 +32,7 @@ from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initializers import ScenarioSuiteInitializer
 
-config = ConfigurationLoader.from_yaml_file(Path("../../scanner/pyrit_conf.yaml"))
+config = ConfigurationLoader.load_with_overrides(config_file=Path("../../scanner/pyrit_conf.yaml"))
 await config.initialize_pyrit_async()  # type: ignore
 
 preset_registry = ScenarioPresetRegistry.get_registry_singleton()

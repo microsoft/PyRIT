@@ -4,10 +4,80 @@
 import json
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from build_scripts.sanitize_notebook_paths import _strip_user_paths, sanitize_notebook_paths
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://private-vault.vault.azure.net/secrets/private-env",
+        "https://private-vault.vault.azure.net/secrets/private-env/0123456789abcdef",
+        "https://private-vault.vault.azure.cn/secrets/private-env",
+        "https://private-vault.vault.usgovcloudapi.net/secrets/private-env",
+        "HTTPS://PRIVATE-VAULT.VAULT.MICROSOFTAZURE.DE/secrets/PRIVATE-ENV/VERSION",
+    ],
+)
+def test_sanitizes_key_vault_secret_urls(url: str) -> None:
+    text = f"Loading '{url}'; failed ({url})."
+    expected = "https://my-vault.vault.azure.net/secrets/my-pyrit-env"
+    assert _strip_user_paths(text) == f"Loading '{expected}'; failed ({expected})."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://example.com/secrets/private-env",
+        "https://private-vault.vault.azure.net.example.com/secrets/private-env",
+        "https://my-vault.vault.azure.net/secrets/my-pyrit-env",
+    ],
+)
+def test_preserves_non_key_vault_urls_and_placeholder(text: str) -> None:
+    assert _strip_user_paths(text) == text
+
+
+def test_sanitizes_key_vault_urls_only_in_notebook_text_outputs(tmp_path: Path) -> None:
+    url = "https://private-vault.vault.azure.net/secrets/private-env/0123456789abcdef"
+    expected = "https://my-vault.vault.azure.net/secrets/my-pyrit-env"
+    notebook = {
+        "metadata": {"url": url},
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": [f"secret_url = '{url}'"],
+                "outputs": [
+                    {"output_type": "stream", "name": "stdout", "text": [f"Loading {url}\n"]},
+                    {"output_type": "stream", "name": "stderr", "text": f"Failed {url}"},
+                    {"output_type": "error", "ename": "ValueError", "evalue": url, "traceback": [url]},
+                    {
+                        "output_type": "display_data",
+                        "data": {"text/plain": [url], "text/html": f"<p>{url}</p>", "application/json": {"url": url}},
+                    },
+                ],
+            }
+        ],
+    }
+    notebook_path = tmp_path / "example.ipynb"
+    notebook_path.write_text(json.dumps(notebook), encoding="utf-8")
+
+    assert sanitize_notebook_paths(str(notebook_path)) is True
+    result = json.loads(notebook_path.read_text(encoding="utf-8"))
+    assert result["metadata"] == notebook["metadata"]
+    assert result["cells"][0]["source"] == notebook["cells"][0]["source"]
+    outputs = result["cells"][0]["outputs"]
+    assert outputs[0]["text"] == [f"Loading {expected}\n"]
+    assert outputs[1]["text"] == f"Failed {expected}"
+    assert outputs[2]["evalue"] == expected
+    assert outputs[2]["traceback"] == [expected]
+    assert outputs[3]["data"] == {
+        "text/plain": [expected],
+        "text/html": f"<p>{expected}</p>",
+        "application/json": {"url": url},
+    }
+    assert sanitize_notebook_paths(str(notebook_path)) is False
 
 
 class TestStripUserPaths:
