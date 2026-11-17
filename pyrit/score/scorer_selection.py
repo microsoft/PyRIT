@@ -235,8 +235,8 @@ class ScorerSelection:
         candidate (ScorerCandidate): The selected candidate.
         candidate_index (int): Its position in the pool.
         requirements (ScorerRequirements): The effective requirements it satisfied.
-        expectation_fingerprints (tuple[str, ...]): Sorted, unique fingerprints of the
-            prepared expectations it accepted, for resume drift checks.
+        expectation_fingerprints (tuple[str, ...]): Sorted, unique fingerprints of the effective
+            expectations the candidate prepared from the inputs, for resume drift checks.
         skipped (tuple[ScorerMismatch, ...]): Earlier candidates and why each was passed over.
     """
 
@@ -452,25 +452,31 @@ class CompatibleScorers:
         if not isinstance(scorable_type, type) or not issubclass(scorable_type, Scorable):
             raise TypeError("scorable_type must be a Scorable subclass.")
         unique = _check_input_expectations(expectations)
-        fingerprints = tuple(sorted(unique))
         mismatches: list[ScorerMismatch] = []
         for index, candidate in enumerate(self._candidates):
-            mismatch = self._check_candidate(
+            checked = self._check_candidate(
                 index=index,
                 candidate=candidate,
                 requirements=requirements,
                 scorable_type=scorable_type,
                 expectations=tuple(unique.values()),
             )
-            if mismatch is None:
-                return ScorerSelection(
-                    candidate=candidate,
-                    candidate_index=index,
-                    requirements=requirements,
-                    expectation_fingerprints=fingerprints,
-                    skipped=tuple(mismatches),
-                )
-            mismatches.append(mismatch)
+            if isinstance(checked, ScorerMismatch):
+                mismatches.append(checked)
+                continue
+            # Fingerprint what the candidate will judge, so a change in the criteria it
+            # supplies by default is drift even when the inputs are unchanged.
+            fingerprints = {
+                NO_EXPECTATION_FINGERPRINT if prepared is None else scoring_expectation_fingerprint(prepared)
+                for prepared in checked
+            }
+            return ScorerSelection(
+                candidate=candidate,
+                candidate_index=index,
+                requirements=requirements,
+                expectation_fingerprints=tuple(sorted(fingerprints)),
+                skipped=tuple(mismatches),
+            )
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=mismatches, available_evaluations=self.evaluations
         )
@@ -483,12 +489,13 @@ class CompatibleScorers:
         requirements: ScorerRequirements,
         scorable_type: type[Scorable],
         expectations: tuple[ScoringExpectation | None, ...],
-    ) -> ScorerMismatch | None:
+    ) -> ScorerMismatch | tuple[ScoringExpectation | None, ...]:
         """
-        Return the first known reason a candidate cannot judge the population, or None.
+        Return the first known reason a candidate cannot judge the population, or what it will judge.
 
         Returns:
-            ScorerMismatch | None: The typed reason, or None when the candidate is compatible.
+            ScorerMismatch | tuple[ScoringExpectation | None, ...]: The typed reason, or, when the
+                candidate is compatible, the effective expectation it prepared for each input.
         """
 
         def mismatch(*, kind: ScorerMismatchKind, detail: str) -> ScorerMismatch:
@@ -512,12 +519,15 @@ class CompatibleScorers:
                 kind=ScorerMismatchKind.FLOAT_FEEDBACK,
                 detail="does not guarantee a float value on each true/false result.",
             )
+        prepared: list[ScoringExpectation | None] = []
         for expectation in expectations:
             try:
-                candidate.scorer.prepare_expectation(expectation=expectation)
+                effective = candidate.scorer.prepare_expectation(expectation=expectation)
             except ExpectationMismatchError as exc:
                 return mismatch(kind=ScorerMismatchKind.CONDITION, detail=f"{exc} (rejected by {exc.scorer_name}).")
-        return None
+            # A scorer that hands back nothing usable is judging the input as it was given.
+            prepared.append(effective if isinstance(effective, ScoringExpectation) else expectation)
+        return tuple(prepared)
 
     def report_entry(
         self,

@@ -6,12 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.models import (
+    ComponentIdentifier,
+    MatchesObjective,
     MessageScorable,
     ProgramExecutionScorable,
+    Scorable,
+    Score,
     ScorerSelectionReport,
     ScoringExpectation,
     ToolCallRequirement,
     ToolsCalled,
+    scoring_expectation_fingerprint,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
@@ -28,6 +33,7 @@ from pyrit.score import (
     SelfAskTrueFalseScorer,
     SubStringScorer,
     TrueFalseQuestion,
+    TrueFalseScorer,
     UnsupportedConditionError,
 )
 
@@ -228,7 +234,8 @@ def test_malformed_input_raises_before_any_candidate_is_checked():
 def test_repeated_inputs_are_checked_once_per_candidate():
     scorer = MessageToolCallScorer()
     expectations = [_tools("lookup"), _tools("lookup"), _tools("lookup"), _tools("send")]
-    with patch.object(MessageToolCallScorer, "prepare_expectation", autospec=True) as prepare:
+    original = MessageToolCallScorer.prepare_expectation
+    with patch.object(MessageToolCallScorer, "prepare_expectation", autospec=True, side_effect=original) as prepare:
         selected = CompatibleScorers(candidates=[scorer]).select(
             requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=expectations
         )
@@ -344,3 +351,34 @@ def test_report_entry_for_no_compatible_scorer_gives_every_reason():
     report = ScorerSelectionReport(entries=[entry])
     assert report.skipped == [entry]
     assert ScorerSelectionReport.model_validate_json(report.model_dump_json()) == report
+
+
+class _ObjectiveJudge(TrueFalseScorer):
+    """A scorer that judges against the objective, so it supplies that criterion by default."""
+
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+    CONDITION_TYPE = MatchesObjective
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return []
+
+
+def test_fingerprints_cover_the_criteria_the_selected_scorer_supplies(patch_central_database):
+    judge = _ObjectiveJudge()
+    condition_free = ScoringExpectation(objective="say it")
+    effective = condition_free.model_copy(update={"conditions": (MatchesObjective(),)})
+
+    by_judge = CompatibleScorers(candidates=[judge]).select(
+        requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[condition_free]
+    )
+    by_substring = CompatibleScorers(candidates=[_substring()]).select(
+        requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[condition_free]
+    )
+
+    # The judge supplies the objective criterion; the substring scorer judges the input as given.
+    assert by_judge.expectation_fingerprints == (scoring_expectation_fingerprint(effective),)
+    assert by_substring.expectation_fingerprints == (scoring_expectation_fingerprint(condition_free),)
+    assert by_judge.expectation_fingerprints != by_substring.expectation_fingerprints

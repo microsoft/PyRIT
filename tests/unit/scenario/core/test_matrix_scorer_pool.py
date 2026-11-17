@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack
+from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     ScenarioRunPlanGroupKind,
@@ -38,12 +38,19 @@ HATE = "harm.hate"
 VIOLENCE = "harm.violence"
 
 
-def _factory(*, name: str, requirements: TechniqueRequirements | None = None) -> MagicMock:
+def _factory(
+    *,
+    name: str,
+    requirements: TechniqueRequirements | None = None,
+    attack_class: type = PromptSendingAttack,
+    scoring_config_type: type | None = None,
+) -> MagicMock:
     factory = MagicMock(spec=AttackTechniqueFactory)
     factory.name = name
     factory.seed_technique = None
     factory.adversarial_chat = None
-    factory.attack_class = PromptSendingAttack
+    factory.attack_class = attack_class
+    factory.scoring_config_type = scoring_config_type
     factory.requirements = requirements or TechniqueRequirements()
     factory.resolve_adversarial_chat.return_value = None
     factory.create.side_effect = lambda **_: AttackTechnique(attack=MagicMock(spec=AttackStrategy))
@@ -274,3 +281,124 @@ class TestSelectionReport:
         (skipped,) = report.skipped
         assert [verdict.reason_kind for verdict in skipped.candidates] == ["evaluation", "evaluation"]
         assert skipped.required_evaluation == "harm.violance"
+
+
+class _NarrowScoringConfig(AttackScoringConfig):
+    """A config type an attack narrows to, accepting only substring scorers that look for 'ok'."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if getattr(self.objective_scorer, "_substring", None) != "ok":
+            raise ValueError("This attack needs the 'ok' scorer.")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestNarrowedScoringConfig:
+    def test_pool_selection_is_passed_in_the_config_type_the_attack_accepts(self) -> None:
+        accepted = SubStringScorer(substring="ok")
+        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+
+        attacks = _builder(CompatibleScorers(candidates=[accepted])).build(
+            technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]}
+        )
+
+        config = factory.create.call_args.kwargs["attack_scoring_config"]
+        assert type(config) is _NarrowScoringConfig
+        assert config.objective_scorer is accepted
+        assert attacks[0]._objective_scorer is accepted
+
+    def test_skip_drops_a_cell_whose_attack_cannot_carry_the_selected_scorer(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+        with caplog.at_level(logging.WARNING):
+            attacks = _builder(CompatibleScorers(candidates=[SubStringScorer(substring="other")])).build(
+                technique_factories={"narrow": factory, "prompt_sending": _factory(name="prompt_sending")},
+                dataset_groups={"d": [_group("o1")]},
+                include_baseline=True,
+            )
+
+        # No binding or baseline names a scorer the narrowed attack would have replaced.
+        factory.create.assert_not_called()
+        assert [a.atomic_attack_name for a in attacks] == ["baseline_d", "prompt_sending_d"]
+        assert "cannot carry the selected scorer" in caplog.text
+
+    def test_raise_rejects_a_cell_whose_attack_cannot_carry_the_selected_scorer(self) -> None:
+        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+        with pytest.raises(IncompatibleTechniqueError, match="Technique 'narrow', dataset 'd'.*cannot carry"):
+            _builder(
+                CompatibleScorers(candidates=[SubStringScorer(substring="other")]),
+                policy=IncompatibleTechniquePolicy.RAISE,
+            ).build(technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSingleScorerBaseline:
+    DATASETS = {"plain": [_group("o1")], "agentic": [_group("o2", tools=("send_email",))]}
+
+    def test_skip_keeps_only_datasets_the_scorer_can_judge(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING):
+            attacks = _builder(SubStringScorer(substring="x")).build(
+                technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+                dataset_groups=self.DATASETS,
+                include_baseline=True,
+            )
+
+        assert [a.atomic_attack_name for a in attacks] == ["baseline", "prompt_sending_plain"]
+        assert attacks[0].seed_groups == self.DATASETS["plain"]
+        assert "Baseline, dataset 'agentic'" in caplog.text
+
+    def test_raise_names_the_baseline_dataset(self) -> None:
+        with pytest.raises(IncompatibleTechniqueError, match="Baseline, dataset 'agentic'"):
+            _builder(SubStringScorer(substring="x"), policy=IncompatibleTechniquePolicy.RAISE).build(
+                technique_factories={}, dataset_groups=self.DATASETS, include_baseline=True
+            )
+
+    def test_dataset_requirements_apply_to_the_baseline(self) -> None:
+        attacks = _builder(SubStringScorer(substring="x")).build(
+            technique_factories={},
+            dataset_groups=DATASETS,
+            include_baseline=True,
+            dataset_scorer_requirements={"airt_hate": ScorerRequirements(evaluation=HATE)},
+        )
+        assert attacks[0].seed_groups == DATASETS["airt_violence"]
+
+    def test_a_dataset_rejected_only_by_a_technique_stays_in_the_baseline(self) -> None:
+        ranked = _factory(
+            name="ranked",
+            requirements=TechniqueRequirements(objective_scorer=ScorerRequirements(preserves_float_scale_value=True)),
+        )
+        attacks = _builder(SubStringScorer(substring="x")).build(
+            technique_factories={"ranked": ranked}, dataset_groups=DATASETS, include_baseline=True
+        )
+        assert [a.atomic_attack_name for a in attacks] == ["baseline"]
+        assert attacks[0].seed_groups == [*DATASETS["airt_hate"], *DATASETS["airt_violence"]]
+
+    def test_single_scorer_keeps_the_plain_config_for_a_narrowed_attack(self) -> None:
+        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+        _builder(SubStringScorer(substring="other")).build(
+            technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]}
+        )
+        assert type(factory.create.call_args.kwargs["attack_scoring_config"]) is AttackScoringConfig
+
+
+class TestTechniqueConfigurationIdentity:
+    """Scorer requirements that require nothing must not change a saved technique's fingerprint."""
+
+    def test_empty_scorer_requirements_are_left_out_of_the_fingerprint(self) -> None:
+        factory = AttackTechniqueFactory(name="plain", attack_class=PromptSendingAttack)
+        assert "objective_scorer" not in factory._requirements_identity()
+        assert set(factory._requirements_identity()) == {"objective_target", "seed_group"}
+
+    def test_declared_scorer_requirements_change_the_fingerprint(self) -> None:
+        plain = AttackTechniqueFactory(name="plain", attack_class=PromptSendingAttack)
+        ranked = AttackTechniqueFactory(
+            name="plain",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(objective_scorer=ScorerRequirements(preserves_float_scale_value=True)),
+        )
+        assert ranked._requirements_identity()["objective_scorer"] == {
+            "preserves_float_scale_value": True,
+            "evaluation": None,
+        }
+        assert plain.get_configuration_identity() != ranked.get_configuration_identity()
