@@ -11,17 +11,16 @@ from pyrit.exceptions import AdversarialChatResponseBlockedException
 from pyrit.models import (
     AttackSeedGroup,
     ConversationReference,
-    ConversationType,
     Message,
     ScoringExpectation,
     SeedGroup,
-    SeedPrompt,
+    SimulatedConversationMode,
 )
 
 if TYPE_CHECKING:
     import uuid
 
-    from pyrit.models import SeedUnion
+    from pyrit.models import SeedUnion, ToolDefinition
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -114,17 +113,17 @@ class AttackParameters:
         Extracts standard fields from the seed group and applies any overrides.
         If the seed_group has a simulated conversation config,
         generates the simulated conversation using the provided adversarial_chat and scorer.
-        If it has a simulated tool history config, the adversarial_chat writes a tool-call
-        history against the tools the objective_target reports.
+        A simulated conversation that uses the objective target's tools is generated against
+        the tools the objective_target reports.
 
         Args:
             seed_group: The seed attack group to extract parameters from.
-            adversarial_chat: The adversarial chat target for generating simulated history.
-                Required if seed_group has a simulated conversation or tool history config.
-            objective_scorer: The scorer for evaluating simulated conversations.
+            adversarial_chat: The adversarial chat target for generating simulated conversations.
                 Required if seed_group has a simulated conversation config.
-            objective_target: The target the attack sends to, whose tools a simulated tool
-                history must call. Required if seed_group has a simulated tool history config.
+            objective_scorer: The scorer for evaluating simulated conversations.
+                Required if seed_group has a turn-by-turn simulated conversation config.
+            objective_target: The target the attack sends to, whose tools a simulated conversation
+                uses. Required if the seed group's simulated conversation uses target tools.
             **overrides: Field overrides to apply. Must be valid fields for this params type.
 
         Returns:
@@ -134,9 +133,9 @@ class AttackParameters:
             AdversarialChatResponseBlockedException: If simulated-conversation preparation was
                 blocked and this parameter type cannot represent a completed preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
-            ValueError: If overrides contain invalid fields, if seed_group has simulated
-                history but a required dependency is not provided, or if the objective target
-                reports no tools for a simulated tool history.
+            ValueError: If overrides contain invalid fields, if seed_group has a simulated
+                conversation but a required dependency is not provided, or if its simulated
+                conversation uses target tools and the objective target reports none.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import generate_simulated_conversation_async
@@ -190,14 +189,25 @@ class AttackParameters:
 
             if adversarial_chat is None:
                 raise ValueError("adversarial_chat is required when seed_group has a simulated conversation config")
-            if objective_scorer is None:
+            if (
+                objective_scorer is None
+                and simulated_conversation_config.mode is SimulatedConversationMode.TURN_BY_TURN
+            ):
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
+            tools = (
+                await _get_objective_target_tools_async(objective_target=objective_target)
+                if simulated_conversation_config.use_target_tools
+                else None
+            )
             simulated_result = await generate_simulated_conversation_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,
                 objective_scorer=objective_scorer,
                 num_turns=simulated_conversation_config.num_turns,
+                mode=simulated_conversation_config.mode,
+                tools=tools,
+                max_attempts=simulated_conversation_config.max_attempts,
                 starting_sequence=simulated_conversation_config.sequence,
                 adversarial_chat_system_prompt=simulated_conversation_config.adversarial_chat_system_prompt,
                 simulated_target_system_prompt=simulated_conversation_config.simulated_target_system_prompt,
@@ -211,22 +221,25 @@ class AttackParameters:
                     raise AdversarialChatResponseBlockedException(message=simulated_result.preparation_failure.reason)
                 params["preparation_failure"] = simulated_result.preparation_failure
 
+            # A conversation with tool calls can run past its reserved range; later static prompts
+            # move back so they still follow it.
+            reserved_end = simulated_conversation_config.sequence_range.stop
+            overflow = max((prompt.sequence + 1 for prompt in simulated_prompts), default=reserved_end) - reserved_end
+            static_prompts = [
+                prompt.model_copy(update={"sequence": prompt.sequence + overflow})
+                if overflow > 0 and prompt.sequence >= reserved_end
+                else prompt
+                for prompt in seed_group.prompts
+            ]
+
             # Merge simulated prompts with existing static prompts from the seed_group
-            all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]
+            all_prompts: list[SeedUnion] = [*static_prompts, *simulated_prompts]
 
             # Create a temporary prompts-only SeedGroup for extraction
             # This group contains only prompts (no objective, no simulated config)
             # and will use the standard sequence-based logic for prepended_conversation/next_message
             if all_prompts:
                 extraction_group = SeedGroup(seeds=all_prompts)
-
-        if seed_group.simulated_tool_history_config is not None:
-            history, reference = await _generate_tool_history_async(
-                seed_group=seed_group, adversarial_chat=adversarial_chat, objective_target=objective_target
-            )
-            if "source_conversations" in valid_fields:
-                params["source_conversations"] = frozenset({reference})
-            extraction_group = SeedGroup(seeds=[*seed_group.prompts, *history])
 
         # Use extraction_group properties for prepended_conversation/next_message
         if "next_message" in valid_fields:
@@ -344,49 +357,22 @@ class AttackParameters:
         return new_cls  # type: ignore[ty:invalid-return-type]
 
 
-async def _generate_tool_history_async(
-    *,
-    seed_group: AttackSeedGroup,
-    adversarial_chat: PromptTarget | None,
-    objective_target: PromptTarget | None,
-) -> tuple[list[SeedPrompt], ConversationReference]:
+async def _get_objective_target_tools_async(*, objective_target: PromptTarget | None) -> list[ToolDefinition]:
     """
-    Write a tool-call history for the seed group's objective against the objective target's tools.
+    Read the function tools a simulated conversation should use from the objective target.
 
     Returns:
-        tuple[list[SeedPrompt], ConversationReference]: The history, placed at the configured
-            sequence, and the adversarial conversation that wrote it.
+        list[ToolDefinition]: The tools the objective target reports.
 
     Raises:
-        ValueError: If a dependency is missing or the objective target reports no tools.
+        ValueError: If no objective target is given or it reports no function tools.
     """
-    # Import here to avoid circular imports
-    from pyrit.executor.promptgen import SimulatedToolHistoryGenerator
-
-    config = seed_group.simulated_tool_history_config
-    assert config is not None and seed_group.objective is not None
-    if adversarial_chat is None:
-        raise ValueError("adversarial_chat is required when seed_group has a simulated tool history config")
     if objective_target is None:
-        raise ValueError("objective_target is required when seed_group has a simulated tool history config")
+        raise ValueError("objective_target is required when a simulated conversation uses target tools")
     tools = await objective_target.get_tool_definitions_async()
     if not tools:
         raise ValueError(
-            f"{type(objective_target).__name__} reports no function tools, so no tool history can be written for it. "
-            "Use a target that advertises function tools."
+            f"{type(objective_target).__name__} reports no function tools, so no tool-using simulated conversation "
+            "can be generated for it. Use a target that advertises function tools."
         )
-    result = await SimulatedToolHistoryGenerator(
-        adversarial_chat=adversarial_chat,
-        system_prompt=config.adversarial_chat_system_prompt,
-        max_attempts=config.max_attempts,
-        max_messages=config.max_messages,
-    ).execute_async(objective=seed_group.objective, tools=tools, shape=config.shape)
-    history = [
-        prompt.model_copy(update={"sequence": config.sequence + index}) for index, prompt in enumerate(result.history)
-    ]
-    reference = ConversationReference(
-        conversation_id=result.conversation_id,
-        conversation_type=ConversationType.PREPARATION,
-        description="simulated tool history generation",
-    )
-    return history, reference
+    return tools

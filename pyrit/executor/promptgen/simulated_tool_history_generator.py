@@ -27,7 +27,6 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
     ToolDefinition,
-    ToolHistoryShape,
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 from pyrit.prompt_target import CapabilityName, TargetRequirements
@@ -37,6 +36,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.prompt_target import PromptTarget
+
+
+class SimulatedToolHistoryError(ValueError):
+    """The adversarial chat did not write a valid history within the allowed attempts."""
 
 
 class _AuthoredMessage(BaseModel):
@@ -87,7 +90,6 @@ class SimulatedToolHistoryGeneratorContext(PromptGeneratorStrategyContext):
 
     objective: SeedObjective
     tools: Sequence[ToolDefinition]
-    shape: ToolHistoryShape = ToolHistoryShape.TOOL_LOOP
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     _used: bool = field(default=False, init=False, repr=False)
 
@@ -190,8 +192,6 @@ class SimulatedToolHistoryGenerator(
             raise ValueError("At least one tool is required to author a tool history.")
         if len({tool.name for tool in context.tools}) != len(context.tools):
             raise ValueError("Tool names must be unique.")
-        if not isinstance(context.shape, ToolHistoryShape):
-            raise ValueError("shape must be a ToolHistoryShape.")
 
     async def _setup_async(self, *, context: SimulatedToolHistoryGeneratorContext) -> None:
         await self._adversarial_chat.set_system_prompt_async(
@@ -221,7 +221,7 @@ class SimulatedToolHistoryGenerator(
                 )
             self._logger.info("Simulated tool history attempt %d failed validation: %s", attempt, issues)
             request = self._build_feedback(issues=issues)
-        raise ValueError(
+        raise SimulatedToolHistoryError(
             f"No valid history after {self._max_attempts} attempt(s) in conversation {context.conversation_id}. "
             f"Remaining problems: {'; '.join(issues)}"
         )
@@ -239,7 +239,6 @@ class SimulatedToolHistoryGenerator(
                 {
                     "objective": context.objective.value,
                     "tools": [tool.model_dump(mode="json") for tool in context.tools],
-                    "shape": context.shape.value,
                     "max_messages": self._max_messages,
                 },
                 indent=2,
@@ -289,24 +288,21 @@ class SimulatedToolHistoryGenerator(
         history = [item.to_seed_prompt(sequence=index) for index, item in enumerate(authored.items)]
         messages = SeedGroup(seeds=[prompt.model_copy() for prompt in history]).user_messages
         return history, [
-            *self._check_shape(history=history, shape=context.shape),
+            *self._check_shape(history=history),
             *check_simulated_tool_history(messages=messages, tools=context.tools),
         ]
 
-    def _check_shape(self, *, history: list[SeedPrompt], shape: ToolHistoryShape) -> list[str]:
+    def _check_shape(self, *, history: list[SeedPrompt]) -> list[str]:
         issues: list[str] = []
         if len(history) > self._max_messages:
             issues.append(f"The history has {len(history)} items; use at most {self._max_messages}.")
         if history[-1].role == "user":
             issues.append("Do not end with a user message; the objective is sent as the next user message.")
         texts = [(index, prompt.role) for index, prompt in enumerate(history) if prompt.data_type == "text"]
-        if shape is ToolHistoryShape.TOOL_LOOP:
-            if any(role == "assistant" for _, role in texts):
-                issues.append('Shape "tool_loop" allows no assistant messages.')
-            if any(role == "user" and index != 0 for index, role in texts):
-                issues.append('Shape "tool_loop" allows only one user message, as the first item.')
-        elif not any(role == "assistant" for _, role in texts):
-            issues.append('Shape "conversation" needs at least one assistant message.')
+        if any(role == "assistant" for _, role in texts):
+            issues.append("Write no assistant messages; use only tool calls and their results.")
+        if any(role == "user" and index != 0 for index, role in texts):
+            issues.append("Only one user message is allowed, as the first item.")
         return issues
 
 

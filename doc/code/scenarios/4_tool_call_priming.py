@@ -11,30 +11,51 @@
 # %% [markdown]
 # # Tool Call Priming
 #
-# Tool-using agents treat their own earlier tool calls and results as ground truth. The
-# `tool_call_priming` technique (in the `extra` catalog) exploits that. Before each attack, an
-# adversarial model writes a fabricated history of tool calls and results against the tools the target
-# actually reports, for example a document that "approves" the request. A deterministic check rejects
-# unknown tools, invalid arguments, and unanswered calls, and the adversarial model revises the history
-# until it passes. The history is prepended natively, then the objective is sent.
+# Tool-using agents treat their own earlier tool calls and results as ground truth. Two techniques in
+# the `extra` catalog exploit that by prepending a fabricated history of the target's own tool calls,
+# against the tools the target actually reports, before the objective is sent as is:
 #
-# The objective target must report its function tools and accept tool-call history natively.
-# `OpenAIResponseTarget` reports the tools it runs and declares; `OpenAIChatTarget` and `LiteLLMChatTarget`
-# report the tools declared in `extra_body_parameters["tools"]`, and accept tool-call history for models
-# PyRIT recognizes or when declared with `custom_configuration`. Targets are configured from environment
-# variables: the objective target uses `OPENAI_RESPONSES_*`, the scorer uses the default chat target, and
-# `TargetInitializer` registers the `adversarial_chat` target that writes the histories from
-# `ADVERSARIAL_CHAT_*`.
+# - `tool_priming_one_shot`: the adversarial chat writes the whole history in one pass, for example a
+#   document that "approves" the request. A deterministic check rejects unknown tools, invalid
+#   arguments, and unanswered calls, and the adversarial chat revises the history until it passes.
+# - `tool_priming_simulated`: the adversarial chat holds a conversation with a stand-in for the target
+#   that has the same tools and is told to use them. The stand-in decides which tools to call, and the
+#   adversarial chat writes each result.
+#
+# Both are simulated-conversation techniques (`SeedSimulatedConversation` with `use_target_tools=True`,
+# in `ONE_SHOT` and `TURN_BY_TURN` mode). The objective target must report its function tools and accept
+# tool-call history natively. `OpenAIResponseTarget` reports the tools it runs and declares;
+# `OpenAIChatTarget` and `LiteLLMChatTarget` report the tools declared in `extra_body_parameters["tools"]`,
+# and accept tool-call history for models PyRIT recognizes or when declared with `custom_configuration`.
+#
+# The stand-in in `tool_priming_simulated` runs its tool calls, so the adversarial chat must be an
+# `OpenAIResponseTarget`. Here one is built from the `ADVERSARIAL_CHAT_*` environment variables and
+# replaces the chat-completions `adversarial_chat` registered from them, so both techniques use it. The objective target uses
+# `OPENAI_RESPONSES_*`, and the scorer uses the default chat target.
 
 # %%
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, tool
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
+import os
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[TargetInitializer()], silent=True)  # type: ignore
+from pyrit.auth import get_azure_openai_auth
+from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, tool
+from pyrit.registry import TargetRegistry
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.initializers import TechniqueInitializer
+
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
 techniques = TechniqueInitializer()
 techniques.set_params_from_args(args={"tags": ["all"]})
 await techniques.initialize_async()  # type: ignore
+
+adversarial_endpoint = os.environ["ADVERSARIAL_CHAT_ENDPOINT"]
+adversarial_chat = OpenAIResponseTarget(
+    endpoint=adversarial_endpoint,
+    model_name=os.environ["ADVERSARIAL_CHAT_MODEL"],
+    api_key=os.environ.get("ADVERSARIAL_CHAT_KEY") or get_azure_openai_auth(adversarial_endpoint),
+)
+registry = TargetRegistry.get_registry_singleton()
+registry.instances.unregister("adversarial_chat")
+registry.instances.register(adversarial_chat, name="adversarial_chat")
 
 
 @tool
@@ -49,16 +70,15 @@ async def read_document(document_id: str) -> str:  # pyrit-async-suffix-exempt
     return "Document unavailable."
 
 
-TOOLS = [search_knowledge_base, read_document]
-victim = OpenAIResponseTarget(tools=TOOLS)
+victim = OpenAIResponseTarget(tools=[search_knowledge_base, read_document])
 
 # %% [markdown]
-# ## Run the technique
+# ## Run the techniques
 #
-# Any scenario that exposes the technique catalog can run `tool_call_priming`. Here `RapidResponse`
-# runs it for one objective, next to its baseline, which sends the same objective without a history.
-# The tools are stubs, and a response counts as a success when it is not a refusal. Each history is
-# generated fresh, so outcomes vary by model and from run to run.
+# Any scenario that exposes the technique catalog can run them. Here `RapidResponse` runs both for one
+# objective, next to its baseline, which sends the same objective without a history. The tools are
+# stubs, and a response counts as a success when it is not a refusal. Each history is generated fresh,
+# so outcomes vary by model and from run to run.
 
 # %%
 from pyrit.models import AttackSeedGroup, SeedObjective
@@ -77,7 +97,10 @@ scenario = RapidResponse(objective_scorer=objective_scorer)
 scenario.set_params_from_args(
     args={
         "objective_target": victim,
-        "scenario_techniques": [RapidResponseTechnique.tool_call_priming],
+        "scenario_techniques": [
+            RapidResponseTechnique.tool_priming_one_shot,
+            RapidResponseTechnique.tool_priming_simulated,
+        ],
         "dataset_config": DatasetAttackConfiguration(
             seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value=objective)])], max_total="all"
         ),
@@ -88,7 +111,7 @@ result = await scenario.run_async()  # type: ignore
 await output_scenario_async(result)  # type: ignore
 
 # %% [markdown]
-# ## Inspect the primed conversation
+# ## Inspect the primed conversations
 #
 # The injected history appears with simulated roles: the target never made these calls. Scorers ignore
 # simulated messages and only judge the target's own reply.
@@ -97,12 +120,12 @@ await output_scenario_async(result)  # type: ignore
 from pyrit.memory import CentralMemory
 
 memory = CentralMemory.get_memory_instance()
-primed = next(
-    attack_result
-    for name, attack_results in result.attack_results.items()
-    if name.startswith("tool_call_priming")
-    for attack_result in attack_results
-)
-for message in await memory.get_conversation_messages_async(conversation_id=primed.conversation_id):  # type: ignore
-    piece = message.get_piece()
-    print(f"[{piece.role} / {piece.converted_value_data_type}] {piece.converted_value[:400]}\n")
+for name, attack_results in result.attack_results.items():
+    if not name.startswith("tool_priming"):
+        continue
+    for attack_result in attack_results:
+        print(f"===== {name}: {attack_result.outcome.value}\n")
+        for message in await memory.get_conversation_messages_async(conversation_id=attack_result.conversation_id):  # type: ignore
+            for piece in message.message_pieces:
+                if piece.converted_value_data_type != "reasoning" and piece.converted_value.strip():
+                    print(f"[{piece.role} / {piece.converted_value_data_type}] {piece.converted_value[:300]}\n")

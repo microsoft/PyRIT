@@ -12,6 +12,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedRecord,
     SeedSimulatedConversation,
+    SimulatedConversationMode,
 )
 
 
@@ -58,6 +59,26 @@ class TestSeedGeneralTechnique:
 
         identifier_after = SeedIdentifier.from_seed(retrieved)
         assert identifier_before.hash == identifier_after.hash
+
+    async def test_tool_using_simulated_conversation_roundtrip_async(self, sqlite_instance: MemoryInterface) -> None:
+        seed = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            max_attempts=5,
+            dataset_name="tool_techniques",
+        )
+
+        await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="operator")
+
+        [retrieved] = await sqlite_instance.get_seeds_async(dataset_name="tool_techniques")
+        assert isinstance(retrieved, SeedSimulatedConversation)
+        assert (retrieved.mode, retrieved.use_target_tools, retrieved.max_attempts) == (
+            SimulatedConversationMode.ONE_SHOT,
+            True,
+            5,
+        )
+        assert SeedIdentifier.from_seed(retrieved).hash == SeedIdentifier.from_seed(seed).hash
 
     async def test_filter_by_is_general_technique_async(self, sqlite_instance: MemoryInterface) -> None:
         general_seed = SeedPrompt(value="General technique seed", is_general_technique=True, dataset_name="mixed")

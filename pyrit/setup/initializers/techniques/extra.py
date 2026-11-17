@@ -27,7 +27,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt, SimulatedConversationMode
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
 
@@ -60,14 +60,29 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             technique_tags=["single_turn"],
             requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
         ),
-        AttackTechniqueFactory.with_simulated_tool_history(
-            name="tool_call_priming",
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_one_shot",
             description=(
                 "Primes a tool-using target with a fabricated history of its own tool calls and results, "
-                "written against the target's real tools, that make the objective look approved."
+                "written in one pass against the target's real tools, that make the objective look approved."
             ),
-            technique_tags=["single_turn"],
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+            num_turns=6,
             max_attempts=5,
+            technique_tags=["single_turn"],
+        ),
+        # Not in any aggregate: its adversarial chat must be an OpenAIResponseTarget, which the
+        # default adversarial chat is not.
+        AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_simulated",
+            description=(
+                "Primes a tool-using target with a conversation in which a stand-in for it calls its real tools, "
+                "with results written by the adversarial chat to make the objective look approved."
+            ),
+            use_target_tools=True,
+            num_turns=3,
+            technique_tags=[],
         ),
         AttackTechniqueFactory(
             name="best_of_n",

@@ -52,19 +52,25 @@ from pyrit.models import (
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
-    SeedSimulatedToolHistory,
+    SimulatedConversationMode,
     SimulatedTargetSystemPromptPaths,
-    ToolHistoryShape,
     config_hash,
     load_next_message_prompt,
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
-from pyrit.prompt_target import CapabilityName, TargetRequirements
+from pyrit.prompt_target import CapabilityName, OpenAIResponseTarget, TargetRequirements
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, TechniqueRequirements
+
+# A technique that writes calls to the objective target's tools needs a target that replays
+# tool-call history natively.
+_TOOL_HISTORY_TARGET_REQUIREMENTS = TargetRequirements(
+    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}),
+    required_input_modalities=frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -296,6 +302,9 @@ class AttackTechniqueFactory(Identifiable):
         next_message_system_prompt_path: str | Path | None = None,
         final_user_message: str | None = None,
         num_turns: int = 3,
+        mode: SimulatedConversationMode = SimulatedConversationMode.TURN_BY_TURN,
+        use_target_tools: bool = False,
+        max_attempts: int = 3,
         technique_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
@@ -342,6 +351,16 @@ class AttackTechniqueFactory(Identifiable):
                 context compliance whose final turn is a hardcoded affirmation
                 (e.g. ``"yes."``) rather than an LLM-generated message.
             num_turns: Number of simulated conversation turns. Defaults to 3.
+            mode: How the conversation is generated. ``ONE_SHOT`` has the adversarial chat write a
+                tool-call history in one pass; its adversarial prompt defaults to the bundled
+                one-shot tool-history prompt. Defaults to ``TURN_BY_TURN``.
+            use_target_tools: Whether the conversation uses the objective target's function tools.
+                When set, no next message is generated unless a next-message prompt is given (the
+                objective is sent as is), the simulated target prompt defaults to one that calls
+                tools actively, and the objective target must report its tools and accept tool-call
+                history natively. Defaults to False.
+            max_attempts: ``ONE_SHOT`` only. Writing attempts, including revisions after validation
+                feedback. Defaults to 3.
             technique_tags: Tags controlling which ``ScenarioTechnique`` aggregates
                 include this technique (e.g. ``"single_turn"``, ``"multi_turn"``,
                 ``"default"``). Forwarded to the factory constructor.
@@ -382,9 +401,12 @@ class AttackTechniqueFactory(Identifiable):
             load_prompt=SeedPrompt.from_yaml_file,
         )
         if adversarial_chat_system_prompt is None:
-            adversarial_chat_system_prompt = SeedPrompt.from_yaml_file(
-                Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
+            default_prompt_path = (
+                Path(EXECUTOR_SEED_PROMPT_PATH) / "promptgen" / "simulated_tool_history.yaml"
+                if mode is SimulatedConversationMode.ONE_SHOT
+                else Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
             )
+            adversarial_chat_system_prompt = SeedPrompt.from_yaml_file(default_prompt_path)
         simulated_target_system_prompt = resolve_prompt_source(
             prompt=simulated_target_system_prompt,
             path=simulated_target_system_prompt_path,
@@ -394,7 +416,9 @@ class AttackTechniqueFactory(Identifiable):
         )
         if simulated_target_system_prompt is None:
             simulated_target_system_prompt = load_simulated_target_prompt(
-                SimulatedTargetSystemPromptPaths.COMPLIANT.value
+                SimulatedTargetSystemPromptPaths.COMPLIANT_TOOL_USE.value
+                if use_target_tools
+                else SimulatedTargetSystemPromptPaths.COMPLIANT.value
             )
 
         # A fixed final user message and an LLM-generated next message are mutually
@@ -410,11 +434,14 @@ class AttackTechniqueFactory(Identifiable):
                 path_name="next_message_system_prompt_path",
                 load_prompt=load_next_message_prompt,
             )
-            if next_message_system_prompt is None:
+            if next_message_system_prompt is None and not use_target_tools:
                 next_message_system_prompt = load_next_message_prompt(NextMessageSystemPromptPaths.DIRECT.value)
 
         simulated_conversation = SeedSimulatedConversation(
             num_turns=num_turns,
+            mode=mode,
+            use_target_tools=use_target_tools,
+            max_attempts=max_attempts,
             adversarial_chat_system_prompt=adversarial_chat_system_prompt,
             simulated_target_system_prompt=simulated_target_system_prompt,
             next_message_system_prompt=next_message_system_prompt,
@@ -447,72 +474,9 @@ class AttackTechniqueFactory(Identifiable):
             uses_adversarial=uses_adversarial,
             supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
-            requirements=requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
-        )
-
-    @classmethod
-    @_capture_creation
-    def with_simulated_tool_history(
-        cls,
-        *,
-        name: str,
-        description: str | None = None,
-        shape: ToolHistoryShape = ToolHistoryShape.TOOL_LOOP,
-        max_messages: int = 12,
-        max_attempts: int = 3,
-        adversarial_chat_system_prompt: SeedPrompt | None = None,
-        technique_tags: list[str] | None = None,
-        adversarial_chat: PromptTarget | None = None,
-        requirements: TechniqueRequirements | None = None,
-    ) -> AttackTechniqueFactory:
-        """
-        Build a technique that primes the target with a fabricated tool-call history.
-
-        Before each attack, the adversarial chat writes a history of tool calls and their outputs
-        for the objective, against the tools the objective target reports, and the history is
-        replayed natively before the objective is sent. Every history is generated fresh.
-
-        Args:
-            name: Registry name for this technique.
-            description: Short human-readable summary of what the technique does.
-            shape: How each history is structured. Defaults to ``TOOL_LOOP``.
-            max_messages: Maximum number of history messages. Defaults to 12.
-            max_attempts: Writing attempts, including revisions after validation feedback. Defaults to 3.
-            adversarial_chat_system_prompt: Priming strategy for the adversarial chat. Defaults to
-                the bundled prompt.
-            technique_tags: Tags controlling which ``ScenarioTechnique`` aggregates include this technique.
-            adversarial_chat: Optional adversarial chat target baked into the technique. When ``None``,
-                the default adversarial target is resolved lazily.
-            requirements: Optional requirements override. Defaults to objective-only dataset input and
-                an objective target that natively replays editable tool-call history.
-
-        Returns:
-            AttackTechniqueFactory: A new factory whose ``seed_technique`` is the tool-history configuration.
-        """
-        return cls(
-            name=name,
-            attack_class=PromptSendingAttack,
-            description=description,
-            technique_tags=technique_tags,
-            adversarial_chat=adversarial_chat,
-            seed_technique=AttackTechniqueSeedGroup(
-                seeds=[
-                    SeedSimulatedToolHistory(
-                        shape=shape,
-                        max_messages=max_messages,
-                        max_attempts=max_attempts,
-                        adversarial_chat_system_prompt=adversarial_chat_system_prompt,
-                    )
-                ]
-            ),
             requirements=requirements
             or TechniqueRequirements(
-                objective_target=TargetRequirements(
-                    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY}),
-                    required_input_modalities=frozenset(
-                        {frozenset({"function_call"}), frozenset({"function_call_output"})}
-                    ),
-                ),
+                objective_target=_TOOL_HISTORY_TARGET_REQUIREMENTS if use_target_tools else TargetRequirements(),
                 seed_group=SeedGroupRequirements(objective_only=True),
             ),
         )
@@ -527,10 +491,16 @@ class AttackTechniqueFactory(Identifiable):
         errors: list[str] = []
         if self.uses_adversarial:
             errors.extend(self.attack_class.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
-        if self.seed_technique is not None and self.seed_technique.has_simulated_conversation:
-            errors.extend(RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
-        if self.seed_technique is not None and self.seed_technique.simulated_tool_history_config is not None:
+        simulation = self.seed_technique.simulated_conversation_config if self.seed_technique is not None else None
+        if simulation is not None and simulation.mode is SimulatedConversationMode.ONE_SHOT:
             errors.extend(SimulatedToolHistoryGenerator.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        elif simulation is not None:
+            errors.extend(RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+            if simulation.use_target_tools and not isinstance(target, OpenAIResponseTarget):
+                errors.append(
+                    "A simulated conversation with tools needs an OpenAIResponseTarget adversarial chat, which "
+                    f"runs the stand-in target's tool calls; got {type(target).__name__}."
+                )
         return list(dict.fromkeys(errors))
 
     def _derive_uses_adversarial(self) -> bool:
@@ -547,7 +517,7 @@ class AttackTechniqueFactory(Identifiable):
         sig = inspect.signature(self._attack_class.__init__)
         if "attack_adversarial_config" in sig.parameters:
             return True
-        return self._seed_technique is not None and self._seed_technique.generated_history_config is not None
+        return self._seed_technique is not None and self._seed_technique.has_simulated_conversation
 
     def _validate_adversarial_flags(self) -> None:
         """
@@ -753,19 +723,18 @@ class AttackTechniqueFactory(Identifiable):
         Resolve the adversarial chat target an ``AtomicAttack`` needs to expand this technique.
 
         A baked ``adversarial_chat`` always wins. Otherwise, when the technique's seed group
-        generates history at attack time (built via ``with_simulated_conversation`` or
-        ``with_simulated_tool_history``), the default adversarial target is resolved lazily here —
-        mirroring how ``create()`` resolves the target for the attack's own
-        ``attack_adversarial_config``. Techniques without such a seed do not need one and return
-        ``None``.
+        carries a simulated conversation (built via ``with_simulated_conversation``), the default
+        adversarial target is resolved lazily here — mirroring how ``create()`` resolves the target
+        for the attack's own ``attack_adversarial_config``. Techniques without a simulated
+        conversation seed do not need one and return ``None``.
 
         Returns:
             PromptTarget | None: The adversarial chat target for the ``AtomicAttack``, or ``None``
-            when the technique does not generate history.
+            when the technique does not drive a simulated conversation.
         """
         if self._adversarial_chat is not None:
             return self._adversarial_chat
-        if self._seed_technique is not None and self._seed_technique.generated_history_config is not None:
+        if self._seed_technique is not None and self._seed_technique.has_simulated_conversation:
             return get_default_adversarial_target()
         return None
 
@@ -779,7 +748,7 @@ class AttackTechniqueFactory(Identifiable):
         """Whether this factory resolves the shared adversarial target."""
         return self._adversarial_chat is None and (
             self._uses_adversarial
-            or (self._seed_technique is not None and self._seed_technique.generated_history_config is not None)
+            or (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
         )
 
     @property
@@ -902,7 +871,7 @@ class AttackTechniqueFactory(Identifiable):
 
     def _supports_seed_input(self, name: str) -> bool:
         allowed = not self._requirements.seed_group.objective_only and not (
-            self._seed_technique is not None and self._seed_technique.generated_history_config is not None
+            self._seed_technique is not None and self._seed_technique.has_simulated_conversation
         )
         if not allowed:
             return False

@@ -32,11 +32,17 @@ from pyrit.models import (
     Message,
     SeedObjective,
     SeedPrompt,
+    SimulatedConversationMode,
     ToolDefinition,
-    ToolHistoryShape,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TargetRequirements
+from pyrit.prompt_target import (
+    OpenAIResponseTarget,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    TargetRequirements,
+)
 from pyrit.scenario import AtomicAttack, AttackTechnique, AttackTechniqueFactory, IncompatibleTechniqueError
 from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SubStringScorer, TrueFalseScorer
@@ -1615,15 +1621,22 @@ def _approval_history(*, objective: SeedObjective, **_: object) -> SimulatedTool
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestWithSimulatedToolHistory:
-    def test_uses_default_adversarial_chat_and_requires_native_tool_history(self) -> None:
-        factory = AttackTechniqueFactory.with_simulated_tool_history(name="tool_call_priming", max_messages=6)
+class TestSimulatedConversationWithTargetTools:
+    def test_one_shot_writes_tool_histories_and_requires_native_tool_history(self) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_one_shot", mode=SimulatedConversationMode.ONE_SHOT, use_target_tools=True, num_turns=6
+        )
 
-        config = factory.seed_technique.simulated_tool_history_config
+        config = factory.seed_technique.simulated_conversation_config
         assert config is not None
-        assert (config.shape, config.max_messages) == (ToolHistoryShape.TOOL_LOOP, 6)
+        assert (config.mode, config.use_target_tools, len(config.sequence_range)) == (
+            SimulatedConversationMode.ONE_SHOT,
+            True,
+            12,
+        )
+        assert config.next_message_system_prompt is None
+        assert config.adversarial_chat_system_prompt.response_json_schema is not None
         assert factory.uses_adversarial
-        assert not factory.supports_prompt
         default_target = MagicMock(spec=PromptTarget)
         with patch(
             "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
@@ -1636,14 +1649,47 @@ class TestWithSimulatedToolHistory:
         assert factory.check_adversarial_target(target=text_only)
         assert factory.check_adversarial_target(target=MockPromptTarget()) == []
 
+    def test_turn_by_turn_uses_tool_prompts_and_needs_a_tool_running_adversarial_chat(self) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_simulated", use_target_tools=True
+        )
+
+        config = factory.seed_technique.simulated_conversation_config
+        assert config is not None
+        assert (config.mode, config.use_target_tools) == (SimulatedConversationMode.TURN_BY_TURN, True)
+        assert config.next_message_system_prompt is None
+        assert "Use your tools actively" in config.simulated_target_system_prompt.value
+        assert "tool results" in config.adversarial_chat_system_prompt.value
+        assert any(
+            "needs an OpenAIResponseTarget" in error
+            for error in factory.check_adversarial_target(target=MockPromptTarget())
+        )
+        responses_target = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+        assert factory.check_adversarial_target(target=responses_target) == []
+
+    @pytest.mark.parametrize("mode", list(SimulatedConversationMode))
+    def test_accepts_an_adversarial_prompt_prefix(self, mode: SimulatedConversationMode) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_simulated", mode=mode, use_target_tools=True
+        )
+
+        prefixed = factory.with_adversarial_system_prompt_prefix("Shared guidance.")
+
+        config = prefixed.seed_technique.simulated_conversation_config
+        assert config is not None
+        assert config.adversarial_chat_system_prompt.value.startswith("Shared guidance.")
+        assert config.mode is mode
+
     async def test_atomic_attack_writes_history_for_target_tools_before_each_objective(self) -> None:
         target = _ApprovalCheckingTarget()
-        technique = AttackTechniqueFactory.with_simulated_tool_history(name="tool_call_priming").create(
+        technique = AttackTechniqueFactory.with_simulated_conversation(
+            name="tool_priming_one_shot", mode=SimulatedConversationMode.ONE_SHOT, use_target_tools=True
+        ).create(
             objective_target=target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=SubStringScorer(substring="Done.")),
         )
         atomic = AtomicAttack(
-            atomic_attack_name="tool_call_priming",
+            atomic_attack_name="tool_priming_one_shot",
             attack_technique=technique,
             seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="Reset the admin password.")])],
             adversarial_chat=MockPromptTarget(),

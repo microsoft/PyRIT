@@ -11,6 +11,7 @@ import pytest
 from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
+    SimulatedConversationMode,
 )
 
 
@@ -610,6 +611,36 @@ class TestSeedSimulatedConversationIdentity:
 
         assert list(without.sequence_range) == [0, 1, 2, 3]
         assert list(with_next.sequence_range) == [0, 1, 2, 3, 4]
+
+    def test_mode_and_tools_change_identity_only_when_set(self):
+        """Defaults keep the identity of configurations that predate modes; set values change it."""
+        default = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt(value="adversarial"))
+        with_tools = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial"), use_target_tools=True
+        )
+        one_shot = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial"),
+            mode=SimulatedConversationMode.ONE_SHOT,
+            use_target_tools=True,
+        )
+
+        assert not {"mode", "use_target_tools", "max_attempts"} & set(json.loads(default.value))
+        assert len({default.value, with_tools.value, one_shot.value}) == 3
+
+    @pytest.mark.parametrize(
+        ("kwargs", "problem"),
+        [
+            ({"mode": "one_shot"}, "use_target_tools=True"),
+            (
+                {"mode": "one_shot", "use_target_tools": True, "next_message_system_prompt": SeedPrompt(value="next")},
+                "do not generate a next message",
+            ),
+            ({"max_attempts": 0}, "max_attempts"),
+        ],
+    )
+    def test_rejects_invalid_mode_settings(self, kwargs, problem):
+        with pytest.raises(ValueError, match=problem):
+            SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt(value="adversarial"), **kwargs)
 
 
 class TestSeedSimulatedConversationTemplatePreparation:

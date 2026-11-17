@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_prompt_normalizer
+from unit.mocks import MockPromptTarget, get_mock_prompt_normalizer
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException
 from pyrit.executor.attack import (
@@ -22,6 +22,8 @@ from pyrit.executor.attack.core.attack_preparation import (
 )
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     _generate_next_message_async,
+    _ToolResultWriter,
+    _with_simulated_tools,
 )
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -35,10 +37,12 @@ from pyrit.models import (
     NextMessageSystemPromptPaths,
     Score,
     SeedPrompt,
+    SimulatedConversationMode,
     SimulatedTargetSystemPromptPaths,
+    ToolDefinition,
     load_next_message_prompt,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -1381,4 +1385,54 @@ class TestSimulatedConversationPromptSources:
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
                 num_turns=2,
+            )
+
+
+_LOOKUP = ToolDefinition(
+    name="lookup_ticket",
+    description="Look up a ticket.",
+    parameters={"type": "object", "properties": {"ticket_id": {"type": "string"}}},
+)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSimulatedConversationWithTools:
+    async def test_stand_in_gets_tools_whose_results_the_adversarial_chat_writes_async(self) -> None:
+        adversarial_chat = MockPromptTarget()
+        writer = _ToolResultWriter(objective="Reset the admin password.", adversarial_chat=adversarial_chat)
+        source = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="key")
+
+        stand_in = _with_simulated_tools(target=source, tools=[_LOOKUP], writer=writer)
+        [simulated_tool] = stand_in._tools
+        result = await simulated_tool.execute_async(arguments={"ticket_id": "SEC-1"})
+
+        assert stand_in is not source
+        assert await stand_in.get_tool_definitions_async() == [_LOOKUP]
+        assert await source.get_tool_definitions_async() == []
+        assert result == "default"
+        assert len(writer.conversation_ids) == 1
+        request = json.loads(adversarial_chat.prompt_sent[-1])
+        assert (request["tool"]["name"], request["arguments"]) == ("lookup_ticket", {"ticket_id": "SEC-1"})
+        assert "Reset the admin password." in adversarial_chat.system_prompt
+
+    async def test_tools_need_a_stand_in_that_runs_them_async(
+        self, mock_objective_scorer: MagicMock, adversarial_system_prompt: SeedPrompt
+    ) -> None:
+        with pytest.raises(ValueError, match="needs an OpenAIResponseTarget"):
+            await generate_simulated_conversation_async(
+                objective="objective",
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
+                tools=[_LOOKUP],
+            )
+
+    async def test_one_shot_needs_tools_async(self, adversarial_system_prompt: SeedPrompt) -> None:
+        with pytest.raises(ValueError, match="need the tools"):
+            await generate_simulated_conversation_async(
+                objective="objective",
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=None,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
+                mode=SimulatedConversationMode.ONE_SHOT,
             )

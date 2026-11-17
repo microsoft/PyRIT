@@ -15,7 +15,6 @@ from pyrit.models import (
     MessagePiece,
     SeedObjective,
     ToolDefinition,
-    ToolHistoryShape,
 )
 
 _TOOLS = [
@@ -40,14 +39,12 @@ def _response(items: list[dict[str, Any]], *, fenced: bool = False) -> Message:
     return Message.from_prompt(prompt=f"```json\n{text}\n```" if fenced else text, role="assistant")
 
 
-async def _generate_async(
-    *, responses: list[Message], shape: ToolHistoryShape = ToolHistoryShape.TOOL_LOOP, **generator_kwargs: Any
-) -> tuple[Any, AsyncMock]:
+async def _generate_async(*, responses: list[Message], **generator_kwargs: Any) -> tuple[Any, AsyncMock]:
     generator = SimulatedToolHistoryGenerator(adversarial_chat=MockPromptTarget(), **generator_kwargs)
     with patch.object(
         generator._normalizer, "send_prompt_async", new_callable=AsyncMock, side_effect=responses
     ) as send:
-        result = await generator.execute_async(objective=_OBJECTIVE, tools=_TOOLS, shape=shape)
+        result = await generator.execute_async(objective=_OBJECTIVE, tools=_TOOLS)
     return result, send
 
 
@@ -67,7 +64,6 @@ class TestSimulatedToolHistoryGenerator:
         assert json.loads(request.get_value()) == {
             "objective": _OBJECTIVE.value,
             "tools": [tool.model_dump(mode="json") for tool in _TOOLS],
-            "shape": "tool_loop",
             "max_messages": 12,
         }
         assert JsonResponseConfig.from_metadata(metadata=request.message_pieces[0].prompt_metadata).enabled
@@ -104,26 +100,21 @@ class TestSimulatedToolHistoryGenerator:
             )
 
     @pytest.mark.parametrize(
-        ("shape", "items", "problem"),
+        ("items", "problem"),
         [
             (
-                ToolHistoryShape.TOOL_LOOP,
                 [_CALL, _OUTPUT, {"type": "message", "role": "assistant", "content": "Done."}],
-                'Shape "tool_loop" allows no assistant messages.',
+                "Write no assistant messages",
             ),
             (
-                ToolHistoryShape.TOOL_LOOP,
                 [_CALL, _OUTPUT, {"type": "message", "role": "user", "content": "Next."}],
                 "Do not end with a user message",
             ),
-            (ToolHistoryShape.CONVERSATION, [_CALL, _OUTPUT], 'Shape "conversation" needs at least one assistant'),
         ],
     )
-    async def test_shape_rules_are_enforced_async(
-        self, shape: ToolHistoryShape, items: list[dict[str, Any]], problem: str
-    ) -> None:
+    async def test_tool_loop_rules_are_enforced_async(self, items: list[dict[str, Any]], problem: str) -> None:
         with pytest.raises(RuntimeError, match=problem):
-            await _generate_async(responses=[_response(items)], shape=shape, max_attempts=1)
+            await _generate_async(responses=[_response(items)], max_attempts=1)
 
     async def test_history_longer_than_budget_is_rejected_async(self) -> None:
         with pytest.raises(RuntimeError, match="The history has 4 items; use at most 3."):

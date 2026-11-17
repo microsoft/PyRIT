@@ -11,12 +11,14 @@ against a simulated (compliant) target before executing the actual attack.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from pyrit.exceptions import AdversarialChatResponseBlockedException
+from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
+from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException
 from pyrit.executor.attack.component import (
     _AdversarialConversationManager,
 )
@@ -36,15 +38,19 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     Message,
+    SeedObjective,
     SeedPrompt,
+    SimulatedConversationMode,
+    ToolDefinition,
     load_next_message_prompt,
     load_simulated_target_prompt,
     warn_prompt_path_deprecated,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target import OpenAIResponseTarget, Tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from pyrit.prompt_target import PromptTarget
@@ -99,7 +105,7 @@ async def generate_simulated_conversation_async(
     *,
     objective: str,
     adversarial_chat: PromptTarget,
-    objective_scorer: TrueFalseScorer,
+    objective_scorer: TrueFalseScorer | None,
     num_turns: int = 3,
     starting_sequence: int = 0,
     adversarial_chat_system_prompt: SeedPrompt | None = None,
@@ -110,12 +116,19 @@ async def generate_simulated_conversation_async(
     next_message_system_prompt_path: str | Path | None = None,
     attack_converter_config: AttackConverterConfig | None = None,
     memory_labels: dict[str, str] | None = None,
+    mode: SimulatedConversationMode = SimulatedConversationMode.TURN_BY_TURN,
+    tools: Sequence[ToolDefinition] | None = None,
+    simulated_target: PromptTarget | None = None,
+    max_attempts: int = 3,
 ) -> SimulatedConversationResult:
     """
     Generate a simulated conversation between an adversarial chat and a target.
 
-    This utility runs a RedTeamingAttack with `score_last_turn_only=True` against a simulated
-    target (the same LLM as adversarial_chat, optionally configured with a system prompt).
+    In ``TURN_BY_TURN`` mode this runs a RedTeamingAttack with `score_last_turn_only=True` against
+    a simulated target (by default the same LLM as adversarial_chat, optionally configured with a
+    system prompt). When ``tools`` are given, the simulated target can call them and the
+    adversarial chat writes each result. In ``ONE_SHOT`` mode the adversarial chat instead writes
+    a whole tool-call history against ``tools`` in one pass and revises it until it is valid.
     The resulting prompts and their source conversation references are returned together so
     downstream attacks can preserve the simulation lineage.
 
@@ -128,7 +141,7 @@ async def generate_simulated_conversation_async(
         objective: The objective for the adversarial chat to work toward.
         adversarial_chat: The adversarial LLM that generates attack prompts.
             This same LLM is also used as the simulated target.
-        objective_scorer: Scorer to evaluate the final turn.
+        objective_scorer: Scorer to evaluate the final turn. Required for ``TURN_BY_TURN``.
         num_turns: Number of conversation turns to generate. Defaults to 3.
         starting_sequence: The starting sequence number for the generated SeedPrompts.
             Each message gets an incrementing sequence number. Defaults to 0.
@@ -149,6 +162,14 @@ async def generate_simulated_conversation_async(
             YAML. Use ``next_message_system_prompt`` instead.
         attack_converter_config: Converter configuration for the attack. Defaults to None.
         memory_labels: Labels to associate with the conversation in memory. Defaults to None.
+        mode: How the conversation is generated. Defaults to ``TURN_BY_TURN``.
+        tools: Function tools the conversation uses, usually those the objective target reports.
+            Required for ``ONE_SHOT``.
+        simulated_target: The target that plays the assistant side in ``TURN_BY_TURN`` mode.
+            Defaults to ``adversarial_chat``. With ``tools`` it must be an
+            ``OpenAIResponseTarget``, which runs the tool calls.
+        max_attempts: ``ONE_SHOT`` only. Writing attempts, including revisions after validation
+            feedback. Defaults to 3.
 
     Returns:
         The generated prompts and their source conversation references. Prompt sequence numbers
@@ -156,11 +177,12 @@ async def generate_simulated_conversation_async(
 
     Raises:
         ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
-            is supplied, or if a prompt and its deprecated path input are both supplied.
+            is supplied, if a prompt and its deprecated path input are both supplied, if
+            ``ONE_SHOT`` mode has no tools, if ``TURN_BY_TURN`` mode has no objective scorer, or if a
+            simulated target with tools cannot run them.
     """
-    # Use the same LLM for both adversarial chat and simulated target
-    # They get different system prompts to play different roles
-    simulated_target = adversarial_chat
+    # By default the same LLM plays both roles, with different system prompts.
+    simulated_target = simulated_target or adversarial_chat
     if num_turns <= 0:
         raise ValueError("num_turns must be a positive integer")
 
@@ -187,6 +209,27 @@ async def generate_simulated_conversation_async(
     )
     if adversarial_chat_system_prompt is None:
         raise ValueError("adversarial_chat_system_prompt is required")
+
+    if mode is SimulatedConversationMode.ONE_SHOT:
+        if not tools:
+            raise ValueError("One-shot simulated conversations need the tools to write calls to")
+        return await _generate_one_shot_history_async(
+            objective=objective,
+            adversarial_chat=adversarial_chat,
+            system_prompt=adversarial_chat_system_prompt,
+            tools=tools,
+            max_messages=num_turns * 2,
+            max_attempts=max_attempts,
+            starting_sequence=starting_sequence,
+        )
+
+    if objective_scorer is None:
+        raise ValueError("objective_scorer is required for turn-by-turn simulated conversations")
+
+    tool_result_writer: _ToolResultWriter | None = None
+    if tools:
+        tool_result_writer = _ToolResultWriter(objective=objective, adversarial_chat=adversarial_chat)
+        simulated_target = _with_simulated_tools(target=simulated_target, tools=tools, writer=tool_result_writer)
 
     # Render the simulated target system prompt; None means the target gets no system prompt.
     simulated_target_system_prompt_value = (
@@ -246,6 +289,16 @@ async def generate_simulated_conversation_async(
         ),
         *result.related_conversations,
     }
+
+    if tool_result_writer is not None:
+        related_conversations.update(
+            ConversationReference(
+                conversation_id=conversation_id,
+                conversation_type=ConversationType.ADVERSARIAL,
+                description="simulated tool result",
+            )
+            for conversation_id in tool_result_writer.conversation_ids
+        )
 
     preparation_failure = AttackPreparationFailure.from_result(result=result)
 
@@ -348,3 +401,123 @@ async def _generate_next_message_async(
         prompt_text="Generate the next user message based on the instructions above.",
     )
     return Message.from_prompt(role="user", prompt=reply.next_message)
+
+
+async def _generate_one_shot_history_async(
+    *,
+    objective: str,
+    adversarial_chat: PromptTarget,
+    system_prompt: SeedPrompt,
+    tools: Sequence[ToolDefinition],
+    max_messages: int,
+    max_attempts: int,
+    starting_sequence: int,
+) -> SimulatedConversationResult:
+    """
+    Have the adversarial chat write a whole tool-call history in one pass.
+
+    Returns:
+        SimulatedConversationResult: The history, or a preparation failure when the adversarial
+            chat produced no usable history.
+
+    Raises:
+        RuntimeError: If generation fails for any other reason, such as a target error.
+    """
+    # Import here to avoid circular imports
+    from pyrit.executor.promptgen import SimulatedToolHistoryError, SimulatedToolHistoryGenerator
+
+    generator = SimulatedToolHistoryGenerator(
+        adversarial_chat=adversarial_chat,
+        system_prompt=system_prompt,
+        max_attempts=max_attempts,
+        max_messages=max_messages,
+    )
+    conversation_id = str(uuid4())
+    reference = ConversationReference(
+        conversation_id=conversation_id,
+        conversation_type=ConversationType.PREPARATION,
+        description="simulated tool history generation",
+    )
+    try:
+        result = await generator.execute_async(
+            objective=SeedObjective(value=objective), tools=tools, conversation_id=conversation_id
+        )
+    except RuntimeError as error:
+        if not isinstance(error.__cause__, (InvalidJsonException, SimulatedToolHistoryError)):
+            raise
+        kind = AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT
+        return SimulatedConversationResult(
+            seed_prompts=[],
+            related_conversations=frozenset({reference}),
+            preparation_failure=AttackPreparationFailure(
+                kind=kind, reason=f"{kind.default_reason} Details: {error.__cause__}"
+            ),
+        )
+    history = [
+        prompt.model_copy(update={"sequence": starting_sequence + index}) for index, prompt in enumerate(result.history)
+    ]
+    return SimulatedConversationResult(seed_prompts=history, related_conversations=frozenset({reference}))
+
+
+@dataclass
+class _ToolResultWriter:
+    """Has the adversarial chat write the result of each tool call a simulated target makes."""
+
+    objective: str
+    adversarial_chat: PromptTarget
+    conversation_ids: list[str] = field(default_factory=list)
+
+    async def write_async(self, *, tool: ToolDefinition, arguments: dict[str, object]) -> str:
+        conversation_id = str(uuid4())
+        self.conversation_ids.append(conversation_id)
+        system_prompt = SeedPrompt.from_yaml_file(EXECUTOR_SIMULATED_TARGET_PATH / "simulated_tool_result.yaml")
+        await self.adversarial_chat.set_system_prompt_async(
+            system_prompt=system_prompt.render_template_value(objective=self.objective),
+            conversation_id=conversation_id,
+        )
+        request = json.dumps({"tool": tool.model_dump(mode="json"), "arguments": arguments}, indent=2)
+        response = await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt=request, role="user"),
+            target=self.adversarial_chat,
+            conversation_id=conversation_id,
+        )
+        return response.get_value() if response else ""
+
+
+class _SimulatedTool(Tool):
+    """A tool whose results are written by the adversarial chat instead of executed."""
+
+    def __init__(self, *, definition: ToolDefinition, writer: _ToolResultWriter) -> None:
+        super().__init__(
+            name=definition.name, description=definition.description, parameters=dict(definition.parameters)
+        )
+        self._definition = definition
+        self._writer = writer
+
+    async def execute_async(self, *, arguments: dict[str, object]) -> object:
+        return await self._writer.write_async(tool=self._definition, arguments=arguments)
+
+
+def _with_simulated_tools(
+    *, target: PromptTarget, tools: Sequence[ToolDefinition], writer: _ToolResultWriter
+) -> PromptTarget:
+    """
+    Copy the simulated target with tools whose results the adversarial chat writes.
+
+    Returns:
+        PromptTarget: An independent copy of ``target`` that offers ``tools``.
+
+    Raises:
+        ValueError: If the target cannot run tool calls.
+    """
+    # Import here to avoid circular imports
+    from pyrit.registry import TargetRegistry
+
+    if not isinstance(target, OpenAIResponseTarget):
+        raise ValueError(
+            "A simulated conversation with tools needs an OpenAIResponseTarget simulated target, which runs "
+            f"the tool calls; got {type(target).__name__}."
+        )
+    return TargetRegistry.get_registry_singleton().recreate_instance(
+        source=target, params={"tools": [_SimulatedTool(definition=tool, writer=writer) for tool in tools]}
+    )

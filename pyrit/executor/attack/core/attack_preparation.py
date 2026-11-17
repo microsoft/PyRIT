@@ -33,6 +33,10 @@ class AttackPreparationFailureKind(str, enum.Enum):
     #: alignment rather than a deployment filter, so it is recorded separately.
     ADVERSARIAL_CHAT_REFUSED = "adversarial_chat_refused"
 
+    #: The adversarial chat kept producing output that could not be used, such as a simulated
+    #: history that never passed validation, so nothing could be prepared.
+    ADVERSARIAL_CHAT_INVALID_OUTPUT = "adversarial_chat_invalid_output"
+
     @property
     def default_reason(self) -> str:
         """
@@ -68,6 +72,9 @@ _DEFAULT_REASONS: dict[AttackPreparationFailureKind, str] = {
     ),
     AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED: (
         "Adversarial chat refused to generate an attacker turn before the attack could run."
+    ),
+    AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT: (
+        "Adversarial chat did not produce usable preparation content before the attack could run."
     ),
 }
 

@@ -35,7 +35,8 @@ from pyrit.models import (
     Message,
     SeedObjective,
     SeedPrompt,
-    SeedSimulatedToolHistory,
+    SeedSimulatedConversation,
+    SimulatedConversationMode,
 )
 
 
@@ -624,12 +625,21 @@ class TestExecuteAttackFromSeedGroupsAsync:
             assert captured_kwargs.get("adversarial_chat") is mock_adversarial_chat
             assert captured_kwargs.get("objective_scorer") is mock_objective_scorer
 
-    async def test_passes_objective_target_only_for_simulated_tool_history_groups(self):
+    async def test_passes_objective_target_only_for_tool_using_simulations(self):
         attack = create_mock_attack()
         attack.execute_with_context_async.return_value = create_attack_result("Test")
         attack.get_objective_target.return_value = objective_target = MagicMock()
         plain = create_seed_group("Plain objective")
-        primed = AttackSeedGroup(seeds=[SeedObjective(value="Primed objective"), SeedSimulatedToolHistory()])
+        primed = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Primed objective"),
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt=SeedPrompt(value="Write a history."),
+                    mode=SimulatedConversationMode.ONE_SHOT,
+                    use_target_tools=True,
+                ),
+            ]
+        )
         build_mock = AsyncMock(
             side_effect=lambda **kwargs: AttackParameters(objective=kwargs["seed_group"].objective.value)
         )

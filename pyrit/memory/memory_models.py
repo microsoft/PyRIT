@@ -81,7 +81,6 @@ from pyrit.models import (
     SeedPrompt,
     SeedRecord,
     SeedSimulatedConversation,
-    SeedSimulatedToolHistory,
     SeedType,
     TargetIdentifier,
     scorable_from_dict,
@@ -1762,17 +1761,7 @@ class SeedEntry(Base):
 
         Args:
             entry (Seed): The seed object to convert into a database entry.
-
-        Raises:
-            ValueError: If the seed is a SeedSimulatedToolHistory, which configures per-attack
-                generation and has no stored form.
         """
-        if isinstance(entry, SeedSimulatedToolHistory):
-            raise ValueError(
-                "SeedSimulatedToolHistory cannot be stored in memory; it configures a history that is "
-                "generated for each attack. Store hand-written histories as function_call and "
-                "function_call_output seed prompts instead."
-            )
         # Determine seed_type based on the Seed subclass
         if isinstance(entry, SeedObjective):
             seed_type: SeedType = "objective"
@@ -2020,6 +2009,9 @@ class SeedEntry(Base):
                     prompt_group_id=self.prompt_group_id,
                     num_turns=config.get("num_turns", 3),
                     sequence=config.get("sequence", 0),
+                    mode=config.get("mode", "turn_by_turn"),
+                    use_target_tools=config.get("use_target_tools", False),
+                    max_attempts=config.get("max_attempts", 3),
                     pyrit_version=config.get("pyrit_version"),
                     is_general_technique=self.is_general_technique,
                     **prompt_config,
