@@ -13,6 +13,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ContentScorable,
     InvalidFloatFeedbackError,
+    MessagePiece,
     Scorable,
     Score,
     ScoreStatus,
@@ -21,6 +22,8 @@ from pyrit.models import (
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
+    MessageTrueFalseScorer,
+    ScorerPromptValidator,
     TrueFalseFallbackScorer,
     TrueFalseInverterScorer,
     TrueFalseScorer,
@@ -156,6 +159,43 @@ class TestNestedBoundary:
         ):
             (result,) = await wrapper.score_async(scorable=EVIDENCE)
         assert result.score_metadata[FLOAT_FEEDBACK_METADATA_KEY] == 0.7
+
+
+class _MessageJudge(MessageTrueFalseScorer):
+    """A message scorer that promises float feedback and returns whatever the test sets."""
+
+    def __init__(self, *, result: Score) -> None:
+        self._result = result
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    def _preserves_float_scale_value(self) -> bool:
+        return True
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        return [self._result]
+
+
+class TestInHandMessageBoundary:
+    """A wrapper that scores a derived message, such as a transcript, gets checked child results."""
+
+    @staticmethod
+    def _transcript() -> MessagePiece:
+        piece = MessagePiece(role="assistant", original_value="transcript")
+        piece.not_in_memory = True
+        return piece
+
+    async def test_a_child_that_breaks_its_promise_is_rejected(self, sqlite_instance: MemoryInterface):
+        judge = _MessageJudge(result=_verdict())
+        with pytest.raises(InvalidFloatFeedbackError, match="_MessageJudge promised a float value"):
+            await judge._score_nested_message_async(message=self._transcript().to_message(), expectation=None)
+
+    async def test_a_child_that_keeps_its_promise_passes(self, sqlite_instance: MemoryInterface):
+        judge = _MessageJudge(result=_verdict(metadata={FLOAT_FEEDBACK_METADATA_KEY: 0.6}))
+        scores = await judge._score_nested_message_async(message=self._transcript().to_message(), expectation=None)
+        assert [score.score_metadata[FLOAT_FEEDBACK_METADATA_KEY] for score in scores] == [0.6]
 
 
 class TestReusedResults:

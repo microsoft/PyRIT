@@ -105,6 +105,14 @@ def test_scenarios_that_do_not_select_from_pools_reject_them(judges):
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+async def test_scenarios_that_do_not_check_dataset_scorer_requirements_reject_them(objective_target, judges):
+    scenario = Jailbreak(objective_scorer=judges[0])
+    scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": _dataset_config()})
+    with pytest.raises(ValueError, match="Jailbreak does not check DatasetSource.scorer_requirements.*airt_hate"):
+        await scenario.initialize_async()
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestRapidResponseScorerPool:
     async def test_each_harm_dataset_is_judged_by_its_bound_scorer(self, objective_target, judges):
         hate, violence = judges
@@ -163,6 +171,26 @@ class TestRapidResponseScorerPool:
                 "technique_eval_hash": str(attack.technique_eval_hash),
             }
         )
+        assert attack.logical_group_id == scenario._get_atomic_group_id(atomic_attack=attack)
+
+    async def test_workers_track_pool_groups_under_their_plan_ids(self, objective_target, judges):
+        scenario = await _initialize(
+            RapidResponse(objective_scorer=_pool(*judges)),
+            target=objective_target,
+            dataset_config=_dataset_config(),
+        )
+        from pyrit.models import config_hash
+
+        planned = {group.atomic_attack_name: group.id for group in scenario._build_run_plan().atomic_groups}
+        for attack in scenario._atomic_attacks:
+            # Workers publish logical_group_id as the active group, and progress matches it to the plan.
+            assert attack.logical_group_id == planned[attack.atomic_attack_name]
+            assert attack.logical_group_id != config_hash(
+                {
+                    "atomic_attack_name": attack.atomic_attack_name,
+                    "technique_eval_hash": str(attack.technique_eval_hash),
+                }
+            )
 
     async def test_readiness_lists_every_candidate(self, objective_target, judges):
         hate, violence = judges

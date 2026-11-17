@@ -66,6 +66,7 @@ class Cyber(Scenario):
     """
 
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
+    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = True
 
     #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
     #: technique pool (and the ``all`` aggregate) reflects whatever the initializer

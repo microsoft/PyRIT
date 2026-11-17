@@ -81,6 +81,7 @@ class Leakage(Scenario):
     """
 
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
+    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = True
 
     VERSION: int = 2
 
