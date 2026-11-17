@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import (
     Scorable,
+    ScorerCandidateVerdict,
     ScorerIdentifier,
+    ScorerSelectionEntry,
     ScoringExpectation,
     scoring_expectation_fingerprint,
 )
@@ -31,6 +33,7 @@ from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationM
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from pyrit.models import ScorerVerdictStatus
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 __all__ = [
@@ -515,6 +518,60 @@ class CompatibleScorers:
             except ExpectationMismatchError as exc:
                 return mismatch(kind=ScorerMismatchKind.CONDITION, detail=f"{exc} (rejected by {exc.scorer_name}).")
         return None
+
+    def report_entry(
+        self,
+        *,
+        technique: str,
+        dataset: str,
+        outcome: ScorerSelection | NoCompatibleScorerError,
+    ) -> ScorerSelectionEntry:
+        """
+        Describe one selection, or one failed selection, as a report entry.
+
+        Built from what ``select`` already found, so it checks nothing again: candidates before
+        the selected one carry their reasons, and candidates after it were not checked.
+
+        Args:
+            technique (str): The technique name.
+            dataset (str): The dataset name.
+            outcome (ScorerSelection | NoCompatibleScorerError): What ``select`` returned or raised.
+
+        Returns:
+            ScorerSelectionEntry: Every candidate's verdict, in pool order.
+        """
+        if isinstance(outcome, ScorerSelection):
+            reasons = {mismatch.candidate_index: mismatch for mismatch in outcome.skipped}
+            selected = outcome.candidate_index
+        else:
+            reasons = {mismatch.candidate_index: mismatch for mismatch in outcome.mismatches}
+            selected = None
+        verdicts = []
+        for index, candidate in enumerate(self._candidates):
+            mismatch = reasons.get(index)
+            if index == selected:
+                status: ScorerVerdictStatus = "selected"
+            elif mismatch is not None:
+                status = "rejected"
+            else:
+                status = "not_checked"
+            verdicts.append(
+                ScorerCandidateVerdict(
+                    candidate_index=index,
+                    candidate_label=candidate.label,
+                    evaluation=candidate.evaluation,
+                    status=status,
+                    reason_kind=mismatch.kind.value if mismatch is not None else None,
+                    reason=mismatch.detail if mismatch is not None else None,
+                )
+            )
+        return ScorerSelectionEntry(
+            technique=technique,
+            dataset=dataset,
+            required_evaluation=outcome.requirements.evaluation,
+            requires_float_scale_value=outcome.requirements.preserves_float_scale_value,
+            candidates=verdicts,
+        )
 
     def get_identifier(self, *, requirements: Mapping[str, Any] | None = None) -> ScorerIdentifier:
         """

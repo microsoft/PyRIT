@@ -8,6 +8,7 @@ import pytest
 from pyrit.models import (
     MessageScorable,
     ProgramExecutionScorable,
+    ScorerSelectionReport,
     ScoringExpectation,
     ToolCallRequirement,
     ToolsCalled,
@@ -296,3 +297,50 @@ def test_scorer_validation_raises_typed_errors_with_existing_messages():
         MessageToolCallScorer().prepare_expectation(expectation=ScoringExpectation())
     assert isinstance(excinfo.value, ValueError)
     assert excinfo.value.scorer_name == "MessageToolCallScorer"
+
+
+# --- the preflight report ---
+
+
+def test_report_entry_for_a_selection_marks_who_was_passed_over_and_who_was_not_checked():
+    first, chosen, later = _substring("a"), _substring("b"), _substring("c")
+    pool = CompatibleScorers(
+        candidates=[
+            ScorerCandidate(scorer=first, evaluation=CRISIS),
+            ScorerCandidate(scorer=chosen, evaluation=THERAPIST),
+            ScorerCandidate(scorer=later, evaluation=THERAPIST),
+        ]
+    )
+    requirements = ScorerRequirements(evaluation=THERAPIST)
+    selection = pool.select(requirements=requirements, scorable_type=MessageScorable, expectations=[None])
+
+    entry = pool.report_entry(technique="role_play", dataset="therapy", outcome=selection)
+
+    assert [verdict.status for verdict in entry.candidates] == ["rejected", "selected", "not_checked"]
+    assert entry.candidates[0].reason_kind == "evaluation"
+    assert entry.candidates[0].reason == f"is bound to {CRISIS!r}, not {THERAPIST!r}."
+    assert entry.selected.candidate_label == f"SubStringScorer [{THERAPIST}]"
+    assert entry.required_evaluation == THERAPIST
+    assert entry.describe() == [
+        f"role_play / therapy: SubStringScorer [{THERAPIST}] (requires evaluation {THERAPIST!r})",
+        f"  #0 SubStringScorer [{CRISIS}]: evaluation, is bound to {CRISIS!r}, not {THERAPIST!r}.",
+    ]
+
+
+def test_report_entry_for_no_compatible_scorer_gives_every_reason():
+    pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring("a"), evaluation=CRISIS), _substring("b")])
+    requirements = ScorerRequirements(evaluation="psychosocial.typo", preserves_float_scale_value=True)
+    with pytest.raises(NoCompatibleScorerError) as excinfo:
+        pool.select(requirements=requirements, scorable_type=MessageScorable, expectations=[None])
+
+    entry = pool.report_entry(technique="tap", dataset="crisis", outcome=excinfo.value)
+
+    assert entry.selected is None
+    assert [verdict.status for verdict in entry.candidates] == ["rejected", "rejected"]
+    assert entry.requires_float_scale_value is True
+    assert entry.describe()[0] == (
+        "tap / crisis: no compatible scorer, skipped (requires evaluation 'psychosocial.typo' and float feedback)"
+    )
+    report = ScorerSelectionReport(entries=[entry])
+    assert report.skipped == [entry]
+    assert ScorerSelectionReport.model_validate_json(report.model_dump_json()) == report

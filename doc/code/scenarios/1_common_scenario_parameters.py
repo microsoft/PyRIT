@@ -255,6 +255,15 @@ await output_scenario_async(custom_result)
 # is reported together with the keys the pool has. With a baseline, each dataset gets its own baseline
 # judged by the same scorer as its attacks. The run plan records every selection, and a resumed run
 # stops if the pool or the objectives' scoring criteria have changed since it started.
+#
+# To check a pool against the datasets before a run, read the selection report after initializing. It
+# lists each technique and dataset with the scorer it will use and, for every candidate passed over,
+# the reason. Building it sends nothing to the target and calls no judge model:
+#
+# ```python
+# await scenario.initialize_async()
+# print(scenario.get_scorer_selection_report().to_text())
+# ```
 
 # %% [markdown]
 # ## Reporting Every Conversation

@@ -252,3 +252,25 @@ class TestPoolBaselines:
         ]
         assert all(a.objective_scorer_binding is None for a in attacks)
         assert attacks[0].seed_groups == [*DATASETS["airt_hate"], *DATASETS["airt_violence"]]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSelectionReport:
+    def test_the_builder_reports_every_cell_including_skipped_ones(self) -> None:
+        pool, _, _ = _pool()
+        requirements = {**REQUIREMENTS, "airt_violence": ScorerRequirements(evaluation="harm.violance")}
+        builder = _builder(pool)
+        builder.build(
+            technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+            dataset_groups=DATASETS,
+            dataset_scorer_requirements=requirements,
+        )
+
+        report = builder.selection_report
+        assert [
+            (entry.technique, entry.dataset, entry.selected.evaluation if entry.selected else None)
+            for entry in report.entries
+        ] == [("prompt_sending", "airt_hate", HATE), ("prompt_sending", "airt_violence", None)]
+        (skipped,) = report.skipped
+        assert [verdict.reason_kind for verdict in skipped.candidates] == ["evaluation", "evaluation"]
+        assert skipped.required_evaluation == "harm.violance"

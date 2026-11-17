@@ -249,6 +249,23 @@ class TestRapidResponseScorerPool:
         assert names == ["baseline_airt_hate", "flip_airt_hate"]
         assert "No candidate is bound to the required evaluation 'harm.violance'" in caplog.text
 
+    async def test_the_selection_report_is_ready_before_the_run(self, objective_target, judges):
+        scenario = RapidResponse(objective_scorer=_pool(*judges))
+        with pytest.raises(ValueError, match="Initialize the scenario first"):
+            scenario.get_scorer_selection_report()
+
+        await _initialize(
+            scenario, target=objective_target, dataset_config=_dataset_config(violence_evaluation="harm.violance")
+        )
+
+        report = scenario.get_scorer_selection_report()
+        assert report.to_text().splitlines() == [
+            f"flip / airt_hate: SubStringScorer [{HATE}] (requires evaluation {HATE!r})",
+            "flip / airt_violence: no compatible scorer, skipped (requires evaluation 'harm.violance')",
+            f"  #0 SubStringScorer [{HATE}]: evaluation, is bound to {HATE!r}, not 'harm.violance'.",
+            f"  #1 SubStringScorer [{VIOLENCE}]: evaluation, is bound to {VIOLENCE!r}, not 'harm.violance'.",
+        ]
+
 
 def test_dataset_overrides_keep_a_sources_scorer_requirements():
     from pyrit.models import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest
