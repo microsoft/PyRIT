@@ -39,12 +39,11 @@ const audioChat = target('audio_chat', 'RealtimeTarget', makeCapabilities(['text
 }))
 const speech = target('speech', 'OpenAITTSTarget', makeCapabilities(['text'], ['audio_path']))
 const bare = target('bare', 'TextTarget', null)
-const ownKeyChat = makeTarget({
-  target_registry_name: 'own_key_chat',
+const privateChat = makeTarget({
+  target_registry_name: 'private_chat',
   target_type: 'OpenAIChatTarget',
   capabilities: makeCapabilities(['text'], ['text']),
-  requires_caller_credential: true,
-  caller_credential_configured: false,
+  private: true,
 })
 
 describe('getTargetFilterOptions', () => {
@@ -95,8 +94,8 @@ describe('getTargetFilterOptions', () => {
 
   it('should offer Shared and Yours only when targets use both', () => {
     expect(getTargetFilterOptions([imageChat, speech]).accounts).toEqual([])
-    expect(getTargetFilterOptions([ownKeyChat]).accounts).toEqual([])
-    expect(getTargetFilterOptions([imageChat, ownKeyChat]).accounts).toEqual([
+    expect(getTargetFilterOptions([privateChat]).accounts).toEqual([])
+    expect(getTargetFilterOptions([imageChat, privateChat]).accounts).toEqual([
       { value: 'shared', label: 'Shared' },
       { value: 'yours', label: 'Yours' },
     ])
@@ -146,12 +145,12 @@ describe('targetMatchesFilters', () => {
   })
 
   it('should match the selected accounts', () => {
-    const accountMatches = (accounts: string[]): string[] => [imageChat, ownKeyChat]
+    const accountMatches = (accounts: string[]): string[] => [imageChat, privateChat]
       .filter((candidate) => targetMatchesFilters(candidate, { ...DEFAULT_TARGET_FILTERS, accounts }))
       .map((candidate) => candidate.target_registry_name)
 
     expect(accountMatches(['shared'])).toEqual(['image_chat'])
-    expect(accountMatches(['yours'])).toEqual(['own_key_chat'])
-    expect(accountMatches(['shared', 'yours'])).toEqual(['image_chat', 'own_key_chat'])
+    expect(accountMatches(['yours'])).toEqual(['private_chat'])
+    expect(accountMatches(['shared', 'yours'])).toEqual(['image_chat', 'private_chat'])
   })
 })

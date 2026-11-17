@@ -8,13 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Seque
 from types import MappingProxyType
 from typing import Any, ClassVar, NoReturn, cast
 
-from pyrit.auth import (
-    CallerCredential,
-    ensure_async_token_provider,
-    resolve_caller_credential,
-    validate_token_provider_headers,
-)
-from pyrit.common import AuthMode
+from pyrit.auth import ensure_async_token_provider
 from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -174,11 +168,6 @@ class LiteLLMChatTarget(PromptTarget):
         api_key: Optional API key, or a callable that returns an access token (sync or async).
             When omitted, falls back to the ``LITELLM_API_KEY`` environment variable and then
             to LiteLLM's own provider-specific environment variable lookup.
-        auth_mode: ``"api_key"`` (the default) resolves ``api_key`` as described above. ``"caller"``
-            is for a shared target that uses each caller's own key: it reads no key, rejects an
-            explicit ``api_key``, and sends the key of the caller in scope with every request (see
-            ``pyrit.auth.CallerCredential``). It requires an explicit ``openai/`` model and allows only
-            generation parameters and non-authentication headers as passthrough options.
         endpoint: Optional base URL override (e.g. for a self-hosted proxy or LiteLLM gateway).
             Falls back to the ``LITELLM_ENDPOINT`` environment variable.
         headers: Optional extra HTTP headers forwarded to the provider (``extra_headers``).
@@ -217,64 +206,16 @@ class LiteLLMChatTarget(PromptTarget):
     """
 
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
-    # An empty endpoint takes ``LITELLM_ENDPOINT``.
-    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
-    # LiteLLM's OpenAI-compatible routes build OpenAI SDK clients, which add these headers.
-    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
-
-    # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
-    # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
-    _SUPPORTS_TOOL_CALL_HISTORY = True
-
-    # A callable ``api_key`` is resolved before every send and passed to LiteLLM as a string key.
-    # ``auth_mode="caller"`` (see ``pyrit.auth.CallerCredential``) is also limited to the ``openai/``
-    # route and to options that can't change how the caller authenticates; a token provider passed
-    # directly keeps LiteLLM's usual routing.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "caller")
     # A copy keeps where its source sends requests and how it signs in, so a key can't be sent elsewhere.
     # The model's provider prefix picks the route, and passthrough options can set the key, route, or
     # base URL, so those are kept too.
     COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {"model_name", "endpoint", "api_key", "auth_mode", "headers", "extra_body_parameters"}
+        {"model_name", "endpoint", "api_key", "headers", "extra_body_parameters"}
     )
-    _CALLER_CREDENTIAL_PASSTHROUGH = frozenset(
-        {
-            "api_key",
-            "headers",
-            "extra_headers",
-            "extra_body",
-            "timeout",
-            "drop_params",
-            "num_retries",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "parallel_tool_calls",
-            "reasoning_effort",
-            "verbosity",
-            "logprobs",
-            "top_logprobs",
-            "max_completion_tokens",
-            "user",
-            "metadata",
-            "store",
-            "stream",
-            "stream_options",
-            "prediction",
-            "service_tier",
-            "safety_identifier",
-            "modalities",
-            "audio",
-            "temperature",
-            "top_p",
-            "max_tokens",
-            "frequency_penalty",
-            "presence_penalty",
-            "seed",
-            "n",
-            "stop",
-        }
-    )
+
+    # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
+    # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -292,7 +233,6 @@ class LiteLLMChatTarget(PromptTarget):
         *,
         model_name: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
-        auth_mode: AuthMode = "api_key",
         endpoint: str | None = None,
         headers: dict[str, str] | None = None,
         temperature: float | None = None,
@@ -315,9 +255,7 @@ class LiteLLMChatTarget(PromptTarget):
         Initialize a LiteLLMChatTarget.
 
         Raises:
-            ValueError: If model_name is not provided and LITELLM_MODEL env var is not set, if the target
-                type doesn't support ``auth_mode``, or if ``auth_mode="caller"`` is combined with a key or
-                with options that could change how the caller authenticates.
+            ValueError: If model_name is not provided and LITELLM_MODEL env var is not set.
             PyritException: If a generation parameter is out of bounds or a penalty is non-finite.
         """
         resolved_model = model_name or os.environ.get("LITELLM_MODEL", "")
@@ -339,16 +277,10 @@ class LiteLLMChatTarget(PromptTarget):
 
         # Resolve api_key: explicit value/callable > LITELLM_API_KEY env var > None (LiteLLM
         # then reads provider-specific env vars itself). ``ensure_async_token_provider`` wraps a
-        # sync token provider so we can uniformly await it at request time. A caller-key target
-        # reads no key; it resolves the current caller's own key before every request.
-        self._validate_auth_mode(auth_mode)
-        self._caller_credential = resolve_caller_credential(auth_mode=auth_mode, api_key=api_key)
-        if self._caller_credential is not None:
-            self._api_key: str | Callable[[], Awaitable[str]] | None = self._caller_credential.get_credential_async
-        else:
-            if api_key is None:
-                api_key = os.environ.get("LITELLM_API_KEY")
-            self._api_key = ensure_async_token_provider(api_key)
+        # sync token provider so we can uniformly await it at request time.
+        if api_key is None:
+            api_key = os.environ.get("LITELLM_API_KEY")
+        self._api_key = ensure_async_token_provider(api_key)
 
         self._endpoint = endpoint or os.environ.get("LITELLM_ENDPOINT")
         self._headers = headers
@@ -370,8 +302,6 @@ class LiteLLMChatTarget(PromptTarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
-        self._validate_caller_credential_options()
-        self._validate_caller_credential_environment()
 
         # Delegate transient/rate-limit retry to LiteLLM (provider-aware: honors ``Retry-After``
         # and per-provider rate-limit semantics), rather than stacking PyRIT's
@@ -393,7 +323,7 @@ class LiteLLMChatTarget(PromptTarget):
 
     def get_reconstruction_parameters(self) -> dict[str, object]:
         """
-        Return server-only constructor inputs, including resolved environment defaults and authentication.
+        Return server-only constructor inputs, including resolved environment defaults and the key.
 
         Returns:
             dict[str, object]: Constructor inputs with the resolved model, endpoint, and key or token provider,
@@ -410,56 +340,17 @@ class LiteLLMChatTarget(PromptTarget):
             raise ValueError(
                 "Separate temperature settings are not supported when extra_body_parameters sets temperature"
             )
-        auth: dict[str, object] = (
-            {"api_key": self._caller_credential, "auth_mode": "caller"}
-            if self._caller_credential is not None
-            else {"api_key": self._api_key, "auth_mode": "api_key"}
-        )
-        return {**parameters, "model_name": self._model_name, "endpoint": self._endpoint, **auth}
+        return {**parameters, "model_name": self._model_name, "endpoint": self._endpoint, "api_key": self._api_key}
 
     def attach_reconstruction_source(self, source: object) -> None:
-        """Share request pacing, not clients or behavioral configuration."""
-        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
-
-    @classmethod
-    def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
         """
-        Preserve caller auth through target construction; a key is still read from ``api_key``.
+        Share request pacing and credential status, not clients or behavioral configuration.
 
         Args:
-            auth_mode (AuthMode): Authentication mode selected by the caller.
-
-        Returns:
-            dict[str, object]: ``{"auth_mode": "caller"}`` for caller auth, otherwise no parameters.
+            source (object): The registered target this copy was built from.
         """
-        return {"auth_mode": auth_mode} if auth_mode == "caller" else {}
-
-    @property
-    def caller_credential(self) -> CallerCredential | None:
-        """
-        The credential that holds each caller's own key, or None when the target uses shared credentials.
-
-        Returns:
-            CallerCredential | None: The credential for ``auth_mode="caller"``, otherwise None.
-        """
-        return self._caller_credential
-
-    def _validate_caller_credential_options(self) -> None:
-        if self._caller_credential is None:
-            return
-        if not self._model_name.startswith("openai/"):
-            raise ValueError(
-                "A caller-credential token provider requires an explicit openai/ model; other provider routes are "
-                "unsupported."
-            )
-        options = self._extra_body_parameters or {}
-        if options.keys() - self._CALLER_CREDENTIAL_PASSTHROUGH:
-            raise ValueError(
-                "Only generation parameters and non-authentication headers may accompany a caller-credential "
-                "token provider."
-            )
-        for headers in (self._headers, options.get("headers"), options.get("extra_headers")):
-            validate_token_provider_headers(headers)
+        super().attach_reconstruction_source(source)
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     @staticmethod
     def _import_litellm() -> Any:
@@ -569,18 +460,6 @@ class LiteLLMChatTarget(PromptTarget):
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         litellm = self._import_litellm()
-        if self._caller_credential is not None:
-            aliases = getattr(litellm, "model_alias_map", {}) or {}
-            if (
-                getattr(litellm, "model_fallbacks", None) is not None
-                or self._model_name in aliases
-                or self._model_name.removeprefix("openai/") in aliases
-            ):
-                raise ValueError(
-                    "Global LiteLLM fallback or alias routing cannot be combined with a caller-credential token "
-                    "provider."
-                )
-            validate_token_provider_headers(getattr(litellm, "headers", None))
 
         message = normalized_conversation[-1]
         request_piece: MessagePiece = message.message_pieces[0]
@@ -724,15 +603,6 @@ class LiteLLMChatTarget(PromptTarget):
         # Passthrough for arbitrary provider params (may override defaults above, e.g. drop_params).
         if self._extra_body_parameters:
             body.update(self._extra_body_parameters)
-        if callable(self._api_key):
-            # The resolved key wins over a passthrough ``api_key``, so LiteLLM never falls back to another key.
-            if not isinstance(api_key, str) or not api_key.strip():
-                raise ValueError("A token provider must return a nonempty API key.")
-            body["api_key"] = api_key
-        if self._caller_credential is not None:
-            self._validate_caller_credential_options()
-            body["model"] = self._model_name.removeprefix("openai/")
-            body["custom_llm_provider"] = "openai"
 
         return {k: v for k, v in body.items() if v is not None}
 

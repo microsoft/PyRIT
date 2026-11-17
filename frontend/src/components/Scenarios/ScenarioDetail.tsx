@@ -64,7 +64,6 @@ import type {
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
-import { targetAccountLabelSuffix, targetNeedsCallerKey } from '@/utils/targetAccount'
 import { targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
@@ -105,10 +104,9 @@ import ScenarioDatasetTable from './ScenarioDatasetTable'
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
-  const name = modelName
+  return modelName
     ? `${target.target_registry_name} (${modelName})`
     : target.target_registry_name
-  return `${name}${targetAccountLabelSuffix(target)}`
 }
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
@@ -922,8 +920,7 @@ function ScenarioLaunchForm({
                         </option>
                       )}
                       {targets.map((target) => (
-                        <option key={target.target_registry_name} value={target.target_registry_name}
-                          disabled={targetNeedsCallerKey(target)}>
+                        <option key={target.target_registry_name} value={target.target_registry_name}>
                           {targetOptionLabel(target)}
                         </option>
                       ))}

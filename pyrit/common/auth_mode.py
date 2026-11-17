@@ -32,10 +32,6 @@ __all__ = ["AUTH_MODES", "AuthMode"]
 #: ``none`` is for endpoints that need no credential, such as a local OpenAI-compatible
 #: server. The component reads no key and mints no token. Only components that list it in
 #: ``supported_auth_modes`` accept it.
-#:
-#: ``caller`` is for a shared target that uses each caller's own key. The component reads no key
-#: and mints no token; it holds a ``pyrit.auth.CallerCredential`` and sends the key of the caller in
-#: scope with every request. Only components that list it in ``supported_auth_modes`` accept it.
-AuthMode = Literal["api_key", "identity", "none", "caller"]
+AuthMode = Literal["api_key", "identity", "none"]
 
-AUTH_MODES: tuple[AuthMode, ...] = ("api_key", "identity", "none", "caller")
+AUTH_MODES: tuple[AuthMode, ...] = ("api_key", "identity", "none")

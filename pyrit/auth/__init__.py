@@ -28,14 +28,10 @@ if TYPE_CHECKING:
     from pyrit.auth.browser_session_copilot_authenticator import (
         BrowserSessionCopilotAuthenticator,
     )
-    from pyrit.auth.caller_credential import (
-        CallerCredential,
-        CallerCredentialRequiredError,
+    from pyrit.auth.caller_principal import (
         caller_principal_context,
         caller_principal_scope,
         get_caller_principal,
-        resolve_caller_credential,
-        validate_token_provider_headers,
     )
     from pyrit.auth.copilot_authenticator import CopilotAuthenticator
     from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
@@ -47,13 +43,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AzureAuth": "pyrit.auth.azure_auth",
     "AzureStorageAuth": "pyrit.auth.azure_storage_auth",
     "BrowserSessionCopilotAuthenticator": "pyrit.auth.browser_session_copilot_authenticator",
-    "CallerCredential": "pyrit.auth.caller_credential",
-    "CallerCredentialRequiredError": "pyrit.auth.caller_credential",
-    "caller_principal_context": "pyrit.auth.caller_credential",
-    "caller_principal_scope": "pyrit.auth.caller_credential",
-    "get_caller_principal": "pyrit.auth.caller_credential",
-    "resolve_caller_credential": "pyrit.auth.caller_credential",
-    "validate_token_provider_headers": "pyrit.auth.caller_credential",
+    "caller_principal_context": "pyrit.auth.caller_principal",
+    "caller_principal_scope": "pyrit.auth.caller_principal",
+    "get_caller_principal": "pyrit.auth.caller_principal",
     "CopilotAuthenticator": "pyrit.auth.copilot_authenticator",
     "ManualCopilotAuthenticator": "pyrit.auth.manual_copilot_authenticator",
     "resolve_openai_auth": "pyrit.auth.openai_auth",

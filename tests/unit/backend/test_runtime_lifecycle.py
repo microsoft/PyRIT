@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
@@ -104,6 +105,21 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     assert result["outcome"] == "accepted"
     assert runtime.apply_task is not None
     await runtime.apply_task
+
+
+async def test_live_apply_runs_as_the_server_not_the_requesting_admin_async(*, runtime: RuntimeLifecycle) -> None:
+    seen: list[str | None] = []
+
+    async def apply_async(*, version: str) -> None:
+        seen.append(get_caller_principal())
+
+    _, version = await runtime.source.read_with_version_async()
+    with patch.object(runtime, "_apply_async", side_effect=apply_async), caller_principal_scope("admin"):
+        assert runtime.begin_apply(version=version)["outcome"] == "accepted"
+        assert runtime.apply_task is not None
+        await runtime.apply_task
+
+    assert seen == [None]
 
 
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])

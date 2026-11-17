@@ -22,8 +22,8 @@ export interface FlatTargetInput {
   supports_history_replay?: boolean
   target_specific_params?: Record<string, unknown> | null
   inner_targets?: FlatTargetInput[] | null
-  requires_caller_credential?: boolean
-  caller_credential_configured?: boolean | null
+  private?: boolean
+  credentials_rejected?: boolean
 }
 
 export function makeTarget(flat: FlatTargetInput): TargetInstance {
@@ -46,9 +46,7 @@ export function makeTarget(flat: FlatTargetInput): TargetInstance {
     ...(flat.supports_history_replay !== undefined ? { supports_history_replay: flat.supports_history_replay } : {}),
     target_specific_params: flat.target_specific_params ?? null,
     inner_targets: flat.inner_targets ? flat.inner_targets.map(makeTarget) : null,
-    ...(flat.requires_caller_credential !== undefined
-      ? { requires_caller_credential: flat.requires_caller_credential } : {}),
-    ...(flat.caller_credential_configured !== undefined
-      ? { caller_credential_configured: flat.caller_credential_configured } : {}),
+    ...(flat.private !== undefined ? { private: flat.private } : {}),
+    ...(flat.credentials_rejected !== undefined ? { credentials_rejected: flat.credentials_rejected } : {}),
   }
 }

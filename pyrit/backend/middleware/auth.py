@@ -113,7 +113,7 @@ def current_user_name(request: Request) -> str | None:
 
 def caller_principal(request: Request) -> str | None:
     """
-    Return the stable key of the caller that owns caller-supplied credentials.
+    Return the stable key of the caller, which owns the private registry entries they create.
 
     The key comes only from the server-validated identity: the configured tenant and the
     user's Microsoft Entra object ID. Local mode has one caller. Display names, email
@@ -180,8 +180,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
 
         request.state.user = user
-        # Work admitted by this request, including background tasks it starts, uses this caller's
-        # credentials for targets that hold caller-supplied credentials.
+        # Work admitted by this request, including background tasks it starts, acts for this caller.
         with caller_principal_scope(caller_principal(request)):
             return await call_next(request)
 

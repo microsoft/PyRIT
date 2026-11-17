@@ -68,7 +68,6 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScenarioRunState,
     ScorerEvaluationIdentifier,
-    TargetIdentifier,
     config_hash,
 )
 from pyrit.models.scenario_readiness import (
@@ -1424,56 +1423,7 @@ class Scenario(ABC):
                         identifier=self._resolved_adversarial_target.get_identifier(),
                     )
                 )
-        result.issues.extend(self._caller_credential_issues(factories=factories))
         return result
-
-    def _caller_credential_issues(
-        self, *, factories: Mapping[str, "AttackTechniqueFactory"]
-    ) -> list[ScenarioConfigurationIssue]:
-        """
-        Report role targets that use each caller's own key when the caller in scope has not set theirs.
-
-        Args:
-            factories (Mapping[str, AttackTechniqueFactory]): The selected techniques' factories by name.
-
-        Returns:
-            list[ScenarioConfigurationIssue]: One issue per such target, or none when no caller is in scope.
-        """
-        try:
-            scorer_target = self._objective_scorer.get_chat_target()
-        except ValueError:
-            # The unresolved scorer is already reported as its own issue.
-            scorer_target = None
-        role_targets: list[tuple[str, str, PromptTarget | None]] = [
-            ("objective_target", self.name, self._objective_target),
-            ("scoring_target", self.name, scorer_target),
-            ("scoring_target", self.name, self._resolved_scoring_target),
-            ("adversarial_target", self.name, self._resolved_adversarial_target),
-        ]
-        for technique in self._scenario_techniques:
-            factory = factories.get(technique.value)
-            if factory is not None:
-                role_targets.append(("adversarial_target", technique.value, factory.adversarial_chat))
-        issues: list[ScenarioConfigurationIssue] = []
-        seen: set[int] = set()
-        for role, component, target in role_targets:
-            if target is None or id(target) in seen:
-                continue
-            seen.add(id(target))
-            if not any(credential.is_missing_for_current_caller() for credential in target.get_caller_credentials()):
-                continue
-            identifier = TargetIdentifier.from_component_identifier(target.get_identifier())
-            name = identifier.model_name or identifier.class_name
-            issues.append(
-                ScenarioConfigurationIssue(
-                    role=role,
-                    component=component,
-                    reason=f"Target '{name}' ({identifier.endpoint}) uses each caller's own key, and you have not "
-                    "set yours.",
-                    remediation="Set your key for that target, or select a target that uses shared credentials.",
-                )
-            )
-        return issues
 
     def _prepare_runtime_components(self) -> ScenarioReadiness:
         readiness = self.get_readiness()

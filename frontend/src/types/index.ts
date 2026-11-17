@@ -529,13 +529,10 @@ export interface TargetInstance {
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
-  /** True when each person's requests use their own key (auth mode `caller`); false for the server's credentials. */
-  requires_caller_credential?: boolean
-  /**
-   * For a target that uses each person's own key, whether the requesting user has set theirs.
-   * Null for a shared target or when there is no signed-in user.
-   */
-  caller_credential_configured?: boolean | null
+  /** True when only the requesting user, who created it, can see and use the target. */
+  private?: boolean
+  /** True when the provider rejected the target's credentials on the last request through it. */
+  credentials_rejected?: boolean
 }
 
 export interface TargetListResponse {
@@ -547,13 +544,8 @@ export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
-  /** With auth_mode `caller`, the creator's own key, stored only for them. */
-  credential?: string
-}
-
-/** Sets or replaces the requesting user's own key for a target that uses each person's own key. */
-export interface SetTargetCredentialRequest {
-  credential: string
+  /** Makes the target visible to and usable by only its creator. */
+  private?: boolean
 }
 
 // --- Initializers ---
@@ -833,7 +825,7 @@ export interface ConverterPreviewResponse {
   steps: ConverterPreviewStep[]
 }
 
-export type TargetAuthMode = 'api_key' | 'identity' | 'none' | 'caller'
+export type TargetAuthMode = 'api_key' | 'identity' | 'none'
 
 export interface TargetTypeEntry {
   target_type: string

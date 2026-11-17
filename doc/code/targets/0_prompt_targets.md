@@ -106,25 +106,6 @@ Here are some examples:
 | **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
 
-## Target authentication
-
-Targets are shared by default: every caller's requests use the target's configured key or
-identity. A target created with `auth_mode="caller"` instead uses each caller's own key. It keeps
-no key; in CoPyRIT, everyone can see and use it, and each caller sets their own key first. The GUI
-marks these targets "Yours" and shared ones "Shared".
-
-```python
-target = OpenAIChatTarget(endpoint="https://api.anthropic.com/v1", model_name="<model>", auth_mode="caller")
-```
-
-![Caller key flow: each caller sets their own key for a target, kept in process memory. Before every provider request, the target uses only the current caller's key. A missing key stops the request without falling back to another user or server credentials.](../../assets/caller-credential-flow.svg)
-
-Each caller sets their key with `pyrit_scan set-target-credential`, the GUI's target list, or
-`PUT /api/targets/{id}/credentials`. Background work and queued scenarios keep the caller who
-started them. See [targets that use each caller's own key](../../../pyrit/backend/README.md#targets-that-use-each-callers-own-key)
-for the supported targets and limits, and [the scanner guide](../../scanner/1_pyrit_scan.ipynb)
-for CLI usage.
-
 ## OpenAI SDK compatibility
 
 PyRIT supports OpenAI Python SDK 2.20 and later 2.x releases, and SDK 3.x.

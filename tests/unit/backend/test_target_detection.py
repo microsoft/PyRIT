@@ -585,10 +585,7 @@ def test_detection_route_errors(error: Exception, status_code: int) -> None:
     app.include_router(router, prefix="/api")
     service = AsyncMock(spec=TargetService)
     service.detect_capabilities_async.side_effect = error
-    with (
-        patch("pyrit.backend.routes.targets.get_target_service", return_value=service),
-        patch("pyrit.backend.routes.targets.caller_principal", return_value=None),
-    ):
+    with patch("pyrit.backend.routes.targets.get_target_service", return_value=service):
         response = TestClient(app).post("/api/targets/test-target/detect-capabilities", json={"expected_hash": "hash"})
     assert response.status_code == status_code
 
@@ -601,10 +598,7 @@ def test_detection_route_returns_updated_target(
     target = service.get_target_object(target_registry_name=target_name)
     app = FastAPI()
     app.include_router(router, prefix="/api")
-    with (
-        patch("pyrit.backend.routes.targets.get_target_service", return_value=service),
-        patch("pyrit.backend.routes.targets.caller_principal", return_value=None),
-    ):
+    with patch("pyrit.backend.routes.targets.get_target_service", return_value=service):
         response = TestClient(app).post(
             f"/api/targets/{target_name}/detect-capabilities", json={"expected_hash": target.get_identifier().hash}
         )

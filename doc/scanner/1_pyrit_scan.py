@@ -313,23 +313,22 @@ MyCustomScenario()
 # ```
 
 # %% [markdown]
-# ## Using Your Own Key for a Target
+# ## Updating a Target's Key
 #
-# Most targets are shared and use the server's credentials, such as its managed identity. A target created with `auth_mode` `caller` uses each person's own key instead: `list-targets` shows it as `Account: Yours`, and you set your key before using it. The key comes from a hidden prompt (`--prompt`), an environment variable (`--from-env VAR`), or the Anthropic `ant` CLI (`--from-ant`); it is never a command-line value.
+# A target you create through the API with `"private": true` is private: only you can see and use it, and `list-targets` shows it as `Account: Yours`. When its key expires or changes, replace it with `set-target-credential`. It works for your private targets and for any shared target; for a shared target, everyone's requests then use the new key. The key comes from a hidden prompt (`--prompt`), an environment variable (`--from-env VAR`), or the Anthropic `ant` CLI (`--from-ant`); it is never a command-line value. `list-targets` also notes when the provider rejected a target's key on its last request.
 #
 # ```shell
 # # One-time sign-in to the Claude Console for a workspace
 # ant auth login --profile copyrit --workspace-id <workspace_id>
 #
-# # Set your token for a target, and re-send a fresh one every 15 minutes until Ctrl+C
+# # Replace the key with your token, and re-send a fresh one every 15 minutes until Ctrl+C
 # pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
 #
-# # Or set an API key, and remove it again
+# # Or replace it with an API key from an environment variable
 # pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
-# pyrit_scan remove-target-credential claude
 # ```
 #
-# Keys live only in the backend's memory, so a backend restart or reinitialization removes them; set yours again afterward. `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone.
+# `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone, for example after the backend restarts.
 
 # %% [markdown]
 # ## Stopping the Backend Server

@@ -28,7 +28,6 @@ import type {
   TechniqueOverride,
   TechniqueEditResponse,
   CreateTargetRequest,
-  SetTargetCredentialRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
   CustomInitializerListResponse,
@@ -414,19 +413,6 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
-
-  /** Set or replace the requesting user's own key for a target that uses each person's own key. */
-  setTargetCredential: async (targetRegistryName: string, credential: string): Promise<TargetInstance> => {
-    const body: SetTargetCredentialRequest = { credential }
-    const response = await apiClient.put(`/targets/${encodeURIComponent(targetRegistryName)}/credentials`, body)
-    return response.data
-  },
-
-  /** Remove the requesting user's own key for a target that uses each person's own key. */
-  removeTargetCredential: async (targetRegistryName: string): Promise<void> => {
-    await apiClient.delete(`/targets/${encodeURIComponent(targetRegistryName)}/credentials`)
-  },
-
   buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {
     const response = await apiClient.post<UnregisteredTarget>('/targets', { type, source, register: false })
     return response.data

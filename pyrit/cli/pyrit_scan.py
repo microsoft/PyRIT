@@ -117,8 +117,8 @@ or connect to an existing server with --server-url.
 
 Global options (--server-url, --config-file, --log-level) are listed below and
 work before or after the verb. Backend commands (run, list-*, add-initializer,
-scenario-results, scenario-history, set-target-credential, remove-target-credential)
-also accept --start-server, --startup-timeout, and --request-timeout; run
+scenario-results, scenario-history, set-target-credential) also accept
+--start-server, --startup-timeout, and --request-timeout; run
 'pyrit_scan <command> --help' to see them.
 
 Examples:
@@ -152,11 +152,11 @@ Examples:
   # Register a custom initializer from a Python script
   pyrit_scan add-initializer ./my_custom_init.py
 
-  # Set your own token for a target that uses each caller's own key, read from an
-  # 'ant auth login --profile copyrit' session and re-sent until Ctrl+C
+  # Replace the key of a target with a token read from an
+  # 'ant auth login --profile copyrit' session, re-sent until Ctrl+C
   pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
 
-  # Or set your own key from an environment variable
+  # Or replace it with a key from an environment variable
   pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
 
   # Connect to a remote server
@@ -447,7 +447,7 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
     )
     subparsers.add_parser("stop-server", parents=[common_parent], help="Stop the backend server")
 
-    _add_target_credential_parsers(subparsers=subparsers, client_parents=client_parents)
+    _add_target_credential_parser(subparsers=subparsers, client_parents=client_parents)
 
     return parser
 
@@ -456,27 +456,20 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
 _DEFAULT_REFRESH_MINUTES = 15
 
 
-def _add_target_credential_parsers(*, subparsers: Any, client_parents: list[ArgumentParser]) -> None:
-    """Register the verbs that manage the caller's own key for targets that use each caller's own key."""
+def _add_target_credential_parser(*, subparsers: Any, client_parents: list[ArgumentParser]) -> None:
+    """Register the verb that replaces the key of a target."""
     set_parser = subparsers.add_parser(
         "set-target-credential",
         parents=client_parents,
-        help="Set or replace your own key for a target that uses each caller's own key",
+        help="Replace the API key of a shared target or your private target",
     )
     set_parser.add_argument("target", type=str, help="Registry name of the target")
-    _add_credential_source_arguments(parser=set_parser, required=True)
-
-    remove_parser = subparsers.add_parser(
-        "remove-target-credential",
-        parents=client_parents,
-        help="Remove your own key for a target that uses each caller's own key",
-    )
-    remove_parser.add_argument("target", type=str, help="Registry name of the target")
+    _add_credential_source_arguments(parser=set_parser)
 
 
-def _add_credential_source_arguments(*, parser: ArgumentParser, required: bool) -> None:
+def _add_credential_source_arguments(*, parser: ArgumentParser) -> None:
     """Register where a target credential is read from; it is never a command-line value."""
-    source = parser.add_mutually_exclusive_group(required=required)
+    source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--prompt", action="store_true", help="Type the credential at a hidden prompt")
     source.add_argument("--from-env", metavar="VAR", help="Read the credential from an environment variable")
     source.add_argument(
@@ -1244,12 +1237,12 @@ async def _handle_run_async(*, client: Any, parsed_args: Namespace) -> int:
     return await _run_scenario_async(client=client, parsed_args=reparsed)
 
 
-def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource | None:
+def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource:
     """
     Select the target credential source requested on the command line.
 
     Returns:
-        CredentialSource | None: The selected source, or ``None`` when none was requested.
+        CredentialSource: The selected source; argparse requires exactly one.
 
     Raises:
         ValueError: If source-specific options are combined with the wrong source.
@@ -1264,13 +1257,11 @@ def _credential_source_from_args(*, parsed_args: Namespace) -> CredentialSource 
         return CredentialSource(kind=CredentialSourceKind.PROMPT)
     if parsed_args.from_env:
         return CredentialSource(kind=CredentialSourceKind.ENVIRONMENT, environment_variable=parsed_args.from_env)
-    if parsed_args.from_ant:
-        return CredentialSource(kind=CredentialSourceKind.ANT, ant_profile=parsed_args.ant_profile)
-    return None
+    return CredentialSource(kind=CredentialSourceKind.ANT, ant_profile=parsed_args.ant_profile)
 
 
 async def _send_target_credential_async(*, client: Any, target_name: str, source: CredentialSource) -> None:
-    """Read the caller's key from its source and set it on a target that uses each caller's own key."""
+    """Read a key from its source and set it as the API key of a target."""
     from pyrit.cli._target_credentials import read_target_credential_async
 
     credential = await read_target_credential_async(source=source, target_name=target_name)
@@ -1340,13 +1331,32 @@ async def _keep_target_credential_fresh_async(
         return 0
 
 
+def _response_detail(response: Any) -> str:
+    """
+    Return the reason a backend gave for refusing a request.
+
+    Returns:
+        str: The response's ``detail``, or its status line when it has none.
+    """
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    return str(detail) if detail else f"The server refused the request ({response.status_code})."
+
+
 async def _handle_set_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
     """
-    Handle ``set-target-credential``: send the caller's own key for a target that uses each caller's own key.
+    Handle ``set-target-credential``: replace the API key of a shared target or the caller's private one.
 
     Returns:
         int: Exit code (``0`` on success, ``1`` on failure).
+
+    Raises:
+        httpx.HTTPStatusError: For a backend error other than a refused update.
     """
+    import httpx
+
     from pyrit.cli._target_credentials import TargetCredentialError
 
     target_name = parsed_args.target
@@ -1355,23 +1365,21 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
-    if source is None:
-        print("Error: Choose --prompt, --from-env, or --from-ant.")
-        return 1
     target = await client.get_target_async(target_registry_name=target_name)
     if target is None:
         print(f"Error: Target '{target_name}' not found on server.")
         return 1
-    if not target.requires_caller_credential:
-        print(
-            f"Error: Target '{target_name}' uses shared credentials and does not take your own key. "
-            "Only targets created with auth_mode 'caller' do."
-        )
-        return 1
+    if not target.private:
+        print(f"Warning: Target '{target_name}' is shared; everyone's requests will use this credential.")
     try:
         await _send_target_credential_async(client=client, target_name=target_name, source=source)
     except TargetCredentialError as exc:
         print(f"Error: {exc}")
+        return 1
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 403:
+            raise
+        print(f"Error: {_response_detail(exc.response)}")
         return 1
     print(f"Set your credential for '{target_name}' from {source.description}.")
     if not parsed_args.keep_fresh:
@@ -1385,18 +1393,6 @@ async def _handle_set_target_credential_async(*, client: Any, parsed_args: Names
     )
 
 
-async def _handle_remove_target_credential_async(*, client: Any, parsed_args: Namespace) -> int:
-    """
-    Handle ``remove-target-credential``: forget the caller's own key for a target that uses each caller's own key.
-
-    Returns:
-        int: Exit code (``0`` on success).
-    """
-    await client.remove_target_credential_async(target_registry_name=parsed_args.target)
-    print(f"Removed your credential for '{parsed_args.target}'.")
-    return 0
-
-
 #: Post-client verbs, each a uniform ``(*, client, parsed_args) -> int`` handler. Reached
 #: only after the API client is open (start-server/stop-server are handled earlier, before
 #: any client exists), so dispatch here is a pure table lookup with no branching.
@@ -1406,7 +1402,6 @@ _CLIENT_HANDLERS: dict[str, Callable[..., Any]] = {
     "scenario-results": _handle_results_async,
     "scenario-history": _handle_scenario_history_async,
     "set-target-credential": _handle_set_target_credential_async,
-    "remove-target-credential": _handle_remove_target_credential_async,
     **dict.fromkeys(_LIST_VERBS, _handle_list_commands_async),
 }
 

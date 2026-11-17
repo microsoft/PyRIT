@@ -294,6 +294,25 @@ class _LaunchScript:
                 raise
 
 
+class _CallerRecordingScript:
+    def __init__(self) -> None:
+        self.callers: list[str | None] = []
+
+    async def initialize_async(self) -> None:
+        self.callers.append(get_caller_principal())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_run_initializers_run_as_the_server_not_the_requesting_caller_async() -> None:
+    """Per-run setup code sees only shared entries, so it can't build a shared component on a private one."""
+    script = _CallerRecordingScript()
+
+    with caller_principal_scope("alice"):
+        await _run_launch_scripts_async({"recording": script})
+
+    assert script.callers == [None]
+
+
 async def _run_launch_scripts_async(scripts: dict[str, Any]) -> None:
     initializers = MagicMock()
     initializers.create_and_configure.side_effect = lambda name, initializer_params=None: scripts[name]
@@ -1455,7 +1474,7 @@ class TestScenarioRunServiceStartRun:
         assert started == ["run-1", "run-2"]
 
     async def test_queued_run_uses_its_own_admitted_caller_async(self, mock_all_registries) -> None:
-        """A run started by another caller's handoff resolves caller credentials for its own admitting caller."""
+        """A run started by another caller's handoff acts for its own admitting caller."""
         service = ScenarioRunService()
         mock_memory = mock_all_registries["memory"]
         records: dict[str, MagicMock] = {}

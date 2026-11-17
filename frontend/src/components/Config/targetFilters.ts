@@ -1,6 +1,18 @@
 import type { FilterOption, TargetInstance } from '@/types'
-import { TARGET_ACCOUNT_LABELS, targetAccount, type TargetAccount } from '@/utils/targetAccount'
 import { targetType } from '@/utils/targetIdentity'
+
+/** Who can see and use a target: everyone (`shared`) or only the requesting user (`yours`). */
+export type TargetAccount = 'shared' | 'yours'
+
+/** Display name for each account, shared by the table and the filters. */
+export const TARGET_ACCOUNT_LABELS: Readonly<Record<TargetAccount, string>> = {
+  shared: 'Shared',
+  yours: 'Yours',
+}
+
+export function targetAccount(target: Pick<TargetInstance, 'private'>): TargetAccount {
+  return target.private === true ? 'yours' : 'shared'
+}
 
 /** Display name for each known modality, shared by the table icons and the filters. */
 export const MODALITY_LABELS: Readonly<Record<string, string>> = {

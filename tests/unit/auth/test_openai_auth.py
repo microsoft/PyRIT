@@ -191,14 +191,3 @@ def test_none_with_explicit_api_key_raises(explicit_key):
             api_key_environment_variable=API_KEY_ENV_VAR,
             auth_mode="none",
         )
-
-
-def test_caller_mode_is_resolved_by_targets_not_the_shared_resolver():
-    # Components such as embeddings share this resolver; only targets that support caller keys accept them.
-    with pytest.raises(ValueError, match='auth_mode="caller" is supported only by targets'):
-        resolve_openai_auth(
-            endpoint="https://api.example.test/v1",
-            api_key=None,
-            api_key_environment_variable="OPENAI_CHAT_KEY",
-            auth_mode="caller",
-        )

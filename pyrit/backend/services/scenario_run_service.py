@@ -34,7 +34,7 @@ from pyrit.analytics.scenario_statistics import (
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
-from pyrit.auth import caller_principal_context, get_caller_principal
+from pyrit.auth import caller_principal_context, caller_principal_scope, get_caller_principal
 from pyrit.backend.models import (
     ConversationMessagesResponse,
     PaginationInfo,
@@ -228,7 +228,7 @@ class _ActiveTask:
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
-    # Captured at admission so a run queued behind another caller's run uses its own caller's credentials.
+    # Captured at admission so a run queued behind another caller's run acts for its own caller.
     caller_principal: str | None = None
 
 
@@ -1676,7 +1676,26 @@ class ScenarioRunService:
             return
 
         initializer_registry = await run_legacy_sync_async(InitializerRegistry.get_registry_singleton)
-        for initializer_name in request.initializers:
+        # Setup code runs as the server, like startup: it sees only shared entries, so it can't build a
+        # shared component on the caller's private target.
+        with caller_principal_scope(None):
+            await self._run_named_initializers_async(request=request, initializer_registry=initializer_registry)
+
+    async def _run_named_initializers_async(
+        self, *, request: RunScenarioRequest, initializer_registry: InitializerRegistry
+    ) -> None:
+        """
+        Execute the request's initializers in order.
+
+        Args:
+            request: The run request containing initializer names and args.
+            initializer_registry: The registry that builds the initializers.
+
+        Raises:
+            ValueError: If an initializer name is not found in the registry.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
+        """
+        for initializer_name in request.initializers or []:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
                 instance = await run_legacy_sync_async(

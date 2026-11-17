@@ -14,6 +14,9 @@ import {
   Checkbox,
   MessageBar,
   MessageBarBody,
+  Popover,
+  PopoverSurface,
+  PopoverTrigger,
   mergeClasses,
 } from '@fluentui/react-components'
 import {
@@ -31,11 +34,9 @@ import {
   ArrowHookUpLeftRegular,
   ChevronRightRegular,
   ChevronDownRegular,
-  DeleteRegular,
   EyeOffRegular,
   EyeRegular,
   KeyFilled,
-  KeyRegular,
   LockClosedFilled,
 } from '@fluentui/react-icons'
 
@@ -45,12 +46,6 @@ import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetCapabilityDetection } from '@/hooks/useTargetCapabilityDetection'
 import type { TargetInstance } from '@/types'
-import {
-  NEEDS_CALLER_KEY_LABEL,
-  TARGET_ACCOUNT_LABELS,
-  targetAccount,
-  targetNeedsCallerKey,
-} from '@/utils/targetAccount'
 import {
   sameTarget,
   targetEndpoint,
@@ -63,8 +58,10 @@ import {
   CAPABILITY_COLUMNS,
   DEFAULT_TARGET_FILTERS,
   MODALITY_LABELS,
+  TARGET_ACCOUNT_LABELS,
   getTargetFilterOptions,
   orderModalities,
+  targetAccount,
   targetMatchesFilters,
   type TargetFilters,
 } from './targetFilters'
@@ -78,14 +75,9 @@ interface TargetTableProps {
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
   detection: TargetCapabilityDetection
-  /** Asks to set or replace the user's own key for a target that uses each person's own key. */
-  onSetKey: (target: TargetInstance) => void
-  /** Asks to remove the user's own key for a target that uses each person's own key. */
-  onRemoveKey: (target: TargetInstance) => void
 }
 
-const KEY_SET_LABEL = 'Your key is set'
-const INNER_KEYS_LABEL = 'Needs your key on its inner targets'
+const CREDENTIALS_ACCEPTED_LABEL = 'Credentials accepted'
 
 /** Format target_specific_params into a short human-readable string. */
 function formatParams(params?: Record<string, unknown> | null): string {
@@ -202,44 +194,63 @@ function ModelCell({ target }: { target: TargetInstance }) {
   return <Text size={200}>{displayName}</Text>
 }
 
-/**
- * Render whose credentials the target uses. A target that uses each person's own key shows
- * whether this user has set theirs; the icon's shape carries that, not only its color.
- */
-function AccountCell({ target, onSetKey }: {
-  target: TargetInstance
-  onSetKey: (target: TargetInstance) => void
-}) {
+function credentialsRejectedMessage(name: string): string {
+  return 'The last request was rejected. The credentials may be expired or invalid. Update them through the API '
+    + `(PUT /api/targets/${name}/credentials) or with pyrit_scan set-target-credential ${name}.`
+}
+
+/** A red lock that explains, on click, how to update credentials the provider rejected. */
+function RejectedCredentialsButton({ name }: { name: string }) {
   const styles = useTargetTableStyles()
-  const account = targetAccount(target)
-  if (account === 'shared') {
-    return <Text size={200}>{TARGET_ACCOUNT_LABELS.shared}</Text>
-  }
-  // A composite takes no key itself; each inner target that uses one gets its own.
-  const composite = (target.inner_targets ?? []).length > 0
+  const [infoOpen, setInfoOpen] = useState(false)
+  const [hoverVisible, setHoverVisible] = useState(false)
+  const message = credentialsRejectedMessage(name)
   return (
-    <span className={styles.accountCell}>
-      <Text size={200}>{TARGET_ACCOUNT_LABELS.yours}</Text>
-      {targetNeedsCallerKey(target) && composite ? (
-        <Tooltip content={INNER_KEYS_LABEL} relationship="label">
-          <KeyFilled className={styles.needsKeyIcon} aria-label={INNER_KEYS_LABEL} />
-        </Tooltip>
-      ) : targetNeedsCallerKey(target) ? (
-        <Tooltip content={NEEDS_CALLER_KEY_LABEL} relationship="label">
+    <Popover withArrow open={infoOpen} onOpenChange={(_, data) => {
+      setInfoOpen(data.open)
+      setHoverVisible(false)
+    }}>
+      <PopoverTrigger disableButtonEnhancement>
+        <Tooltip content={message} relationship="label" visible={hoverVisible && !infoOpen}
+          onVisibleChange={(_, data) => setHoverVisible(!infoOpen && data.visible)}>
           <Button
             className={styles.rowAction}
             appearance="subtle"
             size="small"
-            icon={<KeyFilled className={styles.needsKeyIcon} aria-label={NEEDS_CALLER_KEY_LABEL} />}
-            aria-label={`${NEEDS_CALLER_KEY_LABEL} — set your key for ${target.target_registry_name}`}
-            onClick={() => onSetKey(target)}
+            icon={<LockClosedFilled className={styles.credentialsRejectedIcon} />}
+            aria-label={message}
           />
         </Tooltip>
-      ) : (
-        <Tooltip content={KEY_SET_LABEL} relationship="label">
-          <LockClosedFilled className={styles.keySetIcon} aria-label={KEY_SET_LABEL} />
-        </Tooltip>
-      )}
+      </PopoverTrigger>
+      <PopoverSurface className={styles.credentialsHelp}>
+        The last request was rejected. The credentials may be expired or invalid. Update them through the API
+        (<code>PUT /api/targets/{name}/credentials</code>) or with{' '}
+        <code>pyrit_scan set-target-credential {name}</code>.
+      </PopoverSurface>
+    </Popover>
+  )
+}
+
+/** Whether the provider accepted the target's credentials; the icon's shape carries that, not only its color. */
+function CredentialsStatus({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
+  if (target.credentials_rejected === true) {
+    return <RejectedCredentialsButton name={target.target_registry_name} />
+  }
+  return (
+    <Tooltip content={CREDENTIALS_ACCEPTED_LABEL} relationship="label">
+      <KeyFilled className={styles.credentialsAcceptedIcon} role="img" aria-label={CREDENTIALS_ACCEPTED_LABEL} />
+    </Tooltip>
+  )
+}
+
+/** Render who can use the target and whether the provider accepted its credentials. */
+function AccountCell({ target }: { target: TargetInstance }) {
+  const styles = useTargetTableStyles()
+  return (
+    <span className={styles.accountCell}>
+      <Text size={200}>{TARGET_ACCOUNT_LABELS[targetAccount(target)]}</Text>
+      <CredentialsStatus target={target} />
     </span>
   )
 }
@@ -281,10 +292,8 @@ function InnerTargetRows({ parentKey, innerTargets, weights, selectionVisible, d
           <TableCell>
             <Text size={200}>{targetType(inner)}</Text>
           </TableCell>
-          <TableCell className={styles.accountColumn}>
-            {/* Inner targets aren't managed on their own, so only the account is shown. */}
-            <Text size={200}>{TARGET_ACCOUNT_LABELS[targetAccount(inner)]}</Text>
-          </TableCell>
+          {/* Inner targets don't report who can use them; their own rows show it. */}
+          <TableCell className={styles.accountColumn} />
           <TableCell>
             <ModelCell target={inner} />
           </TableCell>
@@ -318,8 +327,6 @@ export default function TargetTable({
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
   detection,
-  onSetKey,
-  onRemoveKey,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
   const { preferences, updatePreferences } = useUserPreferences()
@@ -562,8 +569,6 @@ export default function TargetTable({
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
             const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
-            const usesOwnKey = targetAccount(target) === 'yours'
-            const keySet = usesOwnKey && !targetNeedsCallerKey(target)
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
@@ -595,45 +600,17 @@ export default function TargetTable({
                       </TableCell>
                     )}
                     <TableCell className={styles.actionCell}>
-                      <div className={styles.rowActions}>
-                        <Button
-                          className={styles.rowAction}
-                          appearance="subtle"
-                          size="small"
-                          icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
-                          onClick={() => setTargetHidden(target, !hidden)}
-                          aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
-                          data-testid={`toggle-target-visibility-${target.target_registry_name}`}
-                        >
-                          {hidden ? 'Show' : 'Hide'}
-                        </Button>
-                        {usesOwnKey && !expandable && (
-                          <Button
-                            className={styles.rowAction}
-                            appearance="subtle"
-                            size="small"
-                            icon={<KeyRegular />}
-                            onClick={() => onSetKey(target)}
-                            aria-label={`${keySet ? 'Replace' : 'Set'} key for ${target.target_registry_name}`}
-                            data-testid={`set-target-key-${target.target_registry_name}`}
-                          >
-                            {keySet ? 'Replace key' : 'Set key'}
-                          </Button>
-                        )}
-                        {keySet && !expandable && (
-                          <Button
-                            className={styles.rowAction}
-                            appearance="subtle"
-                            size="small"
-                            icon={<DeleteRegular />}
-                            onClick={() => onRemoveKey(target)}
-                            aria-label={`Remove key for ${target.target_registry_name}`}
-                            data-testid={`remove-target-key-${target.target_registry_name}`}
-                          >
-                            Remove key
-                          </Button>
-                        )}
-                      </div>
+                      <Button
+                        className={styles.rowAction}
+                        appearance="subtle"
+                        size="small"
+                        icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                        onClick={() => setTargetHidden(target, !hidden)}
+                        aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                        data-testid={`toggle-target-visibility-${target.target_registry_name}`}
+                      >
+                        {hidden ? 'Show' : 'Hide'}
+                      </Button>
                     </TableCell>
                   </>
                 }
@@ -682,7 +659,7 @@ export default function TargetTable({
                   </div>
                 </TableCell>
                 <TableCell className={styles.accountColumn}>
-                  <AccountCell target={target} onSetKey={onSetKey} />
+                  <AccountCell target={target} />
                 </TableCell>
                 <TableCell>
                   <ModelCell target={target} />

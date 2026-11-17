@@ -710,19 +710,6 @@ describe("api service", () => {
       expect(result.target_registry_name).toBe("new-target");
     });
 
-    it("should set and remove the user's own key under the encoded target name", async () => {
-      const updated = makeTarget({
-        target_registry_name: "team/a b?#", requires_caller_credential: true, caller_credential_configured: true,
-      });
-      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: updated });
-      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ data: undefined });
-
-      await expect(targetsApi.setTargetCredential("team/a b?#", "sk-mine")).resolves.toBe(updated);
-      expect(apiClient.put).toHaveBeenCalledWith("/targets/team%2Fa%20b%3F%23/credentials", { credential: "sk-mine" });
-      await expect(targetsApi.removeTargetCredential("team/a b?#")).resolves.toBeUndefined();
-      expect(apiClient.delete).toHaveBeenCalledWith("/targets/team%2Fa%20b%3F%23/credentials");
-    });
-
     it("should handle list targets error", async () => {
       const error = new Error("Server error");
       (apiClient.get as jest.Mock).mockRejectedValueOnce(error);

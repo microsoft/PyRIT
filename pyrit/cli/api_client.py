@@ -296,14 +296,14 @@ class PyRITApiClient:
 
     async def set_target_credential_async(self, *, target_registry_name: str, credential: str) -> TargetInstance:
         """
-        Set or replace this caller's own key for a target that uses each caller's own key.
+        Replace the API key of a shared target or this caller's private target.
 
         Args:
             target_registry_name: The registry name of the target.
-            credential: The caller's credential. It is sent only in the request body.
+            credential: The new API key or access token. It is sent only in the request body.
 
         Returns:
-            TargetInstance: The target as seen by this caller.
+            TargetInstance: The updated target.
         """
         from pyrit.models.catalog import TargetInstance
 
@@ -311,15 +311,10 @@ class PyRITApiClient:
         resp = await self._send_async(
             method="PUT",
             path=f"{self._target_path(target_registry_name)}/credentials",
-            json={"credential": credential},
+            json={"params": {"api_key": credential}},
         )
         self._raise_for_status(resp)
         return TargetInstance.model_validate(resp.json())
-
-    async def remove_target_credential_async(self, *, target_registry_name: str) -> None:
-        """Remove this caller's own key for a target that uses each caller's own key."""
-        resp = await self._send_async(method="DELETE", path=f"{self._target_path(target_registry_name)}/credentials")
-        self._raise_for_status(resp)
 
     # ------------------------------------------------------------------
     # Datasets

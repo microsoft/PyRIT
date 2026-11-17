@@ -4,9 +4,8 @@
 import json
 import math
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from pyrit.common import AuthMode
 from pyrit.exceptions import pyrit_target_retry
 from pyrit.models import (
     ComponentIdentifier,
@@ -40,13 +39,9 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
 
     Responses use the SDK's JSON types. LiteLLM converts Boolean answers and
     numeric strings to numbers before returning them.
-
-    The decision API keeps LiteLLM's usual callable-key behavior and does not support
-    ``auth_mode="caller"``.
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = False
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
     _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=TargetCapabilities())
     _CREDENTIAL_HEADERS = frozenset(
         {

@@ -113,12 +113,16 @@ export const useTargetTableStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
   },
-  keySetIcon: {
+  credentialsAcceptedIcon: {
     color: tokens.colorStatusSuccessForeground1,
     fontSize: tokens.fontSizeBase400,
   },
-  needsKeyIcon: {
+  credentialsRejectedIcon: {
     color: tokens.colorStatusDangerForeground1,
+  },
+  credentialsHelp: {
+    maxWidth: '20rem',
+    overflowWrap: 'anywhere',
   },
   helpHeader: {
     cursor: 'help',
@@ -159,13 +163,7 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
   actionCell: {
-    width: '132px',
-  },
-  rowActions: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: tokens.spacingVerticalXXS,
+    width: '100px',
   },
   rowAction: {
     ...mobileTouchTarget,

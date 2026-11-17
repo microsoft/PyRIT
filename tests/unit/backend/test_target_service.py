@@ -274,7 +274,7 @@ class TestListTargetTypes:
         result = await service.list_target_types_async()
 
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
-        assert openai_entry.supported_auth_modes == ["api_key", "identity", "none", "caller"]
+        assert openai_entry.supported_auth_modes == ["api_key", "identity", "none"]
         azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
         assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -23,12 +23,10 @@ import {
   MessageBar,
   MessageBarBody,
   Tooltip,
-  type LabelProps,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
 
-import ContextualHelpLabel from '@/components/ContextualHelpLabel'
-import { useContextualHelpLabelStyles } from '@/components/ContextualHelpLabel.styles'
+import HelpField from '@/components/HelpField'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ParameterField from '@/components/Parameters/ParameterField'
 import {
@@ -84,9 +82,6 @@ const FALLBACK_NO_KEY_TARGET_TYPES = new Set([
   'OpenAITTSTarget',
   'OpenAIResponseTarget',
 ])
-
-// The same OpenAI fallback types also support each user's own key.
-const FALLBACK_CALLER_KEY_TARGET_TYPES = FALLBACK_NO_KEY_TARGET_TYPES
 
 const TARGET_DISPLAY_NAMES: Record<string, string> = {
   AzureMLChatTarget: 'Azure Machine Learning chat',
@@ -146,7 +141,6 @@ const AUTH_MODE_LABELS: Record<TargetAuthMode, string> = {
   api_key: 'API key',
   identity: 'Microsoft Entra ID',
   none: 'No key',
-  caller: "Each user's own key",
 }
 
 function getTargetDisplayName(targetType: string): string {
@@ -176,10 +170,6 @@ function defaultSupportsIdentity(targetType: string): boolean {
 
 function defaultSupportsNoKey(targetType: string): boolean {
   return FALLBACK_NO_KEY_TARGET_TYPES.has(targetType)
-}
-
-function defaultSupportsCallerKey(targetType: string): boolean {
-  return FALLBACK_CALLER_KEY_TARGET_TYPES.has(targetType)
 }
 
 function getParameterLabel(name: string): string {
@@ -292,8 +282,6 @@ function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
 
 export default function CreateTargetDialog({ open, onClose, onCreated, existingTargets }: CreateTargetDialogProps) {
   const styles = useCreateTargetDialogStyles()
-  const helpStyles = useContextualHelpLabelStyles()
-  const callerKeyHelpId = useId()
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [modelName, setModelName] = useState('')
@@ -301,6 +289,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [underlyingModel, setUnderlyingModel] = useState('')
   const [authMode, setAuthMode] = useState<TargetAuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
+  const [onlyMeChoice, setOnlyMeChoice] = useState(false)
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -433,17 +422,20 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const supportsNoKey = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('none')
     : defaultSupportsNoKey(targetType)
-  const supportsCallerKey = targetTypeEntry
-    ? targetTypeEntry.supported_auth_modes.includes('caller')
-    : defaultSupportsCallerKey(targetType)
-  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey || supportsCallerKey)
+  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
   const isIdentity = showAuthField && authMode === 'identity'
   const isNoKey = showAuthField && authMode === 'none'
-  const isCallerKey = showAuthField && authMode === 'caller'
   const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
-  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey && !isCallerKey
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
+  // Anything built on a private target is private too, so such a round robin can't be shared.
+  const privateMemberName = isRoundRobin
+    ? selectedInnerTargets.find((selected: SelectedInnerTarget) => availableTargets.some(
+      (target: TargetInstance) => target.target_registry_name === selected.registryName && target.private === true,
+    ))?.registryName
+    : undefined
+  const onlyMe = privateMemberName !== undefined || onlyMeChoice
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -548,6 +540,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setUnderlyingModel('')
     setAuthMode('api_key')
     setApiKey('')
+    setOnlyMeChoice(false)
     setParameterValues({})
     setError(null)
     setHttpRequestError(null)
@@ -591,6 +584,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
             targets: selectedInnerTargets.map((t) => t.registryName),
             weights: parsedWeights,
           },
+          private: onlyMe,
         })
         resetForm()
         onCreated()
@@ -647,8 +641,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
-      // With each user's own key the target keeps no key; a typed key is the creator's own credential.
-      if (hasApiKeyField && !isIdentity && !isNoKey && !isCallerKey && apiKey) params.api_key = apiKey
+      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
 
       if (
         (underlyingModelRequired || hasDifferentUnderlying)
@@ -663,10 +656,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
         ...(isNoKey ? { auth_mode: 'none' as const } : {}),
-        ...(isCallerKey ? {
-          auth_mode: 'caller' as const,
-          ...(hasApiKeyField && apiKey ? { credential: apiKey } : {}),
-        } : {}),
+        private: onlyMe,
       })
 
       resetForm()
@@ -749,17 +739,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     const nextSupportsNoKey = nextEntry
                       ? nextEntry.supported_auth_modes.includes('none')
                       : defaultSupportsNoKey(next)
-                    const nextSupportsCallerKey = nextEntry
-                      ? nextEntry.supported_auth_modes.includes('caller')
-                      : defaultSupportsCallerKey(next)
                     if (
                       (authMode === 'identity' && !nextSupportsIdentity)
                       || (authMode === 'none' && !nextSupportsNoKey)
-                      || (authMode === 'caller' && !nextSupportsCallerKey)
                     ) {
                       setAuthMode('api_key')
-                      // A key typed as the creator's own must not become the new target's shared key.
-                      setApiKey('')
                     }
                   }}
                 >
@@ -829,6 +813,22 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </section>
               )}
 
+              {targetType && (
+                <HelpField
+                  label="Only me"
+                  help={HELP_DEFINITIONS.privateTarget}
+                  hint={privateMemberName !== undefined
+                    ? `Stays on because it uses ${privateMemberName}, which only you can use.`
+                    : undefined}
+                >
+                  <Switch
+                    checked={onlyMe}
+                    disabled={submitting || privateMemberName !== undefined}
+                    onChange={(_, data) => setOnlyMeChoice(data.checked)}
+                  />
+                </HelpField>
+              )}
+
               {isGitHubCopilot && (
                 <>
                   <MessageBar intent="info">
@@ -838,11 +838,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       CoPyRIT does not use browser or saved Copilot logins.
                     </MessageBarBody>
                   </MessageBar>
-                  <MessageBar intent="warning">
-                    <MessageBarBody>
-                      Tokens and created targets can be used by anyone with access to this CoPyRIT instance.
-                    </MessageBarBody>
-                  </MessageBar>
+                  {!onlyMe && (
+                    <MessageBar intent="warning">
+                      <MessageBarBody>
+                        Tokens and created targets can be used by anyone with access to this CoPyRIT instance.
+                      </MessageBarBody>
+                    </MessageBar>
+                  )}
                 </>
               )}
 
@@ -1072,10 +1074,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         onChange={(_, data) => {
                           const next = data.value as TargetAuthMode
                           setAuthMode(next)
-                          // Each mode uses the key field differently, so a typed key never carries over:
-                          // a shared key must not become someone's own key, or the reverse.
-                          setApiKey('')
+                          if (next === 'none') {
+                            setApiKey('')
+                          }
                           if (next === 'identity') {
+                            setApiKey('')
                             setParameterValues((current) => {
                               const cleared = { ...current }
                               for (const parameter of metadataDrivenParameters) {
@@ -1093,24 +1096,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         {supportsNoKey && (
                           <Radio value="none" label="No key (for servers that need none)" />
                         )}
-                        {supportsCallerKey && (
-                          <Radio
-                            value="caller"
-                            aria-describedby={callerKeyHelpId}
-                            label={{ children: (_: unknown, labelProps: LabelProps) => (
-                              <ContextualHelpLabel term={AUTH_MODE_LABELS.caller} labelProps={labelProps}>
-                                {HELP_DEFINITIONS.ownKeyAuthentication}
-                              </ContextualHelpLabel>
-                            ) }}
-                          />
-                        )}
                       </RadioGroup>
-                      {/* Keeps the explanation available to assistive technology while its help is closed. */}
-                      {supportsCallerKey && (
-                        <span id={callerKeyHelpId} className={helpStyles.srOnly}>
-                          {HELP_DEFINITIONS.ownKeyAuthentication}
-                        </span>
-                      )}
                     </Field>
                   )}
 
@@ -1124,10 +1110,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
                   {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
-                      label={isCallerKey ? 'Your key (optional)' : 'API Key'}
-                      hint={isCallerKey
-                        ? 'Used only for your requests. Others set their own key.'
-                        : apiKeyParameter?.description || undefined}
+                      label="API Key"
+                      hint={apiKeyParameter?.description || undefined}
                       required={apiKeyRequired}
                       validationMessage={fieldErrors.apiKey}
                       validationState={fieldErrors.apiKey ? 'error' : 'none'}

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
-from pyrit.common import AuthMode, forward_init_parameters, print_deprecation_message
+from pyrit.common import forward_init_parameters, print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -149,10 +149,6 @@ class RealtimeTarget(OpenAITarget):
     #: PCM sample rate in Hz negotiated by the OpenAI Realtime protocol. Single source
     #: of truth for both atomic (send_text/send_audio) and streaming session paths.
     SAMPLE_RATE_HZ: ClassVar[int] = 24000
-
-    # The key is resolved once when a conversation's websocket opens and that connection is reused,
-    # so a shared target cannot switch to each caller's own key per request.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
 
     @forward_init_parameters
     def __init__(

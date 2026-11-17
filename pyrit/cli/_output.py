@@ -234,15 +234,12 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Model: {model}")
         if identifier.endpoint:
             print(f"    Endpoint: {identifier.endpoint}")
-        if tgt.requires_caller_credential:
-            state = (
-                "your key is set"
-                if tgt.caller_credential_configured
-                else f"needs your key; run 'pyrit_scan set-target-credential {tgt.target_registry_name}'"
+        print(f"    Account: {'Yours' if tgt.private else 'Shared'}")
+        if tgt.credentials_rejected:
+            print(
+                "    Credentials rejected by the provider on the last request; update them with "
+                f"'pyrit_scan set-target-credential {tgt.target_registry_name}'"
             )
-            print(f"    Account: Yours ({state})")
-        else:
-            print("    Account: Shared")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 

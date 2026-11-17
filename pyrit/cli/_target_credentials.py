@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Read a caller's own key for targets that use each caller's own key.
+Read a new credential for a target.
 
 Credentials come from a hidden prompt, an environment variable, or the Anthropic ``ant`` CLI.
 They are never taken from command-line arguments, printed, or logged.

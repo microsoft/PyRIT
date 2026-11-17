@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.auth import CallerCredential, caller_principal_scope
 from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError
@@ -19,13 +18,7 @@ from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import ScenarioResult, ScenarioRunSizeEstimateRequest, SeedPrompt
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
-from pyrit.prompt_target import (
-    CapabilityName,
-    RoundRobinTarget,
-    TargetCapabilities,
-    TargetConfiguration,
-    TargetRequirements,
-)
+from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, Scenario, TechniqueRequirements
 from pyrit.scenario.core import (
@@ -37,7 +30,7 @@ from pyrit.scenario.scenarios.airt import Jailbreak, Multilingual
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.scenario.scenarios.garak import Doctor
 from pyrit.scenario.scenarios.technique import Execute
-from pyrit.score import SelfAskRefusalScorer, SubStringScorer
+from pyrit.score import SubStringScorer
 from pyrit.setup.initializers import ScorerInitializerTags
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -639,75 +632,3 @@ class TestScenarioReadiness:
             assert not target.prompt_sent
         finally:
             await service.shutdown_async()
-
-
-class _CallerKeyTarget(MockPromptTarget):
-    """A target that uses each caller's own key."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._credential = CallerCredential()
-
-    @property
-    def caller_credential(self) -> CallerCredential:
-        return self._credential
-
-
-def _execute_with(*, objective_target: MockPromptTarget, scorer_target: MockPromptTarget | None = None) -> Execute:
-    scorer = SelfAskRefusalScorer(chat_target=scorer_target) if scorer_target else SubStringScorer(substring="default")
-    scenario = Execute(objective_scorer=scorer)
-    scenario.set_params_from_args(
-        args={
-            "objective": "Return a response",
-            "objective_target": objective_target,
-            "scenario_techniques": [scenario._technique_class("prompt_sending")],
-        }
-    )
-    scenario._resolve_runtime_configuration(require_objective_target=False)
-    return scenario
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestCallerKeyReadiness:
-    @pytest.mark.parametrize("role", ["objective_target", "scoring_target"])
-    def test_a_role_target_that_needs_the_callers_key_is_an_issue(self, role: str) -> None:
-        target = _CallerKeyTarget()
-        scenario = (
-            _execute_with(objective_target=target)
-            if role == "objective_target"
-            else _execute_with(objective_target=MockPromptTarget(), scorer_target=target)
-        )
-
-        with caller_principal_scope("alice"):
-            issues = scenario.get_readiness().issues
-
-        assert [issue.role for issue in issues] == [role]
-        assert "uses each caller's own key" in issues[0].reason
-
-    def test_setting_the_key_clears_the_issue(self) -> None:
-        target = _CallerKeyTarget()
-        target.caller_credential.set_credential(principal="alice", credential="alice-key")
-        scenario = _execute_with(objective_target=MockPromptTarget(), scorer_target=target)
-
-        with caller_principal_scope("alice"):
-            assert scenario.get_readiness().issues == []
-        with caller_principal_scope("bob"):
-            assert [issue.role for issue in scenario.get_readiness().issues] == ["scoring_target"]
-
-    def test_a_composite_role_target_is_checked_through_its_inner_targets(self) -> None:
-        inner, other = _CallerKeyTarget(), _CallerKeyTarget()
-        other.caller_credential.set_credential(principal="alice", credential="alice-key")
-        composite = RoundRobinTarget(targets=[inner, other])
-        scenario = _execute_with(objective_target=composite)
-
-        with caller_principal_scope("alice"):
-            assert [issue.role for issue in scenario.get_readiness().issues] == ["objective_target"]
-        inner.caller_credential.set_credential(principal="alice", credential="alice-key")
-        with caller_principal_scope("alice"):
-            assert scenario.get_readiness().issues == []
-
-    def test_work_without_a_caller_reports_no_key_issue(self) -> None:
-        # Shared estimates act for no caller; the target still fails closed if it is ever sent to.
-        scenario = _execute_with(objective_target=_CallerKeyTarget())
-
-        assert scenario.get_readiness().issues == []

@@ -17,7 +17,6 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from pyrit.auth import CallerCredentialRequiredError, caller_principal_scope
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -1226,132 +1225,9 @@ async def test_resolve_api_key_async_callable(patch_central_database, litellm_st
     assert await t._resolve_api_key_async() == "atok"
 
 
-async def test_send_prompt_uses_each_callers_own_credential(patch_central_database, litellm_stub):
-    t = _caller_target(key="alice-key")
-    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
-
-    with caller_principal_scope("alice"):
-        await t.send_prompt_async(message=_user_message("hi"))
-    with patch.dict("os.environ", {"LITELLM_API_KEY": "server-key"}), caller_principal_scope("bob"):
-        with pytest.raises(CallerCredentialRequiredError):
-            await t.send_prompt_async(message=_user_message("hi"))
-
-    litellm_stub.acompletion.assert_awaited_once()
-    assert litellm_stub.acompletion.call_args.kwargs["api_key"] == "alice-key"
-
-
-def _caller_target(*, key: str = "caller-key", **kwargs: Any) -> LiteLLMChatTarget:
-    """Build a target that uses each caller's own key, holding ``key`` for caller ``alice``."""
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller", **kwargs)
-    assert target.caller_credential is not None
-    target.caller_credential.set_credential(principal="alice", credential=key)
-    return target
-
-
-@pytest.mark.parametrize("model", ["vertex_ai/gemini-2.5-flash", "bedrock/model", "azure/model", "gpt-4o"])
-def test_caller_mode_rejects_ambient_provider(patch_central_database, litellm_stub, model: str) -> None:
-    with pytest.raises(ValueError, match="openai/"):
-        LiteLLMChatTarget(model_name=model, auth_mode="caller")
-
-
-def test_caller_mode_rejects_an_explicit_key(patch_central_database, litellm_stub) -> None:
-    with pytest.raises(ValueError, match="cannot be combined with an explicit api_key"):
-        LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller", api_key="static-key")
-
-
-def test_caller_mode_ignores_the_environment_key(patch_central_database, litellm_stub) -> None:
-    with patch.dict("os.environ", {"LITELLM_API_KEY": "server-key"}):
-        target = LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller")
-
-    assert target.caller_credential is not None
-    assert target._api_key == target.caller_credential.get_credential_async
-
-
-@pytest.mark.parametrize(
-    ("model", "extra_body_parameters"),
-    [
-        ("azure/gpt-4o", None),
-        ("anthropic/claude-sonnet-4-6", None),
-        ("bedrock/anthropic.claude-v2", None),
-        ("gpt-4o", None),
-        ("openai/gpt-4o", {"api_version": "2024-10-21", "logit_bias": {"1": 1}}),
-    ],
-)
-async def test_direct_token_provider_keeps_litellm_routing_async(
-    patch_central_database, litellm_stub, model: str, extra_body_parameters: dict[str, object] | None
-) -> None:
-    target = LiteLLMChatTarget(
-        model_name=model, api_key=lambda: "direct-key", extra_body_parameters=extra_body_parameters
-    )
-    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
-    with patch.object(litellm_stub, "model_fallbacks", [{model: ["openai/gpt-4o-mini"]}], create=True):
-        await target.send_prompt_async(message=_user_message())
-
-    kwargs = litellm_stub.acompletion.call_args.kwargs
-    assert kwargs["api_key"] == "direct-key"
-    assert kwargs["model"] == model
-    assert "custom_llm_provider" not in kwargs
-    for name, value in (extra_body_parameters or {}).items():
-        assert kwargs[name] == value
-
-
-@pytest.mark.parametrize("override", [None, "static-key"])
-async def test_token_provider_key_wins_over_passthrough_async(
-    patch_central_database, litellm_stub, override: str | None
-) -> None:
-    target = _caller_target(extra_body_parameters={"api_key": override})
-    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
-    with caller_principal_scope("alice"):
-        await target.send_prompt_async(message=_user_message())
-    kwargs = litellm_stub.acompletion.call_args.kwargs
-    assert kwargs["api_key"] == "caller-key"
-    assert kwargs["custom_llm_provider"] == "openai"
-    assert kwargs["model"] == "gpt-4o"
-
-
-@pytest.mark.parametrize("override", [None, "static-key"])
-async def test_direct_token_provider_key_wins_over_passthrough_async(
-    patch_central_database, litellm_stub, override: str | None
-) -> None:
-    target = LiteLLMChatTarget(
-        model_name="azure/gpt-4o", api_key=lambda: "direct-key", extra_body_parameters={"api_key": override}
-    )
-    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
-    await target.send_prompt_async(message=_user_message())
-    kwargs = litellm_stub.acompletion.call_args.kwargs
-    assert kwargs["api_key"] == "direct-key"
-    assert kwargs["model"] == "azure/gpt-4o"
-    assert "custom_llm_provider" not in kwargs
-
-
-def test_caller_mode_refuses_server_header_variables(patch_central_database, litellm_stub) -> None:
-    with patch.dict("os.environ", {"OPENAI_CUSTOM_HEADERS": "Authorization: Bearer server-key"}):
-        with pytest.raises(ValueError, match="OPENAI_CUSTOM_HEADERS"):
-            LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller")
-        direct = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=lambda: "direct-key")
-
-    assert callable(direct._api_key)
-
-
-def test_caller_mode_is_part_of_the_identity(patch_central_database, litellm_stub) -> None:
-    personal = LiteLLMChatTarget(model_name="openai/gpt-4o", auth_mode="caller")
-    direct = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=lambda: "direct-key")
-    shared = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="server-key")
-
-    assert personal.get_identifier().attributes == {"caller_credential": True}
-    assert direct.get_identifier().attributes == {}
-    assert direct.get_identifier().hash == shared.get_identifier().hash
-    assert personal.get_identifier().hash != shared.get_identifier().hash
-
-
-def test_reconstruction_shares_the_callers_keys(patch_central_database, litellm_stub) -> None:
-    source = _caller_target()
-    copy = TargetRegistry.get_registry_singleton().recreate_instance(
-        source=source, params={"temperature": 0.2}, external_input=True
-    )
-
-    assert isinstance(copy, LiteLLMChatTarget)
-    assert copy.caller_credential is source.caller_credential
+# ---------------------------------------------------------------------------
+# Copies and credential status
+# ---------------------------------------------------------------------------
 
 
 def test_reconstruction_keeps_the_provider_route(patch_central_database, litellm_stub) -> None:
@@ -1411,53 +1287,28 @@ def test_reconstruction_keeps_resolved_settings_and_changes_only_temperature(
     assert body["api_base"] == "https://gateway.test/v1"
 
 
-@pytest.mark.parametrize(
-    "passthrough",
-    [
-        {"model": "vertex_ai/gemini-2.5-flash"},
-        {"custom_llm_provider": "vertex_ai"},
-        {"fallbacks": ["vertex_ai/gemini-2.5-flash"]},
-        {"provider_specific_header": {"custom_llm_provider": "openai", "extra_headers": {"Authorization": "static"}}},
-        {"extra_headers": {"aUtHoRiZaTiOn": "static"}},
-        {"headers": {"X-API-Key": "static"}},
-    ],
-)
-async def test_token_provider_rejects_authentication_overrides_async(
-    patch_central_database, litellm_stub, passthrough: dict[str, object]
+@pytest.mark.parametrize("status_code", [401, 403])
+async def test_rejected_credentials_on_a_copy_are_reported_on_its_source(
+    patch_central_database, litellm_stub, status_code: int
 ) -> None:
+    source = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key="expired-key")
+    copy = TargetRegistry.get_registry_singleton().recreate_instance(
+        source=source, params={"temperature": 0.2}, external_input=True
+    )
+    litellm_stub.acompletion = AsyncMock(
+        side_effect=litellm_stub.exceptions.AuthenticationError("bad key", status_code=status_code)
+    )
+
+    with pytest.raises(PyritException):
+        await copy.send_prompt_async(message=_user_message())
+
+    assert source.credentials_rejected
+    assert copy.credentials_rejected
+
     litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
-    with caller_principal_scope("alice"), pytest.raises(ValueError, match="token provider"):
-        target = _caller_target(extra_body_parameters=passthrough)
-        await target.send_prompt_async(message=_user_message())
-    litellm_stub.acompletion.assert_not_awaited()
+    await copy.send_prompt_async(message=_user_message())
 
-
-@pytest.mark.parametrize("value", [None, "", "  "])
-async def test_token_provider_rejects_empty_key_without_fallback_async(
-    patch_central_database, litellm_stub, value: str | None
-) -> None:
-    target = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=AsyncMock(return_value=value))
-    with pytest.raises(ValueError, match="nonempty API key"):
-        await target.send_prompt_async(message=_user_message())
-    litellm_stub.acompletion.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
-    ("name", "value"),
-    [
-        ("model_fallbacks", ["vertex_ai/gemini-2.5-flash"]),
-        ("model_alias_map", {"gpt-4o": "vertex_ai/gemini-2.5-flash"}),
-        ("headers", {"Authorization": "static-key"}),
-    ],
-)
-async def test_token_provider_rejects_global_authentication_overrides_async(
-    patch_central_database, litellm_stub, name: str, value: object
-) -> None:
-    target = _caller_target()
-    with patch.object(litellm_stub, name, value, create=True), caller_principal_scope("alice"):
-        with pytest.raises(ValueError, match="token provider"):
-            await target.send_prompt_async(message=_user_message())
-    litellm_stub.acompletion.assert_not_awaited()
+    assert not source.credentials_rejected
 
 
 # ---------------------------------------------------------------------------

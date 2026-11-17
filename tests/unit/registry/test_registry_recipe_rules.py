@@ -61,9 +61,6 @@ def _refusal(class_name: str, params: dict[str, Any]) -> SavedEntryRefusedError:
         *((name, {"auth_mode": "identity", "endpoint": _ENDPOINT, "headers": "{}"}) for name in _OPENAI_CLASSES),
         ("OpenAIChatTarget", {"auth_mode": "none", "endpoint": "http://localhost:11434/v1"}),
         ("OpenAIChatTarget", {"auth_mode": "none", "endpoint": "http://localhost:11434/v1", "headers": "{}"}),
-        # Each caller sets their own key, so a saved entry neither holds nor borrows one.
-        ("OpenAIChatTarget", {"auth_mode": "caller", "endpoint": "https://api.example.test/v1", "headers": "{}"}),
-        ("OpenAIChatTarget", {"auth_mode": "caller", "endpoint": "https://api.example.test/v1"}),
         ("AzureMLChatTarget", {"auth_mode": "identity", "endpoint": "https://contoso.inference.ml.azure.com/score"}),
         ("PromptShieldTarget", {"auth_mode": "identity", "endpoint": "https://contoso.cognitiveservices.azure.com/"}),
         (

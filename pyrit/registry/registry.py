@@ -32,7 +32,13 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry, SupportsIdentifier
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    InstanceRegistry,
+    SupportsIdentifier,
+    creator_metadata,
+    record_private_references,
+)
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -862,9 +868,12 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 cannot be used for stored instances.
         """
         super().__init__(lazy_discovery=lazy_discovery)
+        identifier_type = self._identifier_type()
+        component_type = identifier_type.component_type if identifier_type is not None else None
         self.instances: InstanceRegistry[InstanceT] = DefaultInstanceRegistry(
             instance_type=self._base_type,
             reserved_names=reserved_instance_names,
+            entry_kind=component_type.value if component_type is not None else "entry",
         )
 
     def create_named_instance(
@@ -876,9 +885,13 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         registry_metadata: dict[str, Any] | None = None,
         external_input: bool = False,
         allowed_path_params: frozenset[str] = frozenset(),
+        private: bool | None = None,
     ) -> InstanceT:
         """
-        Build and store a configured instance under an explicit name.
+        Build and store a configured instance under an explicit name, recording the caller in scope as its creator.
+
+        An instance built from the caller's private entries is private too, so a shared component never
+        uses a private one.
 
         Args:
             name (str): The unique instance name.
@@ -891,23 +904,39 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 Defaults to False.
             allowed_path_params (frozenset[str]): External parameters that can name a
                 server file or folder but that the caller has made safe. Defaults to none.
+            private (bool | None): Whether only the caller can see and use the instance, or None to make it
+                private only when it is built on the caller's private entries. Defaults to None.
 
         Returns:
             InstanceT: The constructed and registered instance.
+
+        Raises:
+            ValueError: If ``private`` is False but the instance is built on the caller's private entries.
+            PermissionError: If ``private`` is True and no caller is in scope.
         """
         self.instances.validate_name_available(name)
         args = dict(params) if params is not None else {}
-        instance = (
-            self.create_instance_from_external_input(type_name, params=args, allowed_path_params=allowed_path_params)
-            if external_input
-            else self.create_instance(type_name, **args)
-        )
-        self.instances.register(instance, name=name, metadata=registry_metadata)
+        with record_private_references() as references:
+            instance = (
+                self.create_instance_from_external_input(
+                    type_name, params=args, allowed_path_params=allowed_path_params
+                )
+                if external_input
+                else self.create_instance(type_name, **args)
+            )
+        metadata = {
+            **(registry_metadata or {}),
+            **creator_metadata(name=name, requested_private=private, private_references=references),
+        }
+        self.instances.register(instance, name=name, metadata=metadata)
         return instance
 
     def resolve_source(self, *, name: str, identifier_hash: str) -> InstanceT:
         """
         Resolve an unchanged source, allowing only an unambiguous rename.
+
+        Only sources the caller in scope may see are found, and each is looked up by name, so a
+        build that uses a private source records it.
 
         Returns:
             InstanceT: The matching registered source.
@@ -921,13 +950,14 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 raise ValueError(f"Source instance '{name}' has changed")
             return source
         matches = [
-            entry.instance
+            entry.name
             for entry in self.instances.get_all_instances()
             if entry.instance.get_identifier().hash == identifier_hash
         ]
-        if len(matches) != 1:
+        renamed = self.instances.get(matches[0]) if len(matches) == 1 else None
+        if renamed is None or renamed.get_identifier().hash != identifier_hash:
             raise ValueError(f"Source instance '{name}' is missing or ambiguous")
-        return matches[0]
+        return renamed
 
     def get_reconstruction_parameters(self, source: InstanceT) -> dict[str, object]:
         """
@@ -958,6 +988,49 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             for parameter in parameters
             if parameter.name in inputs
         }
+
+    def rebuild_instance(
+        self,
+        *,
+        source: InstanceT,
+        params: Mapping[str, object],
+        allowed_path_params: frozenset[str] = frozenset(),
+    ) -> InstanceT:
+        """
+        Build a replacement for a registered component with external overrides; never change or register the source.
+
+        Unlike ``recreate_instance``, any external input may be overridden, including credentials and the
+        settings a copy keeps. The caller decides what the replacement may change, for example by
+        comparing identifiers.
+
+        Args:
+            source (InstanceT): The registered component to rebuild.
+            params (Mapping[str, object]): Constructor overrides from an external caller.
+            allowed_path_params (frozenset[str]): External overrides that can name a server file or folder
+                but that the caller has made safe. Defaults to none.
+
+        Returns:
+            InstanceT: The new component, owned by the caller.
+
+        Raises:
+            ValueError: If the source can't be reconstructed, an override is unknown or not external input,
+                or the source class is unavailable.
+        """
+        inputs = self.get_reconstruction_parameters(source)
+        overrides = resolve_constructor_args(
+            cls=type(source),
+            raw_args=dict(params),
+            identifier_type=self._identifier_type(),
+            external_input=True,
+            seam_base_type=self._seam_base_type(),
+            allowed_path_params=allowed_path_params,
+        )
+        with self._catalog_lock:
+            self._ensure_discovered()
+            names = sorted(name for name, cls in self._classes.items() if cls is type(source))
+        if not names:
+            raise ValueError("The source component's class is no longer registered")
+        return self.create_instance(names[0], **{**inputs, **overrides})
 
     def recreate_instance(
         self,

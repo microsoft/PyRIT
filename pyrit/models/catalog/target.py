@@ -70,17 +70,14 @@ class TargetInstance(BaseModel):
         None,
         description="Inner targets for composite targets like RoundRobinTarget (full instances, not just identifiers)",
     )
-    requires_caller_credential: bool = Field(
+    private: bool = Field(
+        False,
+        description="Whether the target is private: only the user who created it can see and use it",
+    )
+    credentials_rejected: bool = Field(
         False,
         description=(
-            "Whether the target uses each caller's own key (auth_mode 'caller') rather than the server's "
-            "shared credentials"
-        ),
-    )
-    caller_credential_configured: bool | None = Field(
-        None,
-        description=(
-            "Whether the requesting caller has set their own key for this target; null for a target that uses "
-            "shared credentials or when the request has no signed-in caller"
+            "Whether the provider rejected the target's credentials (HTTP 401 or 403) on the last request "
+            "through it; false when it has not been used"
         ),
     )

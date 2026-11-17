@@ -120,8 +120,6 @@ describe('TargetTable', () => {
     targets: sampleTargets,
     defaultAdversarialTarget: null as TargetInstance | null,
     onSetDefaultAdversarialTarget: jest.fn(),
-    onSetKey: jest.fn(),
-    onRemoveKey: jest.fn(),
   }
 
   beforeEach(() => {
@@ -1206,19 +1204,16 @@ describe('TargetTable', () => {
   })
 
   describe('account', () => {
-    const keySetTarget = makeTarget({
-      target_registry_name: 'own_key_set',
-      target_type: 'OpenAIChatTarget',
-      requires_caller_credential: true,
-      caller_credential_configured: true,
+    const REJECTED_MESSAGE = 'The last request was rejected. The credentials may be expired or invalid. '
+      + 'Update them through the API (PUT /api/targets/my_rejected/credentials) '
+      + 'or with pyrit_scan set-target-credential my_rejected.'
+    const acceptedTarget = makeTarget({
+      target_registry_name: 'my_accepted', private: true, credentials_rejected: false,
     })
-    const needsKeyTarget = makeTarget({
-      target_registry_name: 'own_key_missing',
-      target_type: 'OpenAIChatTarget',
-      requires_caller_credential: true,
-      caller_credential_configured: false,
+    const rejectedTarget = makeTarget({
+      target_registry_name: 'my_rejected', private: true, credentials_rejected: true,
     })
-    const accountTargets = [sampleTargets[0], keySetTarget, needsKeyTarget]
+    const accountTargets = [sampleTargets[0], acceptedTarget, rejectedTarget]
     const rowFor = (name: string) => within(screen.getByTestId(`target-row-${name}`))
 
     it('should explain the Account column with info help', async () => {
@@ -1228,111 +1223,82 @@ describe('TargetTable', () => {
       expect(screen.getByRole('columnheader', { name: 'Account' })).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: /Account.*information/i }))
       expect(await screen.findByRole('note')).toHaveTextContent(
-        "Shared targets use the server's credentials. Yours use each person's own key.",
+        'Shared targets are available to everyone. Yours are available only to you. '
+          + "The icon shows whether the provider accepted the target's credentials on the last request.",
       )
     })
 
-    it('should show Shared as plain text for a target that uses the server credentials', () => {
-      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+    it.each([
+      ['Shared', false, false, 'img', 'Credentials accepted'],
+      ['Shared', false, true, 'button', REJECTED_MESSAGE],
+      ['Yours', true, false, 'img', 'Credentials accepted'],
+      ['Yours', true, true, 'button', REJECTED_MESSAGE],
+    ])('should show %s (private: %s) with its credential status (rejected: %s)', (
+      label: string, isPrivate: boolean, credentialsRejected: boolean, role: string, name: string,
+    ) => {
+      const target = makeTarget({
+        target_registry_name: 'my_rejected', private: isPrivate, credentials_rejected: credentialsRejected,
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
 
-      const row = rowFor('openai_chat_gpt4')
-      expect(row.getByText('Shared')).toBeInTheDocument()
-      expect(row.queryByRole('img', { name: 'Your key is set' })).not.toBeInTheDocument()
-      expect(row.queryByRole('button', { name: /Needs your key/ })).not.toBeInTheDocument()
-      expect(row.queryByRole('button', { name: /key for openai_chat_gpt4/ })).not.toBeInTheDocument()
+      const row = rowFor('my_rejected')
+      expect(row.getByText(label)).toBeInTheDocument()
+      expect(row.getByRole(role, { name })).toBeInTheDocument()
     })
+    it.each([false, undefined])(
+      'should show a key labeled Credentials accepted when credentials_rejected is %s',
+      async (credentialsRejected: boolean | undefined) => {
+        const user = userEvent.setup()
+        const target = makeTarget({
+          target_registry_name: 'my_target', private: true, credentials_rejected: credentialsRejected,
+        })
+        render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
 
-    it('should show a lock with a matching label and tooltip when the user has set their key', async () => {
+        const row = rowFor('my_target')
+        expect(row.getByText('Yours')).toBeInTheDocument()
+        const key = row.getByRole('img', { name: 'Credentials accepted' })
+        expect(row.queryByRole('button', { name: /rejected/ })).not.toBeInTheDocument()
+        await user.hover(key)
+        expect(await screen.findByRole('tooltip')).toHaveTextContent('Credentials accepted')
+      },
+    )
+
+    it('should show a lock button labeled with how to update rejected credentials', async () => {
       const user = userEvent.setup()
       render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
 
-      const row = rowFor('own_key_set')
+      const row = rowFor('my_rejected')
       expect(row.getByText('Yours')).toBeInTheDocument()
-      const lock = row.getByRole('img', { name: 'Your key is set' })
-      expect(row.queryByRole('button', { name: /Needs your key/ })).not.toBeInTheDocument()
+      expect(row.queryByRole('img', { name: 'Credentials accepted' })).not.toBeInTheDocument()
+      const lock = row.getByRole('button', { name: REJECTED_MESSAGE })
       await user.hover(lock)
-      expect(await screen.findByRole('tooltip')).toHaveTextContent('Your key is set')
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(REJECTED_MESSAGE)
     })
 
-    it('should show a key button that opens the set-key dialog when the user needs to set their key', async () => {
+    it('should explain how to update rejected credentials when the lock is clicked, without an edit dialog', async () => {
       const user = userEvent.setup()
-      const onSetKey = jest.fn()
-      render(
-        <TestWrapper><TargetTable {...defaultProps} targets={accountTargets} onSetKey={onSetKey} /></TestWrapper>,
-      )
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
 
-      const row = rowFor('own_key_missing')
-      expect(row.getByText('Yours')).toBeInTheDocument()
-      expect(row.getByLabelText('Needs your key')).toBeInTheDocument()
-      expect(row.queryByRole('img', { name: 'Your key is set' })).not.toBeInTheDocument()
-      const shortcut = row.getByRole('button', { name: 'Needs your key — set your key for own_key_missing' })
-      await user.hover(shortcut)
-      expect(await screen.findByRole('tooltip')).toHaveTextContent('Needs your key')
-      await user.click(shortcut)
-      expect(onSetKey).toHaveBeenCalledWith(needsKeyTarget)
+      await user.click(rowFor('my_rejected').getByRole('button', { name: REJECTED_MESSAGE }))
+
+      const commands = await screen.findAllByText(/my_rejected/, { selector: 'code' })
+      expect(commands.map((command: HTMLElement) => command.textContent)).toEqual([
+        'PUT /api/targets/my_rejected/credentials',
+        'pyrit_scan set-target-credential my_rejected',
+      ])
+      expect(commands[0].parentElement).toHaveTextContent(REJECTED_MESSAGE)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     })
 
-    it('should point a composite that needs keys to its inner targets without offering key actions', () => {
-      const composite = makeTarget({
-        target_registry_name: 'mixed_round_robin',
-        requires_caller_credential: true,
-        caller_credential_configured: false,
-        inner_targets: [makeTarget({ target_registry_name: 'inner_own_key', requires_caller_credential: true })],
-      })
-      render(<TestWrapper><TargetTable {...defaultProps} targets={[composite]} /></TestWrapper>)
+    it('should offer no credential row actions', () => {
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
 
-      const row = rowFor('mixed_round_robin')
-      expect(row.getByText('Yours')).toBeInTheDocument()
-      expect(row.getByLabelText('Needs your key on its inner targets')).toBeInTheDocument()
-      expect(row.queryByRole('button', { name: /Needs your key/ })).not.toBeInTheDocument()
-      expect(row.queryByRole('button', { name: /key for mixed_round_robin/ })).not.toBeInTheDocument()
+      const actions = within(rowFor('my_rejected').getAllByRole('cell')[0]).getAllByRole('button')
+      expect(actions.map((button: HTMLElement) => button.getAttribute('aria-label'))).toEqual(['Hide my_rejected'])
     })
 
-    it('should treat an unknown key status as needing the key', () => {
-      const unknown = makeTarget({
-        target_registry_name: 'own_key_unknown', requires_caller_credential: true, caller_credential_configured: null,
-      })
-      render(<TestWrapper><TargetTable {...defaultProps} targets={[unknown]} /></TestWrapper>)
-
-      const row = rowFor('own_key_unknown')
-      expect(row.getByRole('button', { name: 'Needs your key — set your key for own_key_unknown' })).toBeInTheDocument()
-      expect(row.getByRole('button', { name: 'Set key for own_key_unknown' })).toHaveTextContent('Set key')
-      expect(row.queryByRole('button', { name: 'Remove key for own_key_unknown' })).not.toBeInTheDocument()
-    })
-
-    it('should offer Set key, Replace key, and Remove key row actions only for targets that use your own key', async () => {
-      const user = userEvent.setup()
-      const onSetKey = jest.fn()
-      const onRemoveKey = jest.fn()
-      render(
-        <TestWrapper>
-          <TargetTable {...defaultProps} targets={accountTargets} onSetKey={onSetKey} onRemoveKey={onRemoveKey} />
-        </TestWrapper>,
-      )
-
-      const needsKeyRow = rowFor('own_key_missing')
-      const setKey = needsKeyRow.getByRole('button', { name: 'Set key for own_key_missing' })
-      expect(setKey).toHaveTextContent('Set key')
-      expect(needsKeyRow.queryByRole('button', { name: 'Remove key for own_key_missing' })).not.toBeInTheDocument()
-      await user.click(setKey)
-      expect(onSetKey).toHaveBeenLastCalledWith(needsKeyTarget)
-
-      const keySetRow = rowFor('own_key_set')
-      const replaceKey = keySetRow.getByRole('button', { name: 'Replace key for own_key_set' })
-      expect(replaceKey).toHaveTextContent('Replace key')
-      await user.click(replaceKey)
-      expect(onSetKey).toHaveBeenLastCalledWith(keySetTarget)
-      await user.click(keySetRow.getByRole('button', { name: 'Remove key for own_key_set' }))
-      expect(onRemoveKey).toHaveBeenCalledWith(keySetTarget)
-
-      const sharedRow = rowFor('openai_chat_gpt4')
-      expect(sharedRow.getByRole('button', { name: 'Hide openai_chat_gpt4' })).toBeInTheDocument()
-      expect(sharedRow.queryByRole('button', { name: /key for openai_chat_gpt4/ })).not.toBeInTheDocument()
-      expect(onSetKey).toHaveBeenCalledTimes(2)
-      expect(onRemoveKey).toHaveBeenCalledTimes(1)
-    })
-
-    it('should show the account of inner targets without key controls', async () => {
+    it('should leave the account of inner targets blank', async () => {
       const user = userEvent.setup()
       const roundRobin = makeTarget({
         target_registry_name: 'rr_mixed',
@@ -1340,17 +1306,22 @@ describe('TargetTable', () => {
         target_specific_params: { weights: [1, 1] },
         inner_targets: [
           { target_registry_name: 'inner_shared', target_type: 'OpenAIChatTarget' },
-          { target_registry_name: 'inner_own', target_type: 'OpenAIChatTarget', requires_caller_credential: true },
+          {
+            target_registry_name: 'inner_mine', target_type: 'OpenAIChatTarget',
+            private: true, credentials_rejected: true,
+          },
         ],
       })
       render(<TestWrapper><TargetTable {...defaultProps} targets={[roundRobin]} /></TestWrapper>)
 
       await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
-      const sharedInner = within(screen.getByRole('row', { name: /#1 inner_shared/ }))
-      const ownInner = within(screen.getByRole('row', { name: /#2 inner_own/ }))
-      expect(sharedInner.getByText('Shared')).toBeInTheDocument()
-      expect(ownInner.getByText('Yours')).toBeInTheDocument()
-      expect(ownInner.queryByRole('button')).not.toBeInTheDocument()
+      const accountColumn = screen.getAllByRole('columnheader')
+        .findIndex((header: HTMLElement) => header.getAttribute('aria-label') === 'Account')
+      for (const name of [/#1 inner_shared/, /#2 inner_mine/]) {
+        const innerRow = screen.getByRole('row', { name })
+        expect(within(innerRow).getAllByRole('cell')[accountColumn]).toBeEmptyDOMElement()
+        expect(within(innerRow).queryByText(/^(Shared|Yours)$/)).not.toBeInTheDocument()
+      }
     })
 
     it('should filter targets by account', async () => {
@@ -1359,41 +1330,19 @@ describe('TargetTable', () => {
 
       await pickFilterOption(user, 'Filter by account:', 'Yours')
       expect(screen.queryByTestId('target-row-openai_chat_gpt4')).not.toBeInTheDocument()
-      expect(screen.getByTestId('target-row-own_key_set')).toBeInTheDocument()
-      expect(screen.getByTestId('target-row-own_key_missing')).toBeInTheDocument()
+      expect(screen.getByTestId('target-row-my_accepted')).toBeInTheDocument()
+      expect(screen.getByTestId('target-row-my_rejected')).toBeInTheDocument()
 
       await pickFilterOption(user, 'Filter by account:', 'Yours')
       await pickFilterOption(user, 'Filter by account:', 'Shared')
       expect(screen.getByTestId('target-row-openai_chat_gpt4')).toBeInTheDocument()
-      expect(screen.queryByTestId('target-row-own_key_set')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('target-row-my_accepted')).not.toBeInTheDocument()
     })
 
     it('should not offer the account filter when every target is shared', () => {
       render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
 
       expect(screen.queryByRole('combobox', { name: 'Filter by account:' })).not.toBeInTheDocument()
-    })
-
-    it('should keep a target that needs your key listed but not selectable as the adversarial default', () => {
-      const adversarialCapabilities = makeCapabilities(['text'], ['text'])
-      const needsKeyAdversary = makeTarget({
-        target_registry_name: 'own_adversary', model_name: 'gpt-4o', capabilities: adversarialCapabilities,
-        requires_caller_credential: true, caller_credential_configured: false,
-      })
-      const keySetAdversary = makeTarget({
-        target_registry_name: 'set_adversary', capabilities: adversarialCapabilities,
-        requires_caller_credential: true, caller_credential_configured: true,
-      })
-      render(
-        <TestWrapper>
-          <TargetTable {...defaultProps} targets={[sampleTargets[0], needsKeyAdversary, keySetAdversary]} />
-        </TestWrapper>,
-      )
-
-      const adversarial = screen.getByRole('combobox', { name: 'Default adversarial target' })
-      expect(within(adversarial).getByRole('option', { name: 'own_adversary (gpt-4o) · needs your key' })).toBeDisabled()
-      expect(within(adversarial).getByRole('option', { name: 'set_adversary · yours' })).toBeEnabled()
-      expect(within(adversarial).getByRole('option', { name: 'openai_chat_gpt4 (gpt-4)' })).toBeEnabled()
     })
   })
 })

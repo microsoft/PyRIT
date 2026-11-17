@@ -8,14 +8,14 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from pyrit.backend.middleware.auth import caller_principal, has_admin_access
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
-    SetTargetCredentialRequest,
     TargetListResponse,
+    UpdateTargetCredentialsRequest,
 )
 from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.targets import (
@@ -42,7 +42,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
     },
 )
 async def detect_capabilities_async(
-    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest, request: Request
+    target_registry_name: IdentifierStr, body: DetectTargetCapabilitiesRequest
 ) -> TargetInstance:
     """
     Run live checks and automatically update a registered target.
@@ -52,9 +52,7 @@ async def detect_capabilities_async(
     """
     try:
         return await get_target_service().detect_capabilities_async(
-            target_registry_name=target_registry_name,
-            expected_hash=body.expected_hash,
-            caller=caller_principal(request),
+            target_registry_name=target_registry_name, expected_hash=body.expected_hash
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -84,28 +82,6 @@ def _target_upload_directory(request: Request) -> str | None:
     return directory
 
 
-def _require_single_process(request: Request) -> None:
-    """
-    Refuse callers' keys when requests may reach a backend process that does not hold them.
-
-    Raises:
-        HTTPException: 409 when the deployment runs more than one backend worker or replica.
-    """
-    runtime = getattr(request.app.state, "runtime_lifecycle", None)
-    if runtime is not None and not runtime.topology_supported:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Callers' own keys are kept in one backend process and require one backend worker and one replica.",
-        )
-
-
-def _target_not_found(target_registry_name: str) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Target '{target_registry_name}' not found",
-    )
-
-
 @router.get(
     "",
     response_model=TargetListResponse,
@@ -114,21 +90,19 @@ def _target_not_found(target_registry_name: str) -> HTTPException:
     },
 )
 async def list_targets(  # pyrit-async-suffix-exempt
-    request: Request,
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
     """
     List target instances with pagination.
 
-    Returns paginated target instances, including whether the caller has set their own key
-    for targets that use each caller's own key.
+    Returns paginated target instances.
 
     Returns:
         TargetListResponse: Paginated list of target instances.
     """
     service = get_target_service()
-    return await service.list_targets_async(limit=limit, cursor=cursor, caller=caller_principal(request))
+    return await service.list_targets_async(limit=limit, cursor=cursor)
 
 
 @router.get(
@@ -161,11 +135,7 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         403: {
             "model": ProblemDetail,
             "description": "Administrator access is required to run model repository code or to use the "
-            "server's stored credentials",
-        },
-        409: {
-            "model": ProblemDetail,
-            "description": "Callers' own keys require one backend worker and one replica",
+            "server's stored credentials, or a private target was requested without a signed-in caller",
         },
     },
 )
@@ -180,15 +150,13 @@ async def create_target(
     Instantiates a target with the given type and parameters. Registration is
     optional; unregistered responses contain no reusable object handle.
 
-    Note: Sensitive parameters (API keys, tokens) are filtered from the response. With
-    ``auth_mode`` ``caller``, the target keeps no key: ``credential`` is stored only for this
-    caller, and other callers set their own key to use it.
+    Note: Sensitive parameters (API keys, tokens) are filtered from the response. A
+    target is private (only its creator can see and use it) when ``private`` is true, or
+    by default when the request supplies its credentials.
 
     Returns:
         TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
     """
-    if body.auth_mode == "caller":
-        _require_single_process(request)
     service = get_target_service()
 
     try:
@@ -196,7 +164,6 @@ async def create_target(
             request=body,
             upload_directory=_target_upload_directory(request),
             is_admin=has_admin_access(request),
-            caller=caller_principal(request),
         )
     except PermissionError as e:
         raise HTTPException(
@@ -223,9 +190,7 @@ async def create_target(
     },
 )
 async def get_target(
-    *,
     target_registry_name: IdentifierStr,
-    request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.
@@ -235,9 +200,12 @@ async def get_target(
     """
     service = get_target_service()
 
-    target = await service.get_target_async(target_registry_name=target_registry_name, caller=caller_principal(request))
+    target = await service.get_target_async(target_registry_name=target_registry_name)
     if not target:
-        raise _target_not_found(target_registry_name)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target_registry_name}' not found",
+        )
 
     return target
 
@@ -246,61 +214,42 @@ async def get_target(
     "/{target_registry_name}/credentials",
     response_model=TargetInstance,
     responses={
-        400: {"model": ProblemDetail, "description": "The target uses shared credentials"},
-        403: {"model": ProblemDetail, "description": "No verified caller identity"},
+        400: {"model": ProblemDetail, "description": "Invalid parameters, or a change to the target's identity"},
+        403: {
+            "model": ProblemDetail,
+            "description": "No signed-in caller, or the target comes from saved configuration",
+        },
         404: {"model": ProblemDetail, "description": "Target not found"},
-        409: {"model": ProblemDetail, "description": "The deployment runs more than one backend process"},
     },
 )
-async def set_target_credential(
+async def update_target_credentials(
     *,
     target_registry_name: IdentifierStr,
-    body: SetTargetCredentialRequest,
+    body: UpdateTargetCredentialsRequest,
     request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
-    Set or replace the caller's own key for a target that uses each caller's own key.
+    Update the credentials of a shared target, or of a private target the caller owns.
 
-    The key is kept only in this backend process's memory and is never returned. It applies
-    to the caller's next request through the target, including running work.
+    Rebuilds the target with the given parameters and replaces it under the same name. Any
+    parameter the create API accepts may change except ones that are part of the target's
+    identity, such as its endpoint or model. Values are never returned. Work already running
+    keeps using the previous target.
 
     Returns:
-        TargetInstance: The target as seen by the caller.
+        TargetInstance: The updated target.
     """
-    _require_single_process(request)
-    target = await get_target_service().set_caller_credential_async(
-        target_registry_name=target_registry_name,
-        caller=caller_principal(request),
-        credential=body.credential.get_secret_value(),
-    )
+    try:
+        target = await get_target_service().update_credentials_async(
+            target_registry_name=target_registry_name, request=body, is_admin=has_admin_access(request)
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     if target is None:
-        raise _target_not_found(target_registry_name)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target_registry_name}' not found",
+        )
     return target
-
-
-@router.delete(
-    "/{target_registry_name}/credentials",
-    status_code=status.HTTP_204_NO_CONTENT,
-    responses={
-        400: {"model": ProblemDetail, "description": "The target uses shared credentials"},
-        403: {"model": ProblemDetail, "description": "No verified caller identity"},
-        404: {"model": ProblemDetail, "description": "Target not found"},
-    },
-)
-async def delete_target_credential(
-    *,
-    target_registry_name: IdentifierStr,
-    request: Request,
-) -> Response:  # pyrit-async-suffix-exempt
-    """
-    Remove the caller's own key for a target that uses each caller's own key.
-
-    Returns:
-        Response: An empty 204 response.
-    """
-    removed = await get_target_service().remove_caller_credential_async(
-        target_registry_name=target_registry_name, caller=caller_principal(request)
-    )
-    if not removed:
-        raise _target_not_found(target_registry_name)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

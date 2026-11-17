@@ -52,7 +52,9 @@ def _target_specific_params(target_identifier: TargetIdentifier) -> dict[str, An
     return {**extra, **explicit_specific} or None
 
 
-def target_object_to_instance(target_registry_name: str, target_obj: PromptTarget) -> TargetInstance:
+def target_object_to_instance(
+    target_registry_name: str, target_obj: PromptTarget, *, private: bool = False
+) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.
 
@@ -63,6 +65,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     Args:
         target_registry_name: The human-friendly target registry name.
         target_obj: The domain PromptTarget object from the registry.
+        private: Whether only the target's creator can see and use it. Defaults to False.
 
     Returns:
         TargetInstance DTO with metadata derived from the object.
@@ -83,7 +86,8 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
-        requires_caller_credential=bool(target_obj.get_caller_credentials()),
+        private=private,
+        credentials_rejected=target_obj.credentials_rejected,
     )
 
 

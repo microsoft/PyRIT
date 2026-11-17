@@ -8,7 +8,7 @@ The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common import AuthMode
@@ -19,10 +19,10 @@ from pyrit.models.component_spec import SourceInstanceSpec
 __all__ = [
     "CreateTargetRequest",
     "DetectTargetCapabilitiesRequest",
-    "SetTargetCredentialRequest",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
+    "UpdateTargetCredentialsRequest",
 ]
 
 
@@ -89,29 +89,17 @@ class CreateTargetRequest(BaseModel):
             "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
             "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
             "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
-            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets. "
-            "'caller' registers a shared target that uses each caller's own key: it keeps no key, and every "
-            "caller sets their own before using it; requires register=true and is supported by OpenAI-family "
-            "targets (except RealtimeTarget) and LiteLLMChatTarget with an explicit openai/ model."
+            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
         ),
     )
-    credential: SecretStr | None = Field(
+    private: bool | None = Field(
         None,
-        min_length=1,
-        max_length=16384,
         description=(
-            "With auth_mode 'caller', the creating caller's own key, stored only for them. Other callers set "
-            "their own. It is never returned."
+            "Whether only the signed-in user who creates the target can see and use it, and anything built with "
+            "it. Omitted, it is shared, unless it is built on your private targets; then it is private and false "
+            "is refused. A private target requires register=true."
         ),
     )
-
-    @model_validator(mode="after")
-    def _validate_caller_auth(self) -> "CreateTargetRequest":
-        if self.credential is not None and self.auth_mode != "caller":
-            raise ValueError("credential applies only to auth_mode 'caller'; send other keys in params.api_key")
-        if self.auth_mode == "caller" and not self.register:
-            raise ValueError("auth_mode 'caller' applies only to registered targets")
-        return self
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
@@ -137,14 +125,18 @@ class UnregisteredTarget(BaseModel):
     )
 
 
-class SetTargetCredentialRequest(BaseModel):
-    """Request to set or replace the caller's own key for a target that uses each caller's own key."""
+class UpdateTargetCredentialsRequest(BaseModel):
+    """Request to update the credentials of a private target the caller owns."""
 
     model_config = ConfigDict(extra="forbid")
 
-    credential: SecretStr = Field(
+    params: dict[IdentifierStr, JSONValue] = Field(
         ...,
         min_length=1,
-        max_length=16384,
-        description="The caller's own API key or access token for this target. It is never returned.",
+        max_length=MAX_ITEMS,
+        description=(
+            "Constructor parameters to replace, such as api_key or headers. Any parameter the create API accepts "
+            "may change except ones that are part of the target's identity, such as its endpoint or model. Values "
+            "are never returned."
+        ),
     )

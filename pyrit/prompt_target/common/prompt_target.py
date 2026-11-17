@@ -3,12 +3,11 @@
 
 import abc
 import logging
-import os
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Self, final
+from typing import Any, ClassVar, Self, final
 
 from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
@@ -41,10 +40,35 @@ from pyrit.prompt_target.common.target_history import filter_non_replayable_mess
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, target_trace_context
 
-if TYPE_CHECKING:
-    from pyrit.auth import CallerCredential
-
 logger = logging.getLogger(__name__)
+
+# Provider status codes that mean the target's credentials were rejected.
+_CREDENTIAL_REJECTION_STATUS_CODES = frozenset({401, 403})
+
+
+def _is_credential_rejection(error: BaseException) -> bool:
+    """
+    Check whether a send failed because the provider rejected the target's credentials.
+
+    OpenAI SDK errors (``AuthenticationError``, ``PermissionDeniedError``), LiteLLM's errors, and
+    PyRIT exceptions carry the provider's ``status_code``. Targets that translate an error keep the
+    original as its cause, so the whole chain is checked.
+
+    Args:
+        error (BaseException): The error a send raised.
+
+    Returns:
+        bool: True if the error, or one it was raised from, has status 401 or 403.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "status_code", None) in _CREDENTIAL_REJECTION_STATUS_CODES:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 # ``AuthMode`` is imported above (and re-exported from this module for backward
 # compatibility); it is canonically defined in ``pyrit.common.auth_mode`` so
@@ -66,6 +90,11 @@ class PromptTarget(Identifiable):
     supported_converters: list[Any]
 
     _identifier: ComponentIdentifier | None = None
+
+    # Whether the provider rejected the credentials on the last request through this target.
+    _credentials_rejected: bool = False
+    # The target a copy reports credential rejections into, so its registered source reflects the copy's requests.
+    _credential_status_source: "PromptTarget | None" = None
 
     # Class-level default configuration for this target type.
     #
@@ -129,9 +158,9 @@ class PromptTarget(Identifiable):
     # Credential parameters that, left empty, let the target fall back to a credential from this
     # server (an environment variable, or the server's Azure identity), each mapped to the value
     # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
-    # parameter mapped to None, and ``"none"`` and ``"caller"`` read none of them. A saved target never
-    # falls back to this server's credentials, so a saved entry that would is refused. Choosing
-    # ``"identity"`` isn't a fallback.
+    # parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls back
+    # to this server's credentials, so a saved entry that would is refused. Choosing ``"identity"``
+    # isn't a fallback.
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
 
     # Parameters that say where the target sends requests (a URL, or a path the target adds to
@@ -443,7 +472,9 @@ class PromptTarget(Identifiable):
                 if send_context:
                     send_context.mark_target_invoked()
                 try:
-                    response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                    response = await self._send_and_track_credentials_async(
+                        normalized_conversation=normalized_conversation
+                    )
                 finally:
                     generation_info = RequestGenerationInfo.from_metadata(
                         metadata=normalized_request.get_piece().prompt_metadata
@@ -562,9 +593,54 @@ class PromptTarget(Identifiable):
         """
         token = self._DISPATCH_CAPABILITIES.set((self, capabilities))
         try:
-            return await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            return await self._send_and_track_credentials_async(normalized_conversation=normalized_conversation)
         finally:
             self._DISPATCH_CAPABILITIES.reset(token)
+
+    async def _send_and_track_credentials_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Send, and record whether the provider accepted the target's credentials.
+
+        A provider authentication failure (401 or 403) marks them rejected; a completed request marks
+        them accepted. Other failures leave the state unchanged.
+
+        Args:
+            normalized_conversation (list[Message]): The normalized conversation to send.
+
+        Returns:
+            list[Message]: Response messages from the target.
+        """
+        try:
+            response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        except Exception as error:
+            if _is_credential_rejection(error):
+                self._credential_status_owner()._credentials_rejected = True
+            raise
+        self._credential_status_owner()._credentials_rejected = False
+        return response
+
+    def _credential_status_owner(self) -> "PromptTarget":
+        return self._credential_status_source or self
+
+    @property
+    def credentials_rejected(self) -> bool:
+        """
+        Whether the provider rejected this target's credentials on the last request through it.
+
+        Requests through copies built from this target, such as a chat's temperature override, count too.
+        False until a request fails authentication, and again after a later request completes.
+        """
+        return self._credential_status_owner()._credentials_rejected
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """
+        Report credential rejections into the target this copy was built from.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        if isinstance(source, PromptTarget):
+            self._credential_status_source = source._credential_status_owner()
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
@@ -906,61 +982,12 @@ class PromptTarget(Identifiable):
         return TargetIdentifier.of(
             self,
             params=params,
-            # Not a credential: it records that each caller's own key is used, so a target that uses
-            # callers' keys never shares an identity with one that authenticates as the server.
-            attributes={"caller_credential": True} if self.caller_credential is not None else None,
             endpoint=self._endpoint,
             model_name=self._model_name or "",
             underlying_model_name=self._underlying_model or "",
             max_requests_per_minute=self._max_requests_per_minute,
             targets=targets,
         )
-
-    @property
-    def caller_credential(self) -> "CallerCredential | None":
-        """
-        The credential that holds each caller's own key, or None when the target uses shared credentials.
-
-        Targets that support ``auth_mode="caller"`` return the credential they were built with.
-
-        Returns:
-            CallerCredential | None: The credential for ``auth_mode="caller"``, otherwise None.
-        """
-        return None
-
-    def get_caller_credentials(self) -> list["CallerCredential"]:
-        """
-        Return the credentials of this target and of any inner targets that use each caller's own key.
-
-        A composite target, such as ``RoundRobinTarget``, needs each caller's key for every inner target
-        that uses one.
-
-        Returns:
-            list[CallerCredential]: The credentials, or an empty list when every request uses shared credentials.
-        """
-        credentials = [self.caller_credential] if self.caller_credential is not None else []
-        for inner_target in getattr(self, "inner_targets", None) or ():
-            credentials.extend(inner_target.get_caller_credentials())
-        return credentials
-
-    def _validate_caller_credential_environment(self) -> None:
-        """
-        Refuse caller keys while this server sets headers the target's client adds itself.
-
-        Those headers are sent with every request, so one could replace each caller's own key.
-
-        Raises:
-            ValueError: If the target uses callers' keys and one of its ``server_header_variables`` is set.
-        """
-        if self.caller_credential is None:
-            return
-        for variable in type(self).server_header_variables:
-            if os.environ.get(variable):
-                raise ValueError(
-                    f"This server sets {variable}, whose headers {type(self).__name__} would send with every "
-                    "request and which could replace each caller's own key. A target that uses callers' keys "
-                    "isn't built while it is set."
-                )
 
     @property
     def configuration(self) -> TargetConfiguration:
