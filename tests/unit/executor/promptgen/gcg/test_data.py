@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from unit.mocks import get_mock_target
@@ -18,6 +19,8 @@ from pyrit.models import GCGSeedMetadata, Message, MessagePiece, Score, SeedData
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyrit.memory import SQLiteMemory
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -151,6 +154,36 @@ async def test_create_config_resolves_test_dataset(completion_scorer: MagicMock)
     assert config.test_goals == ["test"]
     assert config.test_targets == ["Generated test"]
     assert GCGDataConfig.from_json(config.to_json()) == config
+
+
+async def test_create_config_loads_default_prompt_off_event_loop_async(completion_scorer: MagicMock) -> None:
+    event_loop_thread_id = threading.get_ident()
+    load_prompt = SeedPrompt.from_yaml_file
+    target = _mock_adversarial_target("Prefix", "Prefix")
+
+    def _load_in_worker(file: str | Path) -> SeedPrompt:
+        assert threading.get_ident() != event_loop_thread_id
+        prompt = load_prompt(file)
+        assert prompt.parameters == ["objective", "max_length"]
+        return prompt
+
+    with patch.object(SeedPrompt, "from_yaml_file", side_effect=_load_in_worker) as loader:
+        config = await create_gcg_data_config_async(
+            dataset=SeedDataset(seeds=[SeedObjective(value="train {{ unchanged }}")]),
+            test_dataset=SeedDataset(seeds=[SeedObjective(value="test")]),
+            adversarial_target=target,
+            completion_scorer=completion_scorer,
+            max_generated_target_length=6,
+        )
+
+    loader.assert_called_once()
+    for call, objective in zip(
+        target.send_prompt_async.await_args_list, ["train {{ unchanged }}", "test"], strict=True
+    ):
+        prompt = call.kwargs["message"].get_value()
+        assert "at most 6 characters" in prompt
+        assert f"<objective>\n{objective}\n</objective>" in prompt
+    assert config.train_targets == config.test_targets == ["Prefix"]
 
 
 async def test_create_config_missing_target_without_adversarial_target_raises() -> None:
@@ -367,23 +400,24 @@ async def test_create_config_rejects_invalid_scorer_result(score_count: int, com
 async def test_create_config_renders_custom_prompt(completion_scorer: MagicMock) -> None:
     target = _mock_adversarial_target("Prefix")
 
-    config = await create_gcg_data_config_async(
-        dataset=SeedDataset(seeds=[SeedObjective(value="goal")]),
-        adversarial_target=target,
-        completion_scorer=completion_scorer,
-        completion_prompt=SeedPrompt(
-            value="Custom: {{ objective }} (limit {{ max_length }})",
-            parameters=["objective", "max_length"],
-            data_type="text",
-        ),
-        max_generated_target_length=6,
-    )
+    with patch.object(SeedPrompt, "from_yaml_file", side_effect=AssertionError("Custom prompts must not load YAML")):
+        config = await create_gcg_data_config_async(
+            dataset=SeedDataset(seeds=[SeedObjective(value="goal")]),
+            adversarial_target=target,
+            completion_scorer=completion_scorer,
+            completion_prompt=SeedPrompt(
+                value="Custom: {{ objective }} (limit {{ max_length }})",
+                parameters=["objective", "max_length"],
+                data_type="text",
+            ),
+            max_generated_target_length=6,
+        )
 
     assert target.send_prompt_async.await_args.kwargs["message"].get_value() == "Custom: goal (limit 6)"
     assert config.train_targets == ["Prefix"]
 
 
-@pytest.mark.parametrize("prompt_value", [" ", "{{ missing_variable }}"])
+@pytest.mark.parametrize("prompt_value", [" ", "{{ missing_variable }}", "{{ objective.__class__.__mro__ }}"])
 async def test_create_config_rejects_invalid_prompt_before_sending(
     prompt_value: str, completion_scorer: MagicMock
 ) -> None:
