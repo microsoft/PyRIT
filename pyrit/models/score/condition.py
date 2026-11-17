@@ -197,7 +197,9 @@ class ToolArgumentRequirement(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def _validate_name(cls, value: str, info: ValidationInfo) -> str:
+    def _validate_name(  # pyrit-keyword-only-exempt Pydantic field validator (value, info)
+        cls, value: str, info: ValidationInfo
+    ) -> str:
         """
         Require a valid argument path, except when reading a stored requirement.
 
@@ -422,7 +424,9 @@ class ProgramBehaves(Condition):
         return tuple(case.invocation for case in self.cases)
 
 
-def _parse_conditions(value: Any, info: ValidationInfo) -> Any:
+def _parse_conditions(  # pyrit-keyword-only-exempt Pydantic BeforeValidator (value, info)
+    value: Any, info: ValidationInfo
+) -> Any:
     """
     Rebuild discriminator-tagged conditions without losing subclass fields.
 
