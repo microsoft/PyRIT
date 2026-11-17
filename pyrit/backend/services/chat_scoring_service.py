@@ -611,8 +611,11 @@ class ChatScoringService:
                 sent_after=anchor_timestamp,
             )
             conversations = attack.get_active_conversation_ids()
+            anchor_ids = {str(anchor.id) for anchor in evaluation.response.message_pieces}
             if any(
-                message.timestamp > anchor_timestamp and str(message.conversation_id) in conversations
+                str(message.id) not in anchor_ids
+                and message.timestamp > anchor_timestamp
+                and str(message.conversation_id) in conversations
                 for message in newer
             ):
                 return fields

@@ -1961,17 +1961,34 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
         )
 
     with patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async):
-        await service.add_message_async(
-            attack_result_id=attack.attack_result_id,
-            request=chat_request(attack).model_copy(
-                update={
-                    "pieces": [
-                        MessagePieceRequest(original_value="Write the result"),
-                        MessagePieceRequest(original_value="Keep this request as one multipart turn"),
-                    ]
-                }
-            ),
+        request = chat_request(attack).model_copy(
+            update={
+                "pieces": [
+                    MessagePieceRequest(original_value="Write the result"),
+                    MessagePieceRequest(original_value="Keep this request as one multipart turn"),
+                ]
+            }
         )
+        if not receipt and not writes_file:
+            status = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=MessageSendRequest(**request.model_dump(), submission_id="multipart-delivery", count=2),
+            )
+            for _ in range(100):
+                status = await service.get_status_async(
+                    attack_result_id=attack.attack_result_id, send_id=status.send_id, wait_ms=1000
+                )
+                if status.state in ("completed", "failed"):
+                    break
+            assert status.state == "completed" and status.failure_stage is None
+            [published] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+            assert published.automated_score is not None
+            pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
+            scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id for piece in pieces])
+            assert len(scores) == 2
+            assert published.automated_score.id == max(scores, key=lambda score: score.timestamp).id
+        else:
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
 
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.last_response is None
