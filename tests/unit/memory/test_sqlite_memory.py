@@ -807,7 +807,7 @@ async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample
         sqlite_instance._insert_entries, entries=sample_conversation_entries
     )
     update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
-        conversation_id=specific_conversation_id, update_fields={"prompt_metadata": "updated_metadata"}
+        conversation_id=specific_conversation_id, update_fields={"prompt_metadata": {"status": "updated"}}
     )
     assert update_result is True
 
@@ -816,10 +816,51 @@ async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample
             await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id))
         ).all()
         for entry in updated_entries:
-            assert entry.prompt_metadata == "updated_metadata"
+            assert entry.prompt_metadata == {"status": "updated"}
 
         other_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="other_id"))).first()
         assert other_entry.prompt_metadata == original_metadata
+
+
+@pytest.mark.parametrize("metadata", [[], "invalid", None, 1])
+async def test_generic_metadata_update_rejects_invalid_roots_async(
+    sqlite_instance: SQLiteMemory, metadata: Any
+) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant", original_value=value, conversation_id="generic", prompt_metadata={"owner": value}
+            )
+            for value in ("first", "second")
+        ]
+    )
+    before = await sqlite_instance.get_message_pieces_async(conversation_id="generic")
+    with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+        await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+            conversation_id="generic", update_fields={"original_value": "must not change", "prompt_metadata": metadata}
+        )
+    after = await sqlite_instance.get_message_pieces_async(conversation_id="generic")
+    assert [piece.model_dump() for piece in after] == [piece.model_dump() for piece in before]
+
+
+@pytest.mark.parametrize("metadata", [{}, {"nested": {"values": [1, 2]}}])
+async def test_generic_metadata_update_accepts_dictionaries_async(sqlite_instance: SQLiteMemory, metadata: Any) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant", original_value="original", conversation_id="generic", prompt_metadata={"old": 1}
+            )
+        ]
+    )
+    assert await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+        conversation_id="generic", update_fields={"prompt_metadata": metadata, "original_value": "updated"}
+    )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="generic")
+    assert pieces[0].prompt_metadata == metadata
+    assert pieces[0].original_value == "updated"
+    assert not await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+        conversation_id="missing", update_fields={"prompt_metadata": metadata}
+    )
 
 
 @pytest.mark.parametrize("metadata", [[], "invalid", None, 1])

@@ -4187,10 +4187,13 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             ValueError: If update_fields is empty or not provided.
+            ValueError: If prompt_metadata is provided and is not a dictionary.
             ValueError: If an entry is immutable observation evidence.
         """
         if not update_fields:
             raise ValueError("update_fields must be provided to update prompt entries.")
+        if "prompt_metadata" in update_fields and not isinstance(update_fields["prompt_metadata"], dict):
+            raise ValueError("prompt_metadata must be a dictionary")
         # Fetch the relevant entries using query_entries
         entries_to_update: MutableSequence[Base] = self._query_entries(
             PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == conversation_id
@@ -10254,6 +10257,7 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             ValueError: If update_fields is empty or not provided.
+            ValueError: If prompt_metadata is provided and is not a dictionary.
             ValueError: If an entry is immutable observation evidence.
         """
         return await self._run_database_operation_async(
