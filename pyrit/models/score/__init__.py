@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         ToolCallRequirement,
         ToolsCalled,
         ToolsCalledInOrder,
+        ViolatesAssertPolicy,
     )
     from pyrit.models.score.expectation import (
         ScoringExpectation,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from pyrit.models.score.observation import (
         Acquisition,
         ConversationObservationPayload,
+        ExecutionTraceObservationPayload,
         Observation,
         ObservationPayload,
         ProgramExecutionObservationPayload,
@@ -68,11 +70,14 @@ if TYPE_CHECKING:
     from pyrit.models.score.surface import SurfaceBaseline, SurfaceCoverage, SurfaceEntry, SurfaceMatch
     from pyrit.models.score.text_matcher import Contains, Equals, Regex, StartsWith, TextMatcher
     from pyrit.models.score.trace import (
+        ExecutionStep,
+        ExecutionStepKind,
         ToolExecution,
         TraceCoverage,
         TraceQuery,
         TraceQueryResult,
         TraceSpan,
+        TraceSpanEvent,
         TraceSpanStatus,
     )
 
@@ -99,6 +104,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentWritten": "pyrit.models.score.condition",
     "DecisionMatches": "pyrit.models.score.condition",
     "DivergesFromRepetition": "pyrit.models.score.condition",
+    "ExecutionStep": "pyrit.models.score.trace",
+    "ExecutionStepKind": "pyrit.models.score.trace",
+    "ExecutionTraceObservationPayload": "pyrit.models.score.observation",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",
     "MatchesObjective": "pyrit.models.score.condition",
     "MessageScorable": "pyrit.models.score.scorable",
@@ -127,9 +135,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "TraceQueryResult": "pyrit.models.score.trace",
     "TraceScorable": "pyrit.models.score.scorable",
     "TraceSpan": "pyrit.models.score.trace",
+    "TraceSpanEvent": "pyrit.models.score.trace",
     "TraceSpanStatus": "pyrit.models.score.trace",
     "UndeterminedScoreError": "pyrit.models.score.score",
     "UnvalidatedScore": "pyrit.models.score.score",
+    "ViolatesAssertPolicy": "pyrit.models.score.condition",
     "scorable_from_dict": "pyrit.models.score.scorable",
     "scoring_expectation_fingerprint": "pyrit.models.score.expectation",
 }
