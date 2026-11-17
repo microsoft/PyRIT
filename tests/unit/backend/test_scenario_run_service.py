@@ -64,10 +64,16 @@ from pyrit.models import (
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog import RunScenarioRequest
-from pyrit.prompt_target import TargetCapabilities
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScenarioMetadata, ScenarioRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.models.catalog import RegistryEntryOrigin, RunScenarioRequest
+from pyrit.prompt_target import TargetCapabilities, TextTarget
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioRegistry,
+    TargetRegistry,
+)
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -385,6 +391,35 @@ async def test_launch_scripts_still_replace_startup_entries_async(converter_regi
     await _run_launch_scripts_async({"converters": _LaunchScript(name="rot13")})
 
     assert isinstance(converter_registry.instances.get("rot13"), Base64Converter)
+
+
+class _LaunchScriptTextTarget(TextTarget):
+    """A target class that only a launch script registers."""
+
+
+class _TargetLaunchScript:
+    """A launch script that adds a target class and a target."""
+
+    async def initialize_async(self) -> None:
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_class(_LaunchScriptTextTarget, name="launch_script_text")
+        registry.instances.register(TextTarget(), name="launched_text")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_what_launch_scripts_add_is_temporary_async() -> None:
+    TargetRegistry.reset_registry_singleton()
+    try:
+        await _run_launch_scripts_async({"targets": _TargetLaunchScript()})
+
+        registry = TargetRegistry.get_registry_singleton()
+        entry = registry.instances.get_entry("launched_text")
+        assert entry is not None
+        assert registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY
+        assert registry.is_temporary_class("launch_script_text")
+        assert not registry.is_temporary_class("TextTarget")
+    finally:
+        TargetRegistry.reset_registry_singleton()
 
 
 def _make_request(

@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.registry import (
     DefaultInstanceRegistry,
     InstanceRegistry,
@@ -24,9 +25,14 @@ from pyrit.registry import (
     TagQuery,
 )
 from pyrit.registry.instance_registry import (
+    CONFIGURATION_ENTRY_METADATA_KEY,
     SAVED_ENTRY_METADATA_KEY,
+    RegistryNameTakenError,
     SavedEntryReplacementError,
+    current_registration_origin,
     record_saved_entry_refusals,
+    registration_origin,
+    registry_entry_origin,
     saved_entry_registration,
 )
 
@@ -96,10 +102,21 @@ class TestRegistration:
     def test_register_rejects_existing_name(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
 
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(RegistryNameTakenError, match="already exists"):
             registry.register(_item("updated"), name="name")
 
         assert registry.get("name") == "original"
+
+    def test_a_reserved_name_is_refused_but_not_as_taken(self):
+        registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
+
+        for check in (
+            lambda: registry.register(_item("x"), name="types"),
+            lambda: registry.validate_name_available("types"),
+        ):
+            with pytest.raises(ValueError, match="reserved") as refusal:
+                check()
+            assert not isinstance(refusal.value, RegistryNameTakenError)
 
     def test_register_can_explicitly_replace_existing(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
@@ -127,6 +144,47 @@ class TestRegistration:
 
         assert refusals == [("converters", "name")]
         assert registry.get("other") == "other"
+
+    def test_marks_entries_registered_while_the_startup_scripts_run(self, registry: DefaultInstanceRegistry[_TestItem]):
+        startup_metadata = {"supports_tool_calls": True}
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            registry.register(_item("startup"), name="startup", metadata=startup_metadata)
+            registry.register(_item("replaced"), name="replaced")
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register(_item("launched"), name="launched")
+        registry.register(_item("swapped in"), name="replaced", replace=True)
+        registry.register(_item("created"), name="created")
+
+        origins = {entry.name: registry_entry_origin(entry.metadata) for entry in registry.get_all_instances()}
+        assert origins == {
+            "created": RegistryEntryOrigin.TEMPORARY,
+            "launched": RegistryEntryOrigin.TEMPORARY,
+            "replaced": RegistryEntryOrigin.TEMPORARY,
+            "startup": RegistryEntryOrigin.CONFIGURATION,
+        }
+        assert startup_metadata == {"supports_tool_calls": True}
+
+    def test_the_registration_origin_ends_with_its_block_even_when_a_script_fails(self):
+        with pytest.raises(RuntimeError, match="script failed"), registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            with registration_origin(RegistryEntryOrigin.TEMPORARY):
+                assert current_registration_origin() is RegistryEntryOrigin.TEMPORARY
+            assert current_registration_origin() is RegistryEntryOrigin.CONFIGURATION
+            raise RuntimeError("script failed")
+
+        assert current_registration_origin() is None
+
+    @pytest.mark.parametrize(
+        ("metadata", "origin"),
+        [
+            ({SAVED_ENTRY_METADATA_KEY: "targets"}, RegistryEntryOrigin.SAVED),
+            ({SAVED_ENTRY_METADATA_KEY: "targets", CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.SAVED),
+            ({CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.CONFIGURATION),
+            ({}, RegistryEntryOrigin.TEMPORARY),
+            ({"supports_tool_calls": True}, RegistryEntryOrigin.TEMPORARY),
+        ],
+    )
+    def test_tells_where_an_entry_comes_from(self, metadata: dict[str, object], origin: RegistryEntryOrigin):
+        assert registry_entry_origin(metadata) is origin
 
     def test_a_restore_scope_marks_only_the_entry_it_names(self, registry: DefaultInstanceRegistry[_TestItem]):
         with saved_entry_registration(kind="targets", name="saved"):
