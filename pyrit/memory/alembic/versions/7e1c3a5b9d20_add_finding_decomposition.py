@@ -12,7 +12,7 @@ Revises: 5d7f9b1c3e2a
 Create Date: 2026-11-06 19:00:00.000000
 """
 
-from collections.abc import Sequence  # noqa: TC003
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
