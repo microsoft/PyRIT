@@ -175,6 +175,7 @@ comparable across runs. This suite is text-only and uses the existing scenario s
 See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for the suite contents
 and running a suite.
 
+(custom-initializers-source)=
 ### `custom_initializers_source`
 
 Stores custom initializer Python files in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:

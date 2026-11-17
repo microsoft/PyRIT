@@ -11,7 +11,9 @@
 # %% [markdown]
 # # Scenario Suites
 #
-# A **preset** describes a scenario's techniques, objectives, and parameters.
+# A **scenario** runs attack techniques against a target using objective datasets and
+# scores the results (see [Scenarios](./0_scenarios)).
+# A **preset** saves a scenario's techniques, objectives, and parameter choices.
 # A **suite** is an ordered collection of preset references.
 # One launch runs those presets against a selected target through the ordinary scenario
 # execution path. The `scenario_suite` initializer registers read-only suites whose presets
@@ -76,6 +78,67 @@ for entry in suite.entries:
 #
 # The initializer takes no parameters. A stored document with the same name as a
 # registered suite or preset takes precedence over it.
+
+# %% [markdown]
+# ## Define your own suite
+#
+# ### In code
+#
+# A builder returns a `ScenarioSuite` and the `list[ScenarioPreset]` its entries
+# reference. Use stable entry IDs and unique suite/preset names. Save this example as
+# `my_suites.py` in your configured
+# [custom initializer source](../../getting_started/pyrit_conf.md#custom_initializers_source):
+#
+# ```python
+# from uuid import NAMESPACE_URL, uuid5
+#
+# from pyrit.models import ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
+# from pyrit.setup.initializers import ScenarioSuiteInitializer
+#
+#
+# def build_my_suite() -> tuple[ScenarioSuite, list[ScenarioPreset]]:
+#     """Build a suite and its referenced presets."""
+#     preset = ScenarioPreset(
+#         name="my_base64",
+#         scenario_name="foundry.red_team_agent",
+#         techniques=["base64"],
+#         include_baseline=False,
+#     )
+#     entry = ScenarioSuiteEntry(
+#         entry_id=uuid5(NAMESPACE_URL, "my_suite:my_base64"), preset_name=preset.name
+#     )
+#     return ScenarioSuite(name="my_suite", entries=[entry]), [preset]
+#
+#
+# class MySuites(ScenarioSuiteInitializer):
+#     """Register the built-in suites and a custom suite."""
+#
+#     SUITE_BUILDERS = (*ScenarioSuiteInitializer.SUITE_BUILDERS, build_my_suite)
+# ```
+#
+# Keeping `*ScenarioSuiteInitializer.SUITE_BUILDERS` includes the built-in horizontal
+# suite; omitting it registers only your builders. Configure the backend to load this
+# custom initializer instead of `scenario_suite`:
+#
+# ```yaml
+# allow_custom_initializers: true
+# initializers:
+#   - name: target
+#   - name: scorer
+#   - name: technique
+#   - name: my_suites
+# ```
+#
+# In an initialized notebook, define or import `MySuites` and call
+# `await MySuites().initialize_async()` directly.
+#
+# ### Without code
+#
+# In the GUI's **Registry > Scenario presets** page, save your presets, then create
+# an ordered suite in the **Scenario suites** section. Alternatively, use
+# `POST /api/scenario-presets` and `POST /api/scenario-suites`.
+# Presets are saved to `scenario_presets_source`; suites are saved to
+# `scenario_suites_source`. These stored definitions are editable, unlike code-registered ones.
 
 # %% [markdown]
 # ## Run the suite
