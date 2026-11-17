@@ -605,13 +605,16 @@ class ChatScoringService:
         if not self.is_latest_response(attack=attack, piece=piece):
             return fields
         if evaluation.side_effect_evidence_only:
+            anchor_timestamp = max(anchor.timestamp for anchor in evaluation.response.message_pieces)
             newer = await CentralMemory.get_memory_instance().get_message_pieces_async(
                 attack_result_id=attack.attack_result_id,
-                sent_after=max(anchor.timestamp for anchor in evaluation.response.message_pieces),
+                sent_after=anchor_timestamp,
             )
             conversations = attack.get_active_conversation_ids()
-            anchor_ids = {anchor.id for anchor in evaluation.response.message_pieces}
-            if any(message.id not in anchor_ids and str(message.conversation_id) in conversations for message in newer):
+            if any(
+                message.timestamp > anchor_timestamp and str(message.conversation_id) in conversations
+                for message in newer
+            ):
                 return fields
         score = evaluation.score
         fields["automated_score_id"] = score.id if score else None

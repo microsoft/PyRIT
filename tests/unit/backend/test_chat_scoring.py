@@ -6,6 +6,7 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1933,6 +1934,7 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
     ScorerRegistry.get_registry_singleton().instances.register(scorer, name="file-judge")
     reference = RegisteredComponentReference(registry_name="file-judge", identifier_hash=scorer.get_identifier().hash)
     expectation = ScoringExpectation(objective=attack.objective, conditions=(ContentWritten(uri="/result.txt"),))
+    receipt_timestamp = datetime.now(UTC) + timedelta(days=1)
     await sqlite_instance.update_attack_result_by_id_async(
         attack_result_id=attack.attack_result_id,
         update_fields={
@@ -1951,6 +1953,7 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
                     original_value="Delivery receipt",
                     role="assistant",
                     conversation_id=attack.conversation_id,
+                    timestamp=receipt_timestamp,
                 ).to_message()
             ]
             if receipt
@@ -1978,6 +1981,20 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
     assert stored.automated_score.observation_ids
     assert stored.outcome == (AttackOutcome.SUCCESS if writes_file else AttackOutcome.FAILURE)
     assert stored.get_scoring_failure(attack.conversation_id) is None
+    if receipt:
+        branch = await AttackService().create_related_conversation_async(
+            attack_result_id=attack.attack_result_id, request=CreateConversationRequest()
+        )
+        assert branch is not None
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async):
+            await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=chat_request(attack).model_copy(update={"target_conversation_id": branch.conversation_id}),
+            )
+        [repeated] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert repeated.last_response is None
+        assert repeated.automated_score is not None and repeated.automated_score.id != stored.automated_score.id
+        assert repeated.automated_score.get_value() is writes_file
 
 
 async def test_older_write_only_evaluation_cannot_replace_newer_conversation_score_async(
