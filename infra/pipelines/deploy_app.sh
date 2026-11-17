@@ -209,15 +209,6 @@ start_database_job_execution() (
   az containerapp job start "${job_args[@]}"
 )
 
-stop_database_job_execution() {
-  local action="$1" execution="$2"
-  if ! az containerapp job stop \
-    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME-migrate" \
-    --job-execution-name "$execution" -o none; then
-    echo "##vso[task.logissue type=warning]Could not stop database $action execution $execution; stop it before retrying"
-  fi
-}
-
 run_database_job() {
   local mode="$1" action poll_attempts
   case "$mode" in
@@ -259,11 +250,14 @@ run_database_job() {
     esac
     sleep "${PYRIT_MIGRATION_POLL_SECONDS:-20}"
   done
-  stop_database_job_execution "$action" "$execution"
-  if [[ "$mode" == migrate ]]; then
-    deployment_error "Database migration $execution did not finish in time and was stopped; the app is stopped and was not deployed"
+  local outcome="the app is stopped and was not deployed"
+  [[ "$mode" == migrate ]] || outcome="deployment was not continued"
+  if ! az containerapp job stop \
+    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
+    --job-execution-name "$execution" -o none; then
+    deployment_error "Database $action $execution did not finish in time and could not be stopped; its state is unknown and it may still be running. Confirm it has stopped before retrying; $outcome"
   fi
-  deployment_error "Database $action $execution did not finish in time and was stopped; deployment was not continued"
+  deployment_error "Database $action $execution did not finish in time and was stopped; $outcome"
 }
 
 schema_is_current() {

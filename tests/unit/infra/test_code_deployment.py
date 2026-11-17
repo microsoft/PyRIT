@@ -457,6 +457,22 @@ echo done
         )
         assert "done" not in result.stdout
 
+    def test_database_job_timeout_with_failed_stop_reports_unknown_state(self) -> None:
+        for command, outcome in [
+            ("run_database_migration", "the app is stopped and was not deployed"),
+            ("ensure_schema_upgradable", "deployment was not continued"),
+        ]:
+            with self.subTest(command=command):
+                result = self._run_migration(
+                    statuses=["Running", "Running"], attempts=2, command=command, azure_failure="stop"
+                )
+                assert result.returncode == 1
+                assert "could not be stopped; its state is unknown" in result.stdout
+                assert "Confirm it has stopped before retrying" in result.stdout
+                assert outcome in result.stdout
+                assert "was stopped;" not in result.stdout
+                assert "done" not in result.stdout
+
     def test_revision_check_preserves_full_execution_template(self) -> None:
         result = self._run_migration(statuses=["Running", "Succeeded"], command="ensure_schema_upgradable")
         assert result.returncode == 0, result.stdout + result.stderr
