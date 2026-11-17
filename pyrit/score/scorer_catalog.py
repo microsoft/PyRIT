@@ -49,7 +49,7 @@ class ScorerClassSummary:
     float_feedback: str
 
 
-def _overrides(cls: type[Scorer], name: str) -> bool:
+def _overrides(cls: type[Scorer], *, name: str) -> bool:
     """
     Report whether a class below ``Scorer`` defines ``name`` itself.
 
@@ -60,7 +60,7 @@ def _overrides(cls: type[Scorer], name: str) -> bool:
 
 
 def _wraps_scorers(cls: type[Scorer]) -> bool:
-    return _overrides(cls, "_get_child_scorers")
+    return _overrides(cls, name="_get_child_scorers")
 
 
 def _describe_evidence(cls: type[Scorer]) -> str:
@@ -74,7 +74,7 @@ def _describe_conditions(cls: type[Scorer]) -> str:
         return _WRAPPED
     if cls.CONDITION_TYPE is not None:
         return cls.CONDITION_TYPE.__name__
-    if _overrides(cls, "_get_condition_type"):
+    if _overrides(cls, name="_get_condition_type"):
         return "MatchesObjective, when configured to judge an objective"
     return "None"
 

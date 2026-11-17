@@ -54,7 +54,7 @@ def test_every_true_false_class_that_keeps_float_feedback_is_described():
     overriding = {
         cls.__name__
         for cls in public_scorer_classes()
-        if issubclass(cls, TrueFalseScorer) and _overrides(cls, "_preserves_float_scale_value")
+        if issubclass(cls, TrueFalseScorer) and _overrides(cls, name="_preserves_float_scale_value")
     }
     assert overriding == set(FLOAT_FEEDBACK_GUARANTEES)
 
