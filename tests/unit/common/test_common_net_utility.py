@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -15,31 +16,81 @@ from pyrit.common.net_utility import (
 )
 
 
-@pytest.mark.parametrize(
-    "body, expected_content, expected_content_type",
-    [
-        ({}, b"{}", "application/json"),
-        (None, b"", None),
-        ({"enabled": False, "count": 0}, b'{"enabled":false,"count":0}', "application/json"),
-    ],
-)
-async def test_json_request_body_preserves_explicit_empty_object(body, expected_content, expected_content_type):
-    requests = []
-
-    def handle(request):
+def _capturing_transport(requests: list[httpx.Request]) -> httpx.MockTransport:
+    def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(200)
+
+    return httpx.MockTransport(handle)
+
+
+@pytest.mark.parametrize(
+    "body, expected_json, expected_content_type",
+    [
+        ({}, {}, "application/json"),
+        (None, None, None),
+        ({"enabled": False, "count": 0}, {"enabled": False, "count": 0}, "application/json"),
+    ],
+)
+async def test_json_request_body_preserves_explicit_empty_object(body, expected_json, expected_content_type):
+    requests: list[httpx.Request] = []
 
     await make_request_and_raise_if_error_async(
         endpoint_uri="https://example.test/",
         method="POST",
         request_body=body,
-        transport=httpx.MockTransport(handle),
+        transport=_capturing_transport(requests),
+    )
+
+    assert len(requests) == 1
+    # Compare the decoded body, since HTTPX versions differ in JSON whitespace.
+    if expected_json is None:
+        assert requests[0].content == b""
+    else:
+        assert json.loads(requests[0].content) == expected_json
+    assert requests[0].headers.get("content-type") == expected_content_type
+
+
+@pytest.mark.parametrize(
+    "body, expected_content, expected_content_type",
+    [
+        ({}, b"", None),
+        (None, b"", None),
+        ({"name": "value"}, b"name=value", "application/x-www-form-urlencoded"),
+    ],
+)
+async def test_data_request_body_is_unchanged_for_empty_and_none(body, expected_content, expected_content_type):
+    requests: list[httpx.Request] = []
+
+    await make_request_and_raise_if_error_async(
+        endpoint_uri="https://example.test/",
+        method="POST",
+        post_type="data",
+        request_body=body,
+        transport=_capturing_transport(requests),
     )
 
     assert len(requests) == 1
     assert requests[0].content == expected_content
     assert requests[0].headers.get("content-type") == expected_content_type
+
+
+@pytest.mark.parametrize("body", [{}, None])
+async def test_files_take_precedence_over_empty_json_body(body):
+    requests: list[httpx.Request] = []
+
+    await make_request_and_raise_if_error_async(
+        endpoint_uri="https://example.test/",
+        method="POST",
+        request_body=body,
+        files={"file": ("a.txt", b"hello", "text/plain")},
+        transport=_capturing_transport(requests),
+    )
+
+    assert len(requests) == 1
+    assert requests[0].headers["content-type"].startswith("multipart/form-data")
+    assert b"hello" in requests[0].content
+    assert requests[0].content != b"{}"
 
 
 @pytest.mark.parametrize(
