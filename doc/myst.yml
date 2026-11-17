@@ -191,6 +191,7 @@ project:
             - file: code/scoring/7_program_execution_scorer.ipynb
             - file: code/scoring/8_trace_evidence_scoring.ipynb
             - file: code/scoring/multi_label_true_false.md
+            - file: code/scoring/scorer_capabilities.md
         - file: code/memory/0_memory.md
           children:
             - file: code/memory/1_sqlite_memory.ipynb
