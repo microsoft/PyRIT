@@ -237,6 +237,26 @@ def clear_service_cache():
     _svc_mod._service_instance = None
 
 
+def test_get_scenario_run_service_logs_unavailable_backend(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        patch.dict("sys.modules", {"pyrit.backend.main": None}),
+        patch.object(_svc_mod, "ScenarioRunService", autospec=True) as service_type,
+        caplog.at_level(logging.DEBUG, logger=_svc_mod.__name__),
+    ):
+        service = _svc_mod.get_scenario_run_service()
+        assert _svc_mod.get_scenario_run_service() is service
+
+    assert service is service_type.return_value
+    service_type.assert_called_once()
+    assert service_type.call_args.kwargs == {"max_concurrent_runs": _svc_mod._DEFAULT_MAX_CONCURRENT_RUNS}
+    records = [record for record in caplog.records if record.name == _svc_mod.__name__]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert "Could not read max_concurrent_scenario_runs" in records[0].getMessage()
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], ModuleNotFoundError)
+
+
 async def test_has_active_work_covers_scheduler_owned_work(patch_central_database: MagicMock) -> None:
     service = ScenarioRunService()
     assert not service.has_active_work()
