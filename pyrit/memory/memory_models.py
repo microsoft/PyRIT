@@ -60,6 +60,7 @@ from pyrit.models import (
     DecompositionPath,
     EvaluationIdentifier,
     Finding,
+    FindingCreate,
     FindingEvidence,
     MessagePiece,
     Observation,
@@ -330,12 +331,19 @@ class OperationEntry(Base):
 
 
 class FindingEntry(Base):
-    """A saved finding, kept separate from scores and attack results."""
+    """
+    A saved finding, kept separate from scores and attack results.
+
+    Sub-findings reference their parent like decomposed seed objectives do, and a parent stores its ordered paths
+    as JSON. Memory checks that a parent is in the same operation, that parents form no cycle, and that path steps
+    are direct sub-findings.
+    """
 
     __tablename__ = "FindingEntries"
     # Harm types are deliberately unconstrained: HarmCategory changes over time, so reads map unknown values instead.
     __table_args__ = (
         Index("ix_FindingEntries_operation_id", "operation_id"),
+        Index("ix_FindingEntries_parent_finding_id", "parent_finding_id"),
         CheckConstraint(
             "severity IN ('critical', 'important', 'moderate', 'low', 'informational', 'other')",
             name="ck_findings_severity",
@@ -364,19 +372,44 @@ class FindingEntry(Base):
     harm_type: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     harm_type_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    parent_finding_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("FindingEntries.id"), nullable=True
+    )
+    demonstrated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    paths: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, finding: Finding) -> None:
         """Store a validated finding."""
         validated = Finding.model_validate(finding.model_dump())
         self.id = validated.id
         self.operation_id = validated.operation_id
-        self.title = validated.title
-        self.description = validated.description
-        self.severity = validated.severity.value
-        self.severity_other = validated.severity_other
-        self.harm_type = validated.harm_type.value if validated.harm_type is not None else None
-        self.harm_type_other = validated.harm_type_other
         self.created_at = validated.created_at.astimezone(UTC)
+        self.set_fields(validated)
+        self.set_paths(validated.paths)
+
+    def set_fields(self, fields: FindingCreate) -> None:
+        """Store a finding's editable fields, leaving its identity, creation time, and paths unchanged."""
+        self.title = fields.title
+        self.description = fields.description
+        self.severity = fields.severity.value
+        self.severity_other = fields.severity_other
+        self.harm_type = fields.harm_type.value if fields.harm_type is not None else None
+        self.harm_type_other = fields.harm_type_other
+        self.parent_finding_id = fields.parent_finding_id
+        self.demonstrated = fields.demonstrated
+
+    def set_paths(self, paths: tuple[DecompositionPath, ...]) -> None:
+        """Store a finding's ordered paths, or none."""
+        self.paths = [path.model_dump(mode="json") for path in paths] or None
+
+    def get_paths(self) -> tuple[DecompositionPath, ...]:
+        """
+        Rebuild the stored paths.
+
+        Returns:
+            tuple[DecompositionPath, ...]: The paths, in stored order.
+        """
+        return tuple(DecompositionPath.model_validate(path) for path in self.paths or ())
 
     def get_finding(self) -> Finding:
         """
@@ -403,6 +436,9 @@ class FindingEntry(Base):
             harm_type=harm_type,
             harm_type_other=harm_type_other,
             created_at=self.created_at,
+            parent_finding_id=self.parent_finding_id,
+            demonstrated=self.demonstrated,
+            paths=self.get_paths(),
         )
 
 
