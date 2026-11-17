@@ -532,13 +532,14 @@ class TestLatentAttacks:
         with pytest.raises(ValueError, match="matching configuration"):
             await _initialize_async(resumed, **args)
 
-    async def test_changed_case_refuses_resume_async(self, seeded_memory_async: MemoryInterface) -> None:
+    async def test_changed_case_resumes_the_planned_cases_async(self, seeded_memory_async: MemoryInterface) -> None:
         original = LatentInjection()
         args = {
             "dataset_config": _config(families=["whois"], max_dataset_size=2),
             "scenario_techniques": [LatentInjectionTechnique.Bare],
         }
         await _initialize_async(original, **args)
+        planned = [[group.logical_id for group in attack.seed_groups] for attack in original._atomic_attacks]
         sources = {
             name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
             for name in LatentInjection.required_datasets()
@@ -547,5 +548,5 @@ class TestLatentAttacks:
             seed.value += " changed"
         resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
         with _read_ingredients(sources):
-            with pytest.raises(ValueError, match="cannot resume"):
-                await _initialize_async(resumed, **args)
+            await _initialize_async(resumed, **args)
+        assert [[group.logical_id for group in attack.seed_groups] for attack in resumed._atomic_attacks] == planned
