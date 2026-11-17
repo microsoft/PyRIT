@@ -353,12 +353,19 @@ async def test_shutdown_repeated_failure_preserves_original_error_async(runtime:
         lifecycle_module.close_services_async.assert_awaited_once()
 
 
-async def test_success_preflights_then_replaces_idle_runtime(runtime: RuntimeLifecycle) -> None:
+@pytest.mark.parametrize("allow_custom_initializers", [False, True])
+async def test_success_preflights_then_replaces_idle_runtime(
+    *, runtime: RuntimeLifecycle, allow_custom_initializers: bool
+) -> None:
+    config = await runtime._load_async()
+    config.allow_custom_initializers = allow_custom_initializers
     await apply_async(runtime)
     assert runtime.state == "ready"
     assert runtime.generation != "original"
-    config = await runtime._load_async()
-    config.preflight_reinitialization_async.assert_awaited_once_with(environment_values={"NEW_VALUE": "new"})
+    config.preflight_reinitialization_async.assert_awaited_once_with(
+        environment_values={"NEW_VALUE": "new"},
+        load_stored_initializers=allow_custom_initializers,
+    )
     lifecycle_module.close_services_async.assert_awaited_once()
     config.apply_prepared_reinitialization_async.assert_awaited_once()
     assert runtime.version == (await runtime.source.read_with_version_async())[1]

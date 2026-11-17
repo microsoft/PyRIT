@@ -179,7 +179,10 @@ class RuntimeLifecycle:
             await self._management_async(config)
             if config.allow_custom_initializers:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
-            await config.initialize_pyrit_async(raise_on_initializer_error=True)
+            await config.initialize_pyrit_async(
+                raise_on_initializer_error=True,
+                load_stored_initializers=config.allow_custom_initializers,
+            )
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             if await self._restore_saved_entries_async(config):
@@ -243,7 +246,10 @@ class RuntimeLifecycle:
                 validate_reinitialization_memory(
                     memory_db_type=config._MEMORY_DB_TYPE_MAP[config.memory_db_type], environment=values
                 )
-                prepared = await config.preflight_reinitialization_async(environment_values=values)
+                prepared = await config.preflight_reinitialization_async(
+                    environment_values=values,
+                    load_stored_initializers=config.allow_custom_initializers,
+                )
                 _, checked_version = await self.source.read_with_version_async()
                 if checked_version != current_version:
                     self.outcome, self.message = "version-conflict", "Configuration changed during validation."

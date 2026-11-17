@@ -120,6 +120,35 @@ def test_reset_setup_registries_replaces_registered_presets_without_deleting_sto
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("phase", ["startup", "reload"])
+async def test_programmatic_setup_does_not_import_stored_initializers_async(*, tmp_path: Path, phase: str) -> None:
+    source = tmp_path / "stored_initializers"
+    await asyncio.to_thread(source.mkdir)
+    await asyncio.to_thread(
+        (source / "unused.py").write_text,
+        'raise AssertionError("Stored scripts must not be imported by programmatic setup")\n',
+        encoding="utf-8",
+    )
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[],
+        initializers=["scenario_suite"],
+        allow_custom_initializers=True,
+        custom_initializers_source=str(source),
+    )
+
+    if phase == "startup":
+        await config.initialize_pyrit_async()
+    else:
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
+
+    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == ["horizontal_techniques"]
+    assert len(ScenarioPresetRegistry.get_registry_singleton().instances.get_names()) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("source", ["script", "configured"])
 async def test_startup_constructs_initializers_after_environment_loading_async(*, tmp_path: Path, source: str) -> None:
     script = tmp_path / "capture.py"
@@ -129,6 +158,9 @@ async def test_startup_constructs_initializers_after_environment_loading_async(*
 import os
 from pyrit.memory import CentralMemory
 from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+assert os.environ.get("PYRIT_STARTUP_TEST_VALUE") == "loaded"
+CentralMemory.get_memory_instance()
 
 class CaptureInitializer(PyRITInitializer):
     def __init__(self) -> None:
@@ -154,7 +186,7 @@ class CaptureInitializer(PyRITInitializer):
         custom_initializers_source=str(tmp_path),
     )
     os.environ.pop("PYRIT_STARTUP_TEST_VALUE", None)
-    await config.initialize_pyrit_async()
+    await config.initialize_pyrit_async(load_stored_initializers=source == "configured")
     assert os.environ["PYRIT_STARTUP_TEST_CAPTURED"] == "loaded"
 
 
@@ -232,7 +264,10 @@ class CaptureInitializer(PyRITInitializer):
         custom_initializers_source=str(tmp_path) if source == "configured" else None,
     )
     with patch.dict(os.environ, {"PYRIT_REINIT_TEST_VALUE": "old"}):
-        prepared = await config.preflight_reinitialization_async(environment_values={"PYRIT_REINIT_TEST_VALUE": "new"})
+        prepared = await config.preflight_reinitialization_async(
+            environment_values={"PYRIT_REINIT_TEST_VALUE": "new"},
+            load_stored_initializers=source == "configured",
+        )
         assert os.environ["PYRIT_REINIT_TEST_VALUE"] == "old"
         assert os.environ.get("PYRIT_REINIT_TEST_CAPTURED") is None
         await config.apply_prepared_reinitialization_async(prepared=prepared)
@@ -373,23 +408,23 @@ class CustomInitializer(PyRITInitializer):
         custom_initializers_source=str(source),
     )
     try:
-        prepared = await config.preflight_reinitialization_async(environment_values={})
+        prepared = await config.preflight_reinitialization_async(environment_values={}, load_stored_initializers=True)
         await config.apply_prepared_reinitialization_async(prepared=prepared)
         assert TargetRegistry.get_registry_singleton().instances.get("first") is not None
         first_registry = TargetRegistry.get_registry_singleton()
         script.write_text(template.replace("TARGET_NAME", "second"), encoding="utf-8")
-        prepared = await config.preflight_reinitialization_async(environment_values={})
+        prepared = await config.preflight_reinitialization_async(environment_values={}, load_stored_initializers=True)
         await config.apply_prepared_reinitialization_async(prepared=prepared)
         registry = TargetRegistry.get_registry_singleton()
         assert registry is not first_registry
         assert registry.instances.get("first") is None
         assert registry.instances.get("second") is not None
-        prepared = await config.preflight_reinitialization_async(environment_values={})
+        prepared = await config.preflight_reinitialization_async(environment_values={}, load_stored_initializers=True)
         await config.apply_prepared_reinitialization_async(prepared=prepared)
         assert TargetRegistry.get_registry_singleton().instances.get_names() == ["second"]
         script.unlink()
         with pytest.raises(ValueError, match="not found"):
-            await config.preflight_reinitialization_async(environment_values={})
+            await config.preflight_reinitialization_async(environment_values={}, load_stored_initializers=True)
         assert TargetRegistry.get_registry_singleton().instances.get("second") is not None
         assert CentralMemory.get_memory_instance() is sqlite_instance
         assert await sqlite_instance.get_message_pieces_async(conversation_id=message.message_pieces[0].conversation_id)

@@ -722,9 +722,15 @@ class ConfigurationLoader(YamlLoadable):
         self,
         *,
         environment_values: dict[str, str],
+        load_stored_initializers: bool = False,
     ) -> PreparedReinitialization:
         """
         Validate replacement scripts and initializer configuration without changing live PyRIT state.
+
+        Args:
+            environment_values (dict[str, str]): Replacement environment values to validate against.
+            load_stored_initializers (bool): Explicitly discover stored custom initializers. Defaults to False;
+                the backend supplies its ``allow_custom_initializers`` setting.
 
         Returns:
             PreparedReinitialization: Immutable inputs ready for the mutation phase.
@@ -737,7 +743,7 @@ class ConfigurationLoader(YamlLoadable):
 
         registry = await asyncio.to_thread(InitializerRegistry)
         await asyncio.to_thread(registry.configure_custom_scripts_source, self.custom_initializers_source)
-        if self.allow_custom_initializers:
+        if load_stored_initializers:
             await asyncio.to_thread(registry.register_stored_initializers, strict=True)
 
         initializers = list(
@@ -874,7 +880,9 @@ class ConfigurationLoader(YamlLoadable):
         """
         return self.env_akv_ref
 
-    async def initialize_pyrit_async(self, *, raise_on_initializer_error: bool = True) -> None:
+    async def initialize_pyrit_async(
+        self, *, raise_on_initializer_error: bool = True, load_stored_initializers: bool = False
+    ) -> None:
         """
         Initialize PyRIT with the loaded configuration.
 
@@ -882,8 +890,10 @@ class ConfigurationLoader(YamlLoadable):
         ``initialize_pyrit_async`` function.
 
         Args:
-            raise_on_initializer_error: Whether initializer resolution, loading, validation, or execution
+            raise_on_initializer_error (bool): Whether initializer resolution, loading, validation, or execution
                 failures should abort initialization. Defaults to True.
+            load_stored_initializers (bool): Explicitly discover stored custom initializers. Defaults to False;
+                the backend supplies its ``allow_custom_initializers`` setting.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
@@ -898,7 +908,8 @@ class ConfigurationLoader(YamlLoadable):
             memory_db_type=internal_memory_db_type,
             initialization_scripts=resolved_scripts,
             initializer_factory=lambda: self._construct_initializers(
-                raise_on_initializer_error=raise_on_initializer_error
+                raise_on_initializer_error=raise_on_initializer_error,
+                load_stored_initializers=load_stored_initializers,
             ),
             env_files=resolved_env_files,
             env_akv_ref=self.env_akv_ref,
@@ -920,9 +931,15 @@ class ConfigurationLoader(YamlLoadable):
         presets.scan_stored_presets()
         suites.scan_stored_suites()
 
-    def _construct_initializers(self, *, raise_on_initializer_error: bool) -> Sequence["PyRITInitializer"]:
+    def _construct_initializers(
+        self, *, raise_on_initializer_error: bool, load_stored_initializers: bool
+    ) -> Sequence["PyRITInitializer"]:
         """
-        Load stored classes and construct configured initializers after environment and memory setup.
+        Construct configured initializers after setup, optionally discovering stored classes.
+
+        Args:
+            raise_on_initializer_error (bool): Whether loading or resolution failures should abort initialization.
+            load_stored_initializers (bool): Whether to discover stored custom initializer classes.
 
         Returns:
             Sequence[PyRITInitializer]: Configured instances ready to execute.
@@ -931,7 +948,7 @@ class ConfigurationLoader(YamlLoadable):
 
         self._configure_registry_sources()
         registry = InitializerRegistry.get_registry_singleton()
-        if self.allow_custom_initializers:
+        if load_stored_initializers:
             registry.register_stored_initializers(strict=raise_on_initializer_error)
         return self.resolve_initializers(raise_on_initializer_error=raise_on_initializer_error, registry=registry)
 

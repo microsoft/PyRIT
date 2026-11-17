@@ -233,7 +233,7 @@ class TestLifespan:
                 pass
 
             stamp_reader.assert_called_once()
-            init_mock.assert_awaited_once_with(raise_on_initializer_error=True)
+            init_mock.assert_awaited_once_with(raise_on_initializer_error=True, load_stored_initializers=False)
             assert app.state.compatibility_id == compatibility_id
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
