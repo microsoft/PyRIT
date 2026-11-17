@@ -451,10 +451,27 @@ class TestFromSeedGroupAsyncWithOneShotToolHistory:
                 seed_group=seed_group, adversarial_chat=MockPromptTarget(), objective_scorer=MagicMock()
             )
 
-    async def test_raises_when_objective_target_reports_no_tools(
+    async def test_objective_target_without_tools_is_recorded_as_a_preparation_failure(
         self, seed_group: AttackSeedGroup, objective_target: MagicMock
     ) -> None:
         objective_target.get_tool_definitions_async = AsyncMock(return_value=None)
+        with patch.object(simulated_conversation, "generate_simulated_conversation_async") as generate:
+            params = await PromptSendingAttackParameters.from_seed_group_async(
+                seed_group=seed_group,
+                adversarial_chat=MockPromptTarget(),
+                objective_scorer=MagicMock(),
+                objective_target=objective_target,
+            )
+
+        generate.assert_not_called()
+        assert params.preparation_failure is not None
+        assert params.preparation_failure.kind is AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS
+        assert not params.prepended_conversation
+
+    async def test_raises_when_objective_target_reports_no_tools_and_failure_cannot_be_recorded(
+        self, seed_group: AttackSeedGroup, objective_target: MagicMock
+    ) -> None:
+        objective_target.get_tool_definitions_async = AsyncMock(return_value=[])
         with pytest.raises(ValueError, match="reports no function tools"):
             await AttackParameters.from_seed_group_async(
                 seed_group=seed_group,

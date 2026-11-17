@@ -37,6 +37,10 @@ class AttackPreparationFailureKind(str, enum.Enum):
     #: history that never passed validation, so nothing could be prepared.
     ADVERSARIAL_CHAT_INVALID_OUTPUT = "adversarial_chat_invalid_output"
 
+    #: The technique writes calls to the objective target's function tools, but the target
+    #: reports none, so there is nothing to prime it with.
+    OBJECTIVE_TARGET_HAS_NO_TOOLS = "objective_target_has_no_tools"
+
     @property
     def default_reason(self) -> str:
         """
@@ -75,6 +79,9 @@ _DEFAULT_REASONS: dict[AttackPreparationFailureKind, str] = {
     ),
     AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT: (
         "Adversarial chat did not produce usable preparation content before the attack could run."
+    ),
+    AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS: (
+        "The objective target reports no function tools, so no tool-call history could be prepared for it."
     ),
 }
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
+from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure, AttackPreparationFailureKind
 from pyrit.models import (
     AttackSeedGroup,
     ConversationReference,
@@ -135,10 +136,14 @@ class AttackParameters:
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, if seed_group has a simulated
                 conversation but a required dependency is not provided, or if its simulated
-                conversation uses target tools and the objective target reports none.
+                conversation uses target tools, the objective target reports none, and this
+                parameter type cannot represent a preparation failure.
         """
         # Import here to avoid circular imports
-        from pyrit.executor.attack.multi_turn.simulated_conversation import generate_simulated_conversation_async
+        from pyrit.executor.attack.multi_turn.simulated_conversation import (
+            SimulatedConversationResult,
+            generate_simulated_conversation_async,
+        )
 
         if not isinstance(seed_group, AttackSeedGroup):
             raise TypeError(
@@ -195,29 +200,42 @@ class AttackParameters:
             ):
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            tools = (
-                await _get_objective_target_tools_async(objective_target=objective_target)
-                if simulated_conversation_config.use_target_tools
-                else None
-            )
-            simulated_result = await generate_simulated_conversation_async(
-                objective=seed_group.objective.value,
-                adversarial_chat=adversarial_chat,
-                objective_scorer=objective_scorer,
-                num_turns=simulated_conversation_config.num_turns,
-                mode=simulated_conversation_config.mode,
-                tools=tools,
-                max_attempts=simulated_conversation_config.max_attempts,
-                starting_sequence=simulated_conversation_config.sequence,
-                adversarial_chat_system_prompt=simulated_conversation_config.adversarial_chat_system_prompt,
-                simulated_target_system_prompt=simulated_conversation_config.simulated_target_system_prompt,
-                next_message_system_prompt=simulated_conversation_config.next_message_system_prompt,
-            )
+            tools: list[ToolDefinition] | None = None
+            if simulated_conversation_config.use_target_tools:
+                if objective_target is None:
+                    raise ValueError("objective_target is required when a simulated conversation uses target tools")
+                tools = await objective_target.get_tool_definitions_async() or []
+
+            if tools == []:
+                kind = AttackPreparationFailureKind.OBJECTIVE_TARGET_HAS_NO_TOOLS
+                simulated_result = SimulatedConversationResult(
+                    seed_prompts=[],
+                    related_conversations=frozenset(),
+                    preparation_failure=AttackPreparationFailure(
+                        kind=kind, reason=f"{kind.default_reason} Target: {type(objective_target).__name__}."
+                    ),
+                )
+            else:
+                simulated_result = await generate_simulated_conversation_async(
+                    objective=seed_group.objective.value,
+                    adversarial_chat=adversarial_chat,
+                    objective_scorer=objective_scorer,
+                    num_turns=simulated_conversation_config.num_turns,
+                    mode=simulated_conversation_config.mode,
+                    tools=tools,
+                    max_attempts=simulated_conversation_config.max_attempts,
+                    starting_sequence=simulated_conversation_config.sequence,
+                    adversarial_chat_system_prompt=simulated_conversation_config.adversarial_chat_system_prompt,
+                    simulated_target_system_prompt=simulated_conversation_config.simulated_target_system_prompt,
+                    next_message_system_prompt=simulated_conversation_config.next_message_system_prompt,
+                )
             simulated_prompts = simulated_result.seed_prompts
             if "source_conversations" in valid_fields:
                 params["source_conversations"] = frozenset(simulated_result.related_conversations)
             if simulated_result.preparation_failure is not None:
                 if "preparation_failure" not in valid_fields:
+                    if tools == []:
+                        raise ValueError(simulated_result.preparation_failure.reason)
                     raise AdversarialChatResponseBlockedException(message=simulated_result.preparation_failure.reason)
                 params["preparation_failure"] = simulated_result.preparation_failure
 
@@ -355,24 +373,3 @@ class AttackParameters:
         new_cls.from_seed_group_async = classmethod(from_seed_group_wrapper_async)  # type: ignore[ty:unresolved-attribute]
 
         return new_cls  # type: ignore[ty:invalid-return-type]
-
-
-async def _get_objective_target_tools_async(*, objective_target: PromptTarget | None) -> list[ToolDefinition]:
-    """
-    Read the function tools a simulated conversation should use from the objective target.
-
-    Returns:
-        list[ToolDefinition]: The tools the objective target reports.
-
-    Raises:
-        ValueError: If no objective target is given or it reports no function tools.
-    """
-    if objective_target is None:
-        raise ValueError("objective_target is required when a simulated conversation uses target tools")
-    tools = await objective_target.get_tool_definitions_async()
-    if not tools:
-        raise ValueError(
-            f"{type(objective_target).__name__} reports no function tools, so no tool-using simulated conversation "
-            "can be generated for it. Use a target that advertises function tools."
-        )
-    return tools
