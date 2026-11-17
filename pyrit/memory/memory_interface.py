@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     Unicode,
     and_,
+    bindparam,
     case,
     column,
     delete,
@@ -52,7 +53,7 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
-from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy.sql.elements import BindParameter, ClauseElement
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
@@ -3143,6 +3144,22 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: OR-within-key and AND-across-key SQLAlchemy condition.
         """
+
+        def unique_bind(element: ClauseElement, **kw: Any) -> ClauseElement | None:
+            if not isinstance(element, BindParameter):
+                return None
+            return bindparam(
+                element.key,
+                value=element.value,
+                type_=element.type,
+                unique=True,
+                required=element.required,
+                callable_=element.callable,
+                expanding=element.expanding,
+                isoutparam=element.isoutparam,
+                literal_execute=element.literal_execute,
+            )
+
         conditions = []
         for key, raw_value in labels.items():
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
@@ -3150,7 +3167,11 @@ class MemoryInterface(abc.ABC):
                 conditions.append(
                     or_(
                         *(
-                            self._get_scenario_result_label_condition(labels={key: str(value)}).unique_params()
+                            visitors.replacement_traverse(
+                                self._get_scenario_result_label_condition(labels={key: str(value)}),
+                                {},
+                                unique_bind,
+                            )
                             for value in values
                         )
                     )

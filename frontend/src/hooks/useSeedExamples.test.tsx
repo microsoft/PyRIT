@@ -203,8 +203,9 @@ describe('useSeedExamples', () => {
 
     await waitFor(() => expect(result.current.error?.status).toBe(400))
     expect(result.current.page).toBeNull()
-    result.current.retry()
-    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2))
+    act(() => { result.current.retry() })
+    await waitFor(() => expect(result.current.error?.status).toBe(400))
+    expect(mockList).toHaveBeenCalledTimes(2)
     expect(mockList.mock.calls[1][0].cursor).toBe('stale-cursor')
   })
 })
@@ -252,7 +253,7 @@ describe('useSeedExampleDetail', () => {
     expect(result.current.notFound).toBe(false)
     expect(result.current.detail).toBeNull()
 
-    result.current.retry()
+    act(() => { result.current.retry() })
     await waitFor(() => expect(result.current.detail).toEqual(DETAIL))
     expect(result.current.error).toBeNull()
     expect(mockDetail).toHaveBeenCalledTimes(2)

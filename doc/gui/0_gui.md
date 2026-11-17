@@ -43,7 +43,14 @@ to new work; changes do not alter saved results.
 
 Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
-and branch or edit conversations to try another approach. Add an objective and
+and branch or edit conversations to try another approach. In an empty new chat, use **Need inspiration? Browse seed prompts**
+to find examples already loaded in memory. The **Seed prompts** action below the composer stays available
+when sending is disabled, including for a saved conversation. Browsing does not download providers, create an attack, or send a prompt.
+When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation,
+including unsaved edits, media, and converter work. Unsaved edits still require saving or confirming discard.
+Filters, pagination, and the selected example survive the round trip; paging history stays with its dataset.
+Opening Datasets from another workspace does not select an unrelated Chat destination.
+Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
 To score a saved response, open the objective outcome, expand **Automated scorer**,
@@ -129,14 +136,14 @@ Groups and objectives show success rates and completion counts separately.
 Completed scans offer an optional **Compare baseline and attack** disclosure
 below the objective results. It stays collapsed while you review individual attacks.
 
-**Watch live conversation** opens saved messages while an attack runs. This view
-is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
-stops remaining scan work and keeps saved results. Ordinary manual chats do not
-have scan cancellation controls.
-After cancellation, saved messages remain available in the read-only chat.
-Saving these conversation links does not add attack outcomes or change success rates.
+**Watch live conversation** opens a running attack in Chat. While the scan runs it,
+Chat is read-only, shows **Attack in progress** in place of the prompt bar, and
+refreshes its messages and conversations; when the attack finishes, Chat shows its
+saved result on the same page. **Cancel** stops remaining scan work and keeps saved
+results; saved messages remain available in the read-only chat. Opening these
+conversations does not add attack outcomes or change success rates.
 
-**Rerun** opens the scenario launch page with saved settings filled in. It does
+**Rerun with changes** opens the scenario launch page with saved settings filled in. It does
 not start work or change the original run. Review or edit the settings before
 launching. Recorded target/scorer identities and the scenario version are checked.
 Settings that cannot be restored, including older records without a required identity,

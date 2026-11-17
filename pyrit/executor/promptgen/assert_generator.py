@@ -256,7 +256,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             try:
                 async with asyncio.timeout(self._CLEANUP_TIMEOUT_SECONDS):
                     await target.reset_conversation_async(conversation_id=conversation_id)
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace a generation outcome
+            except Exception as error:  # cleanup must not replace a generation outcome
                 self._logger.warning("Failed to reset ASSERT generation conversation %s: %s", conversation_id, error)
 
     async def _systematize_async(self, *, context: AssertGeneratorContext) -> tuple[AssertSystematization, str]:

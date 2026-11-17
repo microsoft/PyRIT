@@ -1750,6 +1750,7 @@ class Scenario(ABC):
                     description=technique.description if technique else None,
                     tags=sorted(technique.tags) if technique else [],
                     kind=atomic_attack.group_kind,
+                    is_compound=atomic_attack.attack_technique.attack.IS_COMPOUND,
                 )
             )
         return ScenarioRunPlan(

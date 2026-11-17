@@ -26,8 +26,8 @@ async def build_saved_entry_async(stored: StoredRecipe, *, upload_directory: str
     """
     Build one saved entry with the create the API uses for its kind, and register it under its name.
 
-    The entry passes the same checks a create request does. Restore runs as the server, and a saved file
-    doesn't record who saved it, so a target is built as an administrator would build it. A target that
+    The entry passes the same checks a create request does. Restore runs as the server and can't tell who
+    wrote a saved file, so a target is built as an administrator would build it. A target that
     uploads files gets this server's upload folder, as it does through the API.
 
     Args:
