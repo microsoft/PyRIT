@@ -5,7 +5,7 @@
 
 import pytest
 
-from pyrit.scenario.foundry import FoundryComposite, FoundryTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.foundry import FoundryComposite, FoundryTechnique  # type: ignore[ty:import-not-found]
 
 
 class TestFoundryComposite:

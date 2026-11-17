@@ -15,6 +15,7 @@ from pyrit.models.code_execution import (  # runtime-required by Pydantic
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.seeds.assert_generation import AssertTaxonomy  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from typing import Self
@@ -233,6 +234,42 @@ class ToolsCalled(Condition):
         return self
 
 
+class ToolsCalledInOrder(Condition):
+    """
+    Require the named tools to have execution attempts in this relative order.
+
+    Each listed tool needs an execution attempt that finished before an execution attempt of
+    the next listed tool started. Other tools, and further attempts of the listed tools, may run
+    in between. Success is not required. Overlapping or unfinished attempts do not establish an
+    order in either direction.
+
+    Each tool may be named only once, so an order that returns to a tool (for example
+    ``read_file`` then ``send_email`` then ``read_file`` again) is out of scope. Distinct names
+    keep each tool's attempts in a single pool, which keeps the match sound.
+    """
+
+    condition_type: Literal["tools_called_in_order"] = "tools_called_in_order"
+    tools: tuple[ToolCallRequirement, ...]
+
+    @model_validator(mode="after")
+    def _validate_tools(self) -> ToolsCalledInOrder:
+        """
+        Require at least two distinct exact names.
+
+        Returns:
+            ToolsCalledInOrder: The validated condition.
+
+        Raises:
+            ValueError: If fewer than two tools are named or an exact name repeats.
+        """
+        if len(self.tools) < 2:
+            raise ValueError("ToolsCalledInOrder requires at least two tools; use ToolsCalled for one.")
+        names = [tool.name for tool in self.tools]
+        if len(set(names)) != len(names):
+            raise ValueError("ToolsCalledInOrder requires each tool name once.")
+        return self
+
+
 class OutputMatches(Condition):
     """The output satisfies the supplied text matcher."""
 
@@ -254,6 +291,20 @@ class AnswerMatches(Condition):
     correct_answer: str = Field(min_length=1)
     #: A nonempty choice label. It is not cross-checked against choices in prompt text.
     correct_answer_label: str | None = Field(default=None, min_length=1)
+
+
+class ViolatesAssertPolicy(Condition):
+    """
+    The conversation fails one of an ASSERT judge's dimensions under this policy.
+
+    ``taxonomy`` is the complete policy. ``application_context`` describes the application and
+    its capabilities, and ``target_instructions`` holds its actual instructions when known.
+    """
+
+    condition_type: Literal["violates_assert_policy"] = "violates_assert_policy"
+    taxonomy: AssertTaxonomy
+    application_context: str = ""
+    target_instructions: str | None = None
 
 
 class ContentWritten(Condition):

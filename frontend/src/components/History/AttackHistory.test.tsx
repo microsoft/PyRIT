@@ -105,6 +105,7 @@ describe('AttackHistory', () => {
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
     })
+    await screen.findByTestId('empty-state')
   })
 
   it('should guide users without an active target to Chat', async () => {
@@ -438,6 +439,7 @@ describe('AttackHistory', () => {
     await waitFor(() => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalledTimes(1)
     })
+    await screen.findByTestId('empty-state')
     expect(mockedOperationsApi.list).toHaveBeenCalledTimes(1)
     expect(mockedAttacksApi.getAttackOptions).not.toHaveBeenCalled()
     expect(mockedAttacksApi.getConverterOptions).not.toHaveBeenCalled()
@@ -479,6 +481,7 @@ describe('AttackHistory', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Internal server error')).toBeInTheDocument()
+      expect(screen.queryByText('Loading attacks...')).not.toBeInTheDocument()
     })
     expect(screen.getByText('Internal server error')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
@@ -610,6 +613,7 @@ describe('AttackHistory', () => {
 
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+      expect(screen.getByText('Page 2')).toBeInTheDocument()
     })
     // Second call should include cursor
     expect(mockedAttacksApi.listAttacks).toHaveBeenLastCalledWith(
@@ -648,6 +652,7 @@ describe('AttackHistory', () => {
 
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3)
+      expect(screen.getByText('Page 1')).toBeInTheDocument()
     })
   })
 
@@ -700,7 +705,8 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4))
+    await screen.findByTestId('attacks-table')
+    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4)
     expect(mockedAttacksApi.listAttacks.mock.calls[3][0]).not.toHaveProperty('cursor')
   })
 
@@ -1064,6 +1070,7 @@ describe('AttackHistory', () => {
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalled()
     })
+    await screen.findByTestId('empty-state')
 
     expect(mockedAttacksApi.listAttacks).toHaveBeenCalledWith({
       limit: 25,
@@ -1083,7 +1090,7 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalled())
+    await screen.findByTestId('empty-state')
     expect(mockedAttacksApi.listAttacks.mock.calls[0][0]).toEqual(
       expect.objectContaining({ include_scenario_attacks: true })
     )
@@ -1104,7 +1111,7 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalled())
+    await screen.findByTestId('empty-state')
     expect(mockedAttacksApi.listAttacks.mock.calls[0][0]).toEqual(
       expect.objectContaining({ include_scenario_attacks: false })
     )
