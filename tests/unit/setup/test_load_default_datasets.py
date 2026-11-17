@@ -142,26 +142,9 @@ class TestLoadDefaultDatasets:
         """
         available_datasets = set(await SeedDatasetProvider.get_all_dataset_names_async())
 
-        # Patch OpenAIChatTarget at the fallback construction site so registry
-        # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
-        from pyrit.models import ComponentIdentifier
-        from pyrit.score import TrueFalseScorer
-
-        fallback_target = MagicMock()
-        fallback_target.get_identifier.return_value = ComponentIdentifier(
-            class_name="OpenAIChatTarget",
-            class_module="pyrit.prompt_target.openai.openai_chat_target",
-        )
-        fallback_scorer = MagicMock(spec=TrueFalseScorer)
-        with (
-            patch("pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget", return_value=fallback_target),
-            patch(
-                "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer",
-                return_value=fallback_scorer,
-            ),
-        ):
+        with patch("pyrit.prompt_target.OpenAIChatTarget", side_effect=AssertionError("Implicit provider")):
             registry = ScenarioRegistry.get_registry_singleton()
-            registry._metadata_cache = None  # force rebuild under the patch
+            registry._metadata_cache = None
             metadata_list = list(registry.get_all_registered_class_metadata())
 
         missing_datasets: list[str] = []

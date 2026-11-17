@@ -4,6 +4,7 @@
 import uuid
 from collections.abc import Iterator
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -32,6 +33,7 @@ from pyrit.models import (
     ToolCallRequirement,
     ToolsCalled,
     TraceScorable,
+    TraceSpan,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import HTTPTarget, TargetCapabilities, TargetConfiguration, TargetTraceConfig
@@ -504,3 +506,47 @@ async def test_multipart_request_deduplicates_trace_scope(sqlite_instance: SQLit
         TraceScorable(trace_ids=("1" * 32,)),
         True,
     )
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [
+        # "Nothing else ran" rests on absence, so an unlinked request leaves it open.
+        (("lookup",), None),
+        # An observed call outside the required set disproves the match whatever else ran.
+        (("lookup", "delete"), False),
+    ],
+)
+async def test_unlinked_request_blocks_only_absence_based_exhaustive_verdicts_async(
+    sqlite_instance: SQLiteMemory, names: tuple[str, ...], expected: bool | None
+) -> None:
+    conversation = str(uuid.uuid4())
+    (await _store_async(memory=sqlite_instance, conversation=conversation))
+    (await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant"))
+    (await _store_async(memory=sqlite_instance, conversation=conversation, trace_id="1" * 32))
+    response = await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant")
+    client = InMemoryTraceClient()
+    now = datetime.now(tz=UTC)
+    for index, name in enumerate(names):
+        client.add_span(
+            TraceSpan(
+                trace_id="1" * 32,
+                span_id=f"{index + 1:016x}",
+                start_time=now,
+                end_time=now,
+                attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name},
+            )
+        )
+    client.mark_complete(trace_ids=("1" * 32,))
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    expectation = ScoringExpectation(
+        conditions=(ToolsCalled(tools=(ToolCallRequirement(name="lookup"),), exhaustive=True),)
+    )
+
+    score = (await scorer.score_async(scorable=MessageScorable.from_message(response), expectation=expectation))[0]
+
+    if expected is None:
+        assert score.is_undetermined
+        assert "no trace link" in score.score_rationale
+    else:
+        assert score.get_value() is expected

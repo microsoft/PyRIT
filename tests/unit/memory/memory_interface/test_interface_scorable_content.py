@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import mssql
 
-from pyrit.memory import MemoryInterface, StorageIO
+from pyrit.memory import AzureBlobStorageIO, MemoryInterface, StorageIO
 from pyrit.memory.memory_models import ScorableContentEntry, ScoreEntry
 from pyrit.models import (
     ComponentIdentifier,
@@ -185,6 +185,7 @@ async def test_file_content_uses_configured_azure_results_storage(
     source.write_bytes(content_bytes)
     digest = hashlib.sha256(content_bytes).hexdigest()
     storage = AsyncMock(spec=StorageIO)
+    storage.canonical_path.side_effect = AzureBlobStorageIO.__new__(AzureBlobStorageIO).canonical_path
     results_path = "https://account.blob.core.windows.net/container/results"
     score = _content_score(ContentScorable(value=str(source), data_type="binary_path"))
 

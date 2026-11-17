@@ -39,6 +39,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PrependedConversationConfig,
     PromptSendingAttack,
+    RedTeamingAttack,
 )
 from pyrit.models import (
     AttackTechniqueSeedGroup,
@@ -444,6 +445,20 @@ class AttackTechniqueFactory(Identifiable):
             scorer_override_policy=scorer_override_policy,
             requirements=requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
         )
+
+    def check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
+        """
+        Check the selected attack and any simulation's actual generation consumer.
+
+        Returns:
+            list[str]: Unsatisfied consumer requirements, without model traffic.
+        """
+        errors: list[str] = []
+        if self.uses_adversarial:
+            errors.extend(self.attack_class.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        if self.seed_technique is not None and self.seed_technique.has_simulated_conversation:
+            errors.extend(RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        return list(dict.fromkeys(errors))
 
     def _derive_uses_adversarial(self) -> bool:
         """
@@ -1465,5 +1480,7 @@ class AttackTechniqueFactory(Identifiable):
             technique_seed_ids = [SeedIdentifier.from_seed(seed) for seed in self._seed_technique.seeds]
             if technique_seed_ids:
                 children["technique_seeds"] = technique_seed_ids
+            if self._seed_technique.continue_final_assistant_message:
+                params["continue_final_assistant_message"] = True
 
         return ComponentIdentifier.of(self, params=params, children=children)

@@ -32,7 +32,13 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry, SupportsIdentifier
+from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    InstanceRegistry,
+    SupportsIdentifier,
+    current_registration_origin,
+)
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -73,7 +79,7 @@ MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
-def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
+def _get_metadata_value(metadata: Any, *, key: str) -> tuple[bool, Any]:
     """
     Get a value from a metadata object by key.
 
@@ -125,7 +131,7 @@ def _matches_filters(
     """
     if include_filters:
         for key, filter_value in include_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 return False
             if isinstance(actual_value, (list, tuple)):
@@ -136,7 +142,7 @@ def _matches_filters(
 
     if exclude_filters:
         for key, filter_value in exclude_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 continue
             if isinstance(actual_value, (list, tuple)):
@@ -212,16 +218,17 @@ class Registry(ABC, Generic[T, MetadataT]):
         # so catalog reads (__contains__, get_class, ...) are never parked behind a build.
         self._metadata_build_lock = threading.RLock()
         self._classes: dict[str, type[T]] = {}
+        self._temporary_class_names: set[str] = set()
         self._metadata_cache: dict[str, MetadataT] | None = None
         # Bumped on every catalog mutation so an in-flight metadata build can detect a
         # registration that landed mid-build and retry instead of caching a stale snapshot.
         self._catalog_version = 0
         self._discovered = False
+        self._discovering = False
         self._lazy_discovery = lazy_discovery
 
         if not lazy_discovery:
-            self._discover()
-            self._discovered = True
+            self._ensure_discovered()
 
     @classmethod
     def get_registry_singleton(cls) -> Self:
@@ -281,7 +288,11 @@ class Registry(ABC, Generic[T, MetadataT]):
         """Ensure discovery has been performed. Runs discovery on first access."""
         with self._catalog_lock:
             if not self._discovered:
-                self._discover()
+                self._discovering = True
+                try:
+                    self._discover()
+                finally:
+                    self._discovering = False
                 self._discovered = True
 
     def _base_type(self) -> type[T]:
@@ -598,9 +609,28 @@ class Registry(ABC, Generic[T, MetadataT]):
             if name is None:
                 name = self._get_registry_name(cls)
             self._validate_class(cls)
+            if current_registration_origin() is RegistryEntryOrigin.TEMPORARY and not self._discovering:
+                # A class a scan's launch scripts add, or put in place of another, is gone after a restart.
+                # The classes discovery finds come back, so they are found first.
+                self._ensure_discovered()
+                if self._classes.get(name) is not cls:
+                    self._temporary_class_names.add(name)
             self._classes[name] = cls
             self._metadata_cache = None
             self._catalog_version += 1
+
+    def is_temporary_class(self, name: str) -> bool:
+        """
+        Return whether a scan's launch scripts added the class under this name, so it's gone after a restart.
+
+        Args:
+            name (str): The catalog name.
+
+        Returns:
+            bool: True for a class a scan's launch scripts added, or put in place of another one.
+        """
+        with self._catalog_lock:
+            return name in self._temporary_class_names
 
     def get_class(self, name: str) -> type[T]:
         """
@@ -982,7 +1012,8 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             InstanceT: The new component, owned by the caller.
 
         Raises:
-            ValueError: If overrides are unknown or the source class is unavailable.
+            ValueError: If overrides are unknown, external overrides set a connection setting the
+                source's class keeps for copies, or the source class is unavailable.
         """
         inputs = self.get_reconstruction_parameters(source)
         raw_params = dict(params)
@@ -1011,6 +1042,14 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 seam_base_type=self._seam_base_type(),
                 allowed_path_params=allowed_path_params,
             )
+            # A copy keeps where its source sends requests and how it signs in, so a credential
+            # can't be pointed at a different endpoint. Any value is refused, even the source's own.
+            locked = sorted(name for name in params if by_name[name].copy_locked)
+            if locked:
+                raise ValueError(
+                    f"A copy keeps its source's connection settings, so it can't set {', '.join(locked)}. "
+                    "Create a new one to use different settings."
+                )
             from pyrit.models import SeedPrompt
 
             for name, value in raw_params.items():

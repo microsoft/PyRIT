@@ -34,6 +34,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
@@ -41,6 +42,8 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
     resolve_technique_factories,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
+from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniquePolicy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -249,9 +252,6 @@ class AdversarialBenchmark(Scenario):
             scenario_result_id: Optional ID of an existing scenario result
                 to resume.
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
         self._constructor_use_cached: bool = use_cached
         self._precomputed_cached_results: dict[str, list[AttackResult]] = {}
         # Per atomic attack, the one seed group each cached result stands in for, keyed by objective hash.
@@ -265,7 +265,7 @@ class AdversarialBenchmark(Scenario):
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=False,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["harmbench"]],
@@ -511,22 +511,13 @@ class AdversarialBenchmark(Scenario):
             ValueError: If ``adversarial_targets`` is missing/empty, or if any name in
                 ``adversarial_targets`` is not registered.
         """
-        target_names = self.params.get("adversarial_targets")
-        if not target_names:
-            raise ValueError(
-                "AdversarialBenchmark requires at least one adversarial chat target. "
-                "Pass --adversarial-targets <name> [<name> ...] on the CLI, or set "
-                "scenario.args.adversarial_targets in .pyrit_conf. Use 'pyrit_scan list-targets' "
-                "to see registered targets."
-            )
-
-        resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
+        resolved_targets = self._resolve_configured_adversarial_targets()
         guidance = await asyncio.to_thread(_get_benchmark_adversarial_guidance)
         technique_factories = {
             name: factory.with_adversarial_system_prompt_prefix(guidance)
             for name, factory in resolve_technique_factories(
                 context=context,
-                extra_factories=self._get_technique_factory_overrides(),
+                extra_factories=self._get_readiness_factories(),
             ).items()
         }
 
@@ -536,10 +527,7 @@ class AdversarialBenchmark(Scenario):
             memory_labels=context.memory_labels,
             incompatible_technique_policy=context.incompatible_technique_policy,
         )
-        # ``display_group`` is the TargetRegistry name the caller passed via
-        # ``--adversarial-targets`` so per-model ASR rolls up naturally — not any internal
-        # field on the PromptTarget instance (e.g. ``_model_name``). The builder's default
-        # ``{technique}__{target}_{dataset}`` naming preserves the VERSION=2 cache key shape.
+        # Registry names remain the display groups so per-model benchmark statistics roll up naturally.
         atomic_attacks = await run_legacy_sync_async(
             builder.build,
             technique_factories=technique_factories,
@@ -554,6 +542,77 @@ class AdversarialBenchmark(Scenario):
 
         (await self._apply_reusable_cached_results_async(atomic_attacks=atomic_attacks))
         return atomic_attacks
+
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return {**super()._get_readiness_factories(), **(self._get_technique_factory_overrides() or {})}
+
+    def get_readiness(self) -> ScenarioReadiness:
+        """
+        Resolve the benchmark-owned target axis before any dataset work.
+
+        Returns:
+            ScenarioReadiness: Common dependencies and each named benchmark generator.
+        """
+        result = super().get_readiness()
+        try:
+            targets = self._resolve_configured_adversarial_targets()
+        except ValueError as exc:
+            result.issues.append(
+                ScenarioConfigurationIssue(
+                    role="adversarial_targets",
+                    component=self.name,
+                    reason=str(exc),
+                    remediation="Select the benchmark's registered adversarial_targets explicitly.",
+                )
+            )
+            return result
+        factories = self._get_readiness_factories()
+        for index, (name, target) in enumerate(targets):
+            errors: list[str] = []
+            try:
+                validate_default_adversarial_target(target)
+            except ValueError as exc:
+                errors.append(str(exc))
+            for technique in self._scenario_techniques:
+                factory = factories.get(technique.value)
+                if factory is None:
+                    continue
+                if (
+                    self._objective_target is not None
+                    and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
+                    and factory.requirements.check_target(
+                        target=self._objective_target, attack_class=factory.attack_class
+                    )
+                ):
+                    continue
+                errors.extend(factory.check_adversarial_target(target=target))
+            for reason in dict.fromkeys(errors):
+                result.issues.append(
+                    ScenarioConfigurationIssue(
+                        role="adversarial_targets",
+                        component=name,
+                        reason=reason,
+                        remediation="Select a benchmark target compatible with the selected techniques.",
+                    )
+                )
+            result.bindings.append(
+                ScenarioRoleBinding(
+                    role=f"adversarial_targets:{index}:{name}", component=name, identifier=target.get_identifier()
+                )
+            )
+        return result
+
+    def _resolve_configured_adversarial_targets(self) -> list[tuple[str, PromptTarget]]:
+        target_names = self.params.get("adversarial_targets")
+        if not target_names:
+            raise ValueError(
+                "AdversarialBenchmark requires at least one adversarial chat target. "
+                "Pass --adversarial-targets <name> [<name> ...] on the CLI, or set "
+                "scenario.args.adversarial_targets in .pyrit_conf. Use 'pyrit_scan list-targets' "
+                "to see registered targets."
+            )
+
+        return self._resolve_adversarial_targets(target_names=target_names)
 
     def _get_technique_factory_overrides(self) -> dict[str, AttackTechniqueFactory] | None:
         """
