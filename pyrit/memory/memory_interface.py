@@ -53,6 +53,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy.sql.operators import asc_op, desc_op
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
@@ -201,6 +202,33 @@ class PreparedSeedBatch:
     def seeds(self) -> list[Seed[Any]]:
         """Independent copies of the prepared seeds for candidate validation."""
         return [seed.model_copy(deep=True) for seed in self._seeds]
+
+
+def _order_by_attribute_keys(order_by: Any) -> "list[tuple[str, bool]]":
+    """
+    Extract ``(attribute name, ascending)`` pairs from a plain column ``order_by`` clause.
+
+    Batched queries merge rows that came back from separate statements, so the
+    caller's ordering has to be re-applied in Python across the merged rows.
+    Only plain ascending or descending single columns are supported, which is
+    every ordering the batched call sites use.
+
+    Returns:
+        list[tuple[str, bool]]: One ``(attribute name, ascending)`` pair per order key.
+
+    Raises:
+        ValueError: If the clause is not made of plain ascending or descending columns.
+    """
+    expressions = order_by if isinstance(order_by, (list, tuple)) else [order_by]
+    keys: list[tuple[str, bool]] = []
+    for expression in expressions:
+        inner = getattr(expression, "element", expression)
+        name = getattr(inner, "key", None) or getattr(inner, "name", None)
+        modifier = getattr(expression, "modifier", None)
+        if name is None or modifier not in (None, asc_op, desc_op):
+            raise ValueError("Cannot merge a batched query whose order_by clause has no plain columns.")
+        keys.append((name, modifier is not desc_op))
+    return keys
 
 
 def _deprecate_message_labels(*, method: str) -> None:
@@ -2593,12 +2621,16 @@ class MemoryInterface(abc.ABC):
             batch = batch_values[i : i + effective_size]
             conditions = other_conditions + [batch_column.in_(batch)]
 
+            # The limit cannot select inside one batch alone, but rows past it
+            # in a batch can never be in the overall top rows either, so each
+            # statement may fetch at most the limit it will be trimmed to.
             results = self._query_entries(
                 model_class,
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
                 order_by=order_by,
+                limit=limit,
             )
 
             # Deduplicate by primary key (id)
@@ -2612,6 +2644,17 @@ class MemoryInterface(abc.ABC):
                 else:
                     all_results.append(result)
 
+        if order_by is not None:
+            # Rows come back per statement, so the merged sequence is in batch
+            # order and any limit only applied inside each batch. The caller's
+            # ordering is re-applied across the merged rows (ties broken by the
+            # row id, keeping the merge deterministic) before the limit trims.
+            order_keys = _order_by_attribute_keys(order_by)
+            all_results.sort(key=lambda row: str(getattr(row, "id", "")))
+            for name, ascending in reversed(order_keys):
+                all_results.sort(key=lambda row: getattr(row, name), reverse=not ascending)
+        if limit is not None:
+            return all_results[:limit]
         return all_results
 
     def _query_with_list_params(
