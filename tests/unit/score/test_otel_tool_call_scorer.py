@@ -334,7 +334,18 @@ async def test_source_keeps_only_the_named_arguments_async(sqlite_instance: SQLi
 
 @pytest.mark.parametrize(
     "arguments",
-    [None, "not json", '["a@example.com"]', '"a@example.com"', '{"to": NaN}', 3],
+    [
+        None,
+        "not json",
+        '["a@example.com"]',
+        '"a@example.com"',
+        '{"to": NaN}',
+        '{"to": 1e400}',
+        '{"to": "a@example.com", "body": {"sizes": [1, -Infinity]}}',
+        {"to": float("inf")},
+        {"to": "a@example.com", "body": {"sizes": [1, float("nan")]}},
+        3,
+    ],
 )
 async def test_unreadable_trace_arguments_are_not_retained_and_stay_undetermined_async(
     sqlite_instance: SQLiteMemory, arguments: JsonValue
