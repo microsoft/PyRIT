@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
@@ -332,10 +333,8 @@ class AtomicAttack:
         """
         Keep only seed groups whose ``objective_sha256`` is in ``hashes``.
 
-        Inverse of ``drop_seed_groups_with_hashes``: used on resume to
-        replay the originally-sampled subset and ignore any seed groups that
-        were added since (or that landed in this run's fresh ``random.sample``
-        draw and are no longer in the persisted set).
+        Deprecated: resume used this to replay the originally-sampled subset. A scenario run now
+        stores the seed groups it planned and resumes from them, so nothing needs to filter.
 
         Args:
             hashes (set[str]): SHA256 hashes of objective text for seed
@@ -347,6 +346,11 @@ class AtomicAttack:
             union these across atomic attacks to detect persisted hashes that
             no longer exist in the dataset.
         """
+        print_deprecation_message(
+            old_item="AtomicAttack.keep_seed_groups_with_hashes",
+            new_item="the seed groups a scenario run stores for resume",
+            removed_in="1.4.0",
+        )
         retained: set[str] = set()
         new_groups: list[AttackSeedGroup] = []
         for sg in self._seed_groups:
