@@ -153,7 +153,10 @@ This does not restore availability of [OpenAI's retired Sora service](https://he
 The Sora generation tutorial and live integration tests have been removed.
 The adapter, public exports, existing environment-variable support, and unit tests
 remain available; no replacement video service is configured by default.
-SDK 3's deprecation warnings remain visible; type-check exceptions are limited to
+SDK 3's deprecation warnings remain visible at runtime, including for compatible
+providers; the SDK warning does not check the configured endpoint. Mocked
+compatibility tests capture and assert the expected retirement warning while
+verifying Azure and custom-provider routing. Type-check exceptions are limited to
 the specific SDK calls in that adapter. Video scoring does not depend on Sora:
 see [scoring existing videos](../scoring/1_true_false_scorers.ipynb#scoring-existing-videos)
 and [float-scale media scorers](../scoring/2_float_scale_scorers.ipynb#multimodal-scorers).

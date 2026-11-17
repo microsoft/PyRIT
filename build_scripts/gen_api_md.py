@@ -95,6 +95,19 @@ def _indexed_anchor(
     return entries[0].anchor if len(entries) == 1 else anchor
 
 
+# A raw `|` inside a Markdown table cell is parsed as a column separator,
+# even inside a backtick code span (markdown-it/MyST, the engine that renders
+# the published docs). Escape it so union types like `Sequence[Path | str]`
+# stay in one cell instead of splitting the Type and Description columns.
+def _escape_table_cell(text: str) -> str:
+    return re.sub(r"(?<!\\)\|", r"\\|", text)
+
+
+# Matches prose that already states the parameter's default, e.g.
+# "Defaults to (2, 2)." or "When None (default), ...".
+_DEFAULT_ALREADY_STATED_RE = re.compile(r"defaults?\s+to|\(default\)", re.IGNORECASE)
+
+
 def render_params(params: list[dict]) -> str:
     """Render parameter list as a markdown table."""
     if not params:
@@ -105,9 +118,9 @@ def render_params(params: list[dict]) -> str:
         ptype = f"`{p['type']}`" if p.get("type") else ""
         desc = p.get("desc", "").replace("\n", " ")
         default = p.get("default", "")
-        if default:
+        if default and not _DEFAULT_ALREADY_STATED_RE.search(desc):
             desc += f" Defaults to `{default}`."
-        cells = [re.sub(r"(?<!\\)\|", r"\\|", cell) for cell in (name, ptype, desc)]
+        cells = [_escape_table_cell(cell) for cell in (name, ptype, desc)]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 

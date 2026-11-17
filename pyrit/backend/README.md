@@ -16,6 +16,12 @@ PYRIT_AUTH_MODE=local python -m uvicorn pyrit.backend.main:app --reload --host 1
 
 The API will be available at `http://localhost:8000`
 
+Uvicorn's default WebSocket implementation is `websockets-sansio`. PyRIT requires
+Uvicorn 0.53 or newer to retain keepalive, subprotocol negotiation, header values,
+and closing-handshake behavior without importing the deprecated `websockets`
+legacy server. Keep the default `--ws auto`; `--ws websockets` explicitly selects
+the deprecated implementation.
+
 For a shared deployment, set `PYRIT_AUTH_MODE=entra`, configure
 `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS`, and then
 bind the server to the intended network interface. Startup fails when neither
@@ -402,6 +408,26 @@ Writers may wait during an upload. Direct SQL or
 external filesystem/blob modifications outside PyRIT's memory APIs do not
 participate in this protocol. Deploy the new Alembic migration before starting
 backends configured to require an already-current Azure SQL schema.
+
+### Component registration
+
+`POST /api/targets`, `POST /api/converters`, and `POST /api/scorers` accept
+`register`, which defaults to `true`. Setting it to `false` returns a descriptor
+without registering the component. Converter and scorer registration requires
+`name`; targets still accept an omitted name for legacy UI compatibility.
+
+The Python request models store this flag as `register_instance` with the
+`register` alias. Existing `register=` construction and read/write `.register`
+access remain supported, as do `model_copy(update={"register": ...})` and
+serialization include/exclude filters using `register`. Default model
+serialization and OpenAPI schemas keep the public key `register`.
+
+Field introspection differs from PyRIT 1.2: `model_fields` and
+`model_fields_set` now use `register_instance`, whose field alias is `register`.
+Code inspecting these collections must use the internal name or the field's
+alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
+`register_instance`; use the default or `by_alias=True` for the existing JSON
+shape. Copy updates and field filters accept either name.
 
 ### Manual attack creation
 
