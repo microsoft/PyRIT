@@ -214,6 +214,49 @@ custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
 
 # %% [markdown]
+# ## Judging Each Dataset With Its Own Scorer
+#
+# Some runs need a different judge per dataset, such as a hate-speech scorer for one harm category
+# and a violence scorer for another. `RapidResponse`, `Cyber`, and `Leakage` accept a
+# `CompatibleScorers` pool in place of one scorer. Bind each candidate to an evaluation key, then
+# name the key a dataset needs on its `DatasetSource`:
+#
+# ```python
+# from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
+# from pyrit.scenario.airt import RapidResponse
+# from pyrit.score import CompatibleScorers, ScorerCandidate, ScorerRequirements
+#
+# scorers = CompatibleScorers(
+#     candidates=[
+#         ScorerCandidate(scorer=hate_scorer, evaluation="harm.hate"),
+#         ScorerCandidate(scorer=violence_scorer, evaluation="harm.violence"),
+#     ]
+# )
+# dataset_config = DatasetAttackConfiguration(
+#     sources=[
+#         DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation="harm.hate")),
+#         DatasetSource(name="airt_violence", scorer_requirements=ScorerRequirements(evaluation="harm.violence")),
+#     ]
+# )
+# scenario = RapidResponse(objective_scorer=scorers)
+# scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": dataset_config})
+# await scenario.initialize_async()
+# ```
+#
+# Selection runs once per technique and dataset while the scenario initializes, and it never calls a
+# judge model. A candidate qualifies when it accepts the evidence the attack produces, carries the
+# required evaluation key, meets the technique's own scorer needs, and accepts the conditions of
+# every objective in the dataset. The first qualifying candidate in pool order is used, so order
+# only matters between candidates that both qualify. A dataset with no requirements uses the first
+# candidate that can judge its objectives.
+#
+# When no candidate qualifies, `incompatible_technique_policy` applies to that technique and dataset:
+# `skip` leaves it out with a warning, and `raise` stops with each candidate's reason. A mistyped key
+# is reported together with the keys the pool has. With a baseline, each dataset gets its own baseline
+# judged by the same scorer as its attacks. The run plan records every selection, and a resumed run
+# stops if the pool or the objectives' scoring criteria have changed since it started.
+
+# %% [markdown]
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use

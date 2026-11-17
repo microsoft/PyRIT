@@ -28,6 +28,7 @@ from pyrit.models import (
     AttackSeedGroup,
     ObjectiveTargetEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
+    ScenarioRunPlanScorerBinding,
     config_hash,
 )
 from pyrit.scenario.core.technique_requirements import PreparedSeedGroup, prepare_seed_group
@@ -68,6 +69,7 @@ class AtomicAttack:
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
         group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
+        objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -95,6 +97,8 @@ class AtomicAttack:
                 ``build_baseline_atomic_attack`` passes ``BASELINE`` and Adaptive
                 scenarios pass ``ADAPTIVE``. It describes the group and does not
                 change its identity or what it executes.
+            objective_scorer_binding: The candidate a scorer pool selected for this group and
+                the prepared inputs it accepted. ``None`` for single-scorer runs.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -150,6 +154,7 @@ class AtomicAttack:
             else None
         )
         self._objective_scorer = objective_scorer
+        self._objective_scorer_binding = objective_scorer_binding
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
         # Set via set_scenario_result_id() by Scenario._execute_scenario_async
@@ -224,6 +229,11 @@ class AtomicAttack:
     def group_kind(self) -> ScenarioRunPlanGroupKind:
         """What this group runs, as recorded in the scenario's run plan."""
         return self._group_kind
+
+    @property
+    def objective_scorer_binding(self) -> ScenarioRunPlanScorerBinding | None:
+        """The pool selection behind this group's objective scorer, or None for single-scorer runs."""
+        return self._objective_scorer_binding
 
     @property
     def technique_eval_hash(self) -> str:

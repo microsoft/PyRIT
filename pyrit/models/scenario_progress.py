@@ -64,6 +64,30 @@ class ScenarioRunPlanSeedPrompt(BaseModel):
     parameters: list[str] = Field(default_factory=list)
 
 
+class ScenarioRunPlanScorerBinding(BaseModel):
+    """
+    The objective scorer a pool selected for one atomic group, and the inputs it accepted.
+
+    Recorded only for runs that use a scorer pool. Resume checks the current selection and
+    prepared inputs against it and refuses to run on drift, rather than selecting again.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Position of the selected candidate in the pool.
+    candidate_index: int = Field(ge=0)
+    #: The selected candidate's evaluation key, if it has one.
+    evaluation: str | None = None
+    #: Content hash of the selected scorer's identifier.
+    scorer_hash: str
+    #: The effective evaluation requirement the selection satisfied.
+    required_evaluation: str | None = None
+    #: Whether the selection had to guarantee float feedback.
+    requires_float_scale_value: bool = False
+    #: Sorted unique fingerprints of the prepared expectations the scorer accepted.
+    expectation_fingerprints: list[str] = Field(default_factory=list)
+
+
 class ScenarioRunPlanAtomicGroup(BaseModel):
     """A planned atomic-attack group and its ordered units of work."""
 
@@ -80,6 +104,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
     #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
     is_compound: bool | None = None
+    #: The selected objective scorer for pool runs; absent for single-scorer runs.
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None
 
 
 class ScenarioRunPlan(BaseModel):
