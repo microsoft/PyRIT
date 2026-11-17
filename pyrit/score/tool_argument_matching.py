@@ -75,7 +75,7 @@ def match_tool_arguments(
         if kept is not None and not is_argument_kept(constraint.name, kept=kept):
             verdict = None
             continue
-        found, value = read_argument(arguments, constraint.name)
+        found, value = read_argument(arguments, path=constraint.name)
         if not found or not match_text(matcher=constraint.matcher, text=_argument_text(value)):
             return False
     return verdict

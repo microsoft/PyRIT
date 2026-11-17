@@ -90,7 +90,7 @@ def is_argument_kept(path: str, *, kept: Iterable[str]) -> bool:
     return any(keys[: len(prefix)] == prefix for prefix in map(split_argument_path, kept))
 
 
-def read_argument(arguments: Mapping[str, JsonValue], path: str) -> tuple[bool, JsonValue]:
+def read_argument(arguments: Mapping[str, JsonValue], *, path: str) -> tuple[bool, JsonValue]:
     """
     Read the value a path names.
 
@@ -115,7 +115,7 @@ def keep_argument_paths(arguments: Mapping[str, JsonValue], *, kept: Iterable[st
     """
     view: dict[str, JsonValue] = {}
     for path in kept:
-        found, value = read_argument(arguments, path)
+        found, value = read_argument(arguments, path=path)
         if not found:
             continue
         *parents, leaf = split_argument_path(path)
@@ -136,14 +136,14 @@ def holds_only_kept_arguments(arguments: Mapping[str, JsonValue], *, kept: Itera
     """
     kept_keys = {split_argument_path(path) for path in kept}
 
-    def _holds_only(value: Mapping[str, JsonValue], prefix: tuple[str, ...]) -> bool:
+    def _holds_only(value: Mapping[str, JsonValue], *, prefix: tuple[str, ...]) -> bool:
         for key, child in value.items():
             path = (*prefix, key)
             if path in kept_keys:
                 continue
             on_the_way = any(other[: len(path)] == path for other in kept_keys)
-            if not on_the_way or not isinstance(child, Mapping) or not _holds_only(child, path):
+            if not on_the_way or not isinstance(child, Mapping) or not _holds_only(child, prefix=path):
                 return False
         return True
 
-    return _holds_only(arguments, ())
+    return _holds_only(arguments, prefix=())
