@@ -74,7 +74,13 @@ from pyrit.registry import (
     TargetRegistry,
 )
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
-from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
+from pyrit.scenario import (
+    AttackTechniqueFactory,
+    DatasetSource,
+    IncompatibleTechniquePolicy,
+    Scenario,
+    ScenarioTechnique,
+)
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -1500,7 +1506,7 @@ class TestScenarioRunServiceStartRun:
 
     async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
         """A total override copies the default configuration without mutating it."""
-        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_total=100)
+        default_config = DatasetAttackConfiguration(sources=[DatasetSource(name="original")], max_total=100)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
 
@@ -1526,7 +1532,7 @@ class TestScenarioRunServiceStartRun:
     async def test_start_run_resolves_total_limit_async(
         self, *, mock_all_registries: dict[str, Any], limit_args: dict[str, Any], expected: int | str
     ) -> None:
-        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_total=20)
+        default_config = DatasetAttackConfiguration(sources=[DatasetSource(name="original")], max_total=20)
         mock_all_registries["scenario_instance"]._default_dataset_config = default_config
         service = ScenarioRunService()
         await service.start_run_async(
@@ -1551,7 +1557,7 @@ class TestScenarioRunServiceStartRun:
         class _MarkerDatasetConfiguration(DatasetConfiguration):
             pass
 
-        default_config = _MarkerDatasetConfiguration(dataset_names=["original"], max_dataset_size=100)
+        default_config = _MarkerDatasetConfiguration(sources=[DatasetSource(name="original")], max_total=100)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
 
@@ -1565,10 +1571,10 @@ class TestScenarioRunServiceStartRun:
         assert type(built_config) is _MarkerDatasetConfiguration
         # And carries the caller-supplied values, not the scenario defaults
         assert built_config.dataset_names == ["custom_a", "custom_b"]
-        assert built_config.max_dataset_size == 3
+        assert built_config.max_total == 3
         # The original default config is not mutated when a fresh dataset_names is supplied
         assert default_config.dataset_names == ["original"]
-        assert default_config.max_dataset_size == 100
+        assert default_config.max_total == 100
 
     async def test_start_run_dataset_names_without_max_dataset_size_preserves_subclass(
         self, mock_all_registries
@@ -1579,7 +1585,9 @@ class TestScenarioRunServiceStartRun:
             pass
 
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(dataset_names=["original"])
+        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(
+            sources=[DatasetSource(name="original")]
+        )
 
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["only_this"]))
@@ -1588,7 +1596,7 @@ class TestScenarioRunServiceStartRun:
         built_config = _apply_mapped_datasets(mock_all_registries)
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
-        assert built_config.max_dataset_size == "all"
+        assert built_config.max_total == "all"
 
     async def test_start_run_dataset_names_preserves_custom_constructor_state_async(
         self, mock_all_registries: dict[str, Any]
@@ -1603,7 +1611,7 @@ class TestScenarioRunServiceStartRun:
         scenario_instance = mock_all_registries["scenario_instance"]
         # Build the default with the required kwarg so introspection succeeds.
         scenario_instance._default_dataset_config = _RequiresExtraArgConfiguration(
-            required_extra="seeded", dataset_names=["original"]
+            required_extra="seeded", sources=[DatasetSource(name="original")]
         )
 
         service = ScenarioRunService()
@@ -1621,7 +1629,9 @@ class TestScenarioRunServiceStartRun:
             pass
 
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(dataset_names=["original"])
+        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(
+            sources=[DatasetSource(name="original")]
+        )
 
         service = ScenarioRunService()
         await service.start_run_async(
@@ -1635,12 +1645,12 @@ class TestScenarioRunServiceStartRun:
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = _apply_mapped_datasets(mock_all_registries)
         assert built_config.dataset_names == ["custom"]
-        assert built_config.max_dataset_size == 7
+        assert built_config.max_total == 7
         assert built_config.filters == {"harm_categories": ["cyber"]}
 
     async def test_start_run_dataset_filters_updates_default_config(self, mock_all_registries) -> None:
         """``dataset_filters`` with no ``dataset_names`` merges filters into the default config."""
-        default_config = DatasetAttackConfiguration(dataset_names=["original"])
+        default_config = DatasetAttackConfiguration(sources=[DatasetSource(name="original")])
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
 
@@ -1695,7 +1705,7 @@ class TestScenarioRunServiceStartRun:
 
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(
-            dataset_names=["original"], max_dataset_size=99
+            sources=[DatasetSource(name="original")], max_total=99
         )
 
         service = ScenarioRunService()
@@ -1704,7 +1714,7 @@ class TestScenarioRunServiceStartRun:
         built_config = _apply_mapped_datasets(mock_all_registries)
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["a", "b"]
-        assert built_config.max_dataset_size == 7
+        assert built_config.max_total == 7
 
     @pytest.mark.parametrize(
         "watchdog_expires",
