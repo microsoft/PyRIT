@@ -52,11 +52,11 @@ class SearchReplaceConverter(Converter):
         else:
             raise ValueError("replace must be a string or a non-empty list of strings.")
 
-        for item in self._replace_list:
-            try:
+        try:
+            for item in self._replace_list:
                 self._compiled_regex.sub(item, "")
-            except (re.error, IndexError) as e:
-                raise ValueError(f"Invalid regex replacement template in replace: {e}") from e
+        except (re.error, IndexError) as e:
+            raise ValueError(f"Invalid regex replacement template in replace: {e}") from e
 
         self._pattern = pattern
         self._regex_flags = regex_flags
