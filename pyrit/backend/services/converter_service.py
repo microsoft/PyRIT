@@ -100,7 +100,7 @@ class ConverterService:
                 from pyrit.registry.resolution import project_parameter_value
 
                 for parameter in metadata.parameters if metadata else []:
-                    if not parameter.is_external_input or parameter.sensitive:
+                    if not parameter.is_external_input or parameter.sensitive or parameter.copy_locked:
                         continue
                     try:
                         value = project_parameter_value(
@@ -237,7 +237,7 @@ class ConverterService:
         """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
-        if request.register:
+        if request.register_instance:
             if request.name is None:
                 raise ValueError("name is required when register=true")
             self._registry.instances.validate_name_available(request.name)
@@ -256,7 +256,7 @@ class ConverterService:
         upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
-            if request.register:
+            if request.register_instance:
                 if request.name is None:
                     raise ValueError("name is required when register=true")
                 self._registry.instances.validate_name_available(request.name)
@@ -282,7 +282,7 @@ class ConverterService:
                 and (converter_obj.get_identifier().hash != request.source.effective_hash)
             ):
                 raise ValueError("Temporary converter configuration has changed")
-            if not request.register:
+            if not request.register_instance:
                 return UnregisteredConverter(
                     identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
                 )
@@ -310,11 +310,11 @@ class ConverterService:
                     },
                 )
         except (Exception, asyncio.CancelledError):
-            if request.register:
+            if request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
         finally:
-            if not request.register:
+            if not request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
 
         return converter

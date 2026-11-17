@@ -8,6 +8,7 @@ import asyncio
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry
+from pyrit.registry.instance_registry import refuse_saved_entry
 from pyrit.scenario import AttackTechniqueFactory
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -18,8 +19,11 @@ class ToolsInitializer(PyRITInitializer):
     async def initialize_async(self) -> None:
         """Register tool-use techniques using the configured adversarial chat."""
         registry = AttackTechniqueRegistry.get_registry_singleton()
+        # Returning early would leave a saved technique standing in for this one.
+        refuse_saved_entry(registry.instances.get_entry("role_play_tool_calls"))
         if "role_play_tool_calls" in registry.instances:
             return
+        refuse_saved_entry(ConverterRegistry.get_registry_singleton().instances.get_entry("role_play_tool_calls"))
         converter = await asyncio.to_thread(
             ConverterRegistry.get_registry_singleton().create_instance,
             "RolePlayToolCallConverter",

@@ -15,8 +15,11 @@ Targets can be:
 import asyncio
 import logging
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
@@ -29,24 +32,37 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
-from pyrit.backend.services.component_lifecycle import release_component_async
+from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
-from pyrit.models import Parameter, TargetIdentifier
-from pyrit.models.catalog import TargetInstance
+from pyrit.models import Parameter, PromptDataType, TargetCapabilities, TargetIdentifier
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    SavedEntryOwner,
+    TargetInstance,
+)
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
-from pyrit.registry import TargetRegistry
+from pyrit.prompt_target import (
+    GitHubCopilotTarget,
+    PromptTarget,
+    RoundRobinTarget,
+    discover_target_capabilities_async,
+)
+from pyrit.prompt_target.common.discover_target_capabilities import (
+    DEFAULT_TEST_ASSETS,
+    CapabilityDiscoveryError,
+)
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.registry import (
+    SavedEntryConflictError,
+    TargetRegistry,
+    prepare_saved_params_async,
+    save_then_register_async,
+)
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 
 logger = logging.getLogger(__name__)
-
-_ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
-    "OpenAITarget": frozenset({"endpoint", "model_name"}),
-    "AzureBlobStorageTarget": frozenset({"container_url"}),
-    "AzureMLChatTarget": frozenset({"endpoint"}),
-    "HackAPromptTarget": frozenset({"cookie", "session_id"}),
-    "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
-    "PromptShieldTarget": frozenset({"endpoint"}),
-}
 
 # Constructor parameter through which a target accepts an explicit auth mode.
 _AUTH_MODE_PARAM = "auth_mode"
@@ -61,18 +77,147 @@ class TargetService:
     validation remains owned by the target classes.
     """
 
+    DETECTION_TIMEOUT_SECONDS: float = 240.0
+
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
+        self._detecting: set[str] = set()
+        self._detecting_sources: set[int] = set()
+        self._legacy_binding_capabilities: WeakKeyDictionary[PromptTarget, TargetCapabilities] = WeakKeyDictionary()
 
-    def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
+    def saved_capabilities(self, *, target: PromptTarget, metadata: dict[str, Any]) -> TargetCapabilities:
+        """
+        Resolve a manual chat's snapshot, or its source's pre-detection session fallback.
+
+        Returns:
+            TargetCapabilities: Saved capabilities without changing the registered target.
+        """
+        binding = TargetBinding.from_metadata(metadata)
+        if binding is not None and binding.capabilities is not None:
+            return binding.capabilities
+        saved = metadata.get("target_capabilities")
+        if saved is not None:
+            return TargetCapabilities.model_validate(saved)
+        return self._legacy_binding_capabilities.get(target, target.capabilities)
+
+    @contextmanager
+    def capabilities_scope(
+        self, *, target: PromptTarget | None, metadata: dict[str, Any]
+    ) -> Generator[None, None, None]:
+        """
+        Preserve a manual chat's configuration on its original, caller-owned target.
+
+        Yields:
+            None: A task-local scope; the live target is neither mutated nor released.
+        """
+        if target is None:
+            yield
+            return
+        capabilities = self.saved_capabilities(target=target, metadata=metadata)
+        with target.capabilities_scope(capabilities):
+            yield
+
+    async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
+        """
+        Probe private targets and apply a completed result to the selected source.
+
+        Round-robin detection probes each child independently and combines their
+        results. Only the selected parent is updated; live children are not changed.
+
+        Returns:
+            TargetInstance: The updated live target.
+
+        Raises:
+            LookupError: The target is not registered.
+            FileExistsError: Discovery is already running or the source changed.
+            ValueError: The target cannot be probed safely.
+            TimeoutError: Discovery exceeded its operation deadline.
+        """
+        target = self.get_target_object(target_registry_name=target_registry_name)
+        if target is None:
+            raise LookupError("Target not found")
+        if target.get_identifier().hash != expected_hash:
+            raise FileExistsError("The target changed. Refresh the target registry.")
+        if getattr(target, "inner_targets", None) and not isinstance(target, RoundRobinTarget):
+            raise ValueError("Capability detection is not supported for this composite target type.")
+        sources = target.inner_targets if isinstance(target, RoundRobinTarget) else [target]
+        snapshots = [(source, source.configuration) for source in [target, *sources]]
+        source_ids = {id(source) for source, _ in snapshots}
+        if target_registry_name in self._detecting or source_ids & self._detecting_sources:
+            raise FileExistsError("Capability detection is already running for this target or one of its children.")
+        self._detecting.add(target_registry_name)
+        self._detecting_sources.update(source_ids)
+        try:
+            async with asyncio.timeout(self.DETECTION_TIMEOUT_SECONDS):
+                results: list[TargetCapabilities] = []
+                for index, source in enumerate(sources):
+                    try:
+                        results.append(await self._probe_capabilities_async(source))
+                    except (CapabilityDiscoveryError, ValueError) as exc:
+                        if isinstance(target, RoundRobinTarget):
+                            error_type = (
+                                CapabilityDiscoveryError if isinstance(exc, CapabilityDiscoveryError) else ValueError
+                            )
+                            raise error_type(f"Child {index + 1} ({type(source).__name__}): {exc}") from exc
+                        raise
+                capabilities = (
+                    target.aggregate_capabilities(child_capabilities=results)
+                    if isinstance(target, RoundRobinTarget)
+                    else results[0]
+                )
+                entry = self._registry.instances.get_entry(target_registry_name)
+                if (
+                    entry is None
+                    or entry.instance is not target
+                    or any(source.configuration is not configuration for source, configuration in snapshots)
+                    or target.get_identifier().hash != expected_hash
+                    or (isinstance(target, RoundRobinTarget) and target.inner_targets != sources)
+                ):
+                    raise FileExistsError(
+                        "The target changed during capability detection. Refresh the target registry."
+                    )
+                self._legacy_binding_capabilities.setdefault(target, target.capabilities)
+                target.apply_capabilities(capabilities=capabilities)
+                return self._build_instance_from_object(
+                    target_registry_name=target_registry_name,
+                    target_obj=target,
+                    origin=registry_entry_origin(entry.metadata),
+                )
+        finally:
+            self._detecting.discard(target_registry_name)
+            self._detecting_sources.difference_update(source_ids)
+
+    async def _probe_capabilities_async(self, target: PromptTarget) -> TargetCapabilities:
+        """
+        Check one private target and release its resources.
+
+        Returns:
+            TargetCapabilities: Completed capability results.
+        """
+        probe = await construct_component_async(self._registry.recreate_instance, source=target, params={})
+        try:
+            probe.apply_capabilities(capabilities=target.capabilities)
+            modalities: set[frozenset[PromptDataType]] = {frozenset({"text"})}
+            for modality in DEFAULT_TEST_ASSETS:
+                modalities.update({frozenset({modality}), frozenset({"text", modality})})
+            modalities.update(TOOL_CALL_INPUT_MODALITIES)
+            return await discover_target_capabilities_async(
+                target=probe, test_modalities=modalities, raise_on_error=True
+            )
+        finally:
+            await release_component_async(probe)
+
+    def _build_instance_from_object(
+        self, *, target_registry_name: str, target_obj: Any, origin: RegistryEntryOrigin | None = None
+    ) -> TargetInstance:
         """
         Build a TargetInstance from a registry object.
 
         Returns:
             TargetInstance with metadata derived from the object.
         """
-        return target_object_to_instance(target_registry_name, target_obj)
+        return target_object_to_instance(target_registry_name, target_obj, origin=origin)
 
     async def list_targets_async(
         self,
@@ -91,7 +236,9 @@ class TargetService:
             TargetListResponse containing paginated targets.
         """
         items = [
-            self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
+            self._build_instance_from_object(
+                target_registry_name=entry.name, target_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
+            )
             for entry in self._registry.instances.get_all_instances()
         ]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
@@ -132,10 +279,14 @@ class TargetService:
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.instances.get(target_registry_name)
-        if obj is None:
+        entry = self._registry.instances.get_entry(target_registry_name)
+        if entry is None:
             return None
-        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
+        return self._build_instance_from_object(
+            target_registry_name=target_registry_name,
+            target_obj=entry.instance,
+            origin=registry_entry_origin(entry.metadata),
+        )
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
         """
@@ -145,6 +296,20 @@ class TargetService:
             The PromptTarget object if found, None otherwise.
         """
         return self._registry.instances.get(target_registry_name)
+
+    def get_target_object_by_identifier_hash(self, identifier_hash: str) -> PromptTarget | None:
+        """
+        Resolve a legacy saved target only when its registry identity is unambiguous.
+
+        Returns:
+            PromptTarget | None: The sole matching registry entry, or None when missing or ambiguous.
+        """
+        matches = [
+            entry.instance
+            for entry in self._registry.instances.get_all_instances()
+            if entry.instance.get_identifier().hash == identifier_hash
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _get_supported_auth_modes(auth_modes: tuple[str, ...]) -> list[AuthMode]:
@@ -205,11 +370,10 @@ class TargetService:
             list[Parameter]: Parameters projected for dynamic form generation.
         """
         target_cls = self._registry.get_class(target_type)
-        required_names = frozenset().union(
-            *(_ENV_BACKED_REQUIRED_PARAMETERS.get(base.__name__, frozenset()) for base in target_cls.__mro__)
-        )
         return [
-            parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
+            parameter.model_copy(update={"default": REQUIRED_VALUE})
+            if parameter.name in target_cls.environment_backed_parameters
+            else parameter
             for parameter in parameters
             if parameter.name != target_cls.upload_directory_parameter
             and parameter.is_allowed_external_input(allowed_path_params=target_cls.caller_path_parameters)
@@ -272,19 +436,27 @@ class TargetService:
             external_input=True,
             allowed_path_params=type(source).caller_path_parameters,
         )
-        if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
-            await release_component_async(target)
-            raise ValueError("The saved target configuration cannot be reconstructed")
+        if spec.effective_hash:
+            legacy_capabilities = self._legacy_binding_capabilities.get(source)
+            if legacy_capabilities is not None:
+                target.apply_capabilities(capabilities=legacy_capabilities)
+            if target.get_identifier().hash != spec.effective_hash:
+                await release_component_async(target)
+                raise ValueError("The saved target configuration cannot be reconstructed")
         return target
 
     async def resolve_binding_async(self, binding: TargetBinding) -> PromptTarget:
         """
-        Rebuild an attack-owned configuration from its current source.
+        Rebuild an attack-owned target without changing its saved capabilities.
 
         Returns:
             PromptTarget: The caller-owned target.
         """
-        return await self.build_from_source_async(binding.to_spec())
+        source = self._registry.resolve_source(name=binding.source_name, identifier_hash=binding.source_hash)
+        capabilities = binding.capabilities or self._legacy_binding_capabilities.get(source, source.capabilities)
+        target = await self.build_from_source_async(binding.to_spec())
+        target.apply_capabilities(capabilities=capabilities)
+        return target
 
     def _has_required_params(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> bool:
         """
@@ -352,7 +524,13 @@ class TargetService:
         params[parameter_name] = upload_directory
 
     async def create_target_async(
-        self, *, request: CreateTargetRequest, upload_directory: str | None = None, is_admin: bool = False
+        self,
+        *,
+        request: CreateTargetRequest,
+        upload_directory: str | None = None,
+        is_admin: bool = False,
+        owner: SavedEntryOwner | None = None,
+        recipes_source: str | None = None,
     ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
@@ -375,7 +553,8 @@ class TargetService:
         repository code, or that would authenticate with this server's stored
         credentials, is built only for an administrator. The response is built
         before the target is registered, so a failed request leaves no registered
-        target.
+        target. With ``persist``, the target is saved so it is restored at every
+        start; otherwise it is Temporary.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -383,6 +562,8 @@ class TargetService:
                 or None when the server configures none.
             is_admin: Whether the caller may create a target that runs model repository code or
                 authenticates with this server's stored credentials.
+            owner: The signed-in user, recorded on a saved target, or None when sign-in is off.
+            recipes_source: Where saved entries are stored, or None for the default folder.
 
         Returns:
             TargetInstance with the new target's details.
@@ -397,6 +578,9 @@ class TargetService:
                 raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution, or
                 creates a target that would authenticate with this server's stored credentials.
+            NotSaveableError: If a target to save would hold or use a credential, or uses a Temporary target.
+            SavedEntryConflictError: If a target to save has the name of a registered or saved target.
+            SavedEntryStorageError: If a target to save can't be written to storage.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -461,18 +645,43 @@ class TargetService:
                 **self._registry.get_reconstruction_parameters(source),
                 **request.source.params,
             }
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+        if metadata is not None:
+            missing: list[str] = []
+            for parameter in self._project_target_parameters(target_type=request.type, parameters=metadata.parameters):
+                value = permission_params.get(parameter.name)
+                if parameter.required and (value is None or isinstance(value, str) and not value.strip()):
+                    missing.append(parameter.name)
+            if missing:
+                raise ValueError(
+                    f"Target type '{request.type}' requires explicit connection fields: {', '.join(missing)}. "
+                    "Supply these fields explicitly, or select an environment-initialized registered target."
+                )
         await self._enforce_code_execution_permission_async(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
         self._enforce_server_credential_permission(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
+        if request.persist:
+            params = await prepare_saved_params_async(
+                registry=self._registry,
+                type_name=request.type,
+                cls=target_cls,
+                params=params,
+                auth_mode=request.auth_mode,
+            )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        if request.register:
-            self._registry.instances.validate_name_available(target_registry_name)
+        if request.register_instance:
+            try:
+                self._registry.instances.validate_name_available(target_registry_name)
+            except RegistryNameTakenError as error:
+                if request.persist:
+                    raise SavedEntryConflictError(str(error)) from error
+                raise
         if (
             request.source
             and type(
@@ -486,25 +695,87 @@ class TargetService:
         target_obj = (
             await self.build_from_source_async(request.source)
             if request.source
-            else self._registry.create_instance_from_external_input(
-                request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
+            else await self._registry.create_instance_async(
+                name=request.type,
+                params=params,
+                external_input=True,
+                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
             )
         )
-        if not request.register:
+        if not request.register_instance:
             try:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
                     capabilities=target_obj.capabilities,
+                    generation_ranges=target_obj.generation_ranges,
                 )
             finally:
                 await release_component_async(target_obj)
         try:
-            target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+            if request.persist:
+                return await self._save_and_register_async(
+                    name=target_registry_name,
+                    type_name=request.type,
+                    target_cls=target_cls,
+                    target_obj=target_obj,
+                    auth_mode=request.auth_mode,
+                    params=params,
+                    owner=owner,
+                    recipes_source=recipes_source,
+                )
+            target = self._build_instance_from_object(
+                target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
+            )
             self._registry.instances.register(target_obj, name=target_registry_name)
             return target
         except Exception:
             await release_component_async(target_obj)
             raise
+
+    async def _save_and_register_async(
+        self,
+        *,
+        name: str,
+        type_name: str,
+        target_cls: type[PromptTarget],
+        target_obj: PromptTarget,
+        auth_mode: AuthMode,
+        params: dict[str, Any],
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+    ) -> TargetInstance:
+        """
+        Save the target's recipe through the registry library, then return the saved target.
+
+        The recipe names the class by the registry name the request used, which restore looks up, and keeps the
+        auth mode apart from the parameters, as the create request does.
+
+        Returns:
+            TargetInstance: The saved target.
+
+        Raises:
+            SavedEntryConflictError: If a saved or registered target already has the name.
+            SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+        """
+        target = self._build_instance_from_object(
+            target_registry_name=name, target_obj=target_obj, origin=RegistryEntryOrigin.SAVED
+        )
+        auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
+        recipe = ComponentRecipe(
+            class_module=target_cls.__module__,
+            class_name=type_name,
+            auth_mode=auth_mode,
+            params={key: value for key, value in params.items() if key not in auth_parameters},
+            owner=owner,
+        )
+        await save_then_register_async(
+            kind=RegistryRecipeKind.TARGETS,
+            name=name,
+            recipe=recipe,
+            register=lambda metadata: self._registry.instances.register(target_obj, name=name, metadata=metadata),
+            source=recipes_source,
+        )
+        return target
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool

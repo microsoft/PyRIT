@@ -37,6 +37,7 @@ from pyrit.scenario import (
     AttackTechnique,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetFetchPolicy,
     DatasetSource,
     IncompatibleTechniqueError,
     Scenario,
@@ -559,19 +560,19 @@ class TestPsychosocialConstruction:
     def test_injected_scorers_skip_default_scorer_target(self):
         """Regression: injecting both sub-harm scorers must not resolve the default scorer target,
         so callers without scorer-target configuration can still construct the scenario."""
-        with patch("pyrit.scenario.scenarios.airt.psychosocial.get_default_scorer_target") as mock_target:
+        with patch("pyrit.scenario.core.scenario.get_default_scorer_target") as mock_target:
             Psychosocial(imminent_crisis_scorer=_mock_scorer(), licensed_therapist_scorer=_mock_scorer())
         mock_target.assert_not_called()
 
     def test_missing_scorer_resolves_default_scorer_target(self):
         """When a sub-harm scorer is omitted, the default scorer target is resolved once to build it."""
         with patch(
-            "pyrit.scenario.scenarios.airt.psychosocial.get_default_scorer_target",
+            "pyrit.scenario.core.scenario.get_default_scorer_target",
             return_value=MagicMock(spec=PromptTarget),
         ) as mock_target:
             scenario = Psychosocial(imminent_crisis_scorer=_mock_scorer())
-        mock_target.assert_called_once()
-        assert scenario._scorers_by_harm["licensed_therapist"] is not None
+        mock_target.assert_not_called()
+        assert "licensed_therapist" not in scenario._scorers_by_harm
 
     def test_supported_parameters_keeps_dataset_config(self):
         """dataset_config is retained so --max-dataset-size still works (names are hard-bound)."""
@@ -794,7 +795,7 @@ class TestPsychosocialCrossProduct:
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
-                    "dataset_config": DatasetAttackConfiguration(dataset_names=["ignored"], max_dataset_size=7),
+                    "dataset_config": DatasetAttackConfiguration(sources=[DatasetSource(name="ignored")], max_total=7),
                 }
             )
             await scenario.initialize_async()
@@ -833,7 +834,7 @@ class TestPsychosocialCrossProduct:
                     "dataset_config": DatasetAttackConfiguration(
                         sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
                         max_per_dataset=1,
-                        auto_fetch=False,
+                        fetch=DatasetFetchPolicy.NEVER,
                     ),
                 }
             )
@@ -877,7 +878,7 @@ class TestPsychosocialCrossProduct:
             await scenario.initialize_async()
         read_seeds.assert_awaited()
 
-        assert scenario._dataset_config.max_dataset_size == "all"
+        assert scenario._dataset_config.max_total == "all"
         assert len(scenario._atomic_attacks) == 4
         assert all(len(attack.seed_groups) == 6 for attack in scenario._atomic_attacks)
         plan = scenario._build_run_plan()

@@ -112,9 +112,6 @@ class Leakage(Scenario):
                 Defaults to a composite scorer (leakage detection + refusal backstop).
             scenario_result_id: Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-
         technique_class = _build_leakage_technique()
 
         super().__init__(

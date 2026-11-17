@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         MultilingualTechnique,
         RapidResponseTechnique,
     )
+    from pyrit.scenario.scenarios.airt.aggregation_leakage import AggregationLeakage, AggregationLeakageTechnique
     from pyrit.scenario.scenarios.airt.cyber import Cyber
     from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
     from pyrit.scenario.scenarios.airt.leakage import Leakage
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AggregationLeakage": "pyrit.scenario.scenarios.airt.aggregation_leakage",
+    "AggregationLeakageTechnique": "pyrit.scenario.scenarios.airt.aggregation_leakage",
     "Cyber": "pyrit.scenario.scenarios.airt.cyber",
     "CyberTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Jailbreak": "pyrit.scenario.scenarios.airt.jailbreak",
