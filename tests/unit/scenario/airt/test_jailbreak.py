@@ -321,7 +321,7 @@ class TestJailbreakInitialization:
             "num_jailbreaks": 1,
             "dataset_config": DatasetAttackConfiguration(
                 seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="one objective")])],
-                max_dataset_size=5,
+                max_total=5,
             ),
         }
         scenario.set_params_from_args(args=args)

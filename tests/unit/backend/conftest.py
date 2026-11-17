@@ -1,14 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Backend compatibility fixtures independent of a packaged workspace stamp."""
+"""Backend isolation, compatibility, and request-loop resource ownership."""
 
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Generator, Iterator
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from anyio import from_thread
+from anyio.from_thread import BlockingPortal, start_blocking_portal
 
 from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._execution import AnalyticsExecution
@@ -22,6 +26,27 @@ from pyrit.memory import SQLiteMemory
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from test_support.fixtures import authentication_policy, compatibility_headers, compatibility_id  # noqa: F401
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+
+
+@pytest.fixture(autouse=True)
+def close_test_client_memory_before_loop_shutdown(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Dispose fixture-owned engines before TestClient's AnyIO portal closes its loop."""
+    if "sqlite_instance" not in request.fixturenames:
+        yield
+        return
+
+    @contextmanager
+    def memory_portal(*args: Any, **kwargs: Any) -> Generator[BlockingPortal, None, None]:
+        # Preserve normal fixture ordering so memory tears down before fixture-owned executors.
+        memory: SQLiteMemory = request.getfixturevalue("sqlite_instance")
+        with start_blocking_portal(*args, **kwargs) as portal:
+            try:
+                yield portal
+            finally:
+                portal.call(memory.dispose_loop_resources_async)
+
+    with patch.object(from_thread, "start_blocking_portal", memory_portal):
+        yield
 
 
 @pytest.fixture
