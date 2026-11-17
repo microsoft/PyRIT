@@ -25,7 +25,7 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.adaptive import TextAdaptive
-from pyrit.scenario.scenarios.airt import RapidResponse
+from pyrit.scenario.scenarios.airt import RapidResponse, Scam
 from pyrit.scenario.scenarios.garak import (
     ApiKey,
     Exploitation,
@@ -72,6 +72,27 @@ def test_scorer_override_preserves_defaults_and_rejects_stale_or_unsupported_sel
 
 def _datasets(**fields: object) -> ScenarioDatasetRequest | None:
     return RunScenarioRequest.model_validate({"scenario_name": "s", "target_name": "t", **fields}).dataset_request
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("techniques", [None, []])
+def test_baseline_only_selection_does_not_restore_default_techniques(techniques: list[str] | None) -> None:
+    resolved = ScenarioConfigurationResolver.resolve_configuration(
+        scenario_name="airt.scam",
+        scenario_class=Scam,
+        techniques=techniques,
+        include_baseline=True,
+    )
+    scenario = Scam()
+    scenario.set_params_from_args(args=resolved)
+    scenario._resolve_runtime_configuration(require_objective_target=False)
+    assert scenario._include_baseline
+    if techniques is None:
+        assert "scenario_techniques" not in resolved
+        assert scenario._scenario_techniques
+    else:
+        assert resolved["scenario_techniques"] == []
+        assert scenario._scenario_techniques == []
 
 
 @pytest.mark.usefixtures("patch_central_database")

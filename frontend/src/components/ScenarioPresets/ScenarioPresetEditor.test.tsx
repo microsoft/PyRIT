@@ -188,6 +188,24 @@ describe('ScenarioPresetEditor create mode', () => {
     }))
   })
 
+  it('saves baseline as the only selected attack', async () => {
+    const user = userEvent.setup()
+    renderCreate()
+
+    await user.type(await screen.findByTestId('preset-name-input'), 'baseline_only')
+    await selectScenario(user, SCENARIO.scenario_name)
+    await user.click(await screen.findByTestId('technique-default_technique'))
+
+    expect(screen.getByTestId('baseline-checkbox')).toBeChecked()
+    expect(screen.queryByText('Select at least one attack technique.')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('save-preset-btn'))
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({
+      name: 'baseline_only',
+      scenario_name: SCENARIO.scenario_name,
+      techniques: [],
+    }))
+  })
+
   it('creates a preset hidden from the Scanner when the operator turns that off', async () => {
     const user = userEvent.setup()
     renderCreate()
@@ -263,6 +281,7 @@ describe('ScenarioPresetEditor create mode', () => {
       default_techniques: [],
       default_technique: 'all',
       aggregate_techniques: ['all'],
+      include_baseline_by_default: false,
     }))
     renderCreate()
 

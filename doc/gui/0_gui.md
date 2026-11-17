@@ -201,6 +201,8 @@ red X to remove a converter from the live registry; confirmation is required.
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
+Selecting **baseline** alone is valid in both the preset editor and Scanner:
+it sends objectives directly, without adding the scenario's default techniques.
 Suite launch dialogs apply arriving target defaults only to untouched selections.
 An explicit target choice, including clearing an optional adversarial target to
 use the server default, is retained when the registry refreshes.

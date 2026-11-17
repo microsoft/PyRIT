@@ -109,6 +109,23 @@ describe('scenario launch requests', () => {
     expect(run.ok && 'operation_id' in run.request).toBe(false)
   })
 
+  it('allows baseline as the only selected attack in estimates and launches', () => {
+    const input = makeInput({ techniques: [], includeBaseline: true })
+    for (const result of [buildEstimateRequest(input), buildRunRequest(input)]) {
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.request).toMatchObject({ techniques: [], include_baseline: true })
+    }
+  })
+
+  it('does not count a forbidden baseline as a selected attack', () => {
+    expect(buildEstimateRequest(makeInput({
+      scenario: makeScenario({ baseline_policy: 'forbidden' }),
+      techniques: [],
+      includeBaseline: true,
+    }))).toEqual({ ok: false, error: 'Select at least one technique.' })
+  })
+
   it.each<[string, Partial<ScenarioLaunchInput>, string]>([
     ['no target', { targetName: '' }, 'Select a target.'],
     ['no technique', { techniques: [] }, 'Select at least one technique.'],

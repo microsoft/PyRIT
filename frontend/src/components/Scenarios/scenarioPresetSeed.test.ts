@@ -28,11 +28,14 @@ describe('seedPresetTechniques', () => {
   it.each([
     ['absent', undefined],
     ['null', null],
-    ['empty', []],
   ])('should fall back to the form defaults when the preset techniques are %s', (
     _label: string, techniques: string[] | null | undefined,
   ) => {
     expect(seed(makeScenario(), techniques)).toEqual({ techniques: DEFAULTS, tokensWithoutCheckbox: [] })
+  })
+
+  it('should preserve a baseline-only preset instead of adding default techniques', () => {
+    expect(seed(makeScenario(), [])).toEqual({ techniques: [], tokensWithoutCheckbox: [] })
   })
 
   it('should pin concrete techniques in preset order', () => {

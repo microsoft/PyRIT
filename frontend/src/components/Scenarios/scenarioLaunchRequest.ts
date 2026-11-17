@@ -113,7 +113,8 @@ export function buildEstimateRequest({
 }: ScenarioLaunchInput): BuildEstimateRequestResult {
   if (techniqueEditError) return { ok: false, error: techniqueEditError }
   if (scorerError) return { ok: false, error: scorerError }
-  if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
+  if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0
+    && !(supportsParameter(scenario, 'include_baseline') && includeBaseline && scenario.baseline_policy !== 'forbidden')) {
     return { ok: false, error: 'Select at least one technique.' }
   }
   if (supportsParameter(scenario, 'scenario_techniques')

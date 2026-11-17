@@ -407,15 +407,15 @@ class RedTeamAgent(Scenario):
 
         Accepts bare FoundryTechnique members (each becomes its own composite) or
         FoundryComposite objects (used as-is, enabling attack+converter pairings).
-        None and [] both resolve to the default technique aggregate.
+        None resolves to the default technique aggregate; [] selects no techniques.
 
         Args:
-            techniques: FoundryTechnique enums, FoundryComposite objects, or None/[] for default.
+            techniques: FoundryTechnique enums, FoundryComposite objects, or None for default.
 
         Returns:
             list[ScenarioTechnique]: Flat list of constituent techniques for base-class tracking.
         """
-        if not techniques:
+        if techniques is None:
             resolved = FoundryTechnique.resolve(None, default=cast("FoundryTechnique", self._default_technique))
             self._scenario_composites = [self._technique_to_composite(s) for s in resolved]
             return list(resolved)

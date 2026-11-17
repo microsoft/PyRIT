@@ -111,7 +111,7 @@ function presetTechniqueNames(
   scenario: RegisteredScenario | undefined,
 ): string[] {
   const selections = item.preset.techniques
-  if (!selections || selections.length === 0) {
+  if (!selections) {
     return uniqueNames(scenario?.default_techniques ?? [])
   }
   return uniqueNames(selections.flatMap((name) => {

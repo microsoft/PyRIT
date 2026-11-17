@@ -79,7 +79,7 @@ export default function ScenarioTechniqueSelector({
       <Text size={200} className={styles.hint}>
         Select individual techniques.
       </Text>
-      {selectedTechniques.length === 0 && (
+      {selectedTechniques.length === 0 && !(includeBaseline && !isBaselineForbidden) && (
         <Text className={styles.errorText} role="alert">
           Select at least one attack technique.
         </Text>

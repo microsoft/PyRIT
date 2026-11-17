@@ -1412,11 +1412,11 @@ class TestScenarioBaselineOnlyExecution:
             ]
         }
 
-        # Initialize with None (default technique) — [] also works, both expand defaults
+        # An explicit empty selection must not restore the default techniques.
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_techniques": None,
+                "scenario_techniques": [],
                 "dataset_config": mock_dataset_config,
             }
         )
@@ -1425,6 +1425,7 @@ class TestScenarioBaselineOnlyExecution:
         # Should have exactly one attack - the baseline
         assert scenario.atomic_attack_count == 1
         assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+        assert scenario._scenario_techniques == []
 
     async def test_baseline_only_execution_runs_successfully(self, mock_objective_target, sample_attack_results):
         """Test that baseline-only scenario can run successfully."""
@@ -1445,11 +1446,11 @@ class TestScenarioBaselineOnlyExecution:
             "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")])]
         }
 
-        # Initialize with None — [] also expands defaults now, both are equivalent
+        # Select baseline only.
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
-                "scenario_techniques": None,  # same as [] now
+                "scenario_techniques": [],
                 "dataset_config": mock_dataset_config,
             }
         )
@@ -1537,8 +1538,8 @@ class TestScenarioBaselineOnlyExecution:
         assert baseline_attack.atomic_attack_name == "baseline"
         assert baseline_attack.seed_groups == expected_seeds
 
-    def test_empty_list_techniques_expands_defaults_same_as_none(self):
-        """Test that [] and None both expand to the default technique set."""
+    def test_empty_list_techniques_does_not_expand_defaults(self):
+        """Only an omitted selection expands to the default technique set."""
         scenario = ConcreteScenario(name="Test", version=1)
         technique_class = scenario._technique_class
         default = scenario._default_technique
@@ -1546,7 +1547,7 @@ class TestScenarioBaselineOnlyExecution:
         resolved_none = technique_class.resolve(None, default=default)
         resolved_empty = technique_class.resolve([], default=default)
 
-        assert resolved_none == resolved_empty
+        assert resolved_empty == []
         assert len(resolved_none) > 0
 
     def test_unknown_technique_raises(self):

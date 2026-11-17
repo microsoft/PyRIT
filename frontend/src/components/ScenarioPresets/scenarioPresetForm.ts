@@ -59,9 +59,8 @@ export function presetToConfigState(
   preset: ScenarioPreset,
 ): ScenarioConfigFormState {
   const defaults = initialScenarioConfigState(scenario)
-  const pinned = preset.techniques ?? []
   return {
-    techniques: pinned.length > 0 ? pinned : defaults.techniques,
+    techniques: preset.techniques ?? defaults.techniques,
     includeBaseline: scenario.baseline_policy === 'forbidden'
       ? false
       : preset.include_baseline ?? defaults.includeBaseline,

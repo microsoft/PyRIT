@@ -1406,13 +1406,14 @@ describe('ScenarioDetail', () => {
     expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 3')
   })
 
-  it('does not request a preview while the custom technique selection is empty', async () => {
+  it('does not request a preview when neither baseline nor a concrete technique is selected', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await flushRenderedPromises()
 
     await user.click(screen.getByTestId('technique-default_technique'))
+    await user.click(screen.getByTestId('baseline-checkbox'))
     await advanceTimers(300)
 
     expect(mockEstimateRun).not.toHaveBeenCalled()
@@ -1887,11 +1888,26 @@ describe('ScenarioDetail', () => {
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('technique-default_technique'))
+    await user.click(screen.getByTestId('baseline-checkbox'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Select at least one attack technique.')
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
     expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
     expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('launches baseline alone without reselecting the default technique', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByTestId('technique-default_technique'))
+
+    expect(screen.getByTestId('baseline-checkbox')).toBeChecked()
+    expect(screen.queryByText('Select at least one attack technique.')).not.toBeInTheDocument()
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).toMatchObject({ techniques: [], include_baseline: true })
   })
 
   it('defaults the baseline checkbox from include_baseline_by_default when enabled, and allows editing', async () => {

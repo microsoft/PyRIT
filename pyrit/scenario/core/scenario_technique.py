@@ -264,14 +264,14 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         """
         Resolve technique inputs into a concrete, ordered, deduplicated list.
 
-        Handles None (returns expanded default), plain techniques, and aggregate techniques.
+        Handles None (returns expanded default), explicit empty selections, and aggregate techniques.
         Callers that accept other technique shapes, such as ``FoundryComposite``, must
         translate them before they reach this method.
 
         Args:
-            techniques (Sequence[Any] | None): Techniques to resolve. If None or empty,
-                expands the default.
-            default (Self): Default aggregate technique to use when techniques is None or empty.
+            techniques (Sequence[Any] | None): Techniques to resolve. None expands the default;
+                an empty sequence selects no techniques.
+            default (Self): Default aggregate technique to use when techniques is None.
 
         Returns:
             list[Self]: Ordered, deduplicated list of concrete techniques.
@@ -280,7 +280,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
             ValueError: If an item is not a member of this technique catalog. Dropping it
                 silently would run the default selection instead of the requested one.
         """
-        if not techniques:
+        if techniques is None:
             return cls.expand({default})
 
         normalized: list[Self] = []

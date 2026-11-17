@@ -267,7 +267,7 @@ class ScenarioConfigurationResolver:
 
         if datasets is not None:
             resolved["dataset_overrides"] = datasets
-        if not techniques and technique_override is None:
+        if techniques is None and technique_override is None:
             return resolved
 
         try:
@@ -278,7 +278,7 @@ class ScenarioConfigurationResolver:
                 f"scenario class is not instantiable without arguments ({exc})."
             ) from exc
 
-        if techniques:
+        if techniques is not None:
             technique_enums, technique_converters = cls.resolve_techniques_and_converters(
                 tokens=techniques,
                 technique_class=introspection_instance._technique_class,

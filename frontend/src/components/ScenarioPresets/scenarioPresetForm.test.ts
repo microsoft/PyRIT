@@ -159,11 +159,16 @@ describe('presetToConfigState', () => {
     expect(state.techniques).toEqual(['crescendo:converter.translation_spanish'])
   })
 
-  it('falls back to the scenario defaults only when the preset pins nothing', () => {
+  it('preserves an explicitly empty technique selection for a baseline-only preset', () => {
     const scenario = makeScenario({ all_techniques: ['crescendo', 'default_technique'] })
     const state = presetToConfigState(scenario, makePreset({ techniques: [] }))
 
-    expect(state.techniques).toEqual(['default_technique'])
+    expect(state.techniques).toEqual([])
+    expect(state.includeBaseline).toBe(true)
+    const built = buildPresetScenarioConfig(scenario, state, null)
+    expect(built.ok).toBe(true)
+    if (!built.ok) return
+    expect(configToPreset(IDENTITY, built.config, { scenario, previous: null }).techniques).toEqual([])
   })
 
   it('keeps a pinned aggregate technique that the selector renders no checkbox for', () => {

@@ -256,6 +256,32 @@ async def test_foundry_templates_are_loaded_off_loop_async(
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+async def test_baseline_only_does_not_restore_default_composites_async(
+    *,
+    mock_adversarial_target: MagicMock,
+    mock_objective_scorer: MagicMock,
+    mock_memory_seed_groups: list[AttackSeedGroup],
+) -> None:
+    scenario = RedTeamAgent(
+        adversarial_chat=mock_adversarial_target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+    )
+    scenario.set_params_from_args(
+        args={
+            "objective_target": MockPromptTarget(),
+            "scenario_techniques": [],
+            "include_baseline": True,
+            "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
+        }
+    )
+    await scenario.initialize_async()
+
+    assert scenario._scenario_composites == []
+    assert scenario._scenario_techniques == []
+    assert [attack.atomic_attack_name for attack in scenario._atomic_attacks] == ["baseline"]
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryCompatibilityPolicy:
     @pytest.mark.parametrize("policy", [None, "skip", "raise"])
     @pytest.mark.parametrize("composed", [False, True])

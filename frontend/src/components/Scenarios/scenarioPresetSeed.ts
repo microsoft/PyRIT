@@ -23,7 +23,7 @@ export function seedPresetTechniques(
   concreteNames: ReadonlySet<string>,
   defaultTechniques: string[],
 ): PresetTechniqueSeed {
-  if (!presetTechniques || presetTechniques.length === 0) {
+  if (!presetTechniques) {
     return { techniques: defaultTechniques, tokensWithoutCheckbox: [] }
   }
   const aggregateNames = new Set(scenario.aggregate_techniques)

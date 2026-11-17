@@ -741,6 +741,7 @@ function ScenarioLaunchForm({
   const techniqueSelectionOverLimit = supportsTechniques && scenario.max_concrete_techniques != null
     && selectedTechniques.length > scenario.max_concrete_techniques
   const techniqueSelectionError = supportsTechniques && selectedTechniques.length === 0
+    && !(supportsBaseline && baselineChecked && !isBaselineForbidden)
     ? 'Select at least one attack technique.'
     : techniqueSelectionOverLimit
     ? `Select at most ${scenario.max_concrete_techniques} concrete technique(s).`

@@ -150,7 +150,7 @@ export function buildScenarioConfig({
   datasets,
   includeBaseline,
 }: BuildScenarioConfigInput): BuildScenarioConfigResult {
-  if (techniques.length === 0) {
+  if (techniques.length === 0 && !includeBaseline) {
     return { ok: false, error: 'Select at least one technique.' }
   }
 
