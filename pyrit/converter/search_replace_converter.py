@@ -21,8 +21,8 @@ class SearchReplaceConverter(Converter):
 
         Args:
             pattern (str): The regex pattern to replace. Empty patterns match at every character boundary.
-            replace (str | list[str]): The new phrase to replace with. Can be a single string or a list of strings.
-                If a list is provided, a random element will be chosen for replacement.
+            replace (str | list[str]): The regex replacement template(s) to use. Literal backslashes must be escaped.
+                Can be a single string or a list of strings. If a list is provided, a random element will be chosen.
             regex_flags (int): Regex flags to use for the replacement. Defaults to 0 (no flags).
 
         Raises:
