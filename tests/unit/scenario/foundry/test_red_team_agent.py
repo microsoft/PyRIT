@@ -50,7 +50,7 @@ from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfigur
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.foundry import (  # type: ignore[ty:import-not-found]
     FoundryComposite,
     FoundryTechnique,
     RedTeamAgent,
