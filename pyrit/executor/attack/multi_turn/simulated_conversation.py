@@ -14,11 +14,13 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException
+from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException, remove_markdown_json
 from pyrit.executor.attack.component import (
     _AdversarialConversationManager,
 )
@@ -37,8 +39,9 @@ from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
     ConversationReference,
     ConversationType,
+    JsonResponseConfig,
     Message,
-    SeedObjective,
+    SeedGroup,
     SeedPrompt,
     SimulatedConversationMode,
     ToolDefinition,
@@ -46,8 +49,9 @@ from pyrit.models import (
     load_simulated_target_prompt,
     warn_prompt_path_deprecated,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 from pyrit.prompt_target import OpenAIResponseTarget, Tool
+from pyrit.prompt_target.common.tool_call_history import check_simulated_tool_history
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -128,7 +132,9 @@ async def generate_simulated_conversation_async(
     a simulated target (by default the same LLM as adversarial_chat, optionally configured with a
     system prompt). When ``tools`` are given, the simulated target can call them and the
     adversarial chat writes each result. In ``ONE_SHOT`` mode the adversarial chat instead writes
-    a whole tool-call history against ``tools`` in one pass and revises it until it is valid.
+    a whole tool-call history against ``tools`` in one pass. A deterministic check lists every
+    invalid call, argument, output, and shape problem, and the adversarial chat revises the
+    history in the same conversation until it passes or the attempts run out.
     The resulting prompts and their source conversation references are returned together so
     downstream attacks can preserve the simulation lineage.
 
@@ -142,7 +148,8 @@ async def generate_simulated_conversation_async(
         adversarial_chat: The adversarial LLM that generates attack prompts.
             This same LLM is also used as the simulated target.
         objective_scorer: Scorer to evaluate the final turn. Required for ``TURN_BY_TURN``.
-        num_turns: Number of conversation turns to generate. Defaults to 3.
+        num_turns: Number of conversation turns to generate. In ``ONE_SHOT`` mode, the exact number
+            of tool calls in the history, each followed by its result. Defaults to 3.
         starting_sequence: The starting sequence number for the generated SeedPrompts.
             Each message gets an incrementing sequence number. Defaults to 0.
         adversarial_chat_system_prompt: System prompt for the adversarial chat. Required unless
@@ -178,8 +185,9 @@ async def generate_simulated_conversation_async(
     Raises:
         ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
             is supplied, if a prompt and its deprecated path input are both supplied, if
-            ``ONE_SHOT`` mode has no tools, if ``TURN_BY_TURN`` mode has no objective scorer, or if a
-            simulated target with tools cannot run them.
+            ``ONE_SHOT`` mode has no tools or duplicate tool names, if an adversarial chat cannot
+            hold a multi-turn conversation with a system prompt, if ``TURN_BY_TURN`` mode has no
+            objective scorer, or if a simulated target with tools cannot run them.
     """
     # By default the same LLM plays both roles, with different system prompts.
     simulated_target = simulated_target or adversarial_chat
@@ -213,12 +221,14 @@ async def generate_simulated_conversation_async(
     if mode is SimulatedConversationMode.ONE_SHOT:
         if not tools:
             raise ValueError("One-shot simulated conversations need the tools to write calls to")
+        if len({tool.name for tool in tools}) != len(tools):
+            raise ValueError("Tool names must be unique")
         return await _generate_one_shot_history_async(
             objective=objective,
             adversarial_chat=adversarial_chat,
             system_prompt=adversarial_chat_system_prompt,
             tools=tools,
-            max_messages=num_turns * 2,
+            num_tool_calls=num_turns,
             max_attempts=max_attempts,
             starting_sequence=starting_sequence,
         )
@@ -403,13 +413,59 @@ async def _generate_next_message_async(
     return Message.from_prompt(role="user", prompt=reply.next_message)
 
 
+class _InvalidHistoryError(ValueError):
+    """The adversarial chat did not write a valid one-shot history within the allowed attempts."""
+
+
+class _AuthoredMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    type: Literal["message"]
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1)
+
+    def to_seed_prompt(self, *, sequence: int) -> SeedPrompt:
+        return SeedPrompt(value=self.content, data_type="text", role=self.role, sequence=sequence)
+
+
+class _AuthoredCall(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    type: Literal["function_call"]
+    call_id: str
+    name: str
+    arguments: dict[str, JsonValue] | str
+
+    def to_seed_prompt(self, *, sequence: int) -> SeedPrompt:
+        arguments = self.arguments if isinstance(self.arguments, str) else json.dumps(self.arguments)
+        value = {"type": "function_call", "call_id": self.call_id, "name": self.name, "arguments": arguments}
+        return SeedPrompt(value=json.dumps(value), data_type="function_call", role="assistant", sequence=sequence)
+
+
+class _AuthoredOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    type: Literal["function_call_output"]
+    call_id: str
+    output: JsonValue
+
+    def to_seed_prompt(self, *, sequence: int) -> SeedPrompt:
+        output = self.output if isinstance(self.output, str) else json.dumps(self.output)
+        value = {"type": "function_call_output", "call_id": self.call_id, "output": output}
+        return SeedPrompt(value=json.dumps(value), data_type="function_call_output", role="tool", sequence=sequence)
+
+
+class _AuthoredHistory(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    items: list[Annotated[_AuthoredMessage | _AuthoredCall | _AuthoredOutput, Field(discriminator="type")]] = Field(
+        min_length=1
+    )
+
+
 async def _generate_one_shot_history_async(
     *,
     objective: str,
     adversarial_chat: PromptTarget,
     system_prompt: SeedPrompt,
     tools: Sequence[ToolDefinition],
-    max_messages: int,
+    num_tool_calls: int,
     max_attempts: int,
     starting_sequence: int,
 ) -> SimulatedConversationResult:
@@ -421,17 +477,12 @@ async def _generate_one_shot_history_async(
             chat produced no usable history.
 
     Raises:
-        RuntimeError: If generation fails for any other reason, such as a target error.
+        ValueError: If the adversarial chat cannot hold a multi-turn conversation with a system
+            prompt, or ``max_attempts`` is less than 1.
     """
-    # Import here to avoid circular imports
-    from pyrit.executor.promptgen import SimulatedToolHistoryError, SimulatedToolHistoryGenerator
-
-    generator = SimulatedToolHistoryGenerator(
-        adversarial_chat=adversarial_chat,
-        system_prompt=system_prompt,
-        max_attempts=max_attempts,
-        max_messages=max_messages,
-    )
+    RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.validate(target=adversarial_chat)
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
     conversation_id = str(uuid4())
     reference = ConversationReference(
         conversation_id=conversation_id,
@@ -439,24 +490,149 @@ async def _generate_one_shot_history_async(
         description="simulated tool history generation",
     )
     try:
-        result = await generator.execute_async(
-            objective=SeedObjective(value=objective), tools=tools, conversation_id=conversation_id
+        history = await _write_one_shot_history_async(
+            objective=objective,
+            adversarial_chat=adversarial_chat,
+            system_prompt=system_prompt,
+            tools=tools,
+            num_tool_calls=num_tool_calls,
+            max_attempts=max_attempts,
+            conversation_id=conversation_id,
         )
-    except RuntimeError as error:
-        if not isinstance(error.__cause__, (InvalidJsonException, SimulatedToolHistoryError)):
-            raise
+    except (InvalidJsonException, _InvalidHistoryError) as error:
         kind = AttackPreparationFailureKind.ADVERSARIAL_CHAT_INVALID_OUTPUT
         return SimulatedConversationResult(
             seed_prompts=[],
             related_conversations=frozenset({reference}),
-            preparation_failure=AttackPreparationFailure(
-                kind=kind, reason=f"{kind.default_reason} Details: {error.__cause__}"
-            ),
+            preparation_failure=AttackPreparationFailure(kind=kind, reason=f"{kind.default_reason} Details: {error}"),
         )
     history = [
-        prompt.model_copy(update={"sequence": starting_sequence + index}) for index, prompt in enumerate(result.history)
+        prompt.model_copy(update={"sequence": starting_sequence + index}) for index, prompt in enumerate(history)
     ]
     return SimulatedConversationResult(seed_prompts=history, related_conversations=frozenset({reference}))
+
+
+async def _write_one_shot_history_async(
+    *,
+    objective: str,
+    adversarial_chat: PromptTarget,
+    system_prompt: SeedPrompt,
+    tools: Sequence[ToolDefinition],
+    num_tool_calls: int,
+    max_attempts: int,
+    conversation_id: str,
+) -> list[SeedPrompt]:
+    """
+    Request a history and send validation feedback in the same conversation until it passes.
+
+    Responses that are not JSON at all are retried on a clean turn through the shared JSON retry
+    policy instead of spending an attempt.
+
+    Returns:
+        list[SeedPrompt]: The validated history, numbered from sequence 0.
+
+    Raises:
+        _InvalidHistoryError: If no attempt produced a valid history.
+    """
+    json_config = JsonResponseConfig(
+        json_schema=system_prompt.response_json_schema, schema_name="SimulatedToolHistory", strict=False
+    )
+
+    def build_request(text: str) -> Message:
+        message = Message.from_prompt(prompt=text, role="user")
+        message.message_pieces[0].prompt_metadata = json_config.to_metadata()
+        return message
+
+    def parse(response: Message) -> tuple[list[SeedPrompt], list[str]]:
+        return _read_one_shot_history(response=response, tools=tools, num_tool_calls=num_tool_calls)
+
+    await adversarial_chat.set_system_prompt_async(system_prompt=system_prompt.value, conversation_id=conversation_id)
+    normalizer = PromptNormalizer()
+    request = build_request(
+        json.dumps(
+            {
+                "objective": objective,
+                "tools": [tool.model_dump(mode="json") for tool in tools],
+                "num_tool_calls": num_tool_calls,
+            },
+            indent=2,
+        )
+    )
+    issues: list[str] = []
+    for attempt in range(1, max_attempts + 1):
+        history, issues = await send_json_with_retry_async(
+            normalizer=normalizer,
+            target=adversarial_chat,
+            message=request,
+            conversation_id=conversation_id,
+            parse=parse,
+        )
+        if not issues:
+            return history
+        logger.info("One-shot tool history attempt %d failed validation: %s", attempt, issues)
+        request = build_request(
+            "Your history failed validation. Fix every problem below and return the complete corrected "
+            "history in the same JSON format. Message N refers to items[N].\n"
+            + "\n".join(f"- {issue}" for issue in issues)
+        )
+    raise _InvalidHistoryError(
+        f"No valid history after {max_attempts} attempt(s) in conversation {conversation_id}. "
+        f"Remaining problems: {'; '.join(issues)}"
+    )
+
+
+def _read_one_shot_history(
+    *, response: Message, tools: Sequence[ToolDefinition], num_tool_calls: int
+) -> tuple[list[SeedPrompt], list[str]]:
+    """
+    Parse and check one response.
+
+    Returns:
+        tuple[list[SeedPrompt], list[str]]: The history and the problems to send back for revision.
+
+    Raises:
+        InvalidJsonException: If the response is blocked or is not a single JSON object, so the
+            shared JSON retry resends the request instead of spending an attempt.
+    """
+    texts = [piece.converted_value for piece in response.message_pieces if piece.converted_value_data_type == "text"]
+    blocked = any(piece.response_error != "none" for piece in response.message_pieces)
+    if blocked or len(texts) != 1:
+        raise InvalidJsonException(message="Expected one text response containing a history object.")
+    payload = remove_markdown_json(texts[0])
+    try:
+        json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise InvalidJsonException(message="The response is not a JSON object.") from error
+    try:
+        authored = _AuthoredHistory.model_validate_json(payload)
+    except ValidationError as error:
+        details = "; ".join(
+            f"{'.'.join(map(str, detail['loc'])) or 'value'}: {detail['msg']}" for detail in error.errors()
+        )
+        return [], [f"The response is not a valid history object: {details}"]
+    history = [item.to_seed_prompt(sequence=index) for index, item in enumerate(authored.items)]
+    messages = SeedGroup(seeds=[prompt.model_copy() for prompt in history]).user_messages
+    return history, [
+        *_check_one_shot_shape(history=history, num_tool_calls=num_tool_calls),
+        *check_simulated_tool_history(messages=messages, tools=tools),
+    ]
+
+
+def _check_one_shot_shape(*, history: list[SeedPrompt], num_tool_calls: int) -> list[str]:
+    issues: list[str] = []
+    calls = sum(prompt.data_type == "function_call" for prompt in history)
+    if calls != num_tool_calls:
+        issues.append(
+            f"The history has {calls} tool calls; write exactly {num_tool_calls}, each followed by its result."
+        )
+    if history[-1].role == "user":
+        issues.append("Do not end with a user message; the objective is sent as the next user message.")
+    texts = [(index, prompt.role) for index, prompt in enumerate(history) if prompt.data_type == "text"]
+    if any(role == "assistant" for _, role in texts):
+        issues.append("Write no assistant messages; use only tool calls and their results.")
+    if any(role == "user" and index != 0 for index, role in texts):
+        issues.append("Only one user message is allowed, as the first item.")
+    return issues
 
 
 @dataclass

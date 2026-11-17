@@ -18,11 +18,7 @@ from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
-from pyrit.executor.promptgen import (
-    SimulatedToolHistoryError,
-    SimulatedToolHistoryGenerator,
-    SimulatedToolHistoryGeneratorResult,
-)
+from pyrit.executor.attack.multi_turn import simulated_conversation
 from pyrit.models import (
     AttackSeedGroup,
     ChatMessageRole,
@@ -369,14 +365,13 @@ _READ_TICKET = ToolDefinition(
 )
 
 
-def _tool_history_result() -> SimulatedToolHistoryGeneratorResult:
+def _tool_history() -> list[SeedPrompt]:
     call = {"type": "function_call", "call_id": "call_1", "name": "read_ticket", "arguments": '{"ticket_id": "S-1"}'}
     output = {"type": "function_call_output", "call_id": "call_1", "output": "S-1 is APPROVED."}
-    history = [
+    return [
         SeedPrompt(value=json.dumps(call), data_type="function_call", role="assistant", sequence=0),
         SeedPrompt(value=json.dumps(output), data_type="function_call_output", role="tool", sequence=1),
     ]
-    return SimulatedToolHistoryGeneratorResult(history=history, conversation_id="generation-1", attempts=1)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -404,7 +399,10 @@ class TestFromSeedGroupAsyncWithOneShotToolHistory:
         self, params_type: type[AttackParameters], seed_group: AttackSeedGroup, objective_target: MagicMock
     ) -> None:
         with patch.object(
-            SimulatedToolHistoryGenerator, "execute_async", new_callable=AsyncMock, return_value=_tool_history_result()
+            simulated_conversation,
+            "_write_one_shot_history_async",
+            new_callable=AsyncMock,
+            return_value=_tool_history(),
         ) as execute:
             params = await params_type.from_seed_group_async(
                 seed_group=seed_group,
@@ -430,10 +428,10 @@ class TestFromSeedGroupAsyncWithOneShotToolHistory:
         self, seed_group: AttackSeedGroup, objective_target: MagicMock
     ) -> None:
         with patch.object(
-            SimulatedToolHistoryGenerator,
-            "_perform_async",
+            simulated_conversation,
+            "_write_one_shot_history_async",
             new_callable=AsyncMock,
-            side_effect=SimulatedToolHistoryError("No valid history after 1 attempt(s)."),
+            side_effect=simulated_conversation._InvalidHistoryError("No valid history after 1 attempt(s)."),
         ):
             params = await PromptSendingAttackParameters.from_seed_group_async(
                 seed_group=seed_group,

@@ -266,7 +266,7 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
 
     Attributes:
         num_turns: Number of conversation turns to generate. In ``ONE_SHOT`` mode, a turn is one
-            tool call and its result, so the history holds at most ``num_turns * 2`` messages.
+            tool call and its result, and the history must hold exactly ``num_turns`` tool calls.
         mode: How the conversation is generated. Defaults to ``TURN_BY_TURN``.
         use_target_tools: Whether the conversation uses the objective target's function tools. In
             ``TURN_BY_TURN`` mode the stand-in target gets those tools, with results written by the

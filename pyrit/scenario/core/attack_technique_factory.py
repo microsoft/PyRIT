@@ -41,7 +41,6 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     RedTeamingAttack,
 )
-from pyrit.executor.promptgen import SimulatedToolHistoryGenerator
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
@@ -350,10 +349,10 @@ class AttackTechniqueFactory(Identifiable):
                 LLM-generated next message is used. This supports techniques like
                 context compliance whose final turn is a hardcoded affirmation
                 (e.g. ``"yes."``) rather than an LLM-generated message.
-            num_turns: Number of simulated conversation turns. Defaults to 3.
+            num_turns: Number of simulated conversation turns. With ``ONE_SHOT``, the exact number
+                of tool calls in the history. Defaults to 3.
             mode: How the conversation is generated. ``ONE_SHOT`` has the adversarial chat write a
-                tool-call history in one pass; its adversarial prompt defaults to the bundled
-                one-shot tool-history prompt. Defaults to ``TURN_BY_TURN``.
+                tool-call history in one pass. Defaults to ``TURN_BY_TURN``.
             use_target_tools: Whether the conversation uses the objective target's function tools.
                 When set, no next message is generated unless a next-message prompt is given (the
                 objective is sent as is), the simulated target prompt defaults to one that calls
@@ -401,12 +400,9 @@ class AttackTechniqueFactory(Identifiable):
             load_prompt=SeedPrompt.from_yaml_file,
         )
         if adversarial_chat_system_prompt is None:
-            default_prompt_path = (
-                Path(EXECUTOR_SEED_PROMPT_PATH) / "promptgen" / "simulated_tool_history.yaml"
-                if mode is SimulatedConversationMode.ONE_SHOT
-                else Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
+            adversarial_chat_system_prompt = SeedPrompt.from_yaml_file(
+                Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
             )
-            adversarial_chat_system_prompt = SeedPrompt.from_yaml_file(default_prompt_path)
         simulated_target_system_prompt = resolve_prompt_source(
             prompt=simulated_target_system_prompt,
             path=simulated_target_system_prompt_path,
@@ -492,11 +488,13 @@ class AttackTechniqueFactory(Identifiable):
         if self.uses_adversarial:
             errors.extend(self.attack_class.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
         simulation = self.seed_technique.simulated_conversation_config if self.seed_technique is not None else None
-        if simulation is not None and simulation.mode is SimulatedConversationMode.ONE_SHOT:
-            errors.extend(SimulatedToolHistoryGenerator.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
-        elif simulation is not None:
+        if simulation is not None:
             errors.extend(RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
-            if simulation.use_target_tools and not isinstance(target, OpenAIResponseTarget):
+            if (
+                simulation.mode is SimulatedConversationMode.TURN_BY_TURN
+                and simulation.use_target_tools
+                and not isinstance(target, OpenAIResponseTarget)
+            ):
                 errors.append(
                     "A simulated conversation with tools needs an OpenAIResponseTarget adversarial chat, which "
                     f"runs the stand-in target's tool calls; got {type(target).__name__}."

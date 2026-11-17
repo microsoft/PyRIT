@@ -20,12 +20,6 @@ if TYPE_CHECKING:
         PromptGeneratorStrategyContext,
         PromptGeneratorStrategyResult,
     )
-    from pyrit.executor.promptgen.simulated_tool_history_generator import (
-        SimulatedToolHistoryError,
-        SimulatedToolHistoryGenerator,
-        SimulatedToolHistoryGeneratorContext,
-        SimulatedToolHistoryGeneratorResult,
-    )
     from pyrit.executor.promptgen.target_objective_generator import TargetObjectiveGenerator
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -35,10 +29,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AnecdoctorContext": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorGenerator": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorResult": "pyrit.executor.promptgen.anecdoctor",
-    "SimulatedToolHistoryError": "pyrit.executor.promptgen.simulated_tool_history_generator",
-    "SimulatedToolHistoryGenerator": "pyrit.executor.promptgen.simulated_tool_history_generator",
-    "SimulatedToolHistoryGeneratorContext": "pyrit.executor.promptgen.simulated_tool_history_generator",
-    "SimulatedToolHistoryGeneratorResult": "pyrit.executor.promptgen.simulated_tool_history_generator",
     "TargetObjectiveGenerator": "pyrit.executor.promptgen.target_objective_generator",
     "PromptGeneratorStrategy": "pyrit.executor.promptgen.core",
     "PromptGeneratorStrategyContext": "pyrit.executor.promptgen.core",
