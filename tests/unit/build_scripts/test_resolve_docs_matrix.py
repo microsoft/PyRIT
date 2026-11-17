@@ -45,12 +45,15 @@ versions:
   - slug: latest
     name: "latest (dev, main)"
     ref: main
+    template: https://github.com/myst-templates/book-theme/archive/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.zip
   - slug: "0.13.0"
     name: "0.13.0"
     ref: releases/v0.13.0
+    template: https://github.com/myst-templates/book-theme/archive/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip
   - slug: "0.12.1"
     name: "0.12.1"
     ref: releases/v0.12.1
+    template: https://github.com/myst-templates/book-theme/archive/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip
 """
 
 
@@ -64,9 +67,24 @@ def test_build_outputs_shape(module, tmp_path):
     matrix = json.loads(outputs["matrix"])
     assert matrix == {
         "include": [
-            {"slug": "latest", "ref": "main"},
-            {"slug": "0.13.0", "ref": "releases/v0.13.0"},
-            {"slug": "0.12.1", "ref": "releases/v0.12.1"},
+            {
+                "slug": "latest",
+                "ref": "main",
+                "template": "https://github.com/myst-templates/book-theme/archive/"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.zip",
+            },
+            {
+                "slug": "0.13.0",
+                "ref": "releases/v0.13.0",
+                "template": "https://github.com/myst-templates/book-theme/archive/"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip",
+            },
+            {
+                "slug": "0.12.1",
+                "ref": "releases/v0.12.1",
+                "template": "https://github.com/myst-templates/book-theme/archive/"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip",
+            },
         ]
     }
     payload = json.loads(outputs["versions_json"])
@@ -106,6 +124,7 @@ versions:
   - slug: latest
     name: latest
     ref: main
+    template: https://github.com/myst-templates/book-theme/archive/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.zip
 """
     p = _write_yaml(tmp_path, bad)
     with pytest.raises(ValueError, match="missing required key 'default'"):
@@ -120,6 +139,7 @@ versions:
   - slug: "0.13.0"
     name: "0.13.0"
     ref: releases/v0.13.0
+    template: https://github.com/myst-templates/book-theme/archive/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip
 """
     p = _write_yaml(tmp_path, bad)
     with pytest.raises(ValueError, match="'default' value '9.9.9' is not among"):
@@ -134,6 +154,7 @@ versions:
   - slug: "0.13.0"
     name: "0.13.0"
     ref: releases/v0.13.0
+    template: https://github.com/myst-templates/book-theme/archive/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.zip
 """
     p = _write_yaml(tmp_path, bad)
     with pytest.raises(ValueError, match="'stable' value '9.9.9' is not among"):
@@ -219,7 +240,9 @@ def test_ordinary_pr_only_builds_tested_merge(*, module: ModuleType, tmp_path: P
         changed_files=[changed_path],
     )
 
-    assert json.loads(outputs["matrix"]) == {"include": [{"slug": "latest", "ref": TESTED_SHA}]}
+    assert json.loads(outputs["matrix"]) == {
+        "include": [{"slug": "latest", "ref": TESTED_SHA, "template": cfg["versions"][0]["template"]}]
+    }
     assert outputs["compose"] == "false"
     assert json.loads(outputs["versions_json"]) == cfg
     assert json.dumps(cfg) == original
@@ -231,6 +254,7 @@ def test_ordinary_pr_only_builds_tested_merge(*, module: ModuleType, tmp_path: P
         ".github/docs-versions.yml",
         ".github/workflows/docs.yml",
         "build_scripts/resolve_docs_matrix.py",
+        "build_scripts/pin_docs_theme.py",
         "build_scripts/compose_docs_dist.py",
         "build_scripts/generate_pages_manifest.py",
         "build_scripts/inject_version_picker.py",
@@ -252,9 +276,17 @@ def test_composition_pr_keeps_all_releases_and_tested_merge(
 
     assert json.loads(outputs["matrix"]) == {
         "include": [
-            {"slug": "latest", "ref": TESTED_SHA},
-            {"slug": "0.13.0", "ref": "releases/v0.13.0"},
-            {"slug": "0.12.1", "ref": "releases/v0.12.1"},
+            {"slug": "latest", "ref": TESTED_SHA, "template": cfg["versions"][0]["template"]},
+            {
+                "slug": "0.13.0",
+                "ref": "releases/v0.13.0",
+                "template": cfg["versions"][1]["template"],
+            },
+            {
+                "slug": "0.12.1",
+                "ref": "releases/v0.12.1",
+                "template": cfg["versions"][2]["template"],
+            },
         ]
     }
     assert outputs["compose"] == "true"
@@ -270,7 +302,14 @@ def test_non_pr_keeps_full_matrix_and_pins_triggering_branch(
     outputs = module.build_outputs(cfg=cfg, event_name=event_name, ref=f"refs/heads/{branch}", sha=TESTED_SHA)
 
     assert json.loads(outputs["matrix"]) == {
-        "include": [{"slug": v["slug"], "ref": TESTED_SHA if v["ref"] == branch else v["ref"]} for v in cfg["versions"]]
+        "include": [
+            {
+                "slug": v["slug"],
+                "ref": TESTED_SHA if v["ref"] == branch else v["ref"],
+                "template": v["template"],
+            }
+            for v in cfg["versions"]
+        ]
     }
     assert outputs["compose"] == "true"
     assert json.loads(outputs["versions_json"]) == cfg
@@ -292,7 +331,12 @@ def test_unlisted_non_main_ref_validates_its_commit_without_dropping_releases(
     outputs = module.build_outputs(cfg=cfg, event_name=event_name, ref=ref, sha=TESTED_SHA)
     assert json.loads(outputs["matrix"]) == {
         "include": [
-            {"slug": v["slug"], "ref": TESTED_SHA if v["slug"] == "latest" else v["ref"]} for v in cfg["versions"]
+            {
+                "slug": v["slug"],
+                "ref": TESTED_SHA if v["slug"] == "latest" else v["ref"],
+                "template": v["template"],
+            }
+            for v in cfg["versions"]
         ]
     }
     assert outputs["compose"] == "true"
@@ -303,7 +347,9 @@ def test_unlisted_ref_substitution_does_not_change_main_publication(*, module: M
     cfg = module.load_config(_write_yaml(tmp_path, _VALID_YAML))
     cfg["versions"][0]["ref"] = "b" * 40
     outputs = module.build_outputs(cfg=cfg, event_name="push", ref="refs/heads/main", sha=TESTED_SHA)
-    assert json.loads(outputs["matrix"]) == {"include": [{"slug": v["slug"], "ref": v["ref"]} for v in cfg["versions"]]}
+    assert json.loads(outputs["matrix"]) == {
+        "include": [{"slug": v["slug"], "ref": v["ref"], "template": v["template"]} for v in cfg["versions"]]
+    }
 
 
 def test_workflow_requires_triggering_ref(*, module: ModuleType, tmp_path: Path) -> None:
@@ -363,5 +409,6 @@ def test_main_pr_passes_immutable_sha_to_diff(
     assert rc == 0
     diff.assert_called_once_with(TESTED_SHA)
     outputs = dict(line.split("=", 1) for line in capsys.readouterr().out.splitlines())
-    assert json.loads(outputs["matrix"]) == {"include": [{"slug": "latest", "ref": TESTED_SHA}]}
+    template = module.load_config(config)["versions"][0]["template"]
+    assert json.loads(outputs["matrix"]) == {"include": [{"slug": "latest", "ref": TESTED_SHA, "template": template}]}
     assert outputs["compose"] == "false"
