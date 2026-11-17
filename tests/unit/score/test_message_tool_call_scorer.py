@@ -670,3 +670,8 @@ async def test_exhaustive_ignores_unnamed_calls_that_did_not_run_async(sqlite_in
     score = await _score_exhaustive_async(reply)
 
     assert score.status == ScoreStatus.UNDETERMINED
+
+
+def test_identifier_names_the_dotted_path_matching_version() -> None:
+    # Bumped when argument names became dotted paths, so scores matched under the old meaning are not reused.
+    assert MessageToolCallScorer().get_identifier().params["matching_version"] == 3

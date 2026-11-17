@@ -81,7 +81,7 @@ def test_scorer_identifier_retains_source_child() -> None:
 
     assert identifier.children["source"] == source.get_identifier()
     assert "source_hash" not in identifier.params
-    assert identifier.params["matching_version"] == 1
+    assert identifier.params["matching_version"] == 2
     assert identifier.hash != OtelToolCallScorer(source=other_source).get_identifier().hash
     assert ComponentIdentifier.model_validate_json(identifier.model_dump_json()).children == identifier.children
 

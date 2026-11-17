@@ -6,13 +6,22 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from pyrit.models.code_execution import (  # runtime-required by Pydantic
     _ProgramInvocation,
     _RuntimeProfileName,
 )
-from pyrit.models.score._argument_paths import ArgumentPath  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score._argument_paths import split_argument_path
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
@@ -21,10 +30,13 @@ from pyrit.models.seeds.assert_generation import AssertTaxonomy  # noqa: TC001 (
 if TYPE_CHECKING:
     from typing import Self
 
-    from pydantic import GetJsonSchemaHandler
+    from pydantic import GetJsonSchemaHandler, ValidationInfo
     from pydantic.config import ExtraValues
     from pydantic.json_schema import JsonSchemaValue
     from pydantic_core import CoreSchema
+
+#: Validation context key that marks input as a stored, versioned representation.
+_PERSISTED_VALIDATION_CONTEXT = "require_scoring_expectation_schema_version"
 
 #: Maps each condition's stable discriminator to its type. A condition is persisted under
 #: its ``condition_type`` discriminator rather than its import path, so a stored score survives
@@ -180,8 +192,27 @@ class ToolArgumentRequirement(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: ArgumentPath
+    name: str = Field(min_length=1, strict=True)
     matcher: TextMatcher
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str, info: ValidationInfo) -> str:
+        """
+        Require a valid argument path, except when reading a stored requirement.
+
+        Any nonempty name was valid before names became paths, so a stored requirement loads
+        with the name it has and is matched as one literal top-level key.
+
+        Returns:
+            str: The unchanged name.
+
+        Raises:
+            ValueError: If a new requirement's name has an empty path segment.
+        """
+        if not (info.context and info.context.get(_PERSISTED_VALIDATION_CONTEXT)):
+            split_argument_path(value)
+        return value
 
 
 class ToolCallRequirement(BaseModel):
@@ -391,9 +422,11 @@ class ProgramBehaves(Condition):
         return tuple(case.invocation for case in self.cases)
 
 
-def _parse_conditions(value: Any) -> Any:
+def _parse_conditions(value: Any, info: ValidationInfo) -> Any:
     """
     Rebuild discriminator-tagged conditions without losing subclass fields.
+
+    The validation context is passed on, so a condition knows when it is read from storage.
 
     Returns:
         Any: The conditions with serialized entries resolved to concrete types.
@@ -405,7 +438,9 @@ def _parse_conditions(value: Any) -> Any:
         return ()
     if isinstance(value, (str, bytes, dict)) or not isinstance(value, Iterable):
         raise ValueError("conditions must be an iterable of typed conditions.")
-    return tuple(Condition.model_validate(item) if isinstance(item, dict) else item for item in value)
+    return tuple(
+        Condition.model_validate(item, context=info.context) if isinstance(item, dict) else item for item in value
+    )
 
 
 class _ConditionTupleSchema:

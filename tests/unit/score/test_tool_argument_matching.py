@@ -209,3 +209,22 @@ def test_redaction_makes_a_negative_that_rests_on_it_undetermined(
     requirement = _requirement(to=Equals(value="a@example.com"), body=Contains(value="invoice"))
 
     assert match_tool_requirement(requirement=requirement, calls=calls, kept=("to",)) is expected
+
+
+def _stored_requirement(name: str) -> ToolCallRequirement:
+    """Build a requirement as it loads from storage, where older names need not be paths."""
+    return ToolCallRequirement.model_validate(
+        {"name": "send_email", "arguments": [{"name": name, "matcher": Equals(value="x").model_dump(mode="json")}]},
+        context={"require_scoring_expectation_schema_version": True},
+    )
+
+
+@pytest.mark.parametrize("name", ["a..b", ".email", "recipient."])
+def test_a_stored_name_that_is_not_a_path_matches_as_one_literal_key(name: str) -> None:
+    requirement = _stored_requirement(name)
+
+    assert match_tool_arguments(requirement=requirement, arguments={name: "x"}) is True
+    assert match_tool_arguments(requirement=requirement, arguments={name: "y"}) is False
+    assert match_tool_arguments(requirement=requirement, arguments={"a": {"": {"b": "x"}}}) is False
+    # Kept paths are always valid paths, so a source never kept this literal key: it is redacted.
+    assert match_tool_arguments(requirement=requirement, arguments={name: "x"}, kept=("to",)) is None

@@ -141,7 +141,7 @@ class MessageToolCallScorer(TrueFalseScorer):
     CONDITION_TYPE = ToolsCalled
 
     def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(params={"matching_version": 2, "message_scope_version": 1})
+        return self._create_identifier(params={"matching_version": 3, "message_scope_version": 1})
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, MessageScorable):

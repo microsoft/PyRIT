@@ -311,7 +311,7 @@ class OtelToolCallScorer(_OtelToolEvidenceScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"matching_version": 1, "message_scope_version": _MESSAGE_SCOPE_VERSION},
+            params={"matching_version": 2, "message_scope_version": _MESSAGE_SCOPE_VERSION},
             children={"source": self._source.get_identifier()},
         )
 

@@ -12,9 +12,7 @@ objects only: it does not index arrays and cannot name a key that itself contain
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Annotated, cast
-
-from pydantic import AfterValidator, Field
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pydantic import JsonValue
@@ -38,19 +36,20 @@ def split_argument_path(path: str) -> tuple[str, ...]:
     return keys
 
 
-def _require_argument_path(path: str) -> str:
+def _requirement_keys(name: str) -> tuple[str, ...]:
     """
-    Reject a path with an empty segment, leaving the path unchanged.
+    Split a requirement's argument name into object keys.
+
+    A requirement stored before names were paths can hold a name that is not a valid path, such
+    as ``a..b``. It keeps the meaning it was stored with: one literal top-level key.
 
     Returns:
-        str: The unchanged path.
+        tuple[str, ...]: The keys from the top level down.
     """
-    split_argument_path(path)
-    return path
-
-
-#: One top-level argument key, or dot-separated object keys into a nested argument.
-ArgumentPath = Annotated[str, Field(strict=True, min_length=1), AfterValidator(_require_argument_path)]
+    try:
+        return split_argument_path(name)
+    except ValueError:
+        return (name,)
 
 
 def validate_kept_argument_paths(paths: Iterable[object]) -> tuple[str, ...]:
@@ -86,7 +85,7 @@ def is_argument_kept(path: str, *, kept: Iterable[str]) -> bool:
     Returns:
         bool: True when a kept path equals the path or contains it.
     """
-    keys = split_argument_path(path)
+    keys = _requirement_keys(path)
     return any(keys[: len(prefix)] == prefix for prefix in map(split_argument_path, kept))
 
 
@@ -99,7 +98,7 @@ def read_argument(arguments: Mapping[str, JsonValue], *, path: str) -> tuple[boo
             key, or a value on the way that is not an object, means the field does not exist.
     """
     node: object = arguments
-    for key in split_argument_path(path):
+    for key in _requirement_keys(path):
         if not isinstance(node, Mapping) or key not in node:
             return False, None
         node = node[key]
