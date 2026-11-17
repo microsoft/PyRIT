@@ -8,10 +8,11 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict
 from dataclasses import fields as dc_fields
+from traceback import walk_tb
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from tqdm import tqdm
 
 from pyrit.datasets.seed_datasets.seed_metadata import (
@@ -23,6 +24,15 @@ from pyrit.datasets.seed_datasets.seed_metadata import (
 from pyrit.models import SeedDataset
 
 logger = logging.getLogger(__name__)
+
+
+def _description_error_context(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['type']}"
+            for error in exc.errors(include_url=False, include_context=False, include_input=False)
+        )
+    return " -> ".join(f"{frame.f_code.co_name}:{line}" for frame, line in walk_tb(exc.__traceback__))
 
 
 class SeedDatasetProvider(ABC):
@@ -167,7 +177,12 @@ class SeedDatasetProvider(ABC):
                 metadata = validated_metadata
         except Exception as exc:
             unavailable_reason = "Provider metadata is unavailable."
-            logger.warning("Could not describe metadata for %s (%s)", type(self).__name__, type(exc).__name__)
+            logger.warning(
+                "Could not describe metadata for %s (%s): %s",
+                type(self).__name__,
+                type(exc).__name__,
+                _description_error_context(exc),
+            )
         source = self.source_url or getattr(self, "source", None)
         if not source and (hub_name := getattr(self, "HF_DATASET_NAME", None)):
             source = f"https://huggingface.co/datasets/{hub_name}"
@@ -218,7 +233,10 @@ class SeedDatasetProvider(ABC):
                     descriptors.setdefault(descriptor.name, descriptor)
             except Exception as exc:
                 logger.warning(
-                    "Default configuration unavailable for %s (%s)", provider_class.__name__, type(exc).__name__
+                    "Default configuration unavailable for %s (%s): %s",
+                    provider_class.__name__,
+                    type(exc).__name__,
+                    _description_error_context(exc),
                 )
         return descriptors
 

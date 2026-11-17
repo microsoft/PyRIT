@@ -20,6 +20,7 @@ function makeDataset(overrides: Partial<DatasetInfo> & Pick<DatasetInfo, 'name' 
     seed_pieces: 1,
     objectives: 1,
     modalities: [],
+    modality_aliases: { image_path: 'image', audio_path: 'audio', video_path: 'video' },
     harm_categories: [],
     has_unlabeled_harm_categories: false,
     ...overrides,
@@ -55,8 +56,19 @@ describe('datasetQuery', () => {
     })).toEqual([])
   })
 
-  it.each(['text', 'binary_path', 'image/png', 'custom'])('preserves the distinct modality %s', (modality: string) => {
-    expect(normalizeDatasetModality(modality)).toBe(modality)
+  it.each(['text', 'binary_path', 'image/png', 'custom', 'constructor', '__proto__'])('preserves the distinct modality %s', (modality: string) => {
+    expect(normalizeDatasetModality(modality, { image_path: 'image' })).toBe(modality)
+  })
+
+  it('uses the returned alias contract rather than interpreting storage suffixes', () => {
+    const dataset = makeDataset({
+      name: 'custom', selection_key: 'dataset:named:custom',
+      modalities: ['custom_storage', 'image_path'], modality_aliases: { custom_storage: 'image' },
+    })
+    expect(datasetModalities(dataset)).toEqual(['image', 'image_path'])
+    expect(filterDatasets([dataset], {
+      ...DEFAULT_DATASET_CATALOG_QUERY, modalities: ['image'],
+    })).toEqual([dataset])
   })
 
   it('deduplicates equivalent stored and provider modality names', () => {

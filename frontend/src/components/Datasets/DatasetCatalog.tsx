@@ -81,7 +81,12 @@ export default function DatasetCatalog() {
   const filtered = useMemo(() => filterDatasets(datasets, query), [datasets, query])
   const modalities = useMemo(() => modalityOptions(viewDatasets, view), [viewDatasets, view])
   const harms = useMemo(() => harmOptions(viewDatasets, view), [viewDatasets, view])
-  const selectedModalities = [...new Set(query.modalities.map(normalizeDatasetModality))]
+  const modalityAliases = Object.fromEntries(viewDatasets.flatMap(
+    (dataset: DatasetInfo) => Object.entries(dataset.modality_aliases ?? {}),
+  ))
+  const selectedModalities = [...new Set(query.modalities.map(
+    (modality: string) => normalizeDatasetModality(modality, modalityAliases),
+  ))]
   const filtersActive = !catalogQueryIsDefault({ ...query, view: 'memory' })
 
   const updateQuery = (next: DatasetCatalogQuery): void => {

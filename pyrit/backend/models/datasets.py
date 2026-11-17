@@ -17,22 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.models import PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
-
-
-class DatasetProviderInfo(BaseModel):
-    """Facts and coarse estimates for the built-in provider's default configuration."""
-
-    description: str | None = None
-    source_url: str | None = None
-    license_url: str | None = None
-    access_url: str | None = None
-    required_environment_variables: list[str] = Field(default_factory=list)
-    modalities: list[str] = Field(default_factory=list)
-    harm_categories: list[str] = Field(default_factory=list)
-    size: list[str] = Field(default_factory=list)
-    load_time: list[str] = Field(default_factory=list)
-    unavailable_reason: str | None = None
+from pyrit.models import DatasetProviderInfo, Modality, PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
 
 
 class DatasetInfo(BaseModel):
@@ -58,6 +43,10 @@ class DatasetInfo(BaseModel):
     seed_pieces: int | None = Field(None, description="Number of stored seed/prompt pieces")
     objectives: int | None = Field(None, description="Number of stored objective seeds")
     modalities: list[str] = Field(default_factory=list, description="Distinct stored data types")
+    modality_aliases: dict[str, str] = Field(
+        default_factory=Modality.data_type_aliases,
+        description="Library-defined storage aliases for content-modality facets; raw stored data types are unchanged",
+    )
     harm_categories: list[str] = Field(default_factory=list, description="Distinct stored harm categories")
     has_unlabeled_harm_categories: bool = Field(
         False, description="Whether any stored seed is missing a harm-category label"

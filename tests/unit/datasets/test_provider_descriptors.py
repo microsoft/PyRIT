@@ -109,7 +109,21 @@ async def test_metadata_failure_keeps_provider_and_stored_browsing_available_asy
     assert description.unavailable_reason == "Provider metadata is unavailable."
     assert "secret exception details" not in repr(description)
     assert "_HarmBenchDataset (ValueError)" in caplog.text
+    assert "describe_async:" in caplog.text
     assert "secret exception details" not in caplog.text
+
+
+@pytest.mark.parametrize("field", ["modalities", "harm_categories"])
+async def test_invalid_metadata_logs_field_and_error_kind_without_values_async(
+    field: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = _HarmBenchDataset()
+    with patch.object(_HarmBenchDataset, field, [None]):
+        description = await provider.describe_async()
+    assert description.metadata is None
+    assert f"{field}.0: string_type" in caplog.text
+    assert "input_value" not in caplog.text
+    assert "input_type" not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -161,6 +175,7 @@ async def test_catalog_isolates_unsupported_default_provider_async(caplog: pytes
         descriptors = await SeedDatasetProvider.get_all_dataset_descriptors_async()
     assert list(descriptors) == ["harmbench"]
     assert "Unsupported (NotImplementedError)" in caplog.text
+    assert "__init__:" in caplog.text
     assert "secret exception details" not in caplog.text
 
 

@@ -27,7 +27,6 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.datasets import (
     DatasetDeletionResponse,
-    DatasetProviderInfo,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
     SeedExampleSummary,
@@ -140,34 +139,13 @@ class DatasetService:
         for dataset_name in sorted(dataset_names):
             summary = named_summaries.get(dataset_name)
             descriptor = descriptors.get(dataset_name)
-            metadata = descriptor.metadata if descriptor else None
-            provider = (
-                DatasetProviderInfo(
-                    description=descriptor.description,
-                    source_url=descriptor.source_url,
-                    license_url=descriptor.license_url,
-                    access_url=descriptor.access_url,
-                    required_environment_variables=list(descriptor.required_environment_variables),
-                    modalities=sorted(metadata.modalities or []) if metadata else [],
-                    harm_categories=sorted(metadata.harm_categories or []) if metadata else [],
-                    size=sorted(metadata.size or []) if metadata else [],
-                    load_time=sorted(
-                        value.value for value in metadata.load_time or [] if value.value != "uninitialized"
-                    )
-                    if metadata
-                    else [],
-                    unavailable_reason=descriptor.unavailable_reason,
-                )
-                if descriptor
-                else None
-            )
             items.append(
                 DatasetInfo(
                     name=dataset_name,
                     selection_key=f"dataset:named:{dataset_name}",
                     loaded=summary is not None,
                     provider_available=dataset_name in provider_names,
-                    provider=provider,
+                    provider=descriptor,
                     origins=list(summary.origins) if summary else [],
                     logical_examples=summary.logical_examples if summary else None,
                     seed_pieces=summary.seed_pieces if summary else None,

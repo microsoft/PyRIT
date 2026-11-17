@@ -16,7 +16,7 @@ from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetMetadata, SeedDatas
 from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
 from pyrit.datasets.seed_datasets.remote import _HarmBenchDataset
 from pyrit.memory import MemoryInterface, SQLiteMemory
-from pyrit.models import SeedDatasetSummary
+from pyrit.models import DatasetProviderInfo, Modality, SeedDatasetSummary
 
 
 @pytest.fixture
@@ -128,6 +128,15 @@ class TestListDatasets:
             assert unloaded.modalities == []
             assert unloaded.provider.description == "Default dataset description"
             assert unloaded.provider.size == ["huge"]
+            assert isinstance(unloaded.provider, DatasetProviderInfo)
+            assert unloaded.provider is descriptor
+            wire_provider = (await dataset_service.list_datasets_async()).model_dump(mode="json")["items"][0][
+                "provider"
+            ]
+            assert wire_provider["modalities"] == ["image"]
+            assert "name" not in wire_provider
+            assert "metadata" not in wire_provider
+            assert unloaded.modality_aliases == Modality.data_type_aliases()
             mock_memory.get_seed_dataset_summaries_async.return_value = [
                 SeedDatasetSummary(
                     dataset_name="fixture",

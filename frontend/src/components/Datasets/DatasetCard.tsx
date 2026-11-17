@@ -80,11 +80,33 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
         {dataset.loaded && <Badge appearance="outline">In memory</Badge>}
         {dataset.provider_available && <Badge appearance="outline">Available</Badge>}
       </div>
+      {(!linked || dataset.loaded) && <dl className={styles.counts} aria-label="Counts">
+        <div className={styles.count}>
+          <dt className={styles.countTerm}>Logical examples</dt>
+          <dd className={styles.countValue}>{formatDatasetCount(dataset.logical_examples)}</dd>
+        </div>
+        <div className={styles.count}>
+          <dt className={styles.countTerm}>Seed pieces</dt>
+          <dd className={styles.countValue}>{formatDatasetCount(dataset.seed_pieces)}</dd>
+        </div>
+        <div className={styles.count}>
+          <dt className={styles.countTerm}>Objectives</dt>
+          <dd className={styles.countValue}>{formatDatasetCount(dataset.objectives)}</dd>
+        </div>
+      </dl>}
       {dataset.provider && <section className={styles.providerMetadata} aria-label="Provider metadata">
-        <Text weight="semibold">Default provider</Text>
-        <p>{dataset.provider.description ?? 'Description unknown.'}</p>
+        {!linked && <Text weight="semibold">Default provider</Text>}
+        <p className={linked ? styles.descriptionPreview : undefined}>
+          {dataset.provider.description ?? 'Description unknown.'}
+        </p>
         {dataset.provider.unavailable_reason && <p>{dataset.provider.unavailable_reason}</p>}
-        <dl className={styles.providerFields}>
+        {linked ? <div className={styles.badges}>
+          {dataset.provider.modalities.map((modality: string) =>
+            <Badge key={modality} appearance="outline">{modality}</Badge>,
+          )}
+          {dataset.provider.size.length > 0 && <Text size={200}>Size: {dataset.provider.size.join(', ')}</Text>}
+          {dataset.provider.load_time.length > 0 && <Text size={200}>Load: {dataset.provider.load_time.join(', ')}</Text>}
+        </div> : <dl className={styles.providerFields}>
           {([
             ['Source', dataset.provider.source_url],
             ['License', dataset.provider.license_url],
@@ -99,27 +121,15 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
           <div><dt>Declared harm categories:</dt><dd>{dataset.provider.harm_categories.join(', ') || UNKNOWN_LABEL}</dd></div>
           <div><dt>Approximate size:</dt><dd>{dataset.provider.size.join(', ') || UNKNOWN_LABEL}</dd></div>
           <div><dt>Estimated load time:</dt><dd>{dataset.provider.load_time.join(', ') || UNKNOWN_LABEL}</dd></div>
-        </dl>
+        </dl>}
         {dataset.provider.required_environment_variables.length > 0 && <p>
-          Access may require {dataset.provider.required_environment_variables.join(', ')}.
-          Configuring credentials does not establish permission to access the source.
+          {linked
+            ? `May require ${dataset.provider.required_environment_variables.join(', ')}`
+            : <>Access may require {dataset.provider.required_environment_variables.join(', ')}.
+              Configuring credentials does not establish permission to access the source.</>}
         </p>}
       </section>}
-      <dl className={styles.counts} aria-label="Counts">
-        <div className={styles.count}>
-          <dt className={styles.countTerm}>Logical examples</dt>
-          <dd className={styles.countValue}>{formatDatasetCount(dataset.logical_examples)}</dd>
-        </div>
-        <div className={styles.count}>
-          <dt className={styles.countTerm}>Seed pieces</dt>
-          <dd className={styles.countValue}>{formatDatasetCount(dataset.seed_pieces)}</dd>
-        </div>
-        <div className={styles.count}>
-          <dt className={styles.countTerm}>Objectives</dt>
-          <dd className={styles.countValue}>{formatDatasetCount(dataset.objectives)}</dd>
-        </div>
-      </dl>
-      <div className={styles.metaBlock}>
+      {(!linked || dataset.loaded) && <><div className={styles.metaBlock}>
         <Text size={200} weight="semibold" className={styles.metaLabel}>Modalities</Text>
         <StoredValues values={dataset.modalities} />
       </div>
@@ -129,7 +139,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
           values={dataset.harm_categories}
           unlabeled={dataset.has_unlabeled_harm_categories}
         />
-      </div>
+      </div></>}
     </article>
   )
 }

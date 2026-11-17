@@ -65,6 +65,7 @@ function makeDataset(
     seed_pieces: 3,
     objectives: 1,
     modalities: ['text'],
+    modality_aliases: { image_path: 'image', audio_path: 'audio', video_path: 'video' },
     harm_categories: ['hate'],
     has_unlabeled_harm_categories: false,
     ...overrides,
@@ -171,6 +172,23 @@ describe('DatasetCatalog', () => {
   beforeEach(() => {
     mockGet = jest.spyOn(apiClient, 'get')
     mockCatalog([LOADED, UNNAMED, NAMED_UNNAMED])
+  })
+
+  it('keeps linked provider cards compact and full provider facts on the detail route', async () => {
+    mockCatalog([AVAILABLE])
+    render(<Harness initialPath="/datasets?view=available" />)
+    const card = await screen.findByRole('article', { name: AVAILABLE.name })
+    expect(within(card).getByText('Default multimodal dataset')).toBeInTheDocument()
+    expect(within(card).getByText('Size: medium')).toBeInTheDocument()
+    expect(within(card).queryByText('Source:')).not.toBeInTheDocument()
+    expect(within(card).queryByRole('definition')).not.toBeInTheDocument()
+    expect(within(card).queryByText('Harm categories')).not.toBeInTheDocument()
+
+    await userEvent.click(within(card).getByRole('link', { name: AVAILABLE.name }))
+    const metadata = await screen.findByRole('region', { name: 'Provider metadata' })
+    expect(within(metadata).getByRole('link', { name: 'Source: https://example.com/dataset' }))
+      .toHaveAttribute('href', 'https://example.com/dataset')
+    expect(within(metadata).getByText('Declared harm categories:')).toBeInTheDocument()
   })
 
   afterEach(() => {

@@ -1500,6 +1500,7 @@ export interface DatasetInfo {
   seed_pieces: number | null
   objectives: number | null
   modalities: string[]
+  modality_aliases?: Readonly<Record<string, string>>
   harm_categories: string[]
   has_unlabeled_harm_categories: boolean
 }

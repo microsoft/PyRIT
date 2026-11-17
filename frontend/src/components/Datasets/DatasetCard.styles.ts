@@ -67,6 +67,12 @@ export const useDatasetCardStyles = makeStyles({
     minWidth: 0,
     '& p': { margin: 0 },
   },
+  descriptionPreview: {
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 3,
+    overflow: 'hidden',
+  },
   providerFields: {
     margin: 0,
     '& > div': {

@@ -1,5 +1,4 @@
 import type { DatasetInfo } from '@/types'
-import { dataTypeToAttachmentKind } from '@/utils/media'
 
 const SEARCH_PARAM = 'q'
 const MODALITY_PARAM = 'modality'
@@ -90,10 +89,10 @@ export function datasetsForView(
   )
 }
 
-/** Storage-specific URL filters remain aliases of their declared content modality. */
-export function normalizeDatasetModality(modality: string): string {
-  const kind = dataTypeToAttachmentKind(modality)
-  return kind !== 'file' && modality === `${kind}_path` ? kind : modality
+/** Apply the API's library-owned aliases without interpreting storage tokens here. */
+export function normalizeDatasetModality(modality: string, aliases: Readonly<Record<string, string>>): string {
+  const alias = Object.prototype.hasOwnProperty.call(aliases, modality) ? aliases[modality] : undefined
+  return alias ?? modality
 }
 
 function usesProviderFacets(dataset: DatasetInfo, view: DatasetCatalogQuery['view']): boolean {
@@ -102,7 +101,7 @@ function usesProviderFacets(dataset: DatasetInfo, view: DatasetCatalogQuery['vie
 
 export function datasetModalities(dataset: DatasetInfo, view: DatasetCatalogQuery['view'] = 'memory'): string[] {
   const values = usesProviderFacets(dataset, view) ? dataset.provider?.modalities ?? [] : dataset.modalities
-  return [...new Set(values.map(normalizeDatasetModality))]
+  return [...new Set(values.map((value: string) => normalizeDatasetModality(value, dataset.modality_aliases ?? {})))]
 }
 
 export function datasetHarmCategories(dataset: DatasetInfo, view: DatasetCatalogQuery['view'] = 'memory'): string[] {
@@ -118,7 +117,9 @@ function matchesSearch(name: string, search: string): boolean {
 function matchesModalities(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
   if (query.modalities.length === 0) return true
   const values = datasetModalities(dataset, query.view)
-  return query.modalities.some((modality: string) => values.includes(normalizeDatasetModality(modality)))
+  return query.modalities.some((modality: string) =>
+    values.includes(normalizeDatasetModality(modality, dataset.modality_aliases ?? {})),
+  )
 }
 
 function matchesHarm(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
