@@ -206,11 +206,12 @@ Options:
   The catalog reads options and defaults from registry metadata, never from an estimate.
 - Explicit `load_datasets_async()` remains missing-only, regardless of the scan's policy.
   It does not refresh or change that policy.
-- Resume replays the saved launch request and rebuilds the population stored with the run, so caps,
-  fetch policies, and later dataset edits, refreshes, or deletes cannot change a resumed run.
-  Dataset names are checked by the stored scenario identity. Resume never prepares datasets.
-  A scenario that overrides `_resolve_seed_groups_by_dataset_async` still runs it on resume
-  for the state it sets up, so the datasets it reads must still exist.
+- Resume replays the saved launch request with the seed groups stored when the run was planned;
+  later changes to the population do not change the stored seed content. Referenced media files
+  must still be available. Dataset names are checked by the stored identity.
+- Resume never prepares or resamples datasets. `_prepare_resume_state_async()` runs an overriding
+  resolver by default for any state it sets up. If the builder derives all its state from the
+  stored groups, override this setup hook to avoid live reads (see `AssertPolicy`).
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
 - Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.

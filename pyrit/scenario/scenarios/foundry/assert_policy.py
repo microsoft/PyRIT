@@ -302,9 +302,10 @@ class AssertPolicy(Scenario):
         for dataset_name, dataset_groups in population.items():
             for group in dataset_groups:
                 self._validate_group(group=group, dataset_name=dataset_name)
-        counts = Counter(group.logical_id for group in groups)
-        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         return selection.select(apply_sampling=True) if apply_sampling else population
+
+    async def _prepare_resume_state_async(self) -> None:
+        """Use the saved groups for all build state; the live resolver only validates and samples."""
 
     def _validate_group(self, *, group: AttackSeedGroup, dataset_name: str) -> None:
         """
@@ -396,6 +397,8 @@ class AssertPolicy(Scenario):
         return (AssertJudgeScorer(chat_target=target, dimension=AssertScoringDimension.OVERREFUSAL),)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        counts = Counter(group.logical_id for group in context.seed_groups)
+        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         self._auxiliary_scorers = self._get_auxiliary_scorers()
         attacks = self._build_baselines(context=context) if context.include_baseline else []
         local = {_ASSERT_PACKAGE: _build_assert_package_factory()}

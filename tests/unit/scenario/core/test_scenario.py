@@ -2181,7 +2181,12 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         header = await scenario._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
         assert header is not None
         legacy_metadata = dict(header.metadata)
-        legacy_metadata.pop("planned_seed_groups_stored" if removed == "marker" else SCENARIO_RUN_PLAN_METADATA_KEY)
+        if removed == "marker":
+            legacy_plan = dict(legacy_metadata[SCENARIO_RUN_PLAN_METADATA_KEY])
+            assert legacy_plan.pop("stores_seed_groups") is True
+            legacy_metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = legacy_plan
+        else:
+            legacy_metadata.pop(SCENARIO_RUN_PLAN_METADATA_KEY)
         await scenario._memory.update_scenario_metadata_async(
             scenario_result_id=scenario_result_id, metadata=legacy_metadata
         )

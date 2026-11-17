@@ -2767,6 +2767,19 @@ class ScenarioPlanSeedGroupEntry(Base):
         Rebuild the planned seed group.
 
         Returns:
-            AttackSeedGroup: The group, equal to the one the run planned.
+            AttackSeedGroup: The original planned inputs, without reapplying template preparation.
         """
-        return AttackSeedGroup.model_validate(self.seed_group)
+        seeds = []
+        for seed in self.seed_group["seeds"]:
+            if seed["seed_type"] == "simulated_conversation":
+                seed = dict(seed)
+                # The stored prompt values have already had their one-shot template substitution.
+                for field in (
+                    "adversarial_chat_system_prompt",
+                    "simulated_target_system_prompt",
+                    "next_message_system_prompt",
+                ):
+                    if (prompt := seed.get(field)) is not None:
+                        seed[field] = {**prompt, "is_jinja_template": False}
+            seeds.append(seed)
+        return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})

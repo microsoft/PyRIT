@@ -118,11 +118,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Scenario result metadata key marking a run whose planned population is stored with it, so
-#: resume can rebuild it. Runs created before planned seed groups were stored lack it.
-_PLANNED_SEED_GROUPS_METADATA_KEY = "planned_seed_groups_stored"
-
-
 #: Param names a scenario must not declare via ``supported_parameters()``. These
 #: collide with promoted identity fields on ``ScenarioIdentifier`` and would be
 #: silently overwritten during identifier promotion. Only ``version`` is reserved
@@ -1655,8 +1650,9 @@ class Scenario(ABC):
         Returns:
             dict[str, Any]: Metadata payload for the new ScenarioResult.
         """
-        metadata: dict[str, Any] = {_PLANNED_SEED_GROUPS_METADATA_KEY: True}
-        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json", exclude_none=True)
+        metadata: dict[str, Any] = {
+            SCENARIO_RUN_PLAN_METADATA_KEY: self._build_run_plan().model_dump(mode="json", exclude_none=True),
+        }
         metadata["incompatible_technique_policy"] = self._incompatible_technique_policy.value
         adaptations = {
             atomic.logical_group_id: atomic.seed_group_adaptations
@@ -1730,6 +1726,7 @@ class Scenario(ABC):
             scenario_registry_name=self._scenario_registry_name,
             atomic_groups=atomic_groups,
             seed_groups=list(seed_groups.values()),
+            stores_seed_groups=True,
         )
 
     def _get_planned_seed_groups(self, *, atomic_attack: AtomicAttack) -> Sequence[AttackSeedGroup]:
@@ -1812,20 +1809,23 @@ class Scenario(ABC):
                 scenario's own resolution reads was deleted.
             DatasetConstraintError: If the scenario's own resolution fails for another reason.
         """
-        if stored_plan is None or stored_result.metadata.get(_PLANNED_SEED_GROUPS_METADATA_KEY) is not True:
+        if stored_plan is None or stored_plan.stores_seed_groups is not True:
             raise ValueError(
                 f"Scenario result id '{self._scenario_result_id}' cannot resume: it was created by an older "
                 "PyRIT version that didn't store the seeds it planned. Drop scenario_result_id to start a new run."
             )
         population = await self._memory.get_planned_seed_groups_async(scenario_result_id=str(stored_result.id))
-        resolver = type(self)._resolve_seed_groups_by_dataset_async
-        if resolver.__qualname__ != Scenario._resolve_seed_groups_by_dataset_async.__qualname__:
-            try:
-                await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-            except DatasetConstraintError as error:
-                await self._raise_if_datasets_deleted_async(cause=error)
-                raise
+        try:
+            await self._prepare_resume_state_async()
+        except DatasetConstraintError as error:
+            await self._raise_if_datasets_deleted_async(cause=error)
+            raise
         return population
+
+    async def _prepare_resume_state_async(self) -> None:
+        """Restore setup normally performed by a subclass's seed resolver, without resampling."""
+        if type(self)._resolve_seed_groups_by_dataset_async is not Scenario._resolve_seed_groups_by_dataset_async:
+            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
 
     async def _raise_if_datasets_deleted_async(self, *, cause: DatasetConstraintError) -> None:
         """
