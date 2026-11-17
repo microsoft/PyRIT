@@ -13,7 +13,7 @@ import pytest
 from bs4 import BeautifulSoup
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _nodes(node: dict) -> list[dict]:
