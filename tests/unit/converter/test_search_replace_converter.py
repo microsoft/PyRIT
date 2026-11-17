@@ -120,7 +120,7 @@ async def test_search_replace_empty_string_replacement():
         (r"(?P<bar>a)", r"\g<foo>"),
     ],
 )
-def test_search_replace_invalid_replacement_template(pattern: str, invalid_replace: str | list[str]):
+def test_search_replace_invalid_replacement_template(*, pattern: str, invalid_replace: str | list[str]) -> None:
     with pytest.raises(ValueError, match="Invalid regex replacement template in replace"):
         SearchReplaceConverter(pattern=pattern, replace=invalid_replace)
 
