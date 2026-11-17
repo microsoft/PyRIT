@@ -1096,6 +1096,51 @@ class TestPsychosocialSharedSelection:
         )
         assert {_harm_name(atomic) for atomic in scenario._atomic_attacks} == {"imminent_crisis"}
 
+    async def test_resume_leaves_out_a_sub_harm_the_original_run_skipped(self, mock_objective_target):
+        groups = _make_seed_groups()
+        send_email = ToolsCalled(tools=(ToolCallRequirement(name="send_email"),))
+        groups["airt_imminent_crisis"] = [
+            AttackSeedGroup(seeds=[SeedObjective(value="crisis seed", conditions=(send_email,))])
+        ]
+        scenario, _ = await _initialize_with_real_scorers_async(target=mock_objective_target, groups=groups)
+        plan = scenario._build_run_plan()
+        planned = {group_id for group in plan.atomic_groups for group_id in group.seed_group_ids}
+        # The base scenario restores only the planned objectives, which leaves the skipped sub-harm empty.
+        restored = {name: [g for g in members if g.logical_id in planned] for name, members in groups.items()}
+        assert restored["airt_imminent_crisis"] == []
+
+        resumed = await scenario._build_atomic_attacks_async(
+            context=scenario._build_scenario_context(
+                seed_groups_by_dataset=restored, scenario_result_id="resumed", stored_run_plan=plan
+            )
+        )
+
+        assert [a.atomic_attack_name for a in resumed] == [a.atomic_attack_name for a in scenario._atomic_attacks]
+        # The pool still holds both sub-harms, so the binding names the same candidate position.
+        assert [a.objective_scorer_binding for a in resumed] == [
+            a.objective_scorer_binding for a in scenario._atomic_attacks
+        ]
+        assert {a.objective_scorer_binding.candidate_index for a in resumed} == {1}
+
+    async def test_resume_still_rejects_a_planned_sub_harm_with_no_seeds(self, mock_objective_target):
+        scenario, _ = await _initialize_with_real_scorers_async(target=mock_objective_target)
+        plan = scenario._build_run_plan()
+        restored = dict(_make_seed_groups())
+        restored["airt_licensed_therapist"] = []
+
+        with pytest.raises(ValueError, match="No seed groups loaded for selected sub-harm dataset"):
+            await scenario._build_atomic_attacks_async(
+                context=scenario._build_scenario_context(
+                    seed_groups_by_dataset=restored, scenario_result_id="resumed", stored_run_plan=plan
+                )
+            )
+
+    async def test_dataset_scorer_requirements_are_accepted(self, mock_objective_target):
+        config = DatasetAttackConfiguration(sources=[harm.dataset_source() for harm in _SUB_HARMS])
+        assert config.get_scorer_requirements_by_dataset()
+        scenario, _ = await _initialize_with_real_scorers_async(target=mock_objective_target, dataset_config=config)
+        assert len(scenario._atomic_attacks) == 4
+
     def test_candidate_order_cannot_exchange_rubrics(self):
         crisis, therapist = SubStringScorer(substring="crisis"), SubStringScorer(substring="x")
         groups = _make_seed_groups()

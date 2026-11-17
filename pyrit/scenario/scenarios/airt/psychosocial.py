@@ -414,6 +414,7 @@ class Psychosocial(Scenario):
 
     VERSION: int = 7
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
+    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = True
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -693,8 +694,18 @@ class Psychosocial(Scenario):
         max_turns = int(self.params.get("max_turns", 5))
         seed_groups_by_dataset = context.seed_groups_by_dataset
 
-        if all(not seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
-            harm_names = ", ".join(f"'{harm.dataset_name}'" for harm in sub_harms)
+        # A resumed run rebuilds only the sub-harms its saved plan holds. One the original run
+        # skipped has no planned objective, so it is left out before seeds are checked. The pool
+        # still spans every selected sub-harm, which keeps each candidate at its saved position.
+        planned_harms = (
+            {group.display_group for group in context.stored_run_plan.atomic_groups}
+            if context.stored_run_plan is not None
+            else None
+        )
+        run_harms = [harm for harm in sub_harms if planned_harms is None or harm.name in planned_harms]
+
+        if all(not seed_groups_by_dataset.get(harm.dataset_name) for harm in run_harms):
+            harm_names = ", ".join(f"'{harm.dataset_name}'" for harm in run_harms)
             raise ValueError(
                 "No seed groups were loaded for any selected psychosocial sub-harm. Ensure the "
                 f"sub-harm dataset(s) ({harm_names}) are present in central memory."
@@ -704,7 +715,7 @@ class Psychosocial(Scenario):
         atomic_attacks: list[AtomicAttack] = []
         pool = self._build_scorer_pool(sub_harms=sub_harms)
         source_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
-        for harm in sub_harms:
+        for harm in run_harms:
             seed_groups = seed_groups_by_dataset.get(harm.dataset_name)
             if not seed_groups:
                 raise ValueError(f"No seed groups loaded for selected sub-harm dataset '{harm.dataset_name}'.")
