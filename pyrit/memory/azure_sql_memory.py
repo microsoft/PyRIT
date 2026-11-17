@@ -358,7 +358,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         return {
             "pool_size": cls._pool_setting(variable=cls.POOL_SIZE_ENV, default=cls.DEFAULT_POOL_SIZE, minimum=1),
-            "max_overflow": cls._pool_setting(variable=cls.MAX_OVERFLOW_ENV, default=cls.DEFAULT_MAX_OVERFLOW, minimum=0),
+            "max_overflow": cls._pool_setting(
+                variable=cls.MAX_OVERFLOW_ENV, default=cls.DEFAULT_MAX_OVERFLOW, minimum=0
+            ),
             "pool_timeout": cls._pool_setting(
                 variable=cls.POOL_TIMEOUT_ENV, default=cls.DEFAULT_POOL_TIMEOUT_SECONDS, minimum=1
             ),
