@@ -15,14 +15,15 @@ from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import String, create_engine, inspect, text
+from sqlalchemy import String, UnicodeText, create_engine, inspect, literal, text
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateIndex, CreateTable
 
+from pyrit.memory import AttackResultEntry
 from pyrit.memory.alembic.versions.e5f7a9c1b3d2_add_identifiers_tables import IdentifierGraphInserter
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory.analytics_sql import UnicodeCaseFold, text_match
 from pyrit.models import AtomicAttackIdentifier, AttackIdentifier, TargetIdentifier, compute_eval_hash
 
 if TYPE_CHECKING:
@@ -322,6 +323,57 @@ def test_analytics_migration_preserves_outcome_at_the_index_key_limit(tmp_path: 
             command.check(config)
     finally:
         engine.dispose()
+
+
+def test_unicode_casefold_compiles_per_dialect() -> None:
+    """SQLite keeps the registered casefold fallback and SQL Server uses LOWER exactly."""
+    expression = UnicodeCaseFold(literal("CAFÉ", UnicodeText()))
+    sqlite_sql = str(expression.compile(dialect=sqlite.dialect()))
+    mssql_sql = str(expression.compile(dialect=mssql.dialect()))
+    assert "pyrit_analytics_casefold" in sqlite_sql
+    assert "lower(" in sqlite_sql  # the ASCII fast path stays plain lower
+    # Pinned exactly: a wrapper around the fallback would change Azure folding.
+    assert mssql_sql == "LOWER(:param_1)"
+
+
+@pytest.mark.parametrize(
+    ("casefold", "function"),
+    [(False, "pyrit_analytics_lower"), (True, "pyrit_analytics_casefold")],
+)
+def test_text_match_preserves_backend_fold_selection(*, casefold: bool, function: str) -> None:
+    expression = text_match(column=literal("CAF\u00c9", UnicodeText()), value="caf\u00e9", casefold=casefold)
+    sqlite_sql = str(expression.compile(dialect=sqlite.dialect()))
+    assert sqlite_sql.count(function) == 2
+    mssql_sql = str(expression.compile(dialect=mssql.dialect()))
+    assert mssql_sql.count("LOWER(") == 2
+    assert "ESCAPE '/'" in mssql_sql
+
+
+def test_seed_value_search_folds_both_sides_in_the_real_statement() -> None:
+    """The seed search statement itself folds column and pattern in SQL."""
+    from sqlalchemy import true
+
+    from pyrit.memory import SQLiteMemory
+
+    conditions = SQLiteMemory._seed_example_filters(
+        SQLiteMemory.__new__(SQLiteMemory),
+        scope=true(),
+        data_types=None,
+        harm_categories=None,
+        seed_types=None,
+        value_search="CAFÉ",
+        value_pattern=None,
+    )
+    assert conditions, "the value search must produce a condition"
+    for dialect, fold_marker in (
+        (sqlite.dialect(), "pyrit_analytics_casefold"),
+        (mssql.dialect(), "LOWER"),
+    ):
+        for condition in conditions:
+            compiled = str(condition.compile(dialect=dialect))
+            # Column and pattern both fold in SQL, so neither backend can mix
+            # foldings by lowering one side in Python.
+            assert compiled.count(fold_marker) == 2, compiled
 
 
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])

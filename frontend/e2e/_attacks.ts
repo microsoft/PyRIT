@@ -1,7 +1,38 @@
 import type { APIRequestContext, Route } from "@playwright/test";
 
-import type { AddMessageResponse, AttackSummary, BackendMessage, MessageSendRequest, MessageSendStatus, TargetResponseStatus } from "@/types";
+import type { AddMessageResponse, AttackMetadata, AttackSummary, BackendMessage, MessageSendRequest, MessageSendStatus, TargetResponseStatus } from "@/types";
 import { compatibilityHeaders } from "./_compatibility";
+
+export function makeAttackMetadata(
+  attack: AttackSummary,
+  conversationId: string = attack.conversation_id,
+): AttackMetadata {
+  const prunedIds = new Set(attack.related_conversations ? [] : attack.related_conversation_ids);
+  for (const reference of attack.related_conversations ?? []) {
+    if (reference.conversation_type === "pruned") prunedIds.add(reference.conversation_id);
+  }
+  prunedIds.delete(attack.conversation_id);
+  return {
+    attack_result_id: attack.attack_result_id,
+    conversation_id: attack.conversation_id,
+    objective: attack.objective,
+    labels: attack.labels,
+    operator: attack.operator,
+    target: attack.target,
+    target_unbound: attack.target_unbound,
+    outcome: attack.outcome,
+    automated_score: attack.automated_score,
+    human_score: attack.human_score,
+    chat_scorer: attack.chat_scorer,
+    chat_scorer_inherited: attack.chat_scorer_inherited,
+    manual_continuation: attack.manual_continuation,
+    execution_read_only: attack.execution_read_only ?? false,
+    last_response_message_piece_id: attack.last_response?.id ?? null,
+    related_conversation_count: prunedIds.size,
+    selected_conversation_id: conversationId,
+    selected_conversation_valid: conversationId === attack.conversation_id || prunedIds.has(conversationId),
+  };
+}
 
 export function makeAddMessageResponse(
   attackResultId: string,

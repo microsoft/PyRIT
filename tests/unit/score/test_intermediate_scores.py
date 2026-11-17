@@ -12,8 +12,8 @@ from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Session
 from unit.mocks import run_memory_session_async
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import PromptMemoryEntry, ScorableContentEntry, ScoreEntry
+from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory.memory_models import ScorableContentEntry, ScoreEntry
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
@@ -29,12 +29,12 @@ from pyrit.score import (
     AudioTrueFalseScorer,
     FloatScaleScorer,
     FloatScaleThresholdScorer,
+    ScorerPromptValidator,
     SubStringScorer,
     TrueFalseCompositeScorer,
     TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 class _FloatScorer(FloatScaleScorer):

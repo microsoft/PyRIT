@@ -82,7 +82,7 @@ class TemplateSegmentConverter(Converter):
         return self._create_identifier(
             params={
                 "template_hash": template_hash,
-                "number_parameters": self._number_parameters,
+                "parameters": self.prompt_template.parameters,
                 "seed": self._seed,
             }
         )

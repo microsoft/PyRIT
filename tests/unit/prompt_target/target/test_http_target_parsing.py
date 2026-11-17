@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from pyrit.prompt_target.http_target.http_target import HTTPTarget
-from pyrit.prompt_target.http_target.http_target_callback_functions import (
+from pyrit.prompt_target import (
+    HTTPTarget,
     get_http_target_json_response_callback_function,
     get_http_target_regex_matching_callback_function,
 )

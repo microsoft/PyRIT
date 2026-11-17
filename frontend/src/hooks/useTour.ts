@@ -178,6 +178,9 @@ export function useTour(
     }
 
     const nextStep = steps[nextIndex]
+    if (!nextStep) {
+      return
+    }
 
     if (nextStep.viewRequired !== currentViewRef.current) {
       // The required view differs from the actual current view.

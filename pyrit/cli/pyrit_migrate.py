@@ -33,7 +33,7 @@ async def _migrate_async(
     from pyrit.common import default_values
     from pyrit.memory import AzureSQLMemory
     from pyrit.memory.migration import check_schema_migrations, run_schema_migrations
-    from pyrit.setup.configuration_loader import ConfigurationLoader
+    from pyrit.setup import ConfigurationLoader
     from pyrit.setup.environment_loading import load_environment_async
 
     source = ConfigurationFileService(config_file_value=config_file)

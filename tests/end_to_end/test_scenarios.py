@@ -74,8 +74,14 @@ SCENARIO_TARGETS: dict[str, str] = {
 SCENARIO_MAX_TOTAL: dict[str, int] = {
     "airt.psychosocial": 2,  # One objective per sub-harm.
     "garak.latent_injection": 23,  # One objective per family/trigger pair.
+    "garak.leak_replay": 8,  # One objective per technique and corpus.
     "garak.prompt_inject": 3,  # One objective per goal text.
     "garak.web_injection": 6,  # One objective per technique-specific population.
+}
+
+#: Scenarios whose required data the e2e initializers can't prepare.
+SCENARIO_SKIP_REASONS: dict[str, str] = {
+    "foundry.assert_policy": "Needs stored ASSERT seed groups from AssertGenerator; it has no default dataset.",
 }
 
 
@@ -115,6 +121,8 @@ def test_scenario_with_pyrit_scan(scenario_name: str, capsys: pytest.CaptureFixt
     Args:
         scenario_name: Name of the scenario to test (dynamically discovered).
     """
+    if scenario_name in SCENARIO_SKIP_REASONS:
+        pytest.skip(SCENARIO_SKIP_REASONS[scenario_name])
     initializers = _initializers_for(scenario_name)
     extra_args = _extra_args_for(scenario_name)
     target = _target_for(scenario_name)

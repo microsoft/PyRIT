@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from pyrit.common.logger import logger
-from pyrit.executor.core.strategy import (
+from pyrit.executor.core import (
     Strategy,
     StrategyContext,
     StrategyEventData,

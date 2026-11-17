@@ -5,19 +5,22 @@
 Unit tests for the pyrit_scan CLI module (thin REST client).
 """
 
+import asyncio
 import logging
 from argparse import Namespace
+from contextlib import nullcontext
 from datetime import UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+import respx
 
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 from pyrit.cli._cli_args import parse_run_arguments
-from pyrit.models import Operation, Parameter
+from pyrit.models import Operation, Parameter, TargetCapabilities
 from unit.mocks import make_scenario_result
 
 # A valid UTF-8 initializer whose text is not pure ASCII. Decoded with a Windows ANSI code page
@@ -87,6 +90,20 @@ def test_compatibility_failure_exits_without_replay(stage, capsys):
         client.start_scenario_run_async.assert_awaited_once()
         client.get_scenario_run_async.assert_awaited_once()
         assert "server run may still be active" in output
+
+
+def test_run_scenario_cancellation_requests_server_cancellation(capsys):
+    client = _mock_api_client()
+    with (
+        patch("pyrit.cli.api_client.PyRITApiClient", return_value=client),
+        patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new=AsyncMock(return_value=True)),
+        patch.object(pyrit_scan, "_poll_until_terminal_async", new=AsyncMock(side_effect=asyncio.CancelledError)),
+    ):
+        exit_code = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+
+    assert exit_code == 1
+    client.cancel_scenario_run_async.assert_awaited_once_with(scenario_result_id="test-id-123")
+    assert "Cancellation request sent to server." in capsys.readouterr().out
 
 
 def test_dataset_filter_help_covers_every_request_model_key():
@@ -265,6 +282,16 @@ class TestParseArgs:
     def test_list_with_request_timeout(self):
         args = pyrit_scan.parse_args(["list-scenarios", "--request-timeout", "30"])
         assert args.request_timeout == 30
+
+    def test_list_with_fractional_request_timeout(self):
+        args = pyrit_scan.parse_args(["list-targets", "--request-timeout", "0.5"])
+        assert args.request_timeout == 0.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_list_rejects_invalid_request_timeout(self, value):
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_scan.parse_args(["list-targets", "--request-timeout", value])
+        assert exc_info.value.code == 2
 
     def test_start_server_with_startup_timeout(self):
         args = pyrit_scan.parse_args(["start-server", "--startup-timeout", "45.5"])
@@ -547,6 +574,33 @@ class TestMain:
 
         assert result == 0
         mock_client.list_targets_async.assert_awaited_once()
+
+    @respx.mock
+    def test_main_list_targets_prints_total_across_pages(self, capsys: pytest.CaptureFixture[str]) -> None:
+        base_url = "http://testserver:8000"
+        compatibility_id = "0.14.0+g" + "a" * 40
+        capabilities = TargetCapabilities().model_dump(mode="json")
+        items = [
+            {
+                "target_registry_name": f"target-{i}",
+                "identifier": {"class_name": "OpenAIChatTarget", "class_module": "pyrit.prompt_target"},
+                "capabilities": capabilities,
+            }
+            for i in range(205)
+        ]
+        respx.get(f"{base_url}/api/health").respond(200, json={"status": "healthy", "service": "pyrit-backend"})
+        respx.get(f"{base_url}/api/version").respond(200, json={"compatibility_id": compatibility_id})
+        respx.get(f"{base_url}/api/targets", params__eq={"limit": "200"}).respond(
+            200, json={"items": items[:200], "pagination": {"has_more": True, "next_cursor": "next-page"}}
+        )
+        respx.get(f"{base_url}/api/targets", params__eq={"limit": "200", "cursor": "next-page"}).respond(
+            200, json={"items": items[200:], "pagination": {"has_more": False, "next_cursor": None}}
+        )
+
+        with patch("pyrit._compatibility.get_compatibility_id", return_value=compatibility_id):
+            assert pyrit_scan.main(["list-targets", "--server-url", base_url, "--auth-mode", "none"]) == 0
+
+        assert "Total targets: 205" in capsys.readouterr().out.splitlines()
 
     @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
     @patch("pyrit.cli.api_client.PyRITApiClient")
@@ -841,11 +895,25 @@ class TestAddScenarioParamsFromApi:
 class TestBuildRunRequest:
     """Tests for _build_run_request."""
 
+    def test_explicit_helper_roles_match_shell_parser(self) -> None:
+        flags = ["--scoring-target", "judge", "--adversarial-target", "generator"]
+        parsed = pyrit_scan.parse_args(["run", "test", "--target", "objective", *flags])
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        shell = parse_run_arguments(args_string="test --target objective " + " ".join(flags))
+        assert request.scoring_target_name == shell["scoring_target"] == "judge"
+        assert request.adversarial_target_name == shell["adversarial_target"] == "generator"
+        assert request.target_name == shell["target"] == "objective"
+
     @pytest.mark.parametrize("value", [None, "default", "all", "7", ""])
     def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
         flags = [] if value is None else ["--max-dataset-size", value]
         parsed = pyrit_scan.parse_args(["run", "test", "--target", "target", *flags])
-        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        with (
+            pytest.warns(DeprecationWarning, match=r"--max-dataset-size.*removed in 1\.4\.0")
+            if value is not None
+            else nullcontext()
+        ):
+            request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
         shell_args = parse_run_arguments(
             args_string="test --target target " + ("--max-dataset-size ''" if value == "" else " ".join(flags))
         )
@@ -1261,13 +1329,14 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--dry-run", "on"])
         assert "invalid value" in capsys.readouterr().err
 
-    def test_list_int_param_coerces_each_value(self):
+    @pytest.mark.parametrize("type_name", ["list[int]", "list[int] | None", "list[int | None] | None"])
+    def test_list_int_param_coerces_each_value(self, type_name: str) -> None:
         from argparse import ArgumentParser
 
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
+            params=[_sp(name="sample_ids", description="...", param_type=type_name, is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
@@ -1961,9 +2030,8 @@ class TestPollStreamsRetryWarnings:
     async def test_poll_prints_retry_warnings_once(self, capsys):
         from datetime import datetime
 
-        from pyrit.models import ScenarioRunState
+        from pyrit.models import RetryEvent, ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
-        from pyrit.models.retry_event import RetryEvent
 
         now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(

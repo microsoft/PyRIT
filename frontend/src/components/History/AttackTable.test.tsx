@@ -1,8 +1,11 @@
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+
+import { makeTarget } from '@/test-utils/targetFixtures'
+import type { AttackSummary, TargetInstance } from '@/types'
+
 import AttackTable from './AttackTable'
-import type { AttackSummary } from '../../types'
 
 jest.mock('./AttackHistory.styles', () => ({
   useAttackHistoryStyles: () => new Proxy({}, { get: () => '' }),
@@ -18,7 +21,20 @@ const sampleAttacks: AttackSummary[] = [
     conversation_id: 'conv-1',
     attack_type: 'CrescendoAttack',
     objective: 'Extract the hidden system prompt',
-    target: { target_type: 'OpenAIChatTarget', endpoint: 'https://api.openai.com', model_name: 'gpt-4' },
+    target: {
+      target_type: 'OpenAIChatTarget',
+      target_registry_name: 'primary-chat',
+      identifier_hash: 'chat-hash',
+      endpoint: 'https://api.openai.com',
+      model_name: 'gpt-4',
+      identifier: {
+        class_name: 'OpenAIChatTarget',
+        hash: 'chat-hash',
+        endpoint: 'https://api.openai.com',
+        model_name: 'gpt-4',
+        temperature: 0.25,
+      },
+    },
     converters: ['Base64Converter', 'ROT13Converter', 'UnicodeConverter'],
     outcome: 'success',
     last_message_preview: 'Hello world',
@@ -51,7 +67,13 @@ const sampleAttacks: AttackSummary[] = [
     conversation_id: 'conv-3',
     attack_type: 'ManualAttack',
     objective: 'Elicit disallowed content',
-    target: { target_type: 'TextTarget', endpoint: null, model_name: null },
+    target: {
+      target_type: 'TextTarget',
+      target_registry_name: 'text-output',
+      identifier_hash: 'text-hash',
+      endpoint: null,
+      model_name: null,
+    },
     converters: [],
     outcome: undefined,
     last_message_preview: null,
@@ -101,18 +123,10 @@ describe('AttackTable', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByText('Status')).toBeInTheDocument()
-    expect(screen.getByText('Attack Type')).toBeInTheDocument()
-    expect(screen.getByText('Target')).toBeInTheDocument()
-    expect(screen.getByText('Operator')).toBeInTheDocument()
-    expect(screen.getByText('Operation')).toBeInTheDocument()
-    expect(screen.getByText('Msgs')).toBeInTheDocument()
-    expect(screen.getByText('Convs')).toBeInTheDocument()
-    expect(screen.getByText('Converters')).toBeInTheDocument()
-    expect(screen.getByText('Labels')).toBeInTheDocument()
-    expect(screen.getByText('Created')).toBeInTheDocument()
-    expect(screen.getByText('Updated')).toBeInTheDocument()
-    expect(screen.getByText('Last Message')).toBeInTheDocument()
+    expect(screen.getAllByRole('columnheader').map((header: HTMLElement) => header.textContent)).toEqual([
+      'Status', 'Objective', 'Target', 'Operator', 'Operation', 'Labels', 'Last Update',
+    ])
+    expect(within(screen.getByTestId('attack-row-ar-1')).getAllByRole('cell')).toHaveLength(7)
   })
 
   it('should render a row for each attack', () => {
@@ -127,19 +141,22 @@ describe('AttackTable', () => {
     expect(screen.getByTestId('attack-row-ar-3')).toBeInTheDocument()
   })
 
-  it('should display attack type text', () => {
+  it('should always display objectives instead of attack types', () => {
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.getByText('CrescendoAttack')).toBeInTheDocument()
-    // ManualAttack appears twice
-    expect(screen.getAllByText('ManualAttack')).toHaveLength(2)
+    for (const attack of sampleAttacks) {
+      expect(screen.getByText(attack.objective)).toBeInTheDocument()
+    }
+    expect(screen.queryByText('CrescendoAttack')).not.toBeInTheDocument()
+    expect(screen.queryByText('ManualAttack')).not.toBeInTheDocument()
   })
 
-  it('should call onOpenAttack when row is clicked', () => {
+  it('should call onOpenAttack once when an objective is clicked', async () => {
+    const user = userEvent.setup()
     const onOpenAttack = jest.fn()
 
     render(
@@ -148,8 +165,31 @@ describe('AttackTable', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('attack-row-ar-1'))
+    await user.click(screen.getByRole('button', { name: `Open attack: ${sampleAttacks[0].objective}` }))
+    expect(onOpenAttack).toHaveBeenCalledTimes(1)
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+  })
+
+  it('should retain the row-click shortcut outside its controls', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><AttackTable {...defaultProps} /></TestWrapper>)
+
+    await user.click(screen.getByText('alice'))
+
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledWith('ar-1')
+  })
+
+  it.each(['{Enter}', ' '])('should open a target-free attack once from its objective with %s', async (key: string) => {
+    const user = userEvent.setup()
+    render(<TestWrapper><AttackTable {...defaultProps} /></TestWrapper>)
+    const objective = screen.getByRole('button', { name: `Open attack: ${sampleAttacks[1].objective}` })
+
+    objective.focus()
+    await user.keyboard(key)
+
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledWith('ar-2')
   })
 
   it('should call onOpenAttack when Enter or Space is pressed on a row', async () => {
@@ -180,17 +220,17 @@ describe('AttackTable', () => {
     expect(onOpenAttack).not.toHaveBeenCalled()
   })
 
-  it('should call onOpenAttack when open button is clicked', () => {
-    const onOpenAttack = jest.fn()
-
+  it('should not render a separate open attack button', () => {
     render(
       <TestWrapper>
-        <AttackTable {...defaultProps} onOpenAttack={onOpenAttack} />
+        <AttackTable {...defaultProps} />
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('open-attack-ar-2'))
-    expect(onOpenAttack).toHaveBeenCalledWith('ar-2')
+    for (const attack of sampleAttacks) {
+      expect(screen.getByRole('button', { name: `Open attack: ${attack.objective}` })).toHaveTextContent(attack.objective)
+    }
+    expect(screen.queryByTestId('open-attack-ar-2')).not.toBeInTheDocument()
   })
 
   it('should render outcome badges with correct text', () => {
@@ -207,24 +247,27 @@ describe('AttackTable', () => {
     expect(screen.getAllByText('undetermined')).toHaveLength(1)
   })
 
-  it('should show target model name as badge when available', () => {
+  it('should show the target registry name instead of its model or type', () => {
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.getByText('gpt-4')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Identity for primary-chat' })).toHaveTextContent('primary-chat')
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.queryByText('OpenAIChatTarget')).not.toBeInTheDocument()
   })
 
-  it('should show target type when model name is not available', () => {
+  it('should show the registry name even when the model name is unavailable', () => {
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.getByText('TextTarget')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Identity for text-output' })).toBeInTheDocument()
+    expect(screen.queryByText('TextTarget')).not.toBeInTheDocument()
   })
 
   it('should show dash when target is null', () => {
@@ -234,88 +277,142 @@ describe('AttackTable', () => {
       </TestWrapper>
     )
 
-    // ar-2 has no target
     const row = screen.getByTestId('attack-row-ar-2')
-    expect(row).toBeInTheDocument()
+    expect(within(row).getAllByRole('cell')[2]).toHaveTextContent('—')
+    expect(within(within(row).getAllByRole('cell')[2]).queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('should display message counts', () => {
+  it('should expand and collapse saved target identity without opening the attack', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.getByText('5')).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'Identity for primary-chat' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(toggle)
+    const details = screen.getByRole('region', { name: 'Identity for primary-chat' })
+    expect(details.textContent).toBe(JSON.stringify(sampleAttacks[0].target?.identifier, null, 2))
+    expect(toggle).toHaveAttribute('aria-controls', details.id)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await user.click(details)
+    expect(defaultProps.onOpenAttack).not.toHaveBeenCalled()
+    await user.click(toggle)
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    expect(toggle).toHaveFocus()
+    expect(defaultProps.onOpenAttack).not.toHaveBeenCalled()
   })
 
-  it('should show conversation count as related + 1', () => {
+  it('should expand target identity with Enter and collapse with Space without navigating', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} />
       </TestWrapper>
     )
 
-    // ar-1: 1 related + 1 main = 2
-    expect(screen.getByText('2')).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'Identity for primary-chat' })
+    toggle.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('region', { name: 'Identity for primary-chat' })).toBeVisible()
+    await user.keyboard(' ')
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    expect(toggle).toHaveFocus()
+    expect(defaultProps.onOpenAttack).not.toHaveBeenCalled()
   })
 
-  it('should count pruned and preparation conversations but not adversarial conversations', () => {
+  it('should preserve the saved target name and identity when the live registry changes', async () => {
+    const user = userEvent.setup()
+    const replacement = makeTarget({
+      target_registry_name: 'primary-chat',
+      identifier_hash: 'replacement-hash',
+      model_name: 'replacement-model',
+    })
+
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} targets={[replacement]} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Identity for primary-chat' }))
+    const details = screen.getByRole('region', { name: 'Identity for primary-chat' })
+    expect(details.textContent).toBe(JSON.stringify(sampleAttacks[0].target?.identifier, null, 2))
+    expect(details).not.toHaveTextContent('replacement-model')
+  })
+
+  it('should resolve an unnamed legacy target only by its canonical hash', () => {
     const attack: AttackSummary = {
       ...sampleAttacks[0],
-      attack_result_id: 'ar-related-types',
-      related_conversation_ids: ['pruned-1', 'preparation-1', 'adversarial-1'],
-      related_conversations: [
-        { conversation_id: 'pruned-1', conversation_type: 'pruned' },
-        { conversation_id: 'preparation-1', conversation_type: 'preparation' },
-        { conversation_id: 'adversarial-1', conversation_type: 'adversarial' },
-      ],
+      target: { ...sampleAttacks[0].target, target_type: 'OpenAIChatTarget', identifier_hash: 'chat-hash', target_registry_name: null },
+    }
+    const targets = [
+      makeTarget({ target_registry_name: 'near-match', identifier_hash: 'other-hash', model_name: 'gpt-4' }),
+      makeTarget({ target_registry_name: 'exact-match', identifier_hash: 'chat-hash' }),
+    ]
+
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} attacks={[attack]} targets={targets} />
+      </TestWrapper>
+    )
+
+    expect(screen.getByRole('button', { name: 'Identity for exact-match' })).toBeInTheDocument()
+    expect(screen.queryByText('near-match')).not.toBeInTheDocument()
+  })
+
+  it.each<{ targets: TargetInstance[] }>([
+    { targets: [] },
+    { targets: [
+      makeTarget({ target_registry_name: 'first', identifier_hash: 'chat-hash' }),
+      makeTarget({ target_registry_name: 'second', identifier_hash: 'chat-hash' }),
+    ] },
+  ])('should not guess a target name from unavailable or ambiguous registry matches (%#)', ({ targets }: { targets: TargetInstance[] }) => {
+    const attack: AttackSummary = {
+      ...sampleAttacks[0],
+      target: { target_type: 'OpenAIChatTarget', identifier_hash: 'chat-hash', model_name: 'gpt-4' },
     }
 
+    render(<TestWrapper><AttackTable {...defaultProps} attacks={[attack]} targets={targets} /></TestWrapper>)
+
+    expect(screen.getByRole('button', { name: 'Identity for Unnamed target' })).toBeInTheDocument()
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.queryByText('OpenAIChatTarget')).not.toBeInTheDocument()
+  })
+
+  it('should show label badges excluding source', () => {
+    const attack = { ...sampleAttacks[0], labels: { custom: 'val', source: 'gui', category: 'test', extra: 'value' } }
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} attacks={[attack]} />
       </TestWrapper>
     )
 
-    const row = screen.getByTestId('attack-row-ar-related-types')
-    expect(within(row).getByText('3')).toBeInTheDocument()
-  })
-
-  it('should show converter badges', () => {
-    render(
-      <TestWrapper>
-        <AttackTable {...defaultProps} />
-      </TestWrapper>
-    )
-
-    expect(screen.getByText('Base64Converter')).toBeInTheDocument()
-    expect(screen.getByText('ROT13Converter')).toBeInTheDocument()
-    // Third converter overflows to +1
-    expect(screen.getByText('+1')).toBeInTheDocument()
-  })
-
-  it('should show label badges excluding operator, operation, and source', () => {
-    render(
-      <TestWrapper>
-        <AttackTable {...defaultProps} />
-      </TestWrapper>
-    )
-
     expect(screen.getByText('custom: val')).toBeInTheDocument()
+    expect(screen.getByText('category: test')).toBeInTheDocument()
+    expect(screen.getByText('+1')).toBeInTheDocument()
+    expect(screen.queryByText('source: gui')).not.toBeInTheDocument()
   })
 
-  it('should show last message preview when available', () => {
+  it('should display the last update rather than creation time or message previews', () => {
+    const formatDateMock = jest.fn((dateStr: string): string => `Updated: ${dateStr}`)
     render(
       <TestWrapper>
-        <AttackTable {...defaultProps} />
+        <AttackTable {...defaultProps} formatDate={formatDateMock} />
       </TestWrapper>
     )
 
-    expect(screen.getByText('Hello world')).toBeInTheDocument()
+    for (const attack of sampleAttacks) {
+      expect(formatDateMock).toHaveBeenCalledWith(attack.updated_at)
+      expect(formatDateMock).not.toHaveBeenCalledWith(attack.created_at)
+    }
+    expect(screen.queryByText('Hello world')).not.toBeInTheDocument()
+    expect(screen.queryByText('Base64Converter')).not.toBeInTheDocument()
   })
 
-  it('should show operator and operation from labels', () => {
+  it('should show the operator and current operation name', () => {
     render(
       <TestWrapper>
         <AttackTable {...defaultProps} />
@@ -324,6 +421,54 @@ describe('AttackTable', () => {
 
     expect(screen.getByText('alice')).toBeInTheDocument()
     expect(screen.getByText('op_one')).toBeInTheDocument()
+  })
+
+  it('should use the persisted source name for a temperature-bound target', () => {
+    const attack: AttackSummary = {
+      ...sampleAttacks[0],
+      target: {
+        target_type: 'OpenAIChatTarget',
+        identifier_hash: 'effective-hash',
+        binding: {
+          version: 1,
+          source_name: 'temperature-source',
+          source_hash: 'chat-hash',
+          temperature: 0.5,
+          effective_hash: 'effective-hash',
+        },
+      },
+    }
+
+    render(<TestWrapper><AttackTable {...defaultProps} attacks={[attack]} /></TestWrapper>)
+
+    expect(screen.getByRole('button', { name: 'Identity for temperature-source' })).toBeInTheDocument()
+  })
+
+  it('should keep target expansions independent and preserve them across refreshed rows', async () => {
+    const user = userEvent.setup()
+    const rendered = render(<TestWrapper><AttackTable {...defaultProps} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Identity for primary-chat' }))
+    await user.click(screen.getByRole('button', { name: 'Identity for text-output' }))
+    const updatedAttacks = sampleAttacks.map((attack: AttackSummary) => ({ ...attack, updated_at: '2026-02-01T10:00:00Z' }))
+
+    rendered.rerender(<TestWrapper><AttackTable {...defaultProps} attacks={updatedAttacks} /></TestWrapper>)
+
+    expect(screen.getByRole('region', { name: 'Identity for primary-chat' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Identity for text-output' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Identity for primary-chat' }))
+    expect(screen.queryByRole('region', { name: 'Identity for primary-chat' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Identity for text-output' })).toBeVisible()
+  })
+
+  it('should keep an objective cell for attacks without an objective', () => {
+    const attack = { ...sampleAttacks[1], objective: '' }
+
+    render(<TestWrapper><AttackTable {...defaultProps} attacks={[attack]} /></TestWrapper>)
+
+    const row = screen.getByRole('row', { name: 'Open attack: No objective' })
+    expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('—')
+    expect(within(row).getByRole('button', { name: 'Open attack: No objective' })).toBeInTheDocument()
+    expect(row).toHaveAttribute('tabindex', '0')
   })
 
   it('should render with empty attacks array', () => {

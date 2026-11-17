@@ -1,5 +1,5 @@
 import { test, expect } from './_fixtures'
-import { makeAddMessageResponse } from './_attacks'
+import { makeAddMessageResponse, makeAttackMetadata } from './_attacks'
 import { READY_RUNTIME } from './_runtime'
 import { makeTarget } from './_targets'
 import type { AttackSummary, BackendMessage, RegisteredComponentReference, MessageSendRequest, ScoringFailure } from '@/types'
@@ -16,7 +16,8 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
     target_registry_name: target.target_registry_name,
   } }
   await page.route('**/api/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
+    const url = new URL(route.request().url())
+    const path = url.pathname
     if (path === '/api/runtime') { await route.fulfill({ json: READY_RUNTIME }); return }
     if (path === '/api/targets') {
       await route.fulfill({ json: { items: [target], pagination: { has_more: false } } }); return
@@ -28,6 +29,9 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
       await route.fulfill({ json: { items: [{
         scorer_registry_name: 'judge', identifier: { class_name: 'SubStringScorer', hash: 'judge-hash', scorer_type: 'true_false' },
       }], pagination: { has_more: false } } }); return
+    }
+    if (path === '/api/attacks/scoring-attack/metadata') {
+      await route.fulfill({ json: makeAttackMetadata(attack, url.searchParams.get('conversation_id') ?? undefined) }); return
     }
     if (path === '/api/attacks/scoring-attack') {
       if (route.request().method() === 'PATCH') {

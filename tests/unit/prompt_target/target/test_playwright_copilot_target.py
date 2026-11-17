@@ -1,18 +1,22 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.models import (
     Message,
     MessagePiece,
 )
-from pyrit.prompt_target.playwright_copilot_target import (
-    CopilotSelectors,
+from pyrit.prompt_target import (
     CopilotType,
     PlaywrightCopilotTarget,
+)
+from pyrit.prompt_target.playwright_copilot_target import (
+    CopilotSelectors,
 )
 
 
@@ -51,6 +55,31 @@ class TestPlaywrightCopilotTarget:
         # Create a simple mock for expect_file_chooser - we'll override this in specific tests
         page.expect_file_chooser = MagicMock()
         return page
+
+    @pytest.fixture
+    def mock_unified_page(self):
+        """Create a mock Playwright page object for the unified Copilot interface."""
+        page = AsyncMock(name="MockUnifiedPage")
+        page.url = "https://copilot.cloud.microsoft/chat/test-conversation"
+        page.locator = MagicMock(return_value=AsyncMock())
+        page.eval_on_selector_all = AsyncMock()
+        page.click = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
+        page.query_selector_all = AsyncMock()
+        page.expect_file_chooser = MagicMock()
+        return page
+
+    @pytest.fixture
+    def mock_m365_cloud_page(self):
+        """Create a mock M365 page that serves the unified Copilot interface."""
+        page = AsyncMock(name="MockM365CloudPage")
+        page.url = "https://m365.cloud.microsoft/chat/"
+        page.locator = MagicMock(return_value=AsyncMock())
+        page.eval_on_selector_all = AsyncMock()
+        page.click = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
+        page.query_selector_all = AsyncMock()
+        page.expect_file_chooser = MagicMock()
         return page
 
     @pytest.fixture
@@ -116,6 +145,13 @@ class TestPlaywrightCopilotTarget:
         ):
             PlaywrightCopilotTarget(page=mock_page, copilot_type=CopilotType.M365)
 
+    @pytest.mark.parametrize("copilot_type", [CopilotType.CONSUMER, CopilotType.M365])
+    def test_init_unified_copilot_accepts_both_types(self, mock_unified_page, copilot_type):
+        """Test that the unified Copilot host supports both account types."""
+        target = PlaywrightCopilotTarget(page=mock_unified_page, copilot_type=copilot_type)
+
+        assert target._type == copilot_type
+
     def test_get_selectors_consumer(self, mock_page):
         """Test selector configuration for Consumer Copilot."""
         target = PlaywrightCopilotTarget(page=mock_page, copilot_type=CopilotType.CONSUMER)
@@ -128,15 +164,84 @@ class TestPlaywrightCopilotTarget:
         assert selectors.file_picker_selector == 'button[aria-label="Add images or files"]'
 
     def test_get_selectors_m365(self, mock_m365_page):
-        """Test selector configuration for M365 Copilot."""
+        """Test selector configuration supports legacy and unified M365 Copilot."""
         target = PlaywrightCopilotTarget(page=mock_m365_page, copilot_type=CopilotType.M365)
         selectors = target._get_selectors()
 
         assert selectors.input_selector == 'span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]'
-        assert selectors.send_button_selector == 'button[type="submit"]'
-        assert selectors.ai_messages_selector == 'div[data-testid="copilot-message-div"]'
-        assert selectors.plus_button_dropdown_selector == 'button[aria-label="Add content"]'
+        assert selectors.send_button_selector == 'button[aria-label="Send"], button[type="submit"]'
+        assert selectors.ai_messages_selector == (
+            'div[data-testid="copilot-message-div"], div[role="article"][aria-labelledby^="copilot-message-"]'
+        )
+        assert selectors.ai_messages_group_selector == (
+            'div[data-testid="copilot-message-reply-div"], '
+            'div[role="article"][aria-labelledby^="copilot-message-"] > div[id^="copilot-message-"], '
+            'div[data-testid="copilot-message-div"] > div > div > div > div > div > div > div > div > div > div'
+        )
+        assert selectors.text_content_selector == "p"
+        assert selectors.plus_button_dropdown_selector == (
+            'button[data-testid="PlusMenuButton"], '
+            'button[aria-label="Add and manage sources"], '
+            'button[aria-label="Add attachments"], '
+            'button[aria-label="Add content"]'
+        )
         assert selectors.file_picker_selector == 'span.fui-MenuItem__content:has-text("Upload images and files")'
+
+    def test_get_selectors_m365_cloud_unified_markup(self, mock_m365_cloud_page):
+        """Test that the M365 hostname can use unified Copilot controls."""
+        target = PlaywrightCopilotTarget(page=mock_m365_cloud_page, copilot_type=CopilotType.M365)
+
+        selectors = target._get_selectors()
+
+        assert 'button[aria-label="Send"]' in selectors.send_button_selector
+        assert 'div[role="article"][aria-labelledby^="copilot-message-"]' in selectors.ai_messages_selector
+        assert 'button[data-testid="PlusMenuButton"]' in selectors.plus_button_dropdown_selector
+        assert 'button[aria-label="Add and manage sources"]' in selectors.plus_button_dropdown_selector
+
+    @pytest.mark.parametrize("copilot_type", [CopilotType.CONSUMER, CopilotType.M365])
+    def test_get_selectors_unified_copilot(self, mock_unified_page, copilot_type):
+        """Test selector configuration for both account types on the unified Copilot host."""
+        target = PlaywrightCopilotTarget(page=mock_unified_page, copilot_type=copilot_type)
+
+        selectors = target._get_selectors()
+
+        assert selectors.input_selector == (
+            'span[role="textbox"][contenteditable="true"][aria-label="Message Copilot"]'
+        )
+        assert selectors.send_button_selector == 'button[aria-label="Send"]'
+        assert selectors.ai_messages_selector == (
+            'div[data-testid="copilot-message-div"], div[role="article"][aria-labelledby^="copilot-message-"]'
+        )
+        assert selectors.ai_messages_group_selector == (
+            'div[data-testid="copilot-message-reply-div"], '
+            'div[role="article"][aria-labelledby^="copilot-message-"] > div[id^="copilot-message-"]'
+        )
+        assert selectors.text_content_selector == "p"
+        assert selectors.plus_button_dropdown_selector == (
+            'button[data-testid="PlusMenuButton"], '
+            'button[aria-label="Add and manage sources"], '
+            'button[aria-label="Add attachments"], '
+            'button[aria-label="Add content"]'
+        )
+        assert selectors.file_picker_selector == ('span.fui-MenuItem__content:has-text("Upload images and files")')
+
+    async def test_wait_for_response_unified_article_variant(self, mock_unified_page):
+        """Test response detection when the unified UI omits data-testid attributes."""
+        target = PlaywrightCopilotTarget(page=mock_unified_page, copilot_type=CopilotType.CONSUMER)
+        selectors = target._get_selectors()
+        mock_unified_page.eval_on_selector_all.side_effect = [0, 1]
+        mock_unified_page.query_selector_all.return_value = []
+
+        with patch.object(target, "_extract_multimodal_content_async", return_value="Cowork response") as mock_extract:
+            result = await target._wait_for_response_async(selectors)
+
+        assert result == "Cowork response"
+        assert mock_unified_page.eval_on_selector_all.call_args_list == [
+            call(selectors.ai_messages_selector, "elements => elements.length"),
+            call(selectors.ai_messages_selector, "elements => elements.length"),
+        ]
+        mock_unified_page.query_selector_all.assert_awaited_once_with(selectors.ai_messages_group_selector)
+        mock_extract.assert_awaited_once_with(selectors, 0)
 
     def test_validate_request_unsupported_type(self, mock_page):
         """Test validation with unsupported data type."""
@@ -302,6 +407,74 @@ class TestPlaywrightCopilotTarget:
         file_picker_locator.wait_for.assert_awaited_once_with(state="visible", timeout=5000)
         file_picker_locator.click.assert_awaited_once()
         mock_file_chooser.set_files.assert_awaited_once_with("/path/to/image.jpg")
+
+    async def test_multimodal_send_waits_for_unified_attachment_readiness(
+        self, mock_m365_cloud_page, multimodal_request
+    ):
+        """Test that unified M365 waits for attachment staging before sending."""
+        target = PlaywrightCopilotTarget(page=mock_m365_cloud_page, copilot_type=CopilotType.M365)
+        file_picker_locator = AsyncMock()
+        attachment_ready_locator = AsyncMock()
+        mock_m365_cloud_page.locator.return_value = file_picker_locator
+        mock_m365_cloud_page.get_by_role = MagicMock(return_value=attachment_ready_locator)
+
+        mock_file_chooser = AsyncMock()
+
+        class MockFileChooserInfo:
+            @property
+            def value(self) -> asyncio.Future[AsyncMock]:
+                future: asyncio.Future[AsyncMock] = asyncio.Future()
+                future.set_result(mock_file_chooser)
+                return future
+
+        class MockFileChooserContextManager:
+            async def __aenter__(self) -> MockFileChooserInfo:
+                return MockFileChooserInfo()
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        mock_m365_cloud_page.expect_file_chooser = MagicMock(return_value=MockFileChooserContextManager())
+        readiness_wait_started = asyncio.Event()
+        release_readiness = asyncio.Event()
+
+        async def wait_for_readiness_async(*, state: str, timeout: int) -> None:
+            assert state == "visible"
+            assert timeout == target.ATTACHMENT_READY_TIMEOUT_MS
+            readiness_wait_started.set()
+            await release_readiness.wait()
+
+        async def send_response_async(selectors: CopilotSelectors) -> str:
+            await mock_m365_cloud_page.click(selectors.send_button_selector)
+            return "AI response"
+
+        attachment_ready_locator.wait_for.side_effect = wait_for_readiness_async
+
+        with (
+            patch.object(target, "_clear_text_input_async"),
+            patch.object(target, "_send_text_async"),
+            patch.object(target, "_click_dropdown_button_async"),
+            patch.object(target, "_check_login_requirement_async"),
+            patch.object(target, "_wait_for_response_async", side_effect=send_response_async) as mock_wait_for_response,
+        ):
+            interaction_task = asyncio.create_task(target._interact_with_copilot_async(multimodal_request))
+            try:
+                await asyncio.wait_for(readiness_wait_started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                mock_m365_cloud_page.click.assert_not_awaited()
+            finally:
+                release_readiness.set()
+            result = await asyncio.wait_for(interaction_task, timeout=TEST_WATCHDOG_SECONDS)
+
+        assert result == "AI response"
+        mock_file_chooser.set_files.assert_awaited_once_with("/path/to/image.jpg")
+        mock_m365_cloud_page.get_by_role.assert_called_once_with(
+            "button",
+            name="Remove attachment image.jpg",
+            exact=True,
+        )
+        attachment_ready_locator.wait_for.assert_awaited_once_with(state="visible", timeout=60_000)
+        mock_wait_for_response.assert_awaited_once()
+        mock_m365_cloud_page.click.assert_awaited_once_with(target._get_selectors().send_button_selector)
 
     async def test_wait_for_response_async_success(self, mock_page):
         """Test successful response waiting."""

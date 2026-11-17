@@ -6,11 +6,17 @@ from datetime import UTC, datetime
 import pytest
 from unit.mocks import run_memory_session_async
 
-from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ConversationReference, ConversationType
-from pyrit.models.messages.message_piece import MessagePiece
-from pyrit.models.retry_event import RetryEvent
-from pyrit.models.score import Score
+from pyrit.memory import AttackResultEntry
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
+    MessagePiece,
+    RetryEvent,
+    Score,
+)
 
 
 class TestAttackResultTimestamp:
@@ -461,7 +467,7 @@ class TestAttackResultDuplicate:
 
     def test_duplicate_preserves_subclass_type(self) -> None:
         """duplicate() on a subclass returns the same subclass."""
-        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttackResult
+        from pyrit.executor.attack import CrescendoAttackResult
 
         original = CrescendoAttackResult(conversation_id="c1", objective="test")
         original.backtrack_count = 3

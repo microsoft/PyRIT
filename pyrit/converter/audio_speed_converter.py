@@ -19,12 +19,16 @@ logger = logging.getLogger(__name__)
 
 class AudioSpeedConverter(Converter):
     """
-    Changes the playback speed of an audio file without altering pitch or other audio characteristics.
+    Changes the playback speed of an audio file.
 
     A speed_factor > 1.0 speeds up the audio (shorter duration),
     while a speed_factor < 1.0 slows it down (longer duration).
     The converter resamples the audio signal using interpolation so that the
     sample rate, bit depth, and number of channels remain unchanged.
+
+    Because the samples are resampled rather than time-stretched, the pitch
+    changes together with the speed, like playing a tape faster or slower.
+    For example, a speed_factor of 2.0 raises a 440 Hz tone to about 880 Hz.
     """
 
     SUPPORTED_INPUT_TYPES = ("audio_path",)
@@ -96,10 +100,18 @@ class AudioSpeedConverter(Converter):
 
         Returns:
             Resampled audio data with the original dtype preserved.
+
+        Raises:
+            ValueError: If the speed factor would leave no samples in the output.
         """
         original_dtype = data.dtype
         num_samples = len(data) if data.ndim == 1 else data.shape[0]
         new_num_samples = int(num_samples / self._speed_factor)
+        if new_num_samples < 1:
+            raise ValueError(
+                f"speed_factor {self._speed_factor} is too large for an input of {num_samples} samples; "
+                "the converted audio would be empty."
+            )
 
         if data.ndim == 1:
             return self._resample_channel(data, new_num_samples).astype(original_dtype)
@@ -113,7 +125,7 @@ class AudioSpeedConverter(Converter):
 
         The audio is resampled via interpolation so that the output has a different
         number of samples (and therefore a different duration) while keeping the
-        original sample rate. This preserves the pitch and tonal qualities of the audio.
+        original sample rate. The pitch shifts by the same factor as the speed.
 
         Args:
             prompt (str): File path to the audio file to be converted.
@@ -123,7 +135,8 @@ class AudioSpeedConverter(Converter):
             ConverterResult: The result containing the converted audio file path.
 
         Raises:
-            ValueError: If the input type is not supported.
+            ValueError: If the input type is not supported, or if the speed factor
+                would leave no samples in the converted audio.
             Exception: If there is an error during the conversion process.
         """
         if not self.input_supported(input_type):

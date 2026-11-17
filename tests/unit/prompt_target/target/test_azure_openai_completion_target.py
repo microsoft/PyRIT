@@ -12,7 +12,7 @@ from openai.types.completion_usage import CompletionUsage
 from unit.mocks import get_image_message_piece, get_sample_conversations
 
 from pyrit.exceptions import PyritException
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAICompletionTarget
 

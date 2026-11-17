@@ -4,7 +4,8 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.operation import Operation, OperationCreate, operation_name_key
+from pyrit.models import Operation, OperationCreate
+from pyrit.models.operation import operation_name_key
 
 
 def test_operation_trims_display_name_and_folds_key() -> None:

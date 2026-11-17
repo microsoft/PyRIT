@@ -45,13 +45,15 @@ export async function estimatePresetRunSizes(
   )))
   const outcomes = items.map((item, index) => {
     const estimate = estimates[index]
-    return estimate.status === 'fulfilled'
-      ? { name: item.preset.name, runSize: estimate.value, failure: null }
-      : {
-        name: item.preset.name,
-        runSize: null,
-        failure: `${item.preset.name}: ${toApiError(estimate.reason).detail}`,
-      }
+    if (estimate && estimate.status === 'fulfilled') {
+      return { name: item.preset.name, runSize: estimate.value, failure: null }
+    }
+    const reason = estimate && estimate.status === 'rejected' ? estimate.reason : new Error('Missing estimate')
+    return {
+      name: item.preset.name,
+      runSize: null,
+      failure: `${item.preset.name}: ${toApiError(reason).detail}`,
+    }
   })
   return {
     runSizes: new Map<string, ScenarioRunSizeEstimateResponse | null>(

@@ -14,12 +14,11 @@ import numpy as np
 from colorama import Fore, Style
 from pydantic import Field
 
+from pyrit.common import combine_dict, get_kwarg_param, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.text_helper import escape_control_characters
-from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
-from pyrit.executor.core.config import (
+from pyrit.executor.core import (
     StrategyConverterConfig,
 )
 from pyrit.executor.promptgen.core.prompt_generator_strategy import (

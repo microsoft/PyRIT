@@ -213,3 +213,10 @@ class TestJsonSchemaNormalizer:
         """Callers can extend the default phrasing instead of redefining it."""
         assert "{schema_json}" in JsonSchemaNormalizer.DEFAULT_SCHEMA_INSTRUCTIONS_TEMPLATE
         assert "### Response format" in JsonSchemaNormalizer.DEFAULT_SCHEMA_INSTRUCTIONS_TEMPLATE
+
+    def test_get_identifier(self) -> None:
+        """Builds identifier incorporating custom template."""
+        custom_template = "Format: {schema_json}"
+        normalizer = JsonSchemaNormalizer(schema_instructions_template=custom_template)
+        ident = normalizer.get_identifier()
+        assert ident.params["schema_instructions_template"] == custom_template

@@ -34,6 +34,20 @@ export const useConversationPanelStyles = makeStyles({
     overflowY: 'auto',
     padding: tokens.spacingVerticalXS,
   },
+  pagingControls: {
+    display: 'flex',
+    flexDirection: 'column',
+    flexShrink: 0,
+    minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    gap: tokens.spacingVerticalS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  offPageSelection: {
+    display: 'block',
+    padding: tokens.spacingVerticalS,
+    overflowWrap: 'anywhere',
+  },
   conversationItem: {
     display: 'flex',
     flexDirection: 'column',

@@ -11,11 +11,15 @@ import pytest
 
 from pyrit.models import (
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
+    DatasetSourceInput,
     LaunchScenarioSuiteRequest,
+    ResolveScenarioPresetRequest,
+    ScenarioDatasetRequest,
+    ScenarioPreset,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
     ScenarioSuiteLaunchEntrySnapshot,
 )
-from pyrit.models.catalog import ResolveScenarioPresetRequest, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioPresetStorage,

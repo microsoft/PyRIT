@@ -37,6 +37,7 @@ class AttackSeedGroup(SeedGroup):
     next_message, etc.) is inherited from SeedGroup.
     """
 
+    continue_final_assistant_message: bool = False
     adversarial_prompts: AdversarialPrompts | None = None
 
     def _check_invariants(self) -> None:
@@ -169,6 +170,8 @@ class AttackSeedGroup(SeedGroup):
 
         The original group is not mutated. Technique seeds are inserted at
         ``technique.insertion_index`` (or appended at the end when ``None``).
+        When requested, the objective is appended as a separate final user prompt
+        after merged static prompts and reserved simulated-conversation sequences.
 
         Args:
             technique: A validated AttackTechniqueSeedGroup whose seeds will be merged.
@@ -194,8 +197,19 @@ class AttackSeedGroup(SeedGroup):
                 f"overlapping the simulated conversation range are incompatible."
             )
 
+        if technique.continue_final_assistant_message and (self.prompts or self.has_simulated_conversation):
+            raise ValueError("Assistant continuation accepts objective-only seed groups.")
+
         base_seeds = [copy.deepcopy(seed) for seed in self.seeds]
+        if technique.continue_final_assistant_message:
+            # This user turn is prepared through the normal history converter path.
+            base_seeds.append(SeedPrompt(value=self.objective.value, data_type="text", role="user"))
         technique_seeds = [copy.deepcopy(seed) for seed in technique.seeds]
+        if technique.continue_final_assistant_message:
+            # User objective and assistant prefix are two separate turns even if
+            # both input prompts started with the default sequence number (zero).
+            prefix = next(seed for seed in technique_seeds if isinstance(seed, SeedPrompt))
+            prefix.sequence = max(seed.sequence for seed in base_seeds if isinstance(seed, SeedPrompt)) + 1
         idx = technique.insertion_index
         merged_seeds = (
             base_seeds + technique_seeds if idx is None else base_seeds[:idx] + technique_seeds + base_seeds[idx:]
@@ -213,7 +227,26 @@ class AttackSeedGroup(SeedGroup):
             prepend_technique=technique.prompt_placement == "prepend",
         )
 
-        return AttackSeedGroup(seeds=merged_seeds)
+        if technique.append_objective_prompt:
+            next_seq = (
+                max(
+                    (
+                        seed.sequence_range.stop - 1 if isinstance(seed, SeedSimulatedConversation) else seed.sequence
+                        for seed in merged_seeds
+                        if isinstance(seed, (SeedPrompt, SeedSimulatedConversation))
+                    ),
+                    default=-1,
+                )
+                + 1
+            )
+            merged_seeds.append(
+                SeedPrompt(value=self.objective.value, data_type="text", role="user", sequence=next_seq)
+            )
+
+        return AttackSeedGroup(
+            seeds=merged_seeds,
+            continue_final_assistant_message=technique.continue_final_assistant_message,
+        )
 
     @staticmethod
     def _normalize_prompt_sequences(

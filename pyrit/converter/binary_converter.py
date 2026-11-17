@@ -7,7 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 # Deprecation support: remove in 1.4.0.
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.converter.text_selection_strategy import WordSelectionStrategy  # noqa: TC001 - registry annotation resolution
 from pyrit.converter.word_level_converter import WordLevelConverter
 

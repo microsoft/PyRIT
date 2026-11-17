@@ -10,7 +10,7 @@ from end_to_end import test_scenarios as scenario_tests
 
 from pyrit.cli.pyrit_scan import _build_run_request, parse_args
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
+from pyrit.scenario.scenarios.airt import Psychosocial
 from pyrit.score import SubStringScorer
 
 
@@ -20,6 +20,7 @@ from pyrit.score import SubStringScorer
     [
         ("airt.psychosocial", 2),
         ("garak.latent_injection", 23),
+        ("garak.leak_replay", 8),
         ("garak.prompt_inject", 3),
         ("garak.web_injection", 6),
         ("garak.encoding", 1),

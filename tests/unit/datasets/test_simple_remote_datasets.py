@@ -11,16 +11,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import _CCPSensitivePromptsDataset
-from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import _ForbiddenQuestionsDataset
-from pyrit.datasets.seed_datasets.remote.librai_do_not_answer_dataset import _LibrAIDoNotAnswerDataset
-from pyrit.datasets.seed_datasets.remote.llm_latent_adversarial_training_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
+    _CCPSensitivePromptsDataset,
+    _ForbiddenQuestionsDataset,
+    _LibrAIDoNotAnswerDataset,
     _LLMLatentAdversarialTrainingDataset,
+    _MultilingualVulnerabilityDataset,
+    _SOSBenchDataset,
+    _TDC23RedteamingDataset,
+    _XSTestDataset,
 )
-from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import _MultilingualVulnerabilityDataset
-from pyrit.datasets.seed_datasets.remote.sosbench_dataset import _SOSBenchDataset
-from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import _TDC23RedteamingDataset
-from pyrit.datasets.seed_datasets.remote.xstest_dataset import _XSTestDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 _SIMPLE_LOADERS = [

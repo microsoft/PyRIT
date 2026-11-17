@@ -9,8 +9,7 @@ import pytest
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedDataset, SeedObjective
-from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.core.dataset_configuration import DatasetSource
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 
 
 @pytest.mark.usefixtures("patch_central_database")

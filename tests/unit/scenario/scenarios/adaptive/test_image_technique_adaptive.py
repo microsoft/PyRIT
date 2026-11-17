@@ -9,12 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.scenarios.adaptive.image_technique_adaptive import ImageTechniqueAdaptive
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
+from pyrit.scenario.scenarios.adaptive import ImageTechniqueAdaptive
 from pyrit.score import TrueFalseScorer
 
 _IMAGE_TECHNIQUE_NAMES = {
