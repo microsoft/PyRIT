@@ -38,24 +38,39 @@ _ARGUMENTS_ATTRIBUTE = "gen_ai.tool.call.arguments"
 _KEPT_ARGUMENTS_ERROR = "kept_arguments must be a sequence of distinct, nonempty argument paths, none inside another."
 
 
-def _reject_constant(constant: str) -> None:
-    raise ValueError(f"Non-finite JSON constant {constant} is not argument evidence.")
+def _has_non_finite_number(value: JsonValue) -> bool:
+    """
+    Find a NaN or infinite number anywhere in a JSON value.
+
+    Returns:
+        bool: Whether the value holds a number that is not finite.
+    """
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_has_non_finite_number(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_non_finite_number(item) for item in value)
+    return False
 
 
 def _keep_arguments(value: JsonValue | None, *, kept: tuple[str, ...]) -> dict[str, JsonValue] | None:
     """
     Keep only the named arguments of one call, nested as they were, redacting the rest.
 
+    A number that is not finite is not JSON, whether it arrives as a ``NaN`` or ``Infinity``
+    constant, as a literal too large to represent, or inside an already-parsed object.
+
     Returns:
         dict[str, JsonValue] | None: The kept arguments the call has, or None if its arguments
-            are missing or are not a JSON object.
+            are missing, are not a JSON object, or hold a number that is not finite.
     """
     if isinstance(value, str):
         try:
-            value = json.loads(value, parse_constant=_reject_constant)
+            value = json.loads(value)
         except ValueError:
             return None
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or _has_non_finite_number(value):
         return None
     return keep_argument_paths(value, kept=kept)
 
