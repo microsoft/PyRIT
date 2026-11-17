@@ -12,11 +12,12 @@ import {
   MessageBarBody,
 } from '@fluentui/react-components'
 import { SearchRegular } from '@fluentui/react-icons'
-import { useSearchParams } from 'react-router'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
 
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import type { DatasetInfo, FilterOption } from '@/types'
+import { chatOriginFromNavigationState } from '@/utils/routeParams'
 
 import DatasetCard from './DatasetCard'
 import { useDatasetCatalogStyles } from './DatasetCatalog.styles'
@@ -64,6 +65,9 @@ function harmOptions(datasets: readonly DatasetInfo[], view: DatasetCatalogQuery
 export default function DatasetCatalog() {
   const styles = useDatasetCatalogStyles()
   const titleId = useId()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const chatOrigin = chatOriginFromNavigationState(location.state)
   const [searchParams, setSearchParams] = useSearchParams()
   const catalogSearch = searchParams.toString()
   const query = useMemo(
@@ -81,7 +85,7 @@ export default function DatasetCatalog() {
   const filtersActive = !catalogQueryIsDefault({ ...query, view: 'memory' })
 
   const updateQuery = (next: DatasetCatalogQuery): void => {
-    setSearchParams(catalogQueryToSearchParams(next), { replace: true })
+    setSearchParams(catalogQueryToSearchParams(next), { replace: true, state: location.state })
   }
 
   const resultLabel = filtered.length === 1 ? '1 dataset' : `${filtered.length} datasets`
@@ -96,6 +100,8 @@ export default function DatasetCatalog() {
       <div className={styles.header}>
         <div className={styles.headerText}>
           <Text id={titleId} as="h1" size={600} weight="semibold">Datasets</Text>
+          {chatOrigin && <Button appearance="subtle" className={styles.touchTarget}
+            onClick={() => navigate(chatOrigin.path, { state: chatOrigin.state })}>Return to Chat</Button>}
           <Text size={300} className={styles.subtitle}>
             Browse stored datasets and built-in providers. Search, filters, and sort stay in the address bar.
           </Text>

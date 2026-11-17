@@ -23,7 +23,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     PackageHallucinationTechnique,
     WebInjectionTechnique,
 )

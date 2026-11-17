@@ -34,7 +34,7 @@ from pyrit.scenario import (
 from pyrit.scenario.core import (
     DatasetConstraintError,
 )
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     ProPILE,
     ProPILEDatasetConfiguration,
     ProPILETechnique,
