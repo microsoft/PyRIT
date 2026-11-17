@@ -1612,7 +1612,7 @@ class Scenario(ABC):
                 stored_result=stored_result,
                 current_identifier=scenario_identifier,
             )
-            self._apply_persisted_run_plan(stored_plan=cast("ScenarioRunPlan", stored_plan))
+            self._require_rebuilt_plan_matches(stored_plan=cast("ScenarioRunPlan", stored_plan))
             return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
@@ -1773,32 +1773,14 @@ class Scenario(ABC):
             return None
         return ScenarioRunPlan.model_validate(raw_plan)
 
-    def _resume_error_message(self, *, reason: str) -> str:
-        """
-        Build the error for a resume refused because its planned seeds can't be found.
-
-        Args:
-            reason (str): What is missing, without a trailing period.
-
-        Returns:
-            str: The message, ending with the two ways to recover.
-        """
-        return (
-            f"Scenario result id '{self._scenario_result_id}' cannot resume: {reason}. "
-            "To resume, re-import the dataset content this run used; "
-            "otherwise drop scenario_result_id to start a new run."
-        )
-
     async def _load_planned_population_async(
         self, *, stored_result: ScenarioResult, stored_plan: ScenarioRunPlan | None
     ) -> dict[str, list[AttackSeedGroup]]:
         """
         Rebuild a resumed run's population from the seed groups stored when it was created.
 
-        Population datasets are never read, so they may have been edited, refreshed, or deleted.
-        A scenario that resolves its own seed groups still runs that resolution, without sampling,
-        for the state it sets up (such as scorers built from required datasets); its groups are
-        discarded.
+        Datasets are not read, so they may have been edited, refreshed, or deleted. A scenario
+        that keeps state built during seed resolution restores it in ``_restore_resume_state_async``.
 
         Args:
             stored_result (ScenarioResult): The stored scenario result.
@@ -1809,8 +1791,8 @@ class Scenario(ABC):
 
         Raises:
             ValueError: If the run stored no plan or planned seed groups, or a dataset the
-                scenario's own resolution reads was deleted.
-            DatasetConstraintError: If the scenario's own resolution fails for another reason.
+                scenario's state restore reads was deleted.
+            DatasetConstraintError: If the scenario's state restore fails for another reason.
         """
         if stored_plan is None or stored_result.metadata.get(_PLANNED_SEED_GROUPS_METADATA_KEY) is not True:
             raise ValueError(
@@ -1818,14 +1800,28 @@ class Scenario(ABC):
                 "PyRIT version that didn't store the seeds it planned. Drop scenario_result_id to start a new run."
             )
         population = await self._memory.get_planned_seed_groups_async(scenario_result_id=str(stored_result.id))
-        resolver = type(self)._resolve_seed_groups_by_dataset_async
-        if resolver.__qualname__ != Scenario._resolve_seed_groups_by_dataset_async.__qualname__:
-            try:
-                await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-            except DatasetConstraintError as error:
-                await self._raise_if_datasets_deleted_async(cause=error)
-                raise
+        try:
+            await self._restore_resume_state_async(stored_result=stored_result, seed_groups_by_dataset=population)
+        except DatasetConstraintError as error:
+            await self._raise_if_datasets_deleted_async(cause=error)
+            raise
         return population
+
+    async def _restore_resume_state_async(  # noqa: B027
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        """
+        Restore state a new run builds in ``_resolve_seed_groups_by_dataset_async``, for a resume.
+
+        Resume doesn't call seed resolution; it rebuilds from the stored population. A scenario
+        whose resolution also sets up state its builders need (such as a scorer derived from the
+        population) overrides this to set it up again, preferably from ``seed_groups_by_dataset``
+        or from values the run saved in its metadata. The default does nothing.
+
+        Args:
+            stored_result (ScenarioResult): The stored scenario result, including its metadata.
+            seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): The stored planned population.
+        """
 
     async def _raise_if_datasets_deleted_async(self, *, cause: DatasetConstraintError) -> None:
         """
@@ -1850,47 +1846,57 @@ class Scenario(ABC):
         missing = [name for name in configured if name.casefold() not in stored]
         if missing:
             raise ValueError(
-                self._resume_error_message(
-                    reason=f"dataset(s) {', '.join(repr(name) for name in missing)} are no longer in memory; "
-                    "they were deleted after the run was planned"
-                )
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: dataset(s) "
+                f"{', '.join(repr(name) for name in missing)} are no longer in memory; they were deleted after "
+                "the run was planned. To resume, re-import the dataset content this run used; otherwise drop "
+                "scenario_result_id to start a new run."
             ) from cause
 
-    def _apply_persisted_run_plan(self, *, stored_plan: ScenarioRunPlan) -> None:
+    def _require_rebuilt_plan_matches(self, *, stored_plan: ScenarioRunPlan) -> None:
         """
-        Validate and replay the exact logical units captured by a stored plan.
+        Refuse to resume unless the rebuilt atomic attacks match the stored plan exactly.
+
+        Resume rebuilds from the stored population, so a difference means something other than
+        the datasets changed, such as the scenario's code, its techniques, or data it still reads.
+
+        Args:
+            stored_plan (ScenarioRunPlan): The plan stored when the run was created.
 
         Raises:
-            ValueError: If a planned atomic or seed group cannot be reconstructed.
+            ValueError: If the rebuilt plan differs, naming the atomic groups that differ.
         """
-        current_by_id = {
-            self._get_atomic_group_id(atomic_attack=atomic_attack): atomic_attack
-            for atomic_attack in self._atomic_attacks
-        }
-        planned_ids = {group.id for group in stored_plan.atomic_groups}
-        missing_groups = planned_ids - current_by_id.keys()
-        if missing_groups:
-            raise ValueError(
-                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
-                f"{len(missing_groups)} planned atomic group(s) are no longer reconstructable."
-            )
-
-        retained_attacks: list[AtomicAttack] = []
-        for planned_group in stored_plan.atomic_groups:
-            atomic_attack = current_by_id[planned_group.id]
-            current_seed_groups = {seed_group.logical_id: seed_group for seed_group in atomic_attack.seed_groups}
-            missing_seed_groups = set(planned_group.seed_group_ids) - current_seed_groups.keys()
-            if missing_seed_groups:
-                raise ValueError(
-                    self._resume_error_message(
-                        reason=f"atomic group '{planned_group.atomic_attack_name}' is missing "
-                        f"{len(missing_seed_groups)} planned seed group(s)"
-                    )
+        rebuilt = self._build_run_plan()
+        if rebuilt != stored_plan:
+            stored_groups = {group.id: group for group in stored_plan.atomic_groups}
+            rebuilt_groups = {group.id: group for group in rebuilt.atomic_groups}
+            differences = [
+                f"{label}: {', '.join(sorted(names))}"
+                for label, names in (
+                    (
+                        "missing",
+                        [stored_groups[key].atomic_attack_name for key in stored_groups.keys() - rebuilt_groups],
+                    ),
+                    (
+                        "added",
+                        [rebuilt_groups[key].atomic_attack_name for key in rebuilt_groups.keys() - stored_groups],
+                    ),
+                    (
+                        "changed",
+                        [
+                            group.atomic_attack_name
+                            for key, group in stored_groups.items()
+                            if key in rebuilt_groups and rebuilt_groups[key] != group
+                        ],
+                    ),
                 )
-            atomic_attack._seed_groups = [current_seed_groups[group_id] for group_id in planned_group.seed_group_ids]
-            retained_attacks.append(atomic_attack)
-        self._atomic_attacks = retained_attacks
-        self._display_group_map = {group.atomic_attack_name: group.display_group for group in stored_plan.atomic_groups}
+                if names
+            ] or ["its seed groups or scenario changed"]
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: the rebuilt run doesn't match "
+                f"its stored plan ({'; '.join(differences)}). Restore the original scenario configuration, "
+                "or drop scenario_result_id to start a new run."
+            )
+        self._display_group_map = {attack.atomic_attack_name: attack.display_group for attack in self._atomic_attacks}
 
     def _get_identity_params(self) -> dict[str, Any]:
         """
@@ -2093,9 +2099,9 @@ class Scenario(ABC):
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling.
-                Resume rebuilds the population from the seed groups stored with the run, so
-                it calls an overriding implementation only for the state it sets up (such as
-                scorers built from required datasets), with False, and discards its groups.
+                Preparation passes False to validate the full assembly. Resume never calls
+                this; it rebuilds from the stored population, and any state set up here must
+                also be restored in ``_restore_resume_state_async``.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by dataset name.

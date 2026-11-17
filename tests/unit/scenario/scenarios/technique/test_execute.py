@@ -985,10 +985,7 @@ class TestExecute:
                         scenario_result_ids=[prepared.scenario._scenario_result_id],
                     )
                 )[0]
-                assert Execute.PREPENDED_CONVERSATION_HASH_KEY in stored.metadata
-                assert Execute.PREPENDED_CONVERSATION_HASH_KEY not in stored.scenario_identifier.params
                 restored = service._restore_launch_request(stored=stored)
-                assert Execute.PREPENDED_CONVERSATION_HASH_KEY not in restored.scenario_params
                 resumed = await service._prepare_run_async(request=restored)
                 assert resumed.scenario._scenario_result_id == prepared.scenario._scenario_result_id
                 await memory.add_message_to_memory_async(
@@ -998,10 +995,9 @@ class TestExecute:
                         conversation_id=history_id,
                     ).to_message()
                 )
-                with pytest.raises(
-                    ValueError, match="does not match the saved history|cannot resume: missing 1 planned seed group"
-                ):
-                    await service._prepare_run_async(request=restored)
+                # Resume rebuilds from the planned seeds, so a changed source conversation doesn't matter.
+                again = await service._prepare_run_async(request=restored)
+                assert again.scenario._scenario_result_id == prepared.scenario._scenario_result_id
         finally:
             await service.close_async()
 
@@ -1164,7 +1160,9 @@ class TestExecute:
             await changed.initialize_async()
 
     @pytest.mark.parametrize("change", ["append", "metadata"])
-    async def test_resume_rejects_changed_source_async(self, *, scorer: MagicMock, change: str) -> None:
+    async def test_resume_keeps_planned_history_after_source_changes_async(
+        self, *, scorer: MagicMock, change: str
+    ) -> None:
         memory = CentralMemory.get_memory_instance()
         history_id = await _save_history_async(memory=memory, roles=["user", "assistant"])
         target = MockPromptTarget()
@@ -1184,8 +1182,8 @@ class TestExecute:
             await memory.update_prompt_metadata_by_conversation_id_async(
                 conversation_id=history_id, prompt_metadata={"custom": "new metadata"}
             )
-        with pytest.raises(ValueError, match="does not match"):
-            await resumed.initialize_async()
+        await resumed.initialize_async()
+        assert resumed._atomic_attacks[0].seed_groups == original._atomic_attacks[0].seed_groups
 
     def test_alias_and_dynamic_cache_reset(self) -> None:
         package = importlib.import_module("pyrit.scenario.technique")

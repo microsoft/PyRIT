@@ -68,7 +68,14 @@ from pyrit.score.scorer import _set_snapshot_participation
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.models import ScenarioDatasetSizeEstimate, Scorable, ScorableUnion, Score, ScoringExpectation
+    from pyrit.models import (
+        ScenarioDatasetSizeEstimate,
+        ScenarioResult,
+        Scorable,
+        ScorableUnion,
+        Score,
+        ScoringExpectation,
+    )
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -618,14 +625,21 @@ class AssertPolicy(Scenario):
         samples: int = self.params["judge_samples"]
         return len(self._judge_dimensions) * samples
 
+    async def _restore_resume_state_async(
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        # Judges and repeated IDs come from the unsampled population, which the stored sample
+        # doesn't hold, so resume reads the selected datasets again.
+        await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
         """
         Read the selected groups once, build their judges, then sample that same population.
 
-        Judges come from the unsampled population because resume reads it unsampled, so the
-        scenario identity stays the same.
+        Judges come from the unsampled population, so a run's judges don't depend on its sample.
+        Resume restores them by reading the selected datasets again (`_restore_resume_state_async`).
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Selected groups keyed by dataset.

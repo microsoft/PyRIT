@@ -684,8 +684,8 @@ class TestScenarioCompatibilityPolicy:
         )
         scenario._atomic_attacks = [current]
 
-        with pytest.raises(ValueError, match="cannot resume"):
-            scenario._apply_persisted_run_plan(stored_plan=stored_plan)
+        with pytest.raises(ValueError, match="cannot resume: the rebuilt run doesn't match its stored plan"):
+            scenario._require_rebuilt_plan_matches(stored_plan=stored_plan)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1864,17 +1864,8 @@ class TestScenarioBaselineUniformObjectives:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestScenarioResumeDeterministicUnderMaxDatasetSize:
-    """Phase H regression: resume must reconstruct the persisted objective subset.
-
-    ``max_dataset_size`` applies an unseeded ``random.sample`` on every seed
-    resolution. Before the fix, resume re-sampled and intersected the persisted
-    objective hashes against a *fresh* (divergent) draw, so resume aborted with
-    "persisted objective hash(es) are no longer present in the dataset" whenever
-    ``max_dataset_size`` was smaller than the dataset. The fix bypasses sampling on
-    the resume branch: the full deterministic dataset is resolved and the persisted
-    hashes drive selection, reconstructing exactly the first run's objectives.
-    """
+class TestScenarioResumeFromStoredPopulation:
+    """Resume rebuilds the population stored with the run, never resolving or resampling datasets."""
 
     class _StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
         # Use the base seed resolution, so resume rebuilds only from the stored population.
@@ -2015,10 +2006,17 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         lookup.assert_not_awaited()
         sample.assert_not_called()
 
-    async def test_overriding_resolution_still_reads_its_datasets_on_resume(self, mock_objective_target) -> None:
+    @pytest.mark.parametrize("restore_reads_datasets", [False, True])
+    async def test_resume_after_delete_reads_datasets_only_to_restore_state(
+        self, mock_objective_target, restore_reads_datasets: bool
+    ) -> None:
         class _OverridingScenario(self._StrategyScenario):
             async def _resolve_seed_groups_by_dataset_async(self, *, apply_sampling: bool = True):
                 return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+
+            async def _restore_resume_state_async(self, *, stored_result, seed_groups_by_dataset):
+                if restore_reads_datasets:
+                    await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
 
         memory = CentralMemory.get_memory_instance()
         await memory.add_seeds_to_memory_async(
@@ -2032,6 +2030,11 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         await memory.remove_seeds_from_memory_async(dataset_name="owned")
         resumed = _OverridingScenario(name="Overriding", version=1, scenario_result_id=original._scenario_result_id)
         resumed.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        if not restore_reads_datasets:
+            # Resume never runs seed resolution, so an override doesn't need its datasets.
+            await resumed.initialize_async()
+            assert resumed._build_run_plan() == original._build_run_plan()
+            return
         with pytest.raises(ValueError, match=r"dataset\(s\) 'owned' are no longer in memory") as error:
             await resumed.initialize_async()
         assert isinstance(error.value.__cause__, DatasetConstraintError)
@@ -2060,7 +2063,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             "pyrit.scenario.core.dataset_configuration.random.sample",
             side_effect=_sample_first_k,
         ):
-            scenario = self._StrategyScenario(name="Phase H resume", version=1)
+            scenario = self._StrategyScenario(name="Sampled resume", version=1)
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -2079,8 +2082,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         persisted_objectives = set(first_strategy.objectives)
         assert persisted_objectives == {"obj0", "obj1", "obj2"}
 
-        # Resume: a *divergent* sample (last 3) would have broken the pre-fix intersection.
-        # With the fix, resume never samples, so this side_effect must go uncalled.
+        # Resume rebuilds the stored sample, so a divergent draw (the last 3) must go uncalled.
         def _sample_last_k(population, k):
             return list(population)[-k:]
 
@@ -2089,7 +2091,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             side_effect=_sample_last_k,
         ) as resume_sample_mock:
             resumed = self._StrategyScenario(
-                name="Phase H resume",
+                name="Sampled resume",
                 version=1,
                 scenario_result_id=original_id,
             )
@@ -2103,7 +2105,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             # Must not raise "persisted objective hash(es) are no longer present in the dataset".
             await resumed.initialize_async()
 
-        # Sampling is bypassed on resume — the full dataset is resolved deterministically.
+        # Resume never samples.
         assert resume_sample_mock.call_count == 0
         assert resumed._scenario_result_id == original_id
 
@@ -2246,7 +2248,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             "pyrit.scenario.core.dataset_configuration.random.sample",
             side_effect=_sample_first_k,
         ) as sample_mock:
-            scenario = self._StrategyScenario(name="Phase H fresh", version=1)
+            scenario = self._StrategyScenario(name="Sampled fresh", version=1)
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,

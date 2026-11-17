@@ -47,6 +47,7 @@ from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScor
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyrit.models import ScenarioResult
     from pyrit.scenario.core.scenario_context import ScenarioContext
 
 
@@ -436,10 +437,27 @@ class LatentInjection(Scenario):
         groups = config.select_assembled_groups(
             groups_by_population=config.assemble_groups(ingredients), apply_sampling=apply_sampling
         )
-        scorers = [self._scorer_for_trigger(family=family, trigger=trigger) for family, trigger in config.coverage_keys]
+        self._set_objective_scorer(coverage_keys=config.coverage_keys)
+        return groups
+
+    async def _restore_resume_state_async(
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        # Sampling keeps every (family, trigger) pair, so the planned groups carry all of them.
+        self._set_objective_scorer(
+            coverage_keys=sorted(
+                {
+                    LatentInjectionDatasetConfiguration._coverage_key(group)
+                    for groups in seed_groups_by_dataset.values()
+                    for group in groups
+                }
+            )
+        )
+
+    def _set_objective_scorer(self, *, coverage_keys: list[tuple[str, str]]) -> None:
+        scorers = [self._scorer_for_trigger(family=family, trigger=trigger) for family, trigger in coverage_keys]
         self._objective_scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=scorers)
         self._objective_scorer_identifier = self._objective_scorer.get_identifier()
-        return groups
 
     def _scorer_for_trigger(self, *, family: str, trigger: str) -> TrueFalseScorer:
         if family == LatentInjectionDatasetConfiguration.HARM_SCORED_FAMILY:

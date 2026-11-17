@@ -1010,7 +1010,7 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAtomicAttackRestrictSeedGroupsToHashes:
+class TestDeprecatedKeepSeedGroupsWithHashes:
     """Tests for the deprecated ``keep_seed_groups_with_hashes`` keep-set filter."""
 
     def test_keeps_only_listed_hashes(self, mock_attack, sample_seed_groups):

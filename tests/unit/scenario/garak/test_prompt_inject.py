@@ -13,7 +13,7 @@ from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
-from pyrit.memory import SQLiteMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
@@ -346,6 +346,24 @@ class TestPromptInjectAtomicAttacks:
 
         assert _objective_values(resumed) == initial_objectives
         assert sum(len(attack.seed_groups) for attack in resumed._atomic_attacks) == 60
+
+    async def test_resume_uses_saved_templates_after_datasets_are_deleted(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        initial = PromptInject()
+        await _initialize_async(initial, target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+        for name in PromptInject.required_datasets():
+            await memory.remove_seeds_from_memory_async(dataset_name=name)
+
+        resumed = PromptInject(scenario_result_id=initial._scenario_result_id)
+        await _initialize_async(resumed, target=mock_objective_target)
+
+        assert resumed._technique_templates == {
+            technique.value: initial._technique_templates[technique.value] for technique in initial._scenario_techniques
+        }
+        assert resumed._objective_scorer_identifier == initial._objective_scorer_identifier
+        assert resumed._build_run_plan() == initial._build_run_plan()
 
     async def test_custom_scorer_replaces_goal_scorer(
         self, mock_objective_target: PromptTarget, mock_objective_scorer: TrueFalseScorer

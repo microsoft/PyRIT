@@ -550,3 +550,21 @@ class TestLatentAttacks:
         with _read_ingredients(sources):
             await _initialize_async(resumed, **args)
         assert [[group.logical_id for group in attack.seed_groups] for attack in resumed._atomic_attacks] == planned
+
+    async def test_resume_rebuilds_scorer_after_ingredients_are_deleted_async(
+        self, seeded_memory_async: MemoryInterface
+    ) -> None:
+        original = LatentInjection()
+        args = {
+            "dataset_config": _config(families=["whois", "resume"], max_dataset_size=4),
+            "scenario_techniques": [LatentInjectionTechnique.Bare],
+        }
+        await _initialize_async(original, **args)
+        for name in LatentInjection.required_datasets():
+            await seeded_memory_async.remove_seeds_from_memory_async(dataset_name=name)
+
+        resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
+        await _initialize_async(resumed, **args)
+
+        assert resumed._objective_scorer_identifier == original._objective_scorer_identifier
+        assert resumed._build_run_plan() == original._build_run_plan()

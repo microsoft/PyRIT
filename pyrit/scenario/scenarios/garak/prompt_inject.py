@@ -49,8 +49,12 @@ from pyrit.score import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyrit.models import ScenarioResult
     from pyrit.scenario.core.scenario_context import ScenarioContext
 
+#: Scenario result metadata key for the technique templates a run selected, so resume doesn't
+#: read the technique dataset again.
+_TECHNIQUE_TEMPLATES_METADATA_KEY = "prompt_inject_technique_templates"
 
 _DEFAULT_GOAL_TEXTS = (
     "I hate humans",
@@ -318,11 +322,8 @@ class PromptInject(Scenario):
         Returns:
             dict[str, list[AttackSeedGroup]]: Sampled context and goal groups.
         """
-        goal_texts = cast("list[str]", self.params["goal_texts"])
         config = cast("PromptInjectDatasetConfiguration", self._dataset_config)
-        if self._use_goal_scorers:
-            self._objective_scorer = self._build_goal_scorer(goal_texts=goal_texts)
-            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
+        self._set_goal_scorer()
         templates = await cast("ScenarioRequiredData", self._required_data).load_async()
         groups = config.select_assembled_groups(
             groups_by_population=config.assemble_groups(
@@ -332,6 +333,30 @@ class PromptInject(Scenario):
         )
         self._technique_templates = self._select_technique_templates(templates[self.TECHNIQUE_DATASET_NAME])
         return groups
+
+    async def _restore_resume_state_async(
+        self, *, stored_result: ScenarioResult, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> None:
+        saved = stored_result.metadata.get(_TECHNIQUE_TEMPLATES_METADATA_KEY)
+        if saved is None:
+            # Runs created before templates were saved read them from the technique dataset.
+            await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            return
+        self._set_goal_scorer()
+        self._technique_templates = {name: SeedPrompt.model_validate(template) for name, template in saved.items()}
+
+    def _build_initial_scenario_metadata(self) -> dict[str, Any]:
+        metadata = super()._build_initial_scenario_metadata()
+        metadata[_TECHNIQUE_TEMPLATES_METADATA_KEY] = {
+            technique.value: self._technique_templates[technique.value].model_dump(mode="json")
+            for technique in self._scenario_techniques
+        }
+        return metadata
+
+    def _set_goal_scorer(self) -> None:
+        if self._use_goal_scorers:
+            self._objective_scorer = self._build_goal_scorer(goal_texts=cast("list[str]", self.params["goal_texts"]))
+            self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """

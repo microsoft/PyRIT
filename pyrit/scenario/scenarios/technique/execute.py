@@ -87,7 +87,6 @@ class Execute(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = 1
-    PREPENDED_CONVERSATION_HASH_KEY: ClassVar[str] = "prepended_conversation_hash"
     LOCAL_TECHNIQUE_HASH_KEY: ClassVar[str] = "local_technique_configuration_hash"
 
     @apply_defaults
@@ -95,7 +94,6 @@ class Execute(Scenario):
         self, *, objective_scorer: TrueFalseScorer | None = None, scenario_result_id: str | None = None
     ) -> None:
         """Initialize the scenario with an optional scorer and resume ID."""
-        self._prepended_conversation_hash: str | None = None
         self._local_technique_hash: str | None = None
         super().__init__(
             version=self.VERSION,
@@ -234,7 +232,6 @@ class Execute(Scenario):
         return {"objective": [group]}
 
     async def _read_history_seeds_async(self) -> list[SeedPrompt]:
-        self._prepended_conversation_hash = None
         conversation_id = self.params.get("prepended_conversation_id")
         if conversation_id is None:
             return []
@@ -243,26 +240,10 @@ class Execute(Scenario):
             raise ValueError(f"Prepended conversation '{conversation_id}' is empty or does not exist")
         if any(message.is_error() for message in messages):
             raise ValueError(f"Prepended conversation '{conversation_id}' contains blocked or error pieces")
-        self._prepended_conversation_hash = config_hash(
-            {
-                "messages": [
-                    [
-                        piece.model_dump(
-                            mode="json",
-                            include={"role", "converted_value", "converted_value_data_type", "prompt_metadata"},
-                        )
-                        for piece in message.message_pieces
-                    ]
-                    for message in messages
-                ]
-            }
-        )
         return SeedPrompt.from_messages(list(messages))
 
     def _build_initial_scenario_metadata(self) -> dict[str, Any]:
         metadata = super()._build_initial_scenario_metadata()
-        if self._prepended_conversation_hash is not None:
-            metadata[self.PREPENDED_CONVERSATION_HASH_KEY] = self._prepended_conversation_hash
         if self._local_technique_hash is not None:
             metadata[self.LOCAL_TECHNIQUE_HASH_KEY] = self._local_technique_hash
         return metadata
@@ -273,11 +254,6 @@ class Execute(Scenario):
         super()._validate_stored_scenario(stored_result=stored_result, current_identifier=current_identifier)
         if stored_result.metadata.get(self.LOCAL_TECHNIQUE_HASH_KEY) != self._local_technique_hash:
             raise ValueError("The run-local technique does not match the saved configuration")
-        if stored_result.metadata.get(self.PREPENDED_CONVERSATION_HASH_KEY) != self._prepended_conversation_hash:
-            raise ValueError(
-                f"Prepended conversation '{self.params.get('prepended_conversation_id')}' "
-                "does not match the saved history. Restore the source history or start a new scenario."
-            )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         local = self.params.get("local_technique_factory")
