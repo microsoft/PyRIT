@@ -286,10 +286,6 @@ pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._levenshtein_distance
 pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._ngram_set
 pyrit.score.float_scale.plagiarism_scorer:PlagiarismScorer._plagiarism_score
 pyrit.score.scorer:Scorer.scale_value_float
-pyrit.score.scorer_evaluation.krippendorff:_build_ordinal_distance_matrix
-pyrit.score.scorer_evaluation.krippendorff:_build_value_counts_matrix
-pyrit.score.scorer_evaluation.krippendorff:_compute_alpha_from_disagreements
-pyrit.score.scorer_evaluation.krippendorff:_validate_and_prepare_data
 pyrit.score.scorer_evaluation.krippendorff:krippendorff_alpha
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.evaluate_dataset_async
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.from_scorer
