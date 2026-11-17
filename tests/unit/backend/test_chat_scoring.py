@@ -6,6 +6,7 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -42,6 +43,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ContentWritten,
     ConversationReference,
     ConversationType,
     MatchesObjective,
@@ -59,7 +61,9 @@ from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.results.attack_result import AttackScoringInputs
 from pyrit.registry import ScorerRegistry
 from pyrit.score import (
+    FileWriteScorer,
     FloatScaleThresholdScorer,
+    LocalFileSurfaceSource,
     ManualScorer,
     MessageFloatScaleScorer,
     MessageToolCallScorer,
@@ -1911,6 +1915,59 @@ async def test_write_only_delivery_is_not_scored_whatever_its_role_async(
     assert stored.outcome is not AttackOutcome.SUCCESS
     messages = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
     assert [message.api_role for message in messages] == [role]
+
+
+@pytest.mark.parametrize("receipt", [False, True])
+@pytest.mark.parametrize("writes_file", [False, True])
+async def test_write_only_send_scores_inherited_side_effects_without_a_response_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+    receipt: bool,
+    writes_file: bool,
+) -> None:
+    service, attack, target, _ = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="file-judge")
+    reference = RegisteredComponentReference(registry_name="file-judge", identifier_hash=scorer.get_identifier().hash)
+    expectation = ScoringExpectation(objective=attack.objective, conditions=(ContentWritten(uri="/result.txt"),))
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={
+            "attack_metadata": AttackScoringInputs(
+                scorer=reference, revision="inherited-file", inherited=True, expectation=expectation
+            ).to_metadata()
+        },
+    )
+
+    async def deliver_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if writes_file:
+            await asyncio.to_thread((tmp_path / "result.txt").write_text, "delivered", encoding="utf-8")
+        return (
+            [
+                MessagePiece(
+                    original_value="Delivery receipt",
+                    role="assistant",
+                    conversation_id=attack.conversation_id,
+                ).to_message()
+            ]
+            if receipt
+            else []
+        )
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async):
+        await service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.last_response is None
+    assert stored.automated_score is not None
+    assert stored.automated_score.get_value() is writes_file
+    assert stored.automated_score.scored_expectation == expectation
+    assert stored.automated_score.observation_ids
+    assert stored.outcome == (AttackOutcome.SUCCESS if writes_file else AttackOutcome.FAILURE)
+    assert stored.get_scoring_failure(attack.conversation_id) is None
 
 
 @pytest.mark.parametrize("scoring_failure", [False, True])
