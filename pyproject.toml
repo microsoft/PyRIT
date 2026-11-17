@@ -76,7 +76,9 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
     "reportlab>=4.4.4",
-    "regex>=2024.11.6",
+    # 2026.11.x breaks \X on Indic conjuncts (GB9c never applies, mrab-regex#636), which graphemes() relies on.
+    # Remove the upper bound once that is fixed upstream (#4308).
+    "regex>=2024.11.6,<2026.11",
     "segno>=1.6.6",
     "scipy>=1.15.3",
     "SQLAlchemy[asyncio]>=2.0.41",
@@ -162,8 +164,7 @@ litellm = [
 ]
 
 github-copilot = [
-    # Keep the last known working session API until the target is migrated (#3623).
-    "github-copilot-sdk>=1.0.11,<1.0.23",
+    "github-copilot-sdk>=1.0.28",
 ]
 a2a = [
     "a2a-sdk>=1.1.5,<2",
@@ -176,7 +177,7 @@ all = [
     "azure-ai-ml>=1.32.0",
     "azure-cognitiveservices-speech>=1.44.0",
     "flask>=3.1.3",
-    "github-copilot-sdk>=1.0.11,<1.0.23",
+    "github-copilot-sdk>=1.0.28",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
     "litellm>=1.104.2",

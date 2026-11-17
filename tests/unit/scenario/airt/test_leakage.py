@@ -13,7 +13,7 @@ from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolic
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniqueError
-from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.airt import Leakage  # type: ignore[ty:import-not-found]
 from pyrit.scenario.core import BaselineAttackPolicy, resolve_technique_factories_for_techniques
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique, _leakage_factories
 from pyrit.score import TrueFalseCompositeScorer
