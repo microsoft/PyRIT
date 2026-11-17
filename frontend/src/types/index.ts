@@ -122,6 +122,9 @@ export interface PendingComposerDraft {
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
+  converters?: ChatConverterSnapshot
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
@@ -143,6 +146,17 @@ export interface ChatDraftContent {
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Backend send ID for status verification before reconciling this snapshot with history. */
+  acceptedSendId?: string
+  /** Where the accepted send belongs in history, so only this send's saved request reconciles the draft. */
+  acceptedSendHistory?: AcceptedSendHistory
+}
+
+export interface AcceptedSendHistory {
+  /** Turn the backend assigned to the request, when known before leaving Chat. */
+  requestTurnNumber?: number
+  /** User piece IDs saved before the send; new pieces only prompt an exact status check. */
+  priorUserPieceIds: string[]
 }
 
 export interface ChatDraftContextState {
@@ -481,6 +495,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
   supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
@@ -1167,6 +1182,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  initialConverters?: ChatConverterSnapshot
   sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
@@ -1176,6 +1192,7 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
   unsavedImport?: boolean
   pendingPromptId?: string
 }

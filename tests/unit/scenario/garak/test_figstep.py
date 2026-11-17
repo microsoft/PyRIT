@@ -21,7 +21,7 @@ from pyrit.prompt_target import (
 )
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.garak import FigStep, FigStepTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import FigStep, FigStepTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.figstep import DEFAULT_MAX_DATASET_SIZE
 from pyrit.score import TrueFalseScorer
 
