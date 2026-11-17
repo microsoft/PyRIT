@@ -179,9 +179,9 @@ def _configure_preset_storage(*, database_path: str, patches: ExitStack, mutatio
         guard(self, name=preset.name, action="save")
         return original_save(self, preset=preset, expected_version=expected_version)
 
-    def delete(self: ScenarioPresetStorage, name: str) -> bool:
+    def delete(self: ScenarioPresetStorage, name: str, *, expected_version: str | None = None) -> bool:
         guard(self, name=name, action="delete")
-        return original_delete(self, name)
+        return original_delete(self, name, expected_version=expected_version)
 
     patches.enter_context(patch.object(ScenarioPresetStorage, "save_preset", save))
     patches.enter_context(patch.object(ScenarioPresetStorage, "delete_preset", delete))

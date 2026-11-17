@@ -20,7 +20,7 @@ from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core import DatasetConstraintError, ResolvedDataset
 from pyrit.scenario.core.dataset_configuration import require_seed_type
-from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import (  # type: ignore[ty:import-not-found]
     PromptInject,
     PromptInjectDatasetConfiguration,
     PromptInjectTechnique,

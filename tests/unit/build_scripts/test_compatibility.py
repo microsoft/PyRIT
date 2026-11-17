@@ -366,6 +366,7 @@ def test_package_preparation_embeds_one_identity(source, monkeypatch):
     assert read_stamp(source) == stamp
 
 
+@pytest.mark.filterwarnings("error:Python 3.14 will, by default, filter extracted tar archives:DeprecationWarning")
 def test_sdist_wheel_install_without_git(source, monkeypatch):
     stamp = _stamp(source, monkeypatch)
     _frontend(source, stamp)
@@ -394,7 +395,7 @@ def test_sdist_wheel_install_without_git(source, monkeypatch):
     )
     archive = next((source / "dist").glob("*.tar.gz"))
     unpacked = source / "unpacked"
-    shutil.unpack_archive(str(archive), str(unpacked))
+    shutil.unpack_archive(str(archive), str(unpacked), filter="data")
     extracted = next(unpacked.iterdir())
     assert {path.name for path in (extracted / "build_scripts").iterdir()} == {
         "__init__.py",

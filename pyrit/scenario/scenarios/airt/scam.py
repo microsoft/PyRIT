@@ -143,17 +143,13 @@ class Scam(Scenario):
                 objective into the role-play context (in single-turn techniques).
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
         # Used for multiturn techniques and role-play simulated conversations
-        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
-        self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
+        self._adversarial_chat = adversarial_chat
 
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
+            adversarial_target=adversarial_chat,
             technique_class=ScamTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["airt_scams"]], max_per_dataset="all", max_total=4
@@ -183,6 +179,10 @@ class Scam(Scenario):
         Raises:
             ValueError: If an unknown ScamTechnique is provided.
         """
+        if self._adversarial_chat is None:
+            self._adversarial_chat = self._resolved_adversarial_target or get_default_adversarial_target()
+        self._scorer_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
+        self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
         factory: AttackTechniqueFactory | None = None
 
         if technique == "persuasive_rta":

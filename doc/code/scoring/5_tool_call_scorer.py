@@ -14,7 +14,9 @@
 # `OtelToolCallScorer` answers "Did these tools run?" It matches exact,
 # case-sensitive names in execution spans, not claims in a response or
 # model-proposed calls. A failed execution attempt counts; the scorer does not
-# check tool success, arguments, order, or call count.
+# check tool success, arguments, or call count. `OtelToolCallOrderScorer`, shown
+# below, checks the order of tool calls from the same evidence. For argument
+# matching, use `MessageToolCallScorer` (see "Require arguments" below).
 #
 # The example tool is named **`my_tool_call`**, implemented by the `my_tool_call()` function
 # below. Its span records `"gen_ai.tool.name": "my_tool_call"`.
@@ -137,6 +139,79 @@ assert (await memory.get_observations_async(observation_ids=negative.observation
     0
 ].model_dump_json() == before_replay
 print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_value()}")
+
+# %% [markdown]
+# ## Check the order of tool calls
+#
+# `OtelToolCallOrderScorer` matches a `ToolsCalledInOrder` condition against the
+# same trace evidence. Each listed tool needs an execution span that ended before
+# a span of the next listed tool started. Other tools may run in between.
+#
+# Order comes from span timestamps. Overlapping or unfinished spans give no order,
+# so they produce an undetermined score rather than false. A negative still needs
+# complete capture. When spans come from different clocks, pass
+# `clock_skew_tolerance` to treat spans that are closer than that as unordered.
+#
+# This example records spans with explicit timestamps so the result does not depend
+# on clock resolution.
+
+# %%
+import time
+
+from pyrit.models import ToolsCalledInOrder
+from pyrit.score import OtelToolCallOrderScorer
+
+client = InMemoryTraceClient()
+provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+tracer = provider.get_tracer("pyrit-tool-order-example")
+order_scorer = OtelToolCallOrderScorer(source=OtelTraceSource(trace_client=client))
+
+
+def expects_order(*names: str) -> ScoringExpectation:
+    """Build an ordering condition over exact tool names."""
+    return ScoringExpectation(
+        conditions=(ToolsCalledInOrder(tools=tuple(ToolCallRequirement(name=name) for name in names)),)
+    )
+
+
+def record_agent_run(*spans: tuple[str, int, int]) -> TraceScorable:
+    """Record one agent trace whose tool spans have explicit start and end offsets in milliseconds."""
+    base = time.time_ns()
+    with tracer.start_as_current_span("agent", context=Context()) as root:
+        for name, start_ms, end_ms in spans:
+            span = tracer.start_span(
+                name,
+                start_time=base + start_ms * 1_000_000,
+                attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name},
+            )
+            span.end(end_time=base + end_ms * 1_000_000)
+        trace_id = f"{root.get_span_context().trace_id:032x}"
+    return TraceScorable(trace_ids=(trace_id,))
+
+
+sequential = record_agent_run(("read_file", 0, 1), ("send_email", 2, 3))
+concurrent = record_agent_run(("read_file", 0, 2), ("send_email", 1, 3))
+assert await asyncio.to_thread(provider.force_flush)  # type: ignore
+client.mark_complete(trace_ids=(*sequential.trace_ids, *concurrent.trace_ids))
+
+in_order = (
+    await order_scorer.score_async(scorable=sequential, expectation=expects_order("read_file", "send_email"))  # type: ignore
+)[0]
+reversed_order = (
+    await order_scorer.score_async(scorable=sequential, expectation=expects_order("send_email", "read_file"))  # type: ignore
+)[0]
+overlapping = (
+    await order_scorer.score_async(scorable=concurrent, expectation=expects_order("read_file", "send_email"))  # type: ignore
+)[0]
+assert in_order.get_value() is True
+assert reversed_order.get_value() is False
+assert overlapping.status is ScoreStatus.UNDETERMINED
+print(f"read_file before send_email: {in_order.get_value()}")
+print(f"send_email before read_file: {reversed_order.get_value()}")
+print(f"Overlapping spans: {overlapping.status.value}")
+await asyncio.to_thread(provider.shutdown)  # type: ignore
+client.close()
 
 # %% [markdown]
 # ## Score a tool call through an attack
@@ -279,6 +354,58 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # correlation does not install a remote collector or a backend adapter.
 
 # %% [markdown]
+# ## Read traces from a remote backend
+#
+# `OtlpJsonTraceClient` fetches each trace by ID from an HTTP endpoint that returns
+# OTLP/JSON, such as Grafana Tempo's `/api/traces/{trace_id}`. Pass credentials in
+# `headers`; the source identity records the endpoint without them, or its query.
+# Pass your own `httpx.AsyncClient` to control proxies and certificates.
+#
+# A remote backend cannot report when every span of a trace has arrived, so its
+# coverage is never complete. A tool call it returns counts, and a missing one is
+# undetermined, never false. A trace the backend does not have is unavailable. A
+# failed request, an error status, or an unreadable response is an acquisition
+# error, unless another requested trace was retrieved; then coverage is partial.
+#
+# This cell stands an in-process transport in for the backend.
+
+# %%
+from pyrit.models import ToolEventsObservationPayload
+from pyrit.score.observation import OtlpJsonTraceClient
+
+remote_trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+tool_span = {
+    "traceId": remote_trace_id,
+    "spanId": "00f067aa0ba902b7",
+    "startTimeUnixNano": "1767225600000000000",
+    "endTimeUnixNano": "1767225600002000000",
+    "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+        {"key": "gen_ai.tool.name", "value": {"stringValue": "my_tool_call"}},
+    ],
+}
+
+
+def trace_backend(request: httpx.Request) -> httpx.Response:
+    """Answer trace-by-ID requests the way an OTLP/JSON trace backend does."""
+    if request.url.path.endswith(remote_trace_id):
+        return httpx.Response(200, json={"resourceSpans": [{"scopeSpans": [{"spans": [tool_span]}]}]})
+    return httpx.Response(404)
+
+
+remote_source = OtelTraceSource(
+    trace_client=OtlpJsonTraceClient(
+        url_template="http://tempo.test:3200/api/traces/{trace_id}",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(trace_backend)),
+    )
+)
+found = await remote_source.acquire_async(scorable=TraceScorable(trace_ids=(remote_trace_id,)))  # type: ignore
+missing = await remote_source.acquire_async(scorable=TraceScorable(trace_ids=("5" * 32,)))  # type: ignore
+assert isinstance(found.payload, ToolEventsObservationPayload)
+print(f"Remote tools: {[event.name for event in found.payload.events]}, acquisition {found.acquisition.value}")
+print(f"Trace the backend does not have: {missing.acquisition.value}")
+
+# %% [markdown]
 # ## Score tool calls without traces
 #
 # `MessageToolCallScorer` reads the same `ToolsCalled` condition from stored
@@ -294,8 +421,53 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # not count either.
 #
 # Stored messages are partial evidence. Hosted tools, several response section
-# types, and targets that execute tools themselves leave no output pieces, so the
-# scorer returns true or undetermined and never false. `OpenAIResponseTarget`
+# types, and targets that execute tools themselves leave no output pieces. For
+# subset conditions, the scorer returns true or undetermined and never false. `OpenAIResponseTarget`
 # records these pieces when it runs `custom_functions`. Combine it with
 # `OtelToolCallScorer` under `TrueFalseScoreAggregator.OR` when trace evidence is
 # also available.
+
+# %% [markdown]
+# ## Require that nothing else ran
+#
+# `ToolsCalled` is a subset match: a run that calls the required tools and three
+# others satisfies it. Set `exhaustive=True` to ask for an exact match instead, so
+# the required tools ran and no other tool did. With no tools, an exhaustive
+# condition asks that no tool ran at all, which suits confirmation gates.
+#
+# The two halves need different evidence. One observed execution of an unnamed
+# tool disproves the match, even when acquisition reports `Acquisition.PARTIAL`
+# or `Acquisition.ERROR`, provided the event was retained. Confirming it needs
+# complete evidence, because only that rules out every other tool. So
+# `OtelToolCallScorer` returns true only for complete, fully correlated traces,
+# and `MessageToolCallScorer` returns false for a stored execution of an unnamed
+# tool and is otherwise undetermined. Use `OtelToolCallScorer` when an exhaustive
+# check needs to be able to pass.
+#
+# ```python
+# ToolsCalled(tools=(ToolCallRequirement(name="read_file"),), exhaustive=True)
+# ```
+#
+# ## Require arguments
+#
+# A `ToolCallRequirement` can also constrain the arguments of the call. Each
+# `ToolArgumentRequirement` names one top-level argument, exactly and
+# case-sensitively, and compares its value with the same text matchers other
+# conditions use: `Equals`, `Contains`, or `Regex`. A string value is compared as
+# it is; any other JSON value is compared as its compact JSON text. The match is
+# textual, so the string `"3"` and the number `3` both read as `3`, as do `"true"`
+# and `true`, and `"null"` and `null`. One execution of the tool must satisfy every
+# argument requirement.
+#
+# ```python
+# ToolCallRequirement(
+#     name="send_email",
+#     arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value="a@example.com")),),
+# )
+# ```
+#
+# `MessageToolCallScorer` reads the arguments from the stored `function_call`
+# piece of each execution. Trace events do not retain arguments, so
+# `OtelToolCallScorer` cannot confirm an argument requirement and leaves it
+# undetermined. Complete trace evidence with no execution of the tool still makes
+# it false, because no call means no matching call.

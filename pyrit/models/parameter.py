@@ -96,8 +96,8 @@ class Parameter(BaseModel):
     value's live Python type and its allowed set (a ``Literal[...]`` or ``Enum``
     *is* the allowed set) and drives ``coerce_value`` / ``validate``; it is **not**
     serialized. Serialization instead projects the type into the display fields
-    ``type_name``, ``choices``, ``is_list``, ``sensitive``, ``multiline``, and
-    ``identity_conflicting`` (plus ``required`` from the ``REQUIRED_VALUE``
+    ``type_name``, ``choices``, ``is_list``, ``sensitive``, ``multiline``,
+    ``identity_conflicting``, and ``copy_locked`` (plus ``required`` from the ``REQUIRED_VALUE``
     sentinel), so a consumer can rebuild a usable contract from the registry
     without the live type travelling on the wire.
 
@@ -149,6 +149,13 @@ class Parameter(BaseModel):
     identity_conflicting: bool = Field(
         default=False,
         description="Whether this parameter must be omitted when identity-based authentication is selected.",
+    )
+    copy_locked: bool = Field(
+        default=False,
+        description=(
+            "Whether a private copy keeps its source's value, because the parameter chooses where requests go "
+            "or how they authenticate."
+        ),
     )
     destination: ParameterDestination = Field(
         default=ParameterDestination.CONSTRUCTOR,

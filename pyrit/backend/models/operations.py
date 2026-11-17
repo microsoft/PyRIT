@@ -70,6 +70,22 @@ class FindingListItem(Finding):
     evidence_count: int = Field(ge=0)
 
 
+class AttackFindingItem(Finding):
+    """A finding that links an attack as evidence, with its Operation's current name and the evidence link."""
+
+    operation_name: str
+    evidence_id: UUID = Field(description="The evidence link, which unlinks the attack from the finding")
+
+
+class AttackFindingListResponse(BaseModel):
+    """Every finding that links an attack, highest severity first, then newest first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attack_result_id: UUID
+    items: list[AttackFindingItem]
+
+
 class FindingListResponse(BaseModel):
     """One page of an operation's findings."""
 

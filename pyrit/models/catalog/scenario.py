@@ -95,6 +95,11 @@ class _ScenarioLaunchOptions(BaseModel):
     run may omit it, while a preset or suite launch must supply it.
     """
 
+    scoring_target_name: _RequestName | None = Field(
+        None,
+        min_length=1,
+        description="Registered target for the scenario's default scoring rubric",
+    )
     adversarial_target_name: _RequestName | None = Field(
         None,
         min_length=1,
@@ -124,6 +129,7 @@ class _ScenarioLaunchOptions(BaseModel):
 class ScenarioLaunchConfiguration(_ScenarioLaunchOptions):
     """Target and execution fields a preset or suite launch supplies."""
 
+    objective_scorer: RegisteredComponentReference | None = None
     target_name: _RequestName = Field(..., min_length=1, description="Registered objective target name")
 
 
@@ -496,6 +502,7 @@ class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
 
     technique_override: TechniqueOverride | None = None
     objective_scorer: RegisteredComponentReference | None = None
+    scoring_target_name: _RequestName | None = Field(None, min_length=1)
 
     adversarial_target_name: _RequestName | None = Field(
         None,

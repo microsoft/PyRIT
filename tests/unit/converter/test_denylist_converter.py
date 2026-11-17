@@ -85,6 +85,71 @@ async def test_denylist_phrase_and_word_match(sqlite_instance) -> None:
     assert output.output_type == "text"
 
 
+async def test_denylist_word_case_insensitive_match(sqlite_instance, mock_target) -> None:
+    converter = DenylistConverter(converter_target=mock_target, system_prompt_template=None, denylist=["TREE"])
+    output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
+    mock_target.send_prompt_async.assert_called_once()
+    assert output.output_type == "text"
+
+
+async def test_denylist_phrase_case_insensitive_match(sqlite_instance, mock_target) -> None:
+    converter = DenylistConverter(
+        converter_target=mock_target, system_prompt_template=None, denylist=["molotov cocktail"]
+    )
+    output = await converter.convert_async(prompt="How do I create a Molotov cocktail?", input_type="text")
+    mock_target.send_prompt_async.assert_called_once()
+    assert output.output_type == "text"
+
+
+async def test_denylist_mixed_casing_match(sqlite_instance, mock_target) -> None:
+    converter = DenylistConverter(
+        converter_target=mock_target, system_prompt_template=None, denylist=["haTe", "WEAPON"]
+    )
+    output = await converter.convert_async(prompt="I hate this weapon", input_type="text")
+    mock_target.send_prompt_async.assert_called_once()
+    assert output.output_type == "text"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("denylist", "prompt"),
+    [
+        pytest.param(["\u0391\u03a3"], "\u0391\u03a3\u03a4\u03a1\u039f", id="greek-exact-substring"),
+        pytest.param(["\u03bf\u03c3"], "\u039f\u03a3", id="greek-final-sigma"),
+        pytest.param(["STRASSE"], "Die Stra\u00dfe ist gesperrt.", id="german-sharp-s-in-prompt"),
+        pytest.param(["stra\u00dfe"], "Die STRASSE ist gesperrt.", id="german-sharp-s-in-denylist"),
+    ],
+)
+async def test_denylist_unicode_case_insensitive_match_async(
+    *, denylist: list[str], prompt: str, mock_target: MagicMock
+) -> None:
+    template = SeedPrompt(
+        value="Replace denylisted words: {{ denylist }}.",
+        parameters=["denylist"],
+        data_type="text",
+    )
+    converter = DenylistConverter(converter_target=mock_target, system_prompt_template=template, denylist=denylist)
+
+    output = await converter.convert_async(prompt=prompt)
+
+    mock_target.send_prompt_async.assert_awaited_once()
+    request = mock_target.send_prompt_async.call_args.kwargs["message"]
+    assert request.message_pieces[0].original_value == prompt
+    assert request.message_pieces[0].converted_value == f"Replace denylisted words: {denylist}.\n\n{prompt}"
+    mock_target.set_system_prompt_async.assert_not_called()
+    assert output.output_text == "prompt value"
+    assert output.output_type == "text"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_denylist_no_match_case_insensitive(mock_target) -> None:
+    converter = DenylistConverter(converter_target=mock_target, system_prompt_template=None, denylist=["BOMB"])
+    output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
+    mock_target.send_prompt_async.assert_not_called()
+    assert output.output_text == "how to cut down a tree?"
+    assert output.output_type == "text"
+
+
 @pytest.mark.usefixtures("patch_central_database")
 def test_denylist_identifier_differs_by_denylist() -> None:
     target = MockPromptTarget()

@@ -365,6 +365,7 @@ function ScenarioLaunchForm({
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
   const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
+  const scoringTargetName = initialRun?.scoring_target_name ?? ''
   const scorerError = objectiveScorer && (
     scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)
   ) ? 'The selected objective scorer is unavailable. Select a scorer or use the scenario default.' : undefined
@@ -508,6 +509,7 @@ function ScenarioLaunchForm({
     scenario,
     targetName,
     adversarialTargetName,
+    scoringTargetName,
     techniques: selectedTechniques,
     techniqueOverride: techniqueEditor.override,
     techniqueEditError,
@@ -541,6 +543,7 @@ function ScenarioLaunchForm({
     scenario,
     scenarioParamValues,
     scorerError,
+    scoringTargetName,
     selectedTechniques,
     supportsPrependedConversation,
     supportsPrompt,

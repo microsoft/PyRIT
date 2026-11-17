@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react'
 import {
   Text,
   Avatar,
@@ -31,12 +31,16 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import MediaPreview from '@/components/Media/MediaPreview'
 
 import type { DisplayScore, Message, MessageAttachment } from '@/types'
+import { scoreSummaryFromBackendScore, scoreSummaryValue } from '@/utils/scoreSummary'
 
 import { useMessageListStyles } from './MessageList.styles'
 import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
+import ScoreDetails from './ScoreDetails'
 
 interface MessageListProps {
   onEditConversation?: () => void
+  /** Stable identity for the conversation; isolates transient download errors across switches. */
+  conversationId?: string | null
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
   onCopyToInput?: (messageIndex: number) => void
@@ -51,58 +55,22 @@ interface MessageListProps {
   getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
-  /** Live Chat follows the latest response; saved evidence keeps the reader's position. */
-  autoScroll?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
   savedEvidence?: boolean
+  /** Announce new live/manual messages, not an initial page of historical evidence. */
+  announceUpdates?: boolean
+  /** Only show temperature evidence when the viewed target supports runtime temperature. */
+  showGenerationInfo?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
-  // An undetermined score has no value, so name its status instead.
-  return score.score_value ?? score.status ?? ''
+  return scoreSummaryValue(scoreSummaryFromBackendScore(score))
 }
 
 function scoreDisplayLabel(score: DisplayScore): string {
   return `${score.is_objective_score ? 'Final score' : 'Score'}: ${scoreDisplayValue(score)}`
-}
-
-function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
-  const styles = useMessageListStyles()
-  const categories = score.score_category?.filter(Boolean) ?? []
-
-  return (
-    <div className={styles.scoreSurface} data-testid={testId}>
-      <Text weight="semibold">Score details</Text>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Score</Text>
-        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{scoreDisplayValue(score)}</Badge>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
-        <Text size={200} className={styles.scoreValue}>{score.scorer_type}</Text>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Result role</Text>
-        <Text size={200} className={styles.scoreValue}>
-          {score.is_objective_score ? 'Final score' : 'Supporting score'}
-        </Text>
-      </div>
-      {categories.length > 0 && (
-        <div className={styles.scoreRow}>
-          <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
-          <Text size={200} className={styles.scoreValue}>{categories.join(', ')}</Text>
-        </div>
-      )}
-      {score.score_rationale && (
-        <div className={styles.scoreRationale}>
-          <Text size={200} weight="semibold">Rationale</Text>
-          <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
@@ -128,7 +96,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
         </PopoverTrigger>
       </Tooltip>
       <PopoverSurface>
-        <ScoreDetails score={score} testId={`message-score-details-${groupId}-${scoreIndex}`} />
+        <ScoreDetails score={scoreSummaryFromBackendScore(score)} testId={`message-score-details-${groupId}-${scoreIndex}`} />
       </PopoverSurface>
     </Popover>
   )
@@ -165,6 +133,8 @@ interface ScoreOverflowMenuProps {
 const SCORE_TAB_WIDTH_PX = 152
 const SCORE_TAB_GAP_PX = 4
 const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
+// Readers this close to the end keep following new messages; scrolling further up keeps their place.
+const FOLLOW_LATEST_THRESHOLD_PX = 48
 
 function scoreTabLabel({
   score,
@@ -427,7 +397,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
             id={`message-score-panel-${groupId}`}
             aria-labelledby={`message-score-tab-${groupId}-${selectedIndex}`}
           >
-            <ScoreDetails score={selectedScore} testId={`message-score-details-${groupId}-${selectedIndex}`} />
+            <ScoreDetails score={scoreSummaryFromBackendScore(selectedScore)} testId={`message-score-details-${groupId}-${selectedIndex}`} />
           </div>
         </PopoverSurface>
       </Popover>
@@ -442,21 +412,38 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  * line of compact text.
  */
 export default function MessageList({
-  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
+  conversationId, messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, autoScroll = true, savedEvidence = false, globalMarkdown = false, onEditConversation,
+  isLoading, savedEvidence = false, announceUpdates = !savedEvidence, showGenerationInfo = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const followedListRef = useRef<HTMLDivElement | null>(null)
+  const followLatestRef = useRef(true)
   const copyMenuId = useId()
   const isCopyConversationDisabled = copyConversationDisabled || Boolean(copyConversationDisabledReason)
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
+  const activeDownloads = useRef(new Set<string>())
+  const [pendingDownloads, setPendingDownloads] = useState<Set<string>>(new Set())
 
-  const handleDownload = async (att: MessageAttachment) => {
+  const handleDownload = async (att: MessageAttachment, downloadKey: string) => {
+    if (activeDownloads.current.has(downloadKey)) return
+    activeDownloads.current.add(downloadKey)
+    setPendingDownloads(new Set(activeDownloads.current))
+    setDownloadErrors((current) => {
+      const next = { ...current }
+      delete next[downloadKey]
+      return next
+    })
+
     try {
       // Convert the URL (data URI or same-origin) to a Blob, then create
       // an object URL so the browser reliably triggers a file download.
       const resp = await fetch(att.url)
+      if (!resp.ok) {
+        throw new Error(`Media download failed with HTTP ${resp.status}`)
+      }
       const blob = await resp.blob()
       const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -467,14 +454,24 @@ export default function MessageList({
       document.body.removeChild(link)
       URL.revokeObjectURL(objectUrl)
     } catch {
-      // Fallback: open in a new tab rather than navigating away
-      window.open(att.url, '_blank')
+      // Keep the download action available so the user can retry.
+      setDownloadErrors((current) => ({ ...current, [downloadKey]: 'Download failed. Please try again.' }))
+    } finally {
+      activeDownloads.current.delete(downloadKey)
+      setPendingDownloads(new Set(activeDownloads.current))
     }
   }
 
-  useEffect(() => {
-    if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, autoScroll])
+  // Historical pages keep their reading position; live/manual transcripts follow near the end.
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || savedEvidence) return
+    if (list !== followedListRef.current) {
+      followedListRef.current = list
+      followLatestRef.current = true
+    }
+    if (followLatestRef.current) list.scrollTop = list.scrollHeight
+  }, [messages, savedEvidence])
 
   if (isLoading) {
     return (
@@ -495,7 +492,13 @@ export default function MessageList({
   }
 
   return (
-    <div className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={(event) => {
+    <div ref={listRef} className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list"
+      role={announceUpdates ? 'log' : undefined} aria-live={announceUpdates ? 'polite' : undefined}
+      aria-relevant={announceUpdates ? 'additions text' : undefined} aria-atomic={announceUpdates ? false : undefined}
+      onScroll={(event: UIEvent<HTMLDivElement>) => {
+        const list = event.currentTarget
+        followLatestRef.current = list.scrollHeight - list.clientHeight - list.scrollTop <= FOLLOW_LATEST_THRESHOLD_PX
+      }} onDoubleClick={(event) => {
       if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
       onEditConversation?.()
     }}>
@@ -716,18 +719,37 @@ export default function MessageList({
                   )}
 
                   {/* Download: non-text media only */}
-                  {!isUser && message.attachments && message.attachments.filter(a => a.type !== 'file' && a.url).map((att, ai) => (
-                    <Tooltip key={ai} content={`Download ${att.name}`} relationship="label">
-                      <Button
-                        appearance="subtle"
-                        size="small"
-                        icon={<ArrowDownloadRegular />}
-                        onClick={() => handleDownload(att)}
-                        data-testid={`download-btn-${index}-${ai}`}
-                        className={styles.messageActionButton}
-                      />
-                    </Tooltip>
-                  ))}
+                  {!isUser && message.attachments && message.attachments.filter(a => a.type !== 'file' && a.url).map((att, ai) => {
+                    // Key download state to the message and attachment, not their array positions.
+                    // MessageList can remain mounted while the user switches conversations.
+                    const downloadKey = JSON.stringify([
+                      conversationId ?? null,
+                      message.timestamp,
+                      message.role,
+                      message.content,
+                      att.url,
+                      att.name,
+                    ])
+                    return (
+                      <div key={downloadKey}>
+                        <Tooltip content={`Download ${att.name}`} relationship="label">
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            icon={<ArrowDownloadRegular />}
+                            disabled={pendingDownloads.has(downloadKey)}
+                            aria-busy={pendingDownloads.has(downloadKey)}
+                            onClick={() => handleDownload(att, downloadKey)}
+                            data-testid={`download-btn-${index}-${ai}`}
+                            className={styles.messageActionButton}
+                          >
+                            {downloadErrors[downloadKey] && 'Retry download'}
+                          </Button>
+                        </Tooltip>
+                        {downloadErrors[downloadKey] && <div role="alert">{downloadErrors[downloadKey]}</div>}
+                      </div>
+                    )
+                  })}
 
                 </div>
               )}
@@ -741,13 +763,25 @@ export default function MessageList({
                     </Tooltip>
                   )}
                   <Text className={styles.role}>{message.role}</Text>
+                  {showGenerationInfo && message.generationDescription && (message.generationDetails ? (
+                    <Popover positioning="above-end">
+                      <PopoverTrigger disableButtonEnhancement>
+                        <Button appearance="transparent" size="small" className={styles.messageActionButton}
+                          aria-label={`Generation details: ${message.generationDescription}`}>
+                          {message.generationDescription}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverSurface className={styles.generationDetails} role="dialog" aria-label="Saved generation details">
+                        <Text>{message.generationDetails}</Text>
+                      </PopoverSurface>
+                    </Popover>
+                  ) : <Text size={100}>{message.generationDescription}</Text>)}
                 </div>
               </div>
             </div>
           </div>
         )
       })}
-      <div ref={messagesEndRef} />
     </div>
   )
 }

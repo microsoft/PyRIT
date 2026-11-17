@@ -9,9 +9,11 @@ import type {
   MessageDisplayPiece,
   MessageError,
   MessagePieceRequest,
-} from '../types'
+} from '@/types'
 import { mediaApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+
+import { generationDisplay } from './requestGeneration'
 
 // File identity survives draft copies and handoffs without retaining discarded files.
 const ATTACHMENT_UPLOADS = new WeakMap<File, {
@@ -459,6 +461,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
+    ...(role === 'user' || role === 'assistant' ? generationDisplay(msg.message_pieces[0]?.prompt_metadata) : {}),
     attachments: attachments.length > 0 ? attachments : undefined,
     displayPieces: displayPieces.length > 0 ? displayPieces : undefined,
     error,
