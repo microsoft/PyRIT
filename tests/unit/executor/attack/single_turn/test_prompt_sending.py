@@ -1641,7 +1641,9 @@ class TestEdgeCasesAndErrorHandling:
                 SeedObjective(value="Test objective"),
                 SeedSimulatedConversation(
                     num_turns=1,
-                    adversarial_chat_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+                    adversarial_chat_system_prompt=await asyncio.to_thread(
+                        SeedPrompt.from_yaml_file, RTASystemPromptPaths.TEXT_GENERATION.value
+                    ),
                 ),
             ]
         )
