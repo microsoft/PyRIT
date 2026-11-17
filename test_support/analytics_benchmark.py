@@ -65,6 +65,7 @@ def benchmark_directory(tmp_path: Path) -> Iterator[Path]:
                     "initializers": ["technique"],
                     "initialization_scripts": [],
                     "custom_initializers_source": str(directory / "initializers"),
+                    "registry_recipes_source": str(directory / "registry_recipes"),
                     "silent": True,
                 }
             ),

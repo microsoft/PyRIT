@@ -389,6 +389,20 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 return legacy
         return [*legacy, historical]
 
+    def _convert_response(self, parsed_response: dict[str, Any]) -> dict[str, Any]:
+        """
+        Validate and convert the decoded response before the score is read from it.
+
+        Subclasses with their own response contract override this, so the response is decoded once.
+
+        Args:
+            parsed_response (dict[str, Any]): The decoded top-level JSON object.
+
+        Returns:
+            dict[str, Any]: The response the score is read from.
+        """
+        return parsed_response
+
     def parse(
         self,
         *,
@@ -432,7 +446,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
                     message=f"Invalid JSON response, expected a top-level object: {response_json}"
                 )
             score = _build_unvalidated_score(
-                parsed_response=parsed_response,
+                parsed_response=self._convert_response(parsed_response),
                 score_value_output_key=self._score_value_output_key,
                 rationale_output_key=self._rationale_output_key,
                 description_output_key=self._description_output_key,

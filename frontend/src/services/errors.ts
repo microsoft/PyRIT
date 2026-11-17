@@ -16,6 +16,13 @@ export function conflictingOperation(cause: unknown): Operation | null {
   return { id: operation.id, name: operation.name, created_at: operation.created_at }
 }
 
+export interface FieldError {
+  /** Location of the invalid input, e.g. `body.attack_result_id`. */
+  field: string
+  message: string
+  code?: string
+}
+
 /**
  * Normalized error from any API call.
  *
@@ -30,6 +37,8 @@ export interface ApiError {
   detail: string
   /** RFC 7807 `type` URI, if the backend included one. */
   type?: string
+  /** Per-field validation errors from the RFC 7807 `errors` array; empty when the body has none. */
+  fieldErrors: FieldError[]
   /** True when no HTTP response was received (DNS failure, CORS block, etc.). */
   isNetworkError: boolean
   /** True when the request exceeded the configured timeout. */
@@ -58,6 +67,7 @@ export function toApiError(err: unknown): ApiError {
       return {
         status: null,
         detail: 'Request timed out. The server may be busy — please try again.',
+        fieldErrors: [],
         isNetworkError: false,
         isTimeout: true,
         raw: err,
@@ -69,6 +79,7 @@ export function toApiError(err: unknown): ApiError {
       return {
         status: null,
         detail: 'Network error — check that the backend is running and reachable.',
+        fieldErrors: [],
         isNetworkError: true,
         isTimeout: false,
         raw: err,
@@ -77,12 +88,13 @@ export function toApiError(err: unknown): ApiError {
 
     // We have an HTTP response — try to extract RFC 7807 detail
     const { status, data } = err.response
-    const { detail, type } = extractDetail(data)
+    const { detail, type, fieldErrors } = extractDetail(data)
 
     return {
       status,
       detail: detail || `Server error (${status})`,
       type,
+      fieldErrors,
       isNetworkError: false,
       isTimeout: false,
       raw: err,
@@ -94,6 +106,7 @@ export function toApiError(err: unknown): ApiError {
     return {
       status: null,
       detail: err.message || 'An unexpected error occurred.',
+      fieldErrors: [],
       isNetworkError: false,
       isTimeout: false,
       raw: err,
@@ -105,6 +118,7 @@ export function toApiError(err: unknown): ApiError {
     return {
       status: null,
       detail: err,
+      fieldErrors: [],
       isNetworkError: false,
       isTimeout: false,
       raw: err,
@@ -115,6 +129,7 @@ export function toApiError(err: unknown): ApiError {
   return {
     status: null,
     detail: 'An unexpected error occurred.',
+    fieldErrors: [],
     isNetworkError: false,
     isTimeout: false,
     raw: err,
@@ -180,15 +195,29 @@ function readBlobText(blob: Blob): Promise<string> {
  * - A plain string (e.g. nginx HTML error page)
  * - Something else entirely (null, number, etc.)
  */
-function extractDetail(data: unknown): { detail: string | undefined; type: string | undefined } {
+function extractDetail(data: unknown): {
+  detail: string | undefined; type: string | undefined; fieldErrors: FieldError[]
+} {
   if (typeof data === 'string') {
-    return { detail: data, type: undefined }
+    return { detail: data, type: undefined, fieldErrors: [] }
   }
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>
     const detail = typeof obj.detail === 'string' ? obj.detail : undefined
     const type = typeof obj.type === 'string' ? obj.type : undefined
-    return { detail, type }
+    return { detail, type, fieldErrors: extractFieldErrors(obj.errors) }
   }
-  return { detail: undefined, type: undefined }
+  return { detail: undefined, type: undefined, fieldErrors: [] }
+}
+
+function extractFieldErrors(errors: unknown): FieldError[] {
+  if (!Array.isArray(errors)) return []
+  const result: FieldError[] = []
+  for (const item of errors) {
+    if (typeof item !== 'object' || item === null) continue
+    const { field, message, code } = item as Record<string, unknown>
+    if (typeof field !== 'string' || typeof message !== 'string') continue
+    result.push(typeof code === 'string' ? { field, message, code } : { field, message })
+  }
+  return result
 }

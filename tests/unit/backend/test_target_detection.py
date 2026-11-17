@@ -1,0 +1,1005 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Tests for automatic target capability detection."""
+
+import asyncio
+import base64
+import io
+import uuid
+from collections.abc import Iterator, MutableSequence
+from contextlib import ExitStack
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.chat.chat_completion import Choice
+from PIL import Image
+
+from pyrit.backend.models import (
+    AddMessageRequest,
+    CreateAttackRequest,
+    CreateConversationRequest,
+    MessagePieceRequest,
+    MessageRequest,
+)
+from pyrit.backend.models.attacks import SaveConversationRequest
+from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
+from pyrit.backend.routes.targets import router
+from pyrit.backend.services import AttackService, TargetService
+from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
+from pyrit.backend.services.message_send_service import MessageSendService
+from pyrit.memory import SQLiteMemory
+from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
+    AttackResult,
+    Conversation,
+    Message,
+    TargetCapabilities,
+)
+from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
+from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget, RoundRobinTarget, TargetConfiguration
+from pyrit.prompt_target.common.discover_target_capabilities import DEFAULT_TEST_ASSETS, CapabilityDiscoveryError
+from pyrit.registry import TargetRegistry
+from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.backend.mocks import _settle_send_async
+from unit.mocks import MockPromptTarget
+
+
+class _DetectableTarget(MockPromptTarget):
+    def __init__(self, *, custom_configuration: TargetConfiguration | None = None) -> None:
+        super().__init__(custom_configuration=custom_configuration)
+        self.closed = False
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        return {"custom_configuration": self.configuration}
+
+    async def cleanup_target_async(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def detection_service(patch_central_database: None) -> Iterator[tuple[TargetService, _DetectableTarget]]:
+    TargetRegistry.reset_registry_singleton()
+    service = TargetService()
+    service._registry.register_class(_DetectableTarget)
+    target = _DetectableTarget()
+    service._registry.instances.register(target, name="test-target")
+    yield service, target
+    TargetRegistry.reset_registry_singleton()
+
+
+@pytest.fixture
+def composite_detection(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> tuple[TargetService, RoundRobinTarget]:
+    service, first = detection_service
+    second = _DetectableTarget()
+    parent = RoundRobinTarget(targets=[first, second], weights=[2, 1])
+    service._registry.instances.register(parent, name="round-robin")
+    return service, parent
+
+
+async def test_composite_detection_probes_each_child_privately_and_updates_only_parent(
+    composite_detection: tuple[TargetService, RoundRobinTarget],
+) -> None:
+    service, parent = composite_detection
+    parent._counter = 1
+    children = parent.inner_targets
+    originals = [child.configuration for child in children]
+    expected_hash = parent.get_identifier().hash
+    results = [
+        children[0].capabilities.model_copy(
+            update={
+                "supports_json_output": True,
+                "supports_json_schema": True,
+                "input_modalities": frozenset({frozenset({"text"}), frozenset({"text", "image_path"})}),
+            }
+        ),
+        children[1].capabilities.model_copy(update={"supports_json_output": True, "supports_json_schema": False}),
+    ]
+    probes: list[_DetectableTarget] = []
+
+    async def discover_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        assert all(target is not child for child in children)
+        probes.append(target)
+        return results[len(probes) - 1]
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async):
+        response = await service.detect_capabilities_async(
+            target_registry_name="round-robin", expected_hash=expected_hash
+        )
+
+    assert len(probes) == 2
+    assert probes[0] is not probes[1]
+    assert all(probe.closed for probe in probes)
+    assert response.capabilities == parent.aggregate_capabilities(child_capabilities=results)
+    assert parent.capabilities == response.capabilities
+    assert parent.capabilities.supports_json_output
+    assert not parent.capabilities.supports_json_schema
+    assert parent.capabilities.input_modalities == frozenset({frozenset({"text"})})
+    assert all(child.configuration is original for child, original in zip(children, originals, strict=True))
+    assert all(not child.closed for child in children)
+    assert parent._counter == 1
+    assert parent.get_identifier().hash == expected_hash
+    assert not service._detecting
+    assert not service._detecting_sources
+
+
+async def test_composite_detection_failure_preserves_parent_and_children(
+    composite_detection: tuple[TargetService, RoundRobinTarget],
+) -> None:
+    service, parent = composite_detection
+    original = parent.configuration
+    children = parent.inner_targets
+    originals = [child.configuration for child in children]
+    probes: list[_DetectableTarget] = []
+
+    async def discover_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        if len(probes) == 2:
+            raise CapabilityDiscoveryError("Connection failed")
+        return target.capabilities.model_copy(update={"supports_json_output": True})
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async):
+        with pytest.raises(CapabilityDiscoveryError, match=r"Child 2 .*Connection failed"):
+            await service.detect_capabilities_async(
+                target_registry_name="round-robin", expected_hash=parent.get_identifier().hash
+            )
+
+    assert len(probes) == 2
+    assert all(probe.closed for probe in probes)
+    assert parent.configuration is original
+    assert all(child.configuration is original for child, original in zip(children, originals, strict=True))
+    assert not service._detecting
+    assert not service._detecting_sources
+
+
+async def test_composite_detection_enables_json_dispatch_without_changing_children_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    service._registry.register_class(OpenAIChatTarget)
+    capabilities = OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
+        update={"supports_json_output": False, "supports_json_schema": False}
+    )
+    children = [
+        OpenAIChatTarget(
+            api_key="test-key",
+            endpoint=f"https://example{index}.test",
+            model_name="test-model",
+            custom_configuration=TargetConfiguration(capabilities=capabilities),
+        )
+        for index in range(2)
+    ]
+    for index, child in enumerate(children):
+        service._registry.instances.register(child, name=f"json-child-{index}")
+    parent = RoundRobinTarget(targets=children)
+    service._registry.instances.register(parent, name="json-parent")
+    originals = [child.configuration for child in children]
+    identifiers = [child.get_identifier().hash for child in children]
+    completion = ChatCompletion(
+        id="json-result",
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(role="assistant", content='{"ok":true}'),
+            )
+        ],
+    )
+    creates = [AsyncMock(return_value=completion) for _ in children]
+
+    async def discover_async(*, target: OpenAIChatTarget, **kwargs: object) -> TargetCapabilities:
+        return target.capabilities.model_copy(update={"supports_json_output": True})
+
+    try:
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async
+        ):
+            detected = await service.detect_capabilities_async(
+                target_registry_name="json-parent", expected_hash=parent.get_identifier().hash
+            )
+        assert detected.capabilities.supports_json_output
+        with ExitStack() as stack:
+            for child, create in zip(children, creates, strict=True):
+                stack.enter_context(patch.object(child._client.chat.completions, "create", new=create))
+            for _ in children:
+                message = Message.from_prompt(role="user", prompt="Return JSON.")
+                message.get_piece().prompt_metadata["response_format"] = "json"
+                responses = await parent.send_prompt_async(message=message)
+                assert responses[0].get_piece().original_value == '{"ok":true}'
+        for create in creates:
+            create.assert_awaited_once()
+            assert create.call_args.kwargs["response_format"] == {"type": "json_object"}
+        assert parent._counter == 2
+        for child, original, identifier in zip(children, originals, identifiers, strict=True):
+            assert child.configuration is original
+            assert not child.capabilities.supports_json_output
+            assert child.get_identifier().hash == identifier
+    finally:
+        for child in children:
+            await child.cleanup_target_async()
+
+
+async def test_composite_detection_rejects_changes_to_child_configuration(
+    composite_detection: tuple[TargetService, RoundRobinTarget],
+) -> None:
+    service, parent = composite_detection
+    original = parent.configuration
+    child = parent.inner_targets[1]
+
+    async def change_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        child.apply_capabilities(capabilities=child.capabilities.model_copy(update={"supports_json_output": True}))
+        return target.capabilities
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=change_async):
+        with pytest.raises(FileExistsError, match="changed during"):
+            await service.detect_capabilities_async(
+                target_registry_name="round-robin", expected_hash=parent.get_identifier().hash
+            )
+    assert parent.configuration is original
+    assert child.capabilities.supports_json_output
+    assert not service._detecting_sources
+
+
+async def test_composite_detection_has_one_deadline_for_all_children(
+    composite_detection: tuple[TargetService, RoundRobinTarget],
+) -> None:
+    service, parent = composite_detection
+    original = parent.configuration
+    checks = 0
+    deadline = asyncio.timeout(TEST_WATCHDOG_SECONDS)
+
+    async def probe_async(target: _DetectableTarget) -> TargetCapabilities:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            deadline.reschedule(asyncio.get_running_loop().time() - 1)
+            await asyncio.Event().wait()
+        return target.capabilities
+
+    with (
+        patch("pyrit.backend.services.target_service.asyncio.timeout", return_value=deadline) as timeout,
+        patch.object(service, "_probe_capabilities_async", side_effect=probe_async),
+    ):
+        with pytest.raises(TimeoutError):
+            await service.detect_capabilities_async(
+                target_registry_name="round-robin", expected_hash=parent.get_identifier().hash
+            )
+    timeout.assert_called_once_with(service.DETECTION_TIMEOUT_SECONDS)
+    assert checks == 2
+    assert parent.configuration is original
+    assert not service._detecting
+    assert not service._detecting_sources
+
+
+async def test_composite_detection_reconstructs_each_openai_endpoint_with_its_own_client(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    service._registry.register_class(OpenAIChatTarget)
+    children = [
+        OpenAIChatTarget(api_key="test-key", endpoint=f"https://child-{index}.example.test", model_name="test-model")
+        for index in range(2)
+    ]
+    parent = RoundRobinTarget(targets=children)
+    service._registry.instances.register(parent, name="openai-round-robin")
+    probes: list[OpenAIChatTarget] = []
+
+    async def discover_async(*, target: OpenAIChatTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        return target.capabilities.model_copy(update={"supports_json_output": True})
+
+    try:
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async
+        ):
+            result = await service.detect_capabilities_async(
+                target_registry_name="openai-round-robin", expected_hash=parent.get_identifier().hash
+            )
+        assert result.capabilities.supports_json_output
+        assert len(probes) == len(children)
+        for probe, child in zip(probes, children, strict=True):
+            assert probe.get_identifier().hash == child.get_identifier().hash
+            assert probe._async_client is not child._async_client
+            assert probe._async_client is not None
+            assert probe._async_client.is_closed()
+            assert child._async_client is not None
+            assert not child._async_client.is_closed()
+    finally:
+        for child in children:
+            await child.cleanup_target_async()
+
+
+@pytest.mark.parametrize("first_name", ["round-robin", "test-target"])
+async def test_composite_detection_blocks_overlapping_child_and_alias_requests(
+    composite_detection: tuple[TargetService, RoundRobinTarget], first_name: str
+) -> None:
+    service, parent = composite_detection
+    child = parent.inner_targets[0]
+    service._registry.instances.register(child, name="child-alias")
+    started = asyncio.Event()
+    probes: list[_DetectableTarget] = []
+    original = parent.configuration
+
+    async def wait_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        started.set()
+        await asyncio.Event().wait()
+        return target.capabilities
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=wait_async):
+        first = parent if first_name == "round-robin" else child
+        task = asyncio.create_task(
+            service.detect_capabilities_async(
+                target_registry_name=first_name, expected_hash=first.get_identifier().hash
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            second_name = "test-target" if first_name == "round-robin" else "round-robin"
+            second = child if second_name == "test-target" else parent
+            with pytest.raises(FileExistsError, match="already running"):
+                await service.detect_capabilities_async(
+                    target_registry_name=second_name, expected_hash=second.get_identifier().hash
+                )
+            with pytest.raises(FileExistsError, match="already running"):
+                await service.detect_capabilities_async(
+                    target_registry_name="child-alias", expected_hash=child.get_identifier().hash
+                )
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    assert parent.configuration is original
+    assert all(probe.closed for probe in probes)
+    assert not service._detecting
+    assert not service._detecting_sources
+
+
+async def test_detection_applies_private_result_and_releases_probe(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, target = detection_service
+    original = target.configuration
+    expected_hash = target.get_identifier().hash
+    probes: list[_DetectableTarget] = []
+    detected = target.capabilities.model_copy(update={"supports_json_output": True})
+
+    async def discover_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        assert target is not detection_service[1]
+        assert detection_service[1].configuration is original
+        assert kwargs["raise_on_error"] is True
+        assert frozenset({"text", "image_path"}) in kwargs["test_modalities"]
+        return detected
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async):
+        result = await service.detect_capabilities_async(
+            target_registry_name="test-target", expected_hash=expected_hash
+        )
+
+    assert result.capabilities == detected
+    assert target.capabilities == detected
+    assert target.configuration.policy == original.policy
+    assert result.identifier.hash == expected_hash
+    assert probes[0].closed
+    assert not target.closed
+    rebuilt = service._registry.recreate_instance(source=target, params={})
+    assert rebuilt.capabilities == detected
+    await rebuilt.cleanup_target_async()
+
+
+async def test_detection_preserves_declarations_without_verified_adapter_probes(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, target = detection_service
+    assert frozenset({"image_path"}) not in target.capabilities.input_modalities
+    result = await service.detect_capabilities_async(
+        target_registry_name="test-target", expected_hash=target.get_identifier().hash
+    )
+    assert frozenset({"image_path"}) not in result.capabilities.input_modalities
+    assert frozenset({"text", "audio_path"}) not in result.capabilities.input_modalities
+    assert result.capabilities.output_modalities == frozenset({frozenset({"text"})})
+
+
+async def test_detection_reconstructs_openai_without_closing_the_live_client(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    service._registry.register_class(OpenAIChatTarget)
+    target = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(target, name="openai")
+    probes: list[OpenAIChatTarget] = []
+
+    async def discover_async(*, target: OpenAIChatTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        return target.capabilities.model_copy(update={"supports_json_output": True})
+
+    try:
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async
+        ):
+            result = await service.detect_capabilities_async(
+                target_registry_name="openai", expected_hash=target.get_identifier().hash
+            )
+        assert result.capabilities.supports_json_output
+        assert probes[0]._async_client is not target._async_client
+        assert probes[0]._async_client is not None
+        assert target._async_client is not None
+        assert probes[0]._async_client.is_closed()
+        assert not target._async_client.is_closed()
+    finally:
+        await target.cleanup_target_async()
+
+
+@pytest.mark.parametrize("error", [CapabilityDiscoveryError("Connection failed"), TimeoutError()])
+async def test_detection_failure_keeps_source_and_releases_probe(
+    detection_service: tuple[TargetService, _DetectableTarget], error: Exception
+) -> None:
+    service, target = detection_service
+    original = target.configuration
+    probes: list[_DetectableTarget] = []
+
+    async def fail_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        raise error
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=fail_async):
+        with pytest.raises(type(error)):
+            await service.detect_capabilities_async(
+                target_registry_name="test-target", expected_hash=target.get_identifier().hash
+            )
+    assert target.configuration is original
+    assert probes[0].closed
+    assert not service._detecting
+
+
+async def test_detection_rejects_changed_source_before_commit(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, target = detection_service
+    replacement = target.capabilities.model_copy(update={"supports_multi_turn": False})
+
+    async def change_async(**kwargs: object) -> TargetCapabilities:
+        target.apply_capabilities(capabilities=replacement)
+        return TargetCapabilities(supports_json_output=True)
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=change_async):
+        with pytest.raises(FileExistsError, match="changed during"):
+            await service.detect_capabilities_async(
+                target_registry_name="test-target", expected_hash=target.get_identifier().hash
+            )
+    assert target.capabilities == replacement
+
+
+async def test_detection_rejects_missing_stale_and_duplicate_requests(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, target = detection_service
+    with pytest.raises(LookupError):
+        await service.detect_capabilities_async(target_registry_name="missing", expected_hash="hash")
+    with pytest.raises(FileExistsError, match="changed"):
+        await service.detect_capabilities_async(target_registry_name="test-target", expected_hash="old")
+    service._detecting.add("test-target")
+    with pytest.raises(FileExistsError, match="already running"):
+        await service.detect_capabilities_async(
+            target_registry_name="test-target", expected_hash=target.get_identifier().hash
+        )
+
+
+async def test_detection_rejects_unsafe_targets(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    target = MockPromptTarget()
+    service._registry.instances.register(target, name="unsafe")
+    with pytest.raises(ValueError, match="reconstruction"):
+        await service.detect_capabilities_async(
+            target_registry_name="unsafe", expected_hash=target.get_identifier().hash
+        )
+    target.inner_targets = [MockPromptTarget()]
+    with pytest.raises(ValueError, match="composite"):
+        await service.detect_capabilities_async(
+            target_registry_name="unsafe", expected_hash=target.get_identifier().hash
+        )
+    assert not service._detecting
+
+
+async def test_detection_operation_deadline_preserves_source(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, target = detection_service
+    original = target.configuration
+
+    async def wait_async(**kwargs: object) -> TargetCapabilities:
+        await asyncio.Event().wait()
+        return TargetCapabilities()
+
+    with (
+        patch.object(service, "DETECTION_TIMEOUT_SECONDS", 0.1),
+        patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=wait_async),
+    ):
+        with pytest.raises(TimeoutError):
+            await service.detect_capabilities_async(
+                target_registry_name="test-target", expected_hash=target.get_identifier().hash
+            )
+    assert target.configuration is original
+    assert not service._detecting
+
+
+async def test_detection_cancellation_releases_probe_and_admission(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, target = detection_service
+    original = target.configuration
+    entered = asyncio.Event()
+    probes: list[_DetectableTarget] = []
+
+    async def wait_async(*, target: _DetectableTarget, **kwargs: object) -> TargetCapabilities:
+        probes.append(target)
+        entered.set()
+        await asyncio.Event().wait()
+        return TargetCapabilities()
+
+    with patch("pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=wait_async):
+        task = asyncio.create_task(
+            service.detect_capabilities_async(
+                target_registry_name="test-target", expected_hash=target.get_identifier().hash
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    assert probes[0].closed
+    assert target.configuration is original
+    assert not service._detecting
+    assert not service._detecting_sources
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code"),
+    [
+        (LookupError("missing"), 404),
+        (FileExistsError("busy"), 409),
+        (ValueError("unsafe"), 400),
+        (CapabilityDiscoveryError("inconclusive"), 502),
+        (TimeoutError(), 504),
+    ],
+)
+def test_detection_route_errors(error: Exception, status_code: int) -> None:
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    service = AsyncMock(spec=TargetService)
+    service.detect_capabilities_async.side_effect = error
+    with patch("pyrit.backend.routes.targets.get_target_service", return_value=service):
+        response = TestClient(app).post("/api/targets/test-target/detect-capabilities", json={"expected_hash": "hash"})
+    assert response.status_code == status_code
+
+
+@pytest.mark.parametrize("target_name", ["test-target", "round-robin"])
+def test_detection_route_returns_updated_target(
+    composite_detection: tuple[TargetService, RoundRobinTarget], target_name: str
+) -> None:
+    service, _ = composite_detection
+    target = service.get_target_object(target_registry_name=target_name)
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    with patch("pyrit.backend.routes.targets.get_target_service", return_value=service):
+        response = TestClient(app).post(
+            f"/api/targets/{target_name}/detect-capabilities", json={"expected_hash": target.get_identifier().hash}
+        )
+    assert response.status_code == 200
+    assert response.json()["capabilities"] == target.capabilities.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("snapshot_capabilities", [False, True])
+async def test_detection_preserves_existing_binding_and_multi_turn_provider_send_async(
+    detection_service: tuple[TargetService, _DetectableTarget], snapshot_capabilities: bool
+) -> None:
+    service, _ = detection_service
+    source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(source, name="chat")
+    original = source.capabilities
+    private = await service.build_from_source_async(
+        SourceInstanceSpec(source_name="chat", source_hash=source.get_identifier().hash, params={"temperature": 0.7})
+    )
+    binding = TargetBinding(
+        source_name="chat",
+        source_hash=source.get_identifier().hash,
+        effective_hash=private.get_identifier().hash,
+        temperature=0.7,
+        capabilities=original if snapshot_capabilities else None,
+    )
+    await private.cleanup_target_async()
+    completion = ChatCompletion(
+        id="chat-result",
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        choices=[Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="ok"))],
+    )
+    restored = None
+    try:
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async",
+            new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+        ):
+            await service.detect_capabilities_async(
+                target_registry_name="chat", expected_hash=source.get_identifier().hash
+            )
+        assert not source.capabilities.supports_multi_turn
+        restored = await service.resolve_binding_async(TargetBinding.from_metadata(binding.to_metadata()))
+        assert restored.capabilities == original
+        assert restored.get_identifier().hash == binding.effective_hash
+        with patch.object(restored._client.chat.completions, "create", new=AsyncMock(return_value=completion)) as send:
+            first = Message.from_prompt(role="user", prompt="First turn.")
+            first.get_piece().conversation_id = str(uuid.uuid4())
+            [response] = await restored.send_prompt_async(message=first)
+            await restored._memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=first.get_piece().conversation_id,
+                    target_identifier=restored.get_identifier(),
+                )
+            )
+            await restored._memory.add_message_to_memory_async(request=first)
+            response.get_piece().sequence = 1
+            await restored._memory.add_message_to_memory_async(request=response)
+            second = Message.from_prompt(role="user", prompt="Second turn.")
+            second.get_piece().conversation_id = first.get_piece().conversation_id
+            await restored.send_prompt_async(message=second)
+        assert len(send.call_args.kwargs["messages"]) == 3
+        new_binding = binding.model_copy(update={"capabilities": source.capabilities})
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async",
+            new=AsyncMock(return_value=original),
+        ):
+            await service.detect_capabilities_async(
+                target_registry_name="chat", expected_hash=source.get_identifier().hash
+            )
+        newer = await service.resolve_binding_async(new_binding)
+        try:
+            assert not newer.capabilities.supports_multi_turn
+            assert source.capabilities.supports_multi_turn
+        finally:
+            await newer.cleanup_target_async()
+    finally:
+        if restored is not None:
+            await restored.cleanup_target_async()
+        await source.cleanup_target_async()
+
+
+@pytest.mark.parametrize(("legacy", "registry_hint"), [(False, True), (True, True), (True, False)])
+@pytest.mark.parametrize("overlap", [False, True])
+async def test_detection_preserves_default_chat_service_history_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+    sqlite_instance: SQLiteMemory,
+    legacy: bool,
+    registry_hint: bool,
+    overlap: bool,
+) -> None:
+    service, _ = detection_service
+    source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(source, name="default-chat")
+    original = source.capabilities
+    completion = ChatCompletion(
+        id="chat-result",
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        choices=[Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="ok"))],
+    )
+    sends = MessageSendService(scheduler=ManualSendScheduler())
+    attacks = AttackService(message_send_service=sends, memory=sqlite_instance)
+    try:
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service", return_value=service),
+            patch("pyrit.backend.services.message_send_service.get_target_service", return_value=service),
+            patch.object(source._client.chat.completions, "create", new=AsyncMock(return_value=completion)) as send,
+        ):
+            chat = await attacks.create_attack_async(request=CreateAttackRequest(target_registry_name="default-chat"))
+            if legacy:
+                [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[chat.attack_result_id])
+                saved.metadata.pop("target_capabilities", None)
+                if not registry_hint:
+                    saved.metadata.pop("target_registry_name", None)
+                await sqlite_instance.update_attack_result_async(
+                    conversation_id=chat.conversation_id,
+                    update_fields={"attack_metadata": saved.metadata},
+                )
+                [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[chat.attack_result_id])
+                assert "target_capabilities" not in saved.metadata
+            request = AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="First turn.")],
+                target_registry_name="default-chat",
+                target_conversation_id=chat.conversation_id,
+                send=True,
+            )
+            await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 1
+            request.pieces = [MessagePieceRequest(original_value="Second turn.")]
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            pending: asyncio.Task | None = None
+            result = None
+            load_history = sqlite_instance.get_conversation_messages_async
+
+            async def gated_history_async(**kwargs: Any) -> MutableSequence[Message]:
+                entered.set()
+                await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                return await load_history(**kwargs)
+
+            with patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+            ):
+                with patch.object(sqlite_instance, "get_conversation_messages_async", side_effect=gated_history_async):
+                    try:
+                        if overlap:
+                            assert source.capabilities == original
+                            pending = asyncio.create_task(
+                                attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+                            )
+                            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                        await service.detect_capabilities_async(
+                            target_registry_name="default-chat", expected_hash=source.get_identifier().hash
+                        )
+                    finally:
+                        release.set()
+                        if pending is not None:
+                            result = await pending
+            assert not source.capabilities.supports_multi_turn
+            if not overlap:
+                result = await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert result is not None
+            assert send.await_count == 2
+            assert [message["role"] for message in send.call_args.kwargs["messages"]] == ["user", "assistant", "user"]
+            assert result.attack.target is not None
+            assert result.attack.target.capabilities == original
+            assert result.attack.target.supports_history_replay
+            assert not source.capabilities.supports_multi_turn
+            reopened = AttackService(message_send_service=sends, memory=sqlite_instance)
+            summary = await reopened.get_attack_async(attack_result_id=chat.attack_result_id)
+            assert summary is not None and summary.target is not None
+            assert summary.target.capabilities == original
+            assert summary.target.supports_history_replay
+            repeated = await reopened.submit_message_send_async(
+                attack_result_id=chat.attack_result_id,
+                request=MessageSendRequest(
+                    pieces=[MessagePieceRequest(original_value="Repeated turn.")],
+                    target_registry_name="default-chat",
+                    target_conversation_id=chat.conversation_id,
+                    submission_id=str(uuid.uuid4()),
+                    count=2,
+                ),
+            )
+            repeated = await _settle_send_async(service=sends, status=repeated)
+            assert repeated.state == MessageSendState.COMPLETED
+            assert send.await_count == 4
+            assert all(len(call.kwargs["messages"]) == 5 for call in send.call_args_list[-2:])
+            branch = await reopened.create_related_conversation_async(
+                attack_result_id=chat.attack_result_id,
+                request=CreateConversationRequest(source_conversation_id=chat.conversation_id, cutoff_index=1),
+            )
+            assert branch is not None
+            request.target_conversation_id = branch.conversation_id
+            await reopened.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 3
+            saved_conversation = await reopened.save_conversation_async(
+                request=SaveConversationRequest(
+                    save_id=uuid.uuid4(),
+                    destination="same_attack",
+                    attack_result_id=uuid.UUID(chat.attack_result_id),
+                    target_registry_name="default-chat",
+                    messages=[
+                        MessageRequest(role="user", pieces=[MessagePieceRequest(original_value="Edited first.")]),
+                        MessageRequest(
+                            role="simulated_assistant", pieces=[MessagePieceRequest(original_value="Edited reply.")]
+                        ),
+                    ],
+                )
+            )
+            request.target_conversation_id = saved_conversation.messages.conversation_id
+            await reopened.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 3
+            new_chat = await reopened.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="default-chat")
+            )
+            new_summary = await reopened.get_attack_async(attack_result_id=new_chat.attack_result_id)
+            assert new_summary is not None and new_summary.target is not None
+            assert new_summary.target.capabilities == source.capabilities
+            assert not new_summary.target.capabilities.supports_multi_turn
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[new_chat.attack_result_id])
+            assert TargetCapabilities.model_validate(saved.metadata["target_capabilities"]) == source.capabilities
+            fresh_service = TargetService()
+            assert fresh_service.saved_capabilities(target=source, metadata=saved.metadata) == source.capabilities
+            request.target_conversation_id = new_chat.conversation_id
+            await reopened.add_message_async(attack_result_id=new_chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 1
+            with patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new=AsyncMock(return_value=original),
+            ):
+                await service.detect_capabilities_async(
+                    target_registry_name="default-chat", expected_hash=source.get_identifier().hash
+                )
+            new_summary = await reopened.get_attack_async(attack_result_id=new_chat.attack_result_id)
+            assert new_summary is not None and new_summary.target is not None
+            assert not new_summary.target.capabilities.supports_multi_turn
+            assert source.capabilities.supports_multi_turn
+            previous_calls = send.await_count
+            blocked = await reopened.submit_message_send_async(
+                attack_result_id=new_chat.attack_result_id,
+                request=MessageSendRequest(
+                    pieces=[MessagePieceRequest(original_value="This chat retains its single-turn snapshot.")],
+                    target_registry_name="default-chat",
+                    target_conversation_id=new_chat.conversation_id,
+                    submission_id=str(uuid.uuid4()),
+                ),
+            )
+            blocked = await _settle_send_async(service=sends, status=blocked)
+            assert blocked.state == MessageSendState.FAILED
+            assert send.await_count == previous_calls
+    finally:
+        await sends.shutdown_async()
+        await source.cleanup_target_async()
+
+
+async def test_default_chat_preserves_caller_owned_target_state_async(
+    detection_service: tuple[TargetService, _DetectableTarget], sqlite_instance: SQLiteMemory
+) -> None:
+    service, source = detection_service
+    sends = MessageSendService(scheduler=ManualSendScheduler())
+    attacks = AttackService(message_send_service=sends, memory=sqlite_instance)
+    original = source.capabilities
+    try:
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service", return_value=service),
+            patch("pyrit.backend.services.message_send_service.get_target_service", return_value=service),
+            patch.object(source, "_send_prompt_to_target_async", wraps=source._send_prompt_to_target_async) as send,
+        ):
+            chat = await attacks.create_attack_async(request=CreateAttackRequest(target_registry_name="test-target"))
+            request = AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="First turn.")],
+                target_registry_name="test-target",
+                target_conversation_id=chat.conversation_id,
+                send=True,
+            )
+            await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            with patch.object(
+                service,
+                "_probe_capabilities_async",
+                new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+            ):
+                await service.detect_capabilities_async(
+                    target_registry_name="test-target", expected_hash=source.get_identifier().hash
+                )
+            with patch.object(
+                service._registry, "recreate_instance", side_effect=AssertionError("Must reuse live state")
+            ):
+                request.pieces = [MessagePieceRequest(original_value="Second turn.")]
+                await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert source.prompt_sent == ["First turn.", "Second turn."]
+            assert len(send.call_args.kwargs["normalized_conversation"]) == 3
+            assert not source.closed
+            assert not source.capabilities.supports_multi_turn
+    finally:
+        await sends.shutdown_async()
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+async def test_legacy_manual_summary_resolves_only_unique_target_hash_async(
+    detection_service: tuple[TargetService, _DetectableTarget], sqlite_instance: SQLiteMemory, ambiguous: bool
+) -> None:
+    service, source = detection_service
+    original = source.capabilities
+    attack = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective="Legacy chat objective",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="Legacy chat objective",
+                class_module="pyrit.backend",
+                objective_target=source.get_identifier(),
+            )
+        ),
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+    with patch.object(
+        service,
+        "_probe_capabilities_async",
+        new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+    ):
+        await service.detect_capabilities_async(
+            target_registry_name="test-target", expected_hash=source.get_identifier().hash
+        )
+    if ambiguous:
+        service._registry.instances.register(_DetectableTarget(), name="same-identity")
+    with patch("pyrit.backend.services.attack_service.get_target_service", return_value=service):
+        summary = await AttackService(memory=sqlite_instance).get_attack_async(attack_result_id=attack.attack_result_id)
+    assert summary is not None and summary.target is not None
+    assert summary.target.capabilities == (None if ambiguous else original)
+    assert not source.capabilities.supports_multi_turn
+
+
+async def test_detection_does_not_promote_untransmitted_tts_features_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    source = OpenAITTSTarget(api_key="test-key", endpoint="https://example.test", model_name="tts-1")
+    service._registry.instances.register(source, name="tts")
+    original = source.capabilities
+    speech = AsyncMock(return_value=SimpleNamespace(content=b"test-audio"))
+    try:
+        with patch("openai.resources.audio.speech.AsyncSpeech.create", new=speech):
+            result = await service.detect_capabilities_async(
+                target_registry_name="tts", expected_hash=source.get_identifier().hash
+            )
+        assert result.capabilities == original
+        assert source.capabilities == original
+        speech.assert_awaited_once()
+        assert set(speech.call_args.kwargs) == {"model", "voice", "input", "response_format", "speed"}
+        assert speech.call_args.kwargs["response_format"] == "mp3"
+    finally:
+        await source.cleanup_target_async()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+async def test_detection_preserves_vision_and_sends_only_valid_image_probes_async(
+    detection_service: tuple[TargetService, _DetectableTarget], tmp_path: Path, corrupt: bool
+) -> None:
+    service, _ = detection_service
+    source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(source, name="vision")
+    vision = frozenset({"text", "image_path"})
+    assert vision in source.capabilities.input_modalities
+    asset = tmp_path / "probe.png"
+    asset.write_bytes(b"corrupt image" if corrupt else Path(DEFAULT_TEST_ASSETS["image_path"]).read_bytes())
+    images = 0
+
+    async def create_async(**kwargs: Any) -> ChatCompletion:
+        nonlocal images
+        for message in kwargs["messages"]:
+            content = message.get("content")
+            for part in content if isinstance(content, list) else []:
+                if part.get("type") == "image_url":
+                    payload = part["image_url"]["url"].split(",", 1)[1]
+                    with Image.open(io.BytesIO(base64.b64decode(payload))) as image:
+                        image.verify()
+                    images += 1
+        return ChatCompletion(
+            id="vision-result",
+            created=0,
+            model="test-model",
+            object="chat.completion",
+            choices=[
+                Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="ok"))
+            ],
+        )
+
+    try:
+        with (
+            patch.dict(DEFAULT_TEST_ASSETS, {"image_path": str(asset)}),
+            patch("openai.resources.chat.completions.AsyncCompletions.create", side_effect=create_async),
+        ):
+            result = await service.detect_capabilities_async(
+                target_registry_name="vision", expected_hash=source.get_identifier().hash
+            )
+        assert vision in result.capabilities.input_modalities
+        assert vision in source.capabilities.input_modalities
+        assert images == 0 if corrupt else images > 0
+    finally:
+        await source.cleanup_target_async()

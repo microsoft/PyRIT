@@ -22,7 +22,7 @@ import shlex
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, get_args
 from uuid import UUID
 
 from pyrit.common import print_deprecation_message
@@ -751,6 +751,8 @@ _TARGET_ARG = _ArgSpec(
 )
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
+    _ArgSpec(flags=["--scoring-target"], result_key="scoring_target"),
+    _ArgSpec(flags=["--adversarial-target"], result_key="adversarial_target"),
     _INITIALIZERS_ARG,
     _TECHNIQUES_ARG,
     _MAX_CONCURRENCY_ARG,
@@ -915,12 +917,14 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
             that routes through ``pyrit.models.parameter.coerce_value``.
     """
     from pyrit.models import Parameter
+    from pyrit.models.parameter import _unwrap_optional
 
-    multi = get_origin(param.param_type) is list
+    param_type = _unwrap_optional(param.param_type)
+    multi = param.is_list
     parser: Callable[[str], Any] | None
     if multi:
         # Per-element coercion via a temporary scalar-typed Parameter.
-        type_args = get_args(param.param_type)
+        type_args = get_args(param_type)
         element_type = type_args[0] if type_args else str
         element_param = Parameter(
             name=param.name,

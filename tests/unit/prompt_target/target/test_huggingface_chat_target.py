@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from asyncio import Task
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,7 @@ from unit.async_utils import (
     wait_for_event_async,
 )
 
+from pyrit.exceptions import EmptyResponseException
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
 
 def is_torch_installed():
     try:
-        import torch  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import torch  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -1072,3 +1074,116 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("last_role", "continue_final_message"),
+    [("user", False), ("assistant", True)],
+)
+async def test_chat_template_continues_trailing_assistant_message(last_role: str, continue_final_message: bool):
+    """A trailing assistant message is continued rather than followed by a new generation prompt."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+
+    target._apply_chat_template([{"role": "user", "content": "Hi"}, {"role": last_role, "content": "text"}])
+
+    kwargs = target.tokenizer.apply_chat_template.call_args.kwargs
+    assert kwargs["continue_final_message"] is continue_final_message
+    assert kwargs["add_generation_prompt"] is (not continue_final_message)
+
+
+_EOS_TOKEN_ID = 2
+_PROMPT_TOKEN_IDS = [5, 6, 7]
+
+
+async def _target_generating(
+    *, new_token_ids: list[int], decoded_text: str, tokenizer_eos_token_id: int = _EOS_TOKEN_ID
+) -> HuggingFaceChatTarget:
+    """Build a target whose model returns the prompt followed by ``new_token_ids``."""
+    import torch  # type: ignore[ty:import-not-found]
+
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
+    await target.load_model_and_tokenizer_async()
+    target.model.generation_config.eos_token_id = _EOS_TOKEN_ID
+    target.model.generation_config.to_dict.return_value = {"eos_token_id": _EOS_TOKEN_ID}
+    target.tokenizer.eos_token_id = tokenizer_eos_token_id
+    target.tokenizer.apply_chat_template.return_value.to.return_value = {
+        "input_ids": torch.tensor([_PROMPT_TOKEN_IDS]),
+        "attention_mask": torch.ones(1, len(_PROMPT_TOKEN_IDS), dtype=torch.long),
+    }
+    target.model.generate.side_effect = None
+    target.model.generate.return_value = torch.tensor([_PROMPT_TOKEN_IDS + new_token_ids])
+    target.tokenizer.decode.return_value = decoded_text
+    return target
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+@pytest.mark.parametrize(
+    ("new_token_ids", "finish_reason"),
+    [
+        ([101, 102, 103], "length"),
+        ([101, 102, _EOS_TOKEN_ID], "stop"),
+        ([101, _EOS_TOKEN_ID], "stop"),
+    ],
+    ids=["hits-limit", "eos-at-limit", "eos-before-limit"],
+)
+async def test_response_records_why_generation_stopped(
+    new_token_ids: list[int], finish_reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    target = await _target_generating(new_token_ids=new_token_ids, decoded_text="partial answer")
+
+    with caplog.at_level(logging.WARNING):
+        response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    piece = response[0].message_pieces[0]
+    assert piece.original_value == "partial answer"
+    assert piece.prompt_metadata["finish_reason"] == finish_reason
+    assert piece.is_truncated is (finish_reason == "length")
+    assert any("max_new_tokens" in record.message for record in caplog.records) is (finish_reason == "length")
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_generation_config_eos_takes_precedence_over_tokenizer_eos() -> None:
+    """A final token matching only the tokenizer's EOS is not a stopping token for generate()."""
+    target = await _target_generating(
+        new_token_ids=[101, 102, 99],
+        decoded_text="partial answer",
+        tokenizer_eos_token_id=99,
+    )
+
+    response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    piece = response[0].message_pieces[0]
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.is_truncated is True
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_empty_truncated_response_is_returned_without_retry() -> None:
+    target = await _target_generating(new_token_ids=[101, 102, 103], decoded_text="")
+
+    response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    piece = response[0].message_pieces[0]
+    assert piece.original_value == ""
+    assert piece.response_error == "empty"
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["model_id"] == "test_model"
+    effective_config = json.loads(str(piece.prompt_metadata["effective_generation_config"]))
+    assert effective_config["eos_token_id"] == _EOS_TOKEN_ID
+    target.model.generate.assert_called_once()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_empty_response_that_was_not_truncated_still_raises() -> None:
+    target = await _target_generating(new_token_ids=[_EOS_TOKEN_ID], decoded_text="")
+
+    with pytest.raises(EmptyResponseException):
+        await target.send_prompt_async(message=_user_message("Hello"))

@@ -514,6 +514,8 @@ async function selectText(editor: Locator, start: number, length: number): Promi
 }
 
 test.describe("Shared per-piece converter pipelines @seeded", () => {
+  const CONVERTER_PANEL_MAX_WIDTH = 1200;
+
   test.setTimeout(90_000);
 
   let targetRegistryName: string;
@@ -563,6 +565,50 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
   test.beforeEach(async ({ page }) => {
     await selectChatTarget(page, targetRegistryName);
     await expect(page.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  test("should keep keyboard resize bounds aligned with the visible panel after viewport changes", async ({ page }) => {
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    const handle = page.getByRole("separator", { name: "Resize converters panel" });
+    const dimensions = () => handle.evaluate((element: HTMLElement) => {
+      const panel = element.parentElement;
+      const layout = panel?.parentElement;
+      if (!panel || !layout) throw new Error("Converter panel is missing");
+      const { paddingLeft, paddingRight } = getComputedStyle(layout);
+      return {
+        width: panel.getBoundingClientRect().width,
+        available: layout.clientWidth - parseFloat(paddingLeft) - parseFloat(paddingRight),
+        current: Number(element.getAttribute("aria-valuenow")),
+        minimum: Number(element.getAttribute("aria-valuemin")),
+        maximum: Number(element.getAttribute("aria-valuemax")),
+      };
+    });
+
+    for (const width of [1440, 800, 390, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      // The panel reads the new available width from a ResizeObserver after layout, so keys
+      // pressed before the announced bounds catch up would resize against the old viewport.
+      await expect.poll(async () => {
+        const size = await dimensions();
+        return Math.max(
+          Math.abs(size.maximum - Math.min(CONVERTER_PANEL_MAX_WIDTH, size.available)),
+          Math.abs(size.current - size.width),
+        );
+      }).toBeLessThan(1);
+      await handle.press("End");
+      const maximum = await dimensions();
+      expect(maximum.current).toBe(maximum.maximum);
+      expect(maximum.width).toBeCloseTo(maximum.current, 0);
+      await handle.press("ArrowLeft");
+      const smaller = await dimensions();
+      if (maximum.minimum < maximum.maximum) {
+        expect(smaller.width).toBeLessThan(maximum.width);
+      } else {
+        expect(smaller.width).toBeCloseTo(maximum.width, 0);
+      }
+      expect(smaller.current).toBeCloseTo(smaller.width, 0);
+      await expect(handle).toBeFocused();
+    }
   });
 
   test("should align highlighted text through wrapping, scrolling and resizing", async ({ page }) => {

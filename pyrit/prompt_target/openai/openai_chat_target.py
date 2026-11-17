@@ -3,7 +3,8 @@
 
 import logging
 from collections.abc import MutableSequence, Sequence
-from typing import Any
+from copy import deepcopy
+from typing import Any, ClassVar
 
 from openai.types.chat import ChatCompletion
 
@@ -17,6 +18,7 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    PromptDataType,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -31,7 +33,10 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     detect_response_content,
     save_audio_response_async,
 )
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import (
+    CapabilityName,
+    TargetCapabilities,
+)
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -80,10 +85,12 @@ class OpenAIChatTarget(OpenAITarget):
     """
 
     _SUPPORTS_TOOL_CALL_HISTORY = True
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset({CapabilityName.TEMPERATURE})
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
@@ -156,8 +163,6 @@ class OpenAIChatTarget(OpenAITarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, **kwargs)
-
         # Validate generation parameters.
         validate_temperature(temperature)
         validate_top_p(top_p)
@@ -179,6 +184,14 @@ class OpenAIChatTarget(OpenAITarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        capabilities = super()._generation_capabilities_for_mode(capabilities)
+        parameters = self._effective_generation_parameters()
+        if self._audio_response_config is not None or "audio" in (parameters.get("modalities") or []):
+            return capabilities.model_copy(update={"supports_temperature": False})
+        return capabilities
 
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """Check stored tool history and Chat Completions tool-message constraints."""
@@ -249,8 +262,7 @@ class OpenAIChatTarget(OpenAITarget):
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
         body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
-
-        # Use unified error handling - automatically detects ChatCompletion and validates
+        self._prepare_request_generation(body=body, request=message)
         response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
@@ -299,6 +311,27 @@ class OpenAIChatTarget(OpenAITarget):
             has_text_piece=has_text_piece,
             prefer_transcript_for_history=prefer_transcript_for_history,
         )
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the Chat Completions adapter's replayed blocked errors and omitted audio history.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted audio.
+        """
+        if self._should_skip_sending_audio(
+            message_piece=message_piece, is_last_message=False, has_text_piece=has_text_piece
+        ):
+            return None
+        if message_piece.is_blocked_error():
+            return "text"
+        return message_piece.converted_value_data_type
 
     async def _construct_message_from_response_async(self, response: ChatCompletion, request: MessagePiece) -> Message:
         """
@@ -444,7 +477,7 @@ class OpenAIChatTarget(OpenAITarget):
         }
 
         if self._extra_body_parameters:
-            body_parameters.update(self._extra_body_parameters)
+            body_parameters.update(deepcopy(self._extra_body_parameters))
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}

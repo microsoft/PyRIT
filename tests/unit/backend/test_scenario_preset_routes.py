@@ -3,11 +3,11 @@
 
 """Tests for the scenario preset routes."""
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import AzureError
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
@@ -24,6 +24,7 @@ from pyrit.registry import (
     ScenarioPresetNameRegisteredError,
     resolve_scenario_preset_run_request,
 )
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 
 PRESET_NAME = "quick_scan"
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -146,13 +147,22 @@ class TestListPresets:
 
         assert anonymous_client.get("/api/scenario-presets").status_code == 200
 
-    def test_storage_failure_is_reported_without_sdk_detail(self, client: TestClient, service: MagicMock) -> None:
-        service.list_presets_async = AsyncMock(side_effect=AzureError("container 'x' key=secret"))
+    def test_storage_failure_names_the_source_only_in_the_log(
+        self, client: TestClient, service: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service.list_presets_async = AsyncMock(
+            side_effect=DocumentStorageUnavailableError(
+                label="Scenario preset", source="/srv/presets", reason="Permission denied"
+            )
+        )
 
-        response = client.get("/api/scenario-presets")
+        with caplog.at_level(logging.WARNING, logger="pyrit.backend.middleware.error_handlers"):
+            response = client.get("/api/scenario-presets")
 
         assert response.status_code == 503
-        assert "secret" not in response.text
+        assert response.json()["detail"] == "Scenario preset storage is unavailable"
+        assert "/srv/presets" not in response.text
+        assert "Scenario preset storage at /srv/presets is unavailable: Permission denied" in caplog.text
 
     def test_each_preset_carries_its_own_run_size(self, client: TestClient, service: MagicMock) -> None:
         estimate = _estimate(42)
@@ -416,7 +426,9 @@ class TestUpdatePreset:
     def test_a_failed_author_read_is_reported_without_storage_details(
         self, *, client: TestClient, service: MagicMock
     ) -> None:
-        service.get_preset_async.side_effect = AzureError("key=secret")
+        service.get_preset_async.side_effect = DocumentStorageUnavailableError(
+            label="Scenario preset", source="/srv/presets", reason="Permission denied"
+        )
 
         response = client.put(
             f"/api/scenario-presets/{PRESET_NAME}",
@@ -424,7 +436,7 @@ class TestUpdatePreset:
         )
 
         assert response.status_code == 503
-        assert "secret" not in response.text
+        assert "/srv/presets" not in response.text
         service.save_preset_async.assert_not_called()
 
     def test_a_body_naming_a_different_preset_is_rejected(self, client: TestClient, service: MagicMock) -> None:
@@ -489,6 +501,29 @@ class TestDeletePreset:
         response = client.delete(f"/api/scenario-presets/{PRESET_NAME}")
 
         assert response.status_code == 204
+        service.delete_preset_async.assert_awaited_once_with(name=PRESET_NAME, expected_version=None)
+
+    def test_delete_forwards_the_version_that_was_read(self, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(return_value=True)
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 204
+        service.delete_preset_async.assert_awaited_once_with(name=PRESET_NAME, expected_version="v1")
+
+    def test_delete_of_a_changed_preset_is_a_conflict(self, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(
+            side_effect=ScenarioPresetConflictError(
+                name=PRESET_NAME, expected_version="v1", actual_version="v2", action="deleted"
+            )
+        )
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            f"Scenario preset '{PRESET_NAME}' changed since it was read; re-read it and retry"
+        )
 
     def test_delete_reports_a_missing_preset(self, client: TestClient, service: MagicMock) -> None:
         service.delete_preset_async = AsyncMock(return_value=False)
@@ -496,6 +531,27 @@ class TestDeletePreset:
         response = client.delete(f"/api/scenario-presets/{PRESET_NAME}")
 
         assert response.status_code == 404
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            DocumentStorageUnavailableError(
+                label="Scenario preset", source="https://secret.test/c", reason="AzureError"
+            ),
+            DocumentStorageUnavailableError(
+                label="Scenario preset", source="/srv/secret", reason="Timed out waiting to write '.secret.lock'"
+            ),
+        ],
+    )
+    def test_a_delete_storage_failure_is_unavailable(
+        self, *, client: TestClient, service: MagicMock, error: Exception
+    ) -> None:
+        service.delete_preset_async = AsyncMock(side_effect=error)
+
+        response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
+
+        assert response.status_code == 503
+        assert "secret" not in response.text
 
     def test_delete_requires_admin(self, anonymous_client: TestClient, service: MagicMock) -> None:
         service.delete_preset_async = AsyncMock(return_value=True)

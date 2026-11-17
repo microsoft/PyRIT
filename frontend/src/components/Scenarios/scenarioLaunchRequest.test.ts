@@ -8,12 +8,12 @@ import {
 } from './scenarioLaunchRequest'
 
 const OBJECTIVE: Parameter = {
-  name: 'objective', description: 'The objective.', param_type: 'str', choices: null, default: null, required: false,
-} as unknown as Parameter
+  name: 'objective', description: 'The objective.', type_name: 'str | None', choices: null, default: null, required: false,
+}
 const HISTORY: Parameter = {
-  name: 'prepended_conversation_id', description: 'History.', param_type: 'str', choices: null, default: null,
+  name: 'prepended_conversation_id', description: 'History.', type_name: 'str | None', choices: null, default: null,
   required: false,
-} as unknown as Parameter
+}
 
 function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredScenario {
   return {
@@ -86,6 +86,20 @@ describe('scenario launch requests', () => {
     const run = buildRunRequest(makeInput({ scenario, datasetEdits: { max_total: 3 } }))
 
     expect(run).toEqual({ ok: true, request: { scenario_name: 'garak.api_key', target_name: 'target', operation_id: 'operation' } })
+  })
+
+  it('carries explicitly selected generation and scoring targets through estimates and launches', () => {
+    const scenario = makeScenario()
+    const input = makeInput({ scenario, adversarialTargetName: 'generation', scoringTargetName: 'rubric' })
+
+    for (const result of [buildEstimateRequest(input), buildRunRequest(input)]) {
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.request).toMatchObject({
+        adversarial_target_name: 'generation',
+        scoring_target_name: 'rubric',
+      })
+    }
   })
 
   it('omits unchanged datasets and an unset operation', () => {

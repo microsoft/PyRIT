@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import {
-  Badge,
   Button,
   MessageBar,
   MessageBarBody,
@@ -11,7 +10,6 @@ import {
   TabList,
   Text,
 } from '@fluentui/react-components'
-import type { BadgeProps } from '@fluentui/react-components'
 import {
   AddRegular,
   ArrowRightRegular,
@@ -24,26 +22,19 @@ import {
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
+import ScanStatusBadge from '@/components/ScanStatusBadge'
 import type { ViewName } from '@/components/Sidebar/Navigation'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { AttackSummary, Operation, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
+import type { AttackSummary, Operation, OperationListItem, ScenarioRunListItem } from '@/types'
 import { scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useHomeStyles } from './Home.styles'
 
 const RECENT_WORK_LIMIT = 5
 const VISIBLE_OPERATIONS_LIMIT = 3
-const SCAN_STATUS_LABELS: Record<ScenarioRunState, string> = {
-  CREATED: 'Created', QUEUED: 'Queued', IN_PROGRESS: 'Executing',
-  COMPLETED: 'Completed', FAILED: 'Failed', CANCELLED: 'Cancelled',
-}
-const SCAN_STATUS_COLORS: Record<ScenarioRunState, BadgeProps['color']> = {
-  CREATED: 'informative', QUEUED: 'informative', IN_PROGRESS: 'brand',
-  COMPLETED: 'success', FAILED: 'danger', CANCELLED: 'warning',
-}
 
 interface HomeProps {
   readonly selectedOperation: Operation | null
@@ -165,7 +156,7 @@ export default function Home({
       title: scan.scenario_registry_name || scan.scenario_name,
       operationName: scan.operation_name,
       updatedAt: scan.updated_at,
-      badge: <Badge appearance="tint" color={SCAN_STATUS_COLORS[scan.status]}>{SCAN_STATUS_LABELS[scan.status]}</Badge>,
+      badge: <ScanStatusBadge status={scan.status} />,
       open: () => { void navigate(scenarioRunRoutePath(scan.scenario_result_id)) },
     })),
   ].filter((item: RecentItem) => filter === 'all' || (filter === 'attacks' ? item.kind === 'Attack' : item.kind === 'Scan'))
