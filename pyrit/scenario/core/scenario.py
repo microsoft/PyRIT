@@ -81,7 +81,7 @@ from pyrit.models.scenario_readiness import (
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
-from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario.core.atomic_attack import AtomicAttack, compute_atomic_group_id
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetSource,
@@ -185,6 +185,11 @@ class Scenario(ABC):
     #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer and
     #: selects from it per attack population. Unmigrated scenarios reject pools explicitly.
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = False
+
+    #: Whether the scenario checks its objective scorer against ``DatasetSource.scorer_requirements``.
+    #: Scenarios that do not check them reject a source that declares any, so a declared
+    #: requirement is never silently ignored.
+    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = False
 
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
@@ -1058,6 +1063,7 @@ class Scenario(ABC):
         self._dataset_config = (
             dataset_config if dataset_config is not None else self._resolved_default_dataset_config
         ).with_overrides()
+        self._validate_dataset_scorer_requirements()
         self._required_data = self.get_required_data()
         self._move_required_sources_out_of_dataset_config()
         options = self.get_dataset_options()
@@ -1075,6 +1081,24 @@ class Scenario(ABC):
             )
         self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+
+    def _validate_dataset_scorer_requirements(self) -> None:
+        """
+        Reject dataset scorer requirements this scenario would not check.
+
+        Raises:
+            ValueError: If a dataset source declares scorer requirements and the scenario does
+                not enforce them.
+        """
+        if type(self).ENFORCES_DATASET_SCORER_REQUIREMENTS:
+            return
+        declared = sorted(self._dataset_config.get_scorer_requirements_by_dataset())
+        if declared:
+            raise ValueError(
+                f"{type(self).__name__} does not check DatasetSource.scorer_requirements, which these "
+                f"datasets declare: {', '.join(declared)}. Remove them, or use a scenario that selects "
+                "its objective scorer per dataset."
+            )
 
     def _load_required_data_like_dataset_config(self) -> None:
         """
@@ -1854,26 +1878,16 @@ class Scenario(ABC):
     @staticmethod
     def _get_atomic_group_id(*, atomic_attack: AtomicAttack) -> str:
         """
-        Compute the stable ID of an atomic group from its name and technique.
-
-        Pool runs also key the group by its selected objective scorer and evaluation, so a
-        different selection is a different unit of work. Single-scorer runs keep their IDs.
+        Compute the stable ID of an atomic group, the same value as ``AtomicAttack.logical_group_id``.
 
         Returns:
             str: The atomic-group ID.
         """
-        key: dict[str, Any] = {
-            "atomic_attack_name": atomic_attack.atomic_attack_name,
-            "technique_eval_hash": str(atomic_attack.technique_eval_hash),
-        }
-        binding = Scenario._get_scorer_binding(atomic_attack=atomic_attack)
-        if binding is not None:
-            key["objective_scorer"] = {
-                "candidate_index": binding.candidate_index,
-                "evaluation": binding.evaluation,
-                "scorer_hash": binding.scorer_hash,
-            }
-        return config_hash(key)
+        return compute_atomic_group_id(
+            atomic_attack_name=atomic_attack.atomic_attack_name,
+            technique_eval_hash=atomic_attack.technique_eval_hash,
+            objective_scorer_binding=Scenario._get_scorer_binding(atomic_attack=atomic_attack),
+        )
 
     @staticmethod
     def _get_stored_run_plan(*, stored_result: ScenarioResult) -> ScenarioRunPlan | None:
