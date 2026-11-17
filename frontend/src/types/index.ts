@@ -2647,8 +2647,6 @@ export interface FindingField {
   colors: Record<string, FindingSeverityColor>
   hint: string | null
   section: string | null
-  /** Shown on the dashboard but left out of the Word and Markdown exports. */
-  internal: boolean
 }
 
 /** The active finding fields: the severity slot and the fields shown after it. */
@@ -2676,7 +2674,6 @@ export interface FindingValueRow {
   /** The option label of a matching choice value, otherwise the stored text. */
   value: string
   multiline: boolean
-  internal: boolean
 }
 
 export interface FindingListItem extends Finding {

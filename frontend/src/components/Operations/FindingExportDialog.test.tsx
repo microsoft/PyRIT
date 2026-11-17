@@ -608,34 +608,4 @@ describe('FindingExportDialog', () => {
     expect(await within(dialog).findByRole('checkbox', { name: GAMMA.title })).toBeChecked()
     expect(within(dialog).getByRole('checkbox', { name: 'Select all' })).toBeChecked()
   })
-
-  it('warns when selected findings have retired values', async () => {
-    const user = userEvent.setup()
-    const legacyAlpha = { ...ALPHA, retired: [['contoso_ticket', 'CONTOSO-42']] as Array<[string, string]> }
-    const legacyBeta = {
-      ...BETA,
-      retired: [['description', 'Kept from the earlier form.'], ['retired_owner', 'Contoso']] as Array<[string, string]>,
-    }
-    const singular = 'Retired fields aren\'t included in the export. 1 selected finding has retired values.'
-    const plural = 'Retired fields aren\'t included in the export. 2 selected findings have retired values.'
-    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([legacyAlpha, legacyBeta, GAMMA]))
-    renderDialog()
-    const dialog = await openDialog(user)
-    const selectAll = await within(dialog).findByRole('checkbox', { name: 'Select all' })
-    await user.click(selectAll)
-    expect(within(dialog).queryByText(/Retired fields/)).not.toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('checkbox', { name: legacyAlpha.title }))
-    expect(within(dialog).getByText(singular)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('checkbox', { name: GAMMA.title }))
-    expect(within(dialog).getByText(singular)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('checkbox', { name: legacyBeta.title }))
-    expect(within(dialog).getByText(plural)).toBeInTheDocument()
-    expect(within(dialog).queryByText(singular)).not.toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('checkbox', { name: legacyAlpha.title }))
-    await user.click(within(dialog).getByRole('checkbox', { name: legacyBeta.title }))
-    expect(within(dialog).queryByText(/Retired fields/)).not.toBeInTheDocument()
-    expect(within(dialog).getByRole('checkbox', { name: GAMMA.title })).toBeChecked()
-  })
 })

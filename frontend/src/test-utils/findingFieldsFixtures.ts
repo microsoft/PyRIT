@@ -13,7 +13,6 @@ function field(definition: FieldDefinition): FindingField {
     colors: {},
     hint: null,
     section: null,
-    internal: false,
     ...definition,
   }
 }
@@ -22,7 +21,7 @@ export function option(key: string, label: string, children: FindingFieldOption[
   return { key, label, children }
 }
 
-/** A Contoso deployment's fields: a severity level, a cascade, Other text, a required multiline and an internal field. */
+/** A Contoso deployment's fields: a severity level, a cascade, Other text, and fields in two sections. */
 export const CONTOSO_FINDING_FIELDS: FindingFields = {
   severity: field({
     key: 'severity',
@@ -71,7 +70,7 @@ export const CONTOSO_FINDING_FIELDS: FindingFields = {
       hint: 'List each prompt you sent to the Contoso assistant, in order.',
       section: 'Reproduction',
     }),
-    field({ key: 'owner', label: 'Owner', type: 'text', section: 'Tracking', internal: true }),
+    field({ key: 'owner', label: 'Owner', type: 'text', section: 'Tracking' }),
   ],
 }
 

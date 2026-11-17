@@ -49,7 +49,7 @@ def _listed(finding: dict, *rows: dict) -> dict:
 
 
 def _row(key: str, label: str, value: str, *, multiline: bool = False) -> dict:
-    return {"key": key, "label": label, "value": value, "multiline": multiline, "internal": False}
+    return {"key": key, "label": label, "value": value, "multiline": multiline}
 
 
 def test_operations_create_list_and_get(compatibility_headers: dict[str, str]) -> None:

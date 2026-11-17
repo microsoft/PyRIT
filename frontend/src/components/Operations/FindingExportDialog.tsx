@@ -41,16 +41,11 @@ function removedNotice(titles: readonly string[]): string {
   return `${names} ${verb} removed from your selection. Review the list and download again.`
 }
 
-function retiredNotice(count: number): string {
-  const subject = count === 1 ? '1 selected finding has' : `${count} selected findings have`
-  return `Retired fields aren't included in the export. ${subject} retired values.`
-}
-
 interface FindingExportDialogProps {
   operation: Operation
   /** The active finding fields, which decide the severity badges. */
   fields: FindingFields
-  /** Changes when the active fields change, which loads every page again with the new labels and retired values. */
+  /** Changes when the active fields change, which loads every page again with the new labels. */
   fieldsRevision: number
 }
 
@@ -78,7 +73,6 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
   const selectedIds = findings.filter(finding => selected.has(finding.id)).map(finding => finding.id)
   const allSelected = selectedIds.length === findings.length
   const selectAllChecked = allSelected ? true : selectedIds.length === 0 ? false : 'mixed'
-  const selectedWithRetired = findings.filter(finding => selected.has(finding.id) && finding.retired.length > 0).length
   const tooMany = selectedIds.length > MAX_EXPORT_FINDINGS
   // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
   // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
@@ -265,11 +259,6 @@ export default function FindingExportDialog({ operation, fields, fieldsRevision 
               Findings, attack objectives and score rationales can contain sensitive content. Nothing is redacted
               automatically.
             </MessageBarBody></MessageBar>
-            {selectedWithRetired > 0 && (
-              <MessageBar className={styles.messageBar} intent="warning" aria-live="polite"><MessageBarBody>
-                {retiredNotice(selectedWithRetired)}
-              </MessageBarBody></MessageBar>
-            )}
             {exportError && <MessageBar className={styles.messageBar} intent="error" aria-live="polite"><MessageBarBody>
               Could not export findings: {exportError}
             </MessageBarBody></MessageBar>}

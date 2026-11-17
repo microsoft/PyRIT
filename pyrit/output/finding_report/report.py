@@ -4,8 +4,11 @@
 """An Operation's findings laid out for a report, and the text every report format shares."""
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+
+from pyrit.models import FindingCreate, FindingFields
 
 EVIDENCE_NOTE = "Evidence is listed as references with links to the PyRIT dashboard; transcripts are not included."
 UNAVAILABLE_EVIDENCE = "Evidence unavailable"
@@ -69,6 +72,42 @@ class FindingReport:
 
     operation_name: str
     findings: tuple[FindingReportEntry, ...]
+
+
+def finding_report_entry(
+    *, finding: FindingCreate, fields: FindingFields, evidence: Sequence[FindingReportEvidence] = ()
+) -> FindingReportEntry:
+    """
+    Lay out a finding for a report, labelled by finding fields.
+
+    Multi-line fields go in the Finding column; choices and single-line text go in the Assessment column. Values that
+    no configured field uses follow in the Finding column, labelled by their stored keys.
+
+    Args:
+        finding (FindingCreate): The finding's title, severity and field values.
+        fields (FindingFields): The finding fields that label the values.
+        evidence (Sequence[FindingReportEvidence]): The finding's evidence references. Defaults to none.
+
+    Returns:
+        FindingReportEntry: The finding's severity, its filled fields in configured order, its retired values, and
+            its evidence.
+    """
+    description = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
+    current = (
+        FindingReportField(
+            label=row.label,
+            value=row.value,
+            column=FindingReportColumn.FINDING if row.multiline else FindingReportColumn.ASSESSMENT,
+        )
+        for row in description.rows
+    )
+    retired = (FindingReportField(label=key, value=value) for key, value in description.retired)
+    return FindingReportEntry(
+        title=finding.title,
+        severity=FindingReportField(label=fields.severity.label, value=description.severity_label),
+        fields=(*current, *retired),
+        evidence=tuple(evidence),
+    )
 
 
 def plain_text(value: str) -> str:

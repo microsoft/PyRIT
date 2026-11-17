@@ -61,7 +61,7 @@ CONTOSO = FindingFields(
             section="Reproduction",
             hint="List the prompts in the order you sent them.",
         ),
-        FindingField(key="owner", label="Owner", type="text", section="Tracking", internal=True),
+        FindingField(key="owner", label="Owner", type="text", section="Tracking"),
     ],
 )
 
@@ -209,12 +209,6 @@ def test_finding_fields_accept_keys_up_to_the_request_limits_and_reject_more() -
         FindingFields.model_validate({"severity": SEVERITY, "fields": [*fields, _choice(key="one_more")]})
 
 
-def test_internal_defaults_to_false_and_is_rejected_on_the_severity_slot() -> None:
-    assert FindingField.model_validate(_choice()).internal is False
-    with pytest.raises(ValidationError, match="The severity slot can't be internal."):
-        FindingFields.model_validate({"severity": {**SEVERITY, "internal": True}})
-
-
 def test_describe_values_lists_filled_values_in_configured_order_and_retired_keys() -> None:
     description = CONTOSO.describe_values(
         severity="sev1",
@@ -256,13 +250,11 @@ def test_describe_values_shows_an_unmatched_severity_as_typed() -> None:
     assert [(row.label, row.value) for row in description.rows] == [("Severity rationale", "remote_no_auth")]
 
 
-def test_describe_values_carries_multiline_and_internal_on_each_row() -> None:
+def test_describe_values_carries_multiline_on_each_row() -> None:
     description = CONTOSO.describe_values(severity="sev2", field_values={"owner": "dana", "steps": "1. Open\n2. Ask"})
     assert description.rows == [
-        FindingValueRow(
-            key="steps", label="Steps to reproduce", value="1. Open\n2. Ask", multiline=True, internal=False
-        ),
-        FindingValueRow(key="owner", label="Owner", value="dana", multiline=False, internal=True),
+        FindingValueRow(key="steps", label="Steps to reproduce", value="1. Open\n2. Ask", multiline=True),
+        FindingValueRow(key="owner", label="Owner", value="dana", multiline=False),
     ]
     assert description.retired == []
 
@@ -273,8 +265,8 @@ def test_describe_values_labels_the_default_fields() -> None:
     )
     assert description.severity_label == "Critical"
     assert description.rows == [
-        FindingValueRow(key="harm_type", label="Harm-type", value="Hate Speech", multiline=False, internal=False),
-        FindingValueRow(key="description", label="Description", value="Synthetic text", multiline=True, internal=False),
+        FindingValueRow(key="harm_type", label="Harm-type", value="Hate Speech", multiline=False),
+        FindingValueRow(key="description", label="Description", value="Synthetic text", multiline=True),
     ]
 
 

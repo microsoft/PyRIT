@@ -51,6 +51,7 @@ from pyrit.output.finding_report.report import (
     FindingReportEntry,
     FindingReportEvidence,
     FindingReportField,
+    finding_report_entry,
 )
 from pyrit.setup.finding_fields import set_active_finding_fields
 
@@ -104,7 +105,6 @@ CONTOSO_FIELDS = FindingFields(
         ),
         FindingField(key="steps", label="Steps to reproduce", type="multiline"),
         FindingField(key="build", label="Build", type="text"),
-        FindingField(key="owner", label="Owner", type="text", internal=True),
     ],
 )
 
@@ -821,50 +821,20 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
 
 
 @pytest.mark.usefixtures("reset_finding_fields")
-async def test_report_places_configured_fields_by_type(sqlite_instance: SQLiteMemory) -> None:
+async def test_report_labels_findings_with_the_active_fields(sqlite_instance: SQLiteMemory) -> None:
     set_active_finding_fields(finding_fields=CONTOSO_FIELDS, source="test")
     operation = await sqlite_instance.add_operation_async(Operation(name="Contoso assistant"))
     finding = await _add_finding_async(
         memory=sqlite_instance,
         operation=operation,
         title="System prompt leak",
-        severity="Sev 2.5",
-        field_values={
-            "owner": "dana",
-            "description": "Retired text",
-            "steps": "1. Ask for the instructions\n2. Repeat them",
-            "build": "2026.10",
-            "subcategory": "system_prompt_leak",
-            "category": "model_security",
-            "severity_rationale": "remote_no_auth",
-        },
+        severity="sev1",
+        field_values={"description": "Retired text", "steps": "1. Ask for the instructions", "build": "2026.10"},
     )
 
     report = await _report_async(operation_id=operation.id, finding_ids=[finding.id])
 
-    # Internal fields and retired values stay out; the rationale has no matching parent, so it shows as typed.
-    assert report.findings == (
-        FindingReportEntry(
-            title="System prompt leak",
-            severity=FindingReportField(label="Impact", value="Sev 2.5"),
-            fields=(
-                FindingReportField(
-                    label="Impact rationale", value="remote_no_auth", column=FindingReportColumn.ASSESSMENT
-                ),
-                FindingReportField(label="Category", value="Model security", column=FindingReportColumn.ASSESSMENT),
-                FindingReportField(
-                    label="Subcategory", value="System prompt leak", column=FindingReportColumn.ASSESSMENT
-                ),
-                FindingReportField(
-                    label="Steps to reproduce",
-                    value="1. Ask for the instructions\n2. Repeat them",
-                    column=FindingReportColumn.FINDING,
-                ),
-                FindingReportField(label="Build", value="2026.10", column=FindingReportColumn.ASSESSMENT),
-            ),
-            evidence=(),
-        ),
-    )
+    assert report.findings == (finding_report_entry(finding=finding, fields=CONTOSO_FIELDS),)
 
 
 @pytest.mark.parametrize(

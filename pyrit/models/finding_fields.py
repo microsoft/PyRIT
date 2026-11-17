@@ -66,8 +66,6 @@ class FindingField(BaseModel):
         colors (dict[str, FindingSeverityColor]): The severity slot's badge color for each top-level option.
         hint (str | None): Help text under the field in the finding dialog.
         section (str | None): A heading the finding dialog shows where the section changes.
-        internal (bool): Whether the field and its levels stay out of the Word and Markdown exports. The dashboard
-            still shows them.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -85,7 +83,6 @@ class FindingField(BaseModel):
     colors: dict[str, FindingSeverityColor] = {}
     hint: str | None = None
     section: str | None = None
-    internal: bool = False
 
     @field_validator("options", mode="before")
     @classmethod
@@ -227,7 +224,6 @@ class FindingValueRow(BaseModel):
     label: str
     value: str
     multiline: bool
-    internal: bool
 
 
 class FindingValueDescription(BaseModel):
@@ -269,8 +265,8 @@ class FindingFields(BaseModel):
             FindingField: The slot with ``required`` set to True.
 
         Raises:
-            ValueError: If the slot's key is not ``severity``, it is not a choice field, it sets
-                ``required=False``, or it is internal.
+            ValueError: If the slot's key is not ``severity``, it is not a choice field, or it sets
+                ``required=False``.
         """
         if value.key != "severity":
             raise ValueError(f"The severity slot's key must be 'severity', not '{value.key}'.")
@@ -278,8 +274,6 @@ class FindingFields(BaseModel):
             raise ValueError("The severity slot must be a choice field.")
         if "required" in value.model_fields_set and not value.required:
             raise ValueError("The severity slot is always required; leave required out or set it to True.")
-        if value.internal:
-            raise ValueError("The severity slot can't be internal.")
         return value.model_copy(update={"required": True})
 
     @model_validator(mode="after")
@@ -634,7 +628,6 @@ def _value_rows(*, field: FindingField, values: dict[str, str]) -> Iterator[Find
                 label=label,
                 value=match.label if match is not None else value,
                 multiline=field.type == FindingFieldType.MULTILINE,
-                internal=field.internal,
             )
 
 

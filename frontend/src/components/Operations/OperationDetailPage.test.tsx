@@ -33,7 +33,7 @@ const FINDING: FindingListItem = {
 }
 
 function row(key: string, label: string, value: string, extra: Partial<FindingValueRow> = {}): FindingValueRow {
-  return { key, label, value, multiline: false, internal: false, ...extra }
+  return { key, label, value, multiline: false, ...extra }
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'missing' } } }
@@ -454,7 +454,7 @@ it('shows configured rows and retired values on a finding card', async () => {
       row('subcategory', 'Subcategory', 'System prompt leak'),
       row('technique', 'Technique', 'Contoso persona swap'),
       row('steps', 'Steps to reproduce', steps, { multiline: true }),
-      row('owner', 'Owner', 'Contoso red team', { internal: true }),
+      row('owner', 'Owner', 'Contoso red team'),
     ],
     retired: [['description', note], ['contoso_ticket', 'CONTOSO-42']],
   }

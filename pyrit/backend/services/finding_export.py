@@ -29,7 +29,7 @@ from pyrit.backend.models.operations import (
     FindingExportRequest,
 )
 from pyrit.backend.services.operation_service import OperationService
-from pyrit.models import Finding, FindingFields, ScoreStatus
+from pyrit.models import ScoreStatus
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import (
     DETAIL_SEPARATOR,
@@ -38,9 +38,9 @@ from pyrit.output.finding_report.report import (
     UNAVAILABLE_EVIDENCE,
     FindingReport,
     FindingReportColumn,
-    FindingReportEntry,
     FindingReportEvidence,
     FindingReportField,
+    finding_report_entry,
     plain_text,
 )
 from pyrit.setup.finding_fields import get_active_finding_fields
@@ -114,46 +114,18 @@ async def _build_report_async(*, operation_id: UUID, request: FindingExportReque
         operation_id=operation_id, finding_ids=request.finding_ids
     )
     fields = get_active_finding_fields()
-    report_findings = []
-    for finding, evidence in selected:
-        severity, projected = _project_finding_fields(finding, fields=fields)
-        report_findings.append(
-            FindingReportEntry(
-                title=finding.title,
-                severity=severity,
-                fields=projected,
-                evidence=tuple(
-                    _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
-                    for item in evidence
-                ),
-            )
+    report_findings = tuple(
+        finding_report_entry(
+            finding=finding,
+            fields=fields,
+            evidence=[
+                _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
+                for item in evidence
+            ],
         )
-    return FindingReport(operation_name=operation.name, findings=tuple(report_findings))
-
-
-def _project_finding_fields(
-    finding: Finding, *, fields: FindingFields
-) -> tuple[FindingReportField, tuple[FindingReportField, ...]]:
-    """
-    Label a finding's severity and its filled fields, in configured order, and place each in a Word column.
-
-    Multiline text goes in the Finding column; choices and single-line text go in the Assessment column.
-    Internal fields and retired values are left out.
-
-    Returns:
-        tuple[FindingReportField, tuple[FindingReportField, ...]]: The severity, then the filled fields.
-    """
-    description = fields.describe_values(severity=finding.severity, field_values=finding.field_values)
-    projected = tuple(
-        FindingReportField(
-            label=row.label,
-            value=row.value,
-            column=FindingReportColumn.FINDING if row.multiline else FindingReportColumn.ASSESSMENT,
-        )
-        for row in description.rows
-        if not row.internal
+        for finding, evidence in selected
     )
-    return FindingReportField(label=fields.severity.label, value=description.severity_label), projected
+    return FindingReport(operation_name=operation.name, findings=report_findings)
 
 
 def _project_evidence(

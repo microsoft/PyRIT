@@ -50,7 +50,7 @@ async def test_list_labels_current_values_and_sets_retired_values_apart(
     finding = retired_value_finding_async
     page = await OperationService().list_findings_async(operation_id=finding.operation_id, limit=1, offset=0)
     assert page.items[0].rows == [
-        FindingValueRow(key="steps", label="Steps to reproduce", value="1. Open", multiline=True, internal=False)
+        FindingValueRow(key="steps", label="Steps to reproduce", value="1. Open", multiline=True)
     ]
     assert page.items[0].retired == [("description", "Old text")]
 
