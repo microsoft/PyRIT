@@ -53,6 +53,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
 ]
 
 EXTRA_TECHNIQUE_NAMES: list[str] = [
+    "prefill",
     "crescendo",
     "pair",
     "skeleton_key",
