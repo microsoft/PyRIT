@@ -40,6 +40,7 @@ import {
   getInitialFormValues,
   getParameterControlKind,
   isStructuredParameterFormValue,
+  nonNullableTypeName,
   type ParameterControlKind,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
@@ -107,11 +108,16 @@ function isEditableParameter(parameter: Parameter): boolean {
     return parameter.reference_type === 'target' || parameter.reference_type === 'converter'
   }
   if (parameter.choices?.length) return true
+  const typeName = nonNullableTypeName(parameter.type_name)
+  if (parameter.is_list) {
+    const element = /^list\[(.+)\]$/.exec(typeName)?.[1]
+    return element !== undefined && EDITABLE_PARAMETER_TYPES.has(`list[${nonNullableTypeName(element)}]`)
+  }
 
   const members: string[] = []
   let member = ''
   let depth = 0
-  for (const character of parameter.type_name) {
+  for (const character of typeName) {
     if (character === '|' && depth === 0) {
       members.push(member.trim())
       member = ''
@@ -195,6 +201,7 @@ function ParameterInput({
   const [manualValue, setManualValue] = useState<string | null>(null)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
   const help = parameter.description?.trim()
+  const typeName = nonNullableTypeName(parameter.type_name)
   const uploadsDisabled = disabled || !allowUploads
 
   useLayoutEffect(() => {
@@ -236,7 +243,7 @@ function ParameterInput({
     )
   }
 
-  if (parameter.type_name === 'bool') {
+  if (typeName === 'bool') {
     const checked = (value || parameterDefaultValue(parameter) || 'false').toLowerCase() === 'true'
     return (
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
@@ -271,8 +278,8 @@ function ParameterInput({
     )
   }
 
-  const isFile = parameter.type_name === 'Path'
-    || parameter.type_name === 'Path | str'
+  const isFile = typeName === 'Path'
+    || typeName === 'Path | str'
     || /path|file/i.test(parameter.name)
     || /path|file/i.test(parameter.description ?? '')
   const mappedImage = isFile && value.startsWith('data:')
@@ -281,7 +288,7 @@ function ParameterInput({
   const fileDetails = selectedFile?.value === value ? selectedFile : undefined
   const hasFileValue = isFile && value.startsWith('data:') && (Boolean(fileDetails) || manualValue !== value)
   const defaultValue = parameterDefaultValue(parameter)
-  const pathPlaceholder = parameter.type_name === 'Path | str'
+  const pathPlaceholder = typeName === 'Path | str'
     ? 'Upload a file or enter a URL' : 'Upload a file or enter a server path'
 
   return (
@@ -463,6 +470,18 @@ export default function CreateConverterDialog({
     () => converterTypes.find((item) => item.converter_type === selectedType),
     [converterTypes, selectedType],
   )
+  // Temporary settings can't move a copy to a different endpoint or credential.
+  const lockedParameterNames = useMemo(
+    () => new Set((editing ? selectedConverterType?.parameters ?? [] : [])
+      .filter((parameter) => parameter.copy_locked)
+      .map((parameter) => parameter.name)),
+    [selectedConverterType, editing],
+  )
+  const editableParameters = useMemo(
+    () => (selectedConverterType?.parameters ?? []).filter((parameter) => !lockedParameterNames.has(parameter.name)),
+    [selectedConverterType, lockedParameterNames],
+  )
+  const keepsSourceConnection = lockedParameterNames.size > 0
   const groupedConverterTypes = useMemo(() => {
     const groups = new Map<string, ConverterTypeEntry[]>()
     for (const converterType of converterTypes) {
@@ -594,7 +613,7 @@ export default function CreateConverterDialog({
   }
 
   const submit = async () => {
-    const missingParameters = (selectedConverterType?.parameters ?? []).some(
+    const missingParameters = editableParameters.some(
       (parameter) => parameter.required
         && !parameter.default
         && !acceptsEmptySearchReplaceValue(selectedType, parameter.name)
@@ -605,7 +624,7 @@ export default function CreateConverterDialog({
       return
     }
 
-    const parameters = (selectedConverterType?.parameters ?? []).filter(
+    const parameters = editableParameters.filter(
       (parameter) => !editing || changedParameters.has(parameter.name),
     )
     const params: Record<string, unknown> = Object.fromEntries(
@@ -640,8 +659,9 @@ export default function CreateConverterDialog({
           source_name: editing.spec?.source_name ?? editing.converter.converter_id,
           source_hash: editing.spec?.source_hash ?? editing.converter.identifier.hash,
           params: {
+            // Settings applied before copies kept their source's connection would now be refused.
             ...Object.fromEntries(Object.entries(editing.spec?.params ?? {})
-              .filter(([name]: [string, unknown]) => !changedParameters.has(name))),
+              .filter(([name]: [string, unknown]) => !changedParameters.has(name) && !lockedParameterNames.has(name))),
             ...params,
           },
         }
@@ -703,10 +723,6 @@ export default function CreateConverterDialog({
                 <MessageBarBody role="status">{fileNotice}</MessageBarBody>
               </MessageBar>}
               {loading && <Spinner label="Loading converter types..." />}
-              {editing && <Text>
-                Only changed fields replace source settings. These settings apply to this stage,
-                not the registered converter.
-              </Text>}
               {!loading && converterTypes.length === 0 && !error && (
                 <Text>No converter types are available.</Text>
               )}
@@ -804,9 +820,14 @@ export default function CreateConverterDialog({
                       }}
                     />
                   </HelpField>}
-                  {editing && <Text>Changes apply only to this stage. The registered converter stays unchanged.</Text>}
+                  {editing && (
+                    <Text>
+                      Only changed fields apply to this stage, not the registered converter.
+                      {keepsSourceConnection && ' Connection settings stay with the source converter.'}
+                    </Text>
+                  )}
                   <div className={styles.parameterGrid}>
-                    {selectedConverterType?.parameters.map((parameter) => (
+                    {editableParameters.map((parameter) => (
                       <div key={`${selectedType}:${parameter.name}`} className={styles.parameterRow}>
                         {parameter.variants || parameter.multiline ? (
                           <ParameterField

@@ -83,15 +83,11 @@ class RapidResponse(Scenario):
             scenario_result_id: Optional ID of an existing scenario
                 result to resume.
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
-
         technique_class = _build_rapid_response_technique()
 
         super().__init__(
             version=self.VERSION,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[

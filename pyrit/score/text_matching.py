@@ -6,7 +6,7 @@
 import re
 
 from pyrit.common.text_matching import ExactTextMatching
-from pyrit.models import Contains, Equals, Regex, TextMatcher
+from pyrit.models import Contains, Equals, Regex, StartsWith, TextMatcher
 
 
 def match_text(*, matcher: TextMatcher, text: str) -> bool:
@@ -26,6 +26,12 @@ def match_text(*, matcher: TextMatcher, text: str) -> bool:
     candidate = text.strip() if matcher.ignore_whitespace else text
     if isinstance(matcher, Regex):
         return re.search(matcher.value, candidate, flags=0 if matcher.case_sensitive else re.IGNORECASE) is not None
+    if isinstance(matcher, StartsWith):
+        return (
+            candidate.startswith(matcher.value)
+            if matcher.case_sensitive
+            else candidate.lower().startswith(matcher.value.lower())
+        )
     if isinstance(matcher, Equals):
         expected = matcher.value.strip() if matcher.ignore_whitespace else matcher.value
         return candidate == expected if matcher.case_sensitive else candidate.lower() == expected.lower()

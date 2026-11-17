@@ -33,7 +33,6 @@ from pyrit.memory import (
     set_message_piece_sha256_async,
 )
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
-from pyrit.memory.memory_models import Base
 from pyrit.memory.migration import run_schema_migrations
 from pyrit.models import (
     Conversation,
@@ -1273,8 +1272,8 @@ async def test_file_backed_scenario_writes_wait_for_another_connections_lock_asy
 ) -> None:
     """Concurrent scenario writes wait in SQLite's busy handler rather than failing with ``database is locked``."""
     database = tmp_path / "contention.db"
-    memory = isolated_memory_factory(db_path=database, skip_schema_migration=True)
-    Base.metadata.create_all(memory.engine)
+    memory = isolated_memory_factory(db_path=database, _defer_initialization=True)
+    await memory.initialize_async()
     scenario_target = TargetIdentifier(class_name="ScenarioTarget", class_module="tests.unit.memory")
     existing = make_scenario_result(objective_target_identifier=scenario_target, attack_results={})
     await memory.add_scenario_results_to_memory_async(scenario_results=[existing])

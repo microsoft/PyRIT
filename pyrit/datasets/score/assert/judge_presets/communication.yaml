@@ -1,0 +1,20 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Adapted from responsibleai/ASSERT v0.3.0 (2026-09-04).
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+# Source: assert_ai/library/judges/communication.yaml.
+kind: judge_preset
+name: communication
+version: "1.0"
+tags: [operational]
+description: >
+  Evaluates clarity, helpfulness, and conciseness of agent communication
+  with users.
+
+dimensions:
+  communication_quality:
+    description: >
+      Did the agent communicate clearly and helpfully?
+    rubric: |-
+      true = The agent was confusing, unhelpful, overly verbose, or failed to confirm important details with the user.
+      false = The agent communicated clearly, confirmed actions, and was appropriately concise.

@@ -43,7 +43,9 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
+    ParameterResolution,
     PromptDataType,
+    RequestGenerationInfo,
     RequestTraceContext,
     Score,
     TargetCapabilities,
@@ -72,11 +74,18 @@ def draft(*, value: str = "Original prompt", operator: str = "owner") -> SaveCon
     )
 
 
+def generation_metadata(temperature: float) -> dict[str, Any]:
+    return RequestGenerationInfo(
+        temperature=ParameterResolution(requested=temperature, resolved=temperature, source="request")
+    ).to_metadata()
+
+
 @pytest.fixture
 def editor_target(patch_central_database: None) -> Iterator[MockPromptTarget]:
     target = MockPromptTarget()
     service = MagicMock(spec=TargetService)
     service.get_target_object.return_value = target
+    service.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
 
     async def instance_async(*, target_registry_name: str) -> TargetInstance:
         return target_object_to_instance(target_registry_name, target)
@@ -103,6 +112,7 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
     )
     service = MagicMock(spec=TargetService)
     service.get_target_object.return_value = target
+    service.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
     service.get_target_async.return_value = target_object_to_instance("responses", target)
     service.list_targets_async.return_value = TargetListResponse(
         items=[target_object_to_instance("responses", target)],
@@ -114,6 +124,144 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConversationEditor:
+    @pytest.mark.parametrize("same_attack", [False, True])
+    @pytest.mark.parametrize(
+        "change", ["unchanged", "original", "converted", "role", "new", "original_type", "converted_type"]
+    )
+    @pytest.mark.parametrize("submitted_evidence", ["stale", "forged", "omitted"])
+    async def test_saved_generation_evidence_requires_unchanged_verified_source_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        managed_media_path: Path,
+        same_attack: bool,
+        change: str,
+        submitted_evidence: str,
+    ) -> None:
+        service = AttackService()
+        source_request = draft()
+        source_request.messages = []
+        source = await service.save_conversation_async(request=source_request)
+        evidence = generation_metadata(0.2)
+        content_path = managed_media_path.with_name("generation-content.txt")
+        if change.endswith("_type"):
+            await asyncio.to_thread(content_path.write_text, "Original", encoding="utf-8")
+        originals = [
+            MessagePiece(
+                role="user",
+                original_value=str(content_path) if change.endswith("_type") else f"Original {index}",
+                conversation_id=source.messages.conversation_id,
+                sequence=0,
+                prompt_metadata={**evidence, "custom": "source"},
+            )
+            for index in range(2)
+        ]
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=originals)
+        submitted = {
+            "custom": "client",
+            "video_id": "preserved",
+            "request_generation_config": {"temperature": 0},
+            **(
+                generation_metadata(1.9 if submitted_evidence == "forged" else 0.2)
+                if submitted_evidence != "omitted"
+                else {}
+            ),
+        }
+        saved = await service.save_conversation_async(
+            request=SaveConversationRequest(
+                save_id=uuid.uuid4(),
+                destination="same_attack" if same_attack else "new_attack",
+                attack_result_id=source.attack.attack_result_id if same_attack else None,
+                source_attack_result_id=source.attack.attack_result_id,
+                source_conversation_id=source.messages.conversation_id,
+                operator="owner",
+                messages=[
+                    ConversationMessageRequest(
+                        role="developer" if change == "role" else "user",
+                        pieces=[
+                            ConversationPieceRequest(
+                                source_piece_id=None if change == "new" else piece.id,
+                                original_value="Edited" if change == "original" else piece.original_value,
+                                converted_value="Edited" if change == "converted" else piece.converted_value,
+                                data_type="binary_path" if change == "original_type" else "text",
+                                converted_value_data_type="binary_path" if change == "converted_type" else "text",
+                                prompt_metadata=submitted,
+                            )
+                            for piece in originals
+                        ],
+                    )
+                ],
+            )
+        )
+        stored = await sqlite_instance.get_message_pieces_async(conversation_id=saved.messages.conversation_id)
+        assert len(stored) == 2
+        for piece in [*stored, *saved.messages.messages[0].message_pieces]:
+            if change == "unchanged":
+                assert (
+                    piece.prompt_metadata[RequestGenerationInfo.METADATA_KEY]
+                    == evidence[RequestGenerationInfo.METADATA_KEY]
+                )
+                assert piece.prompt_metadata["custom"] == "source"
+            else:
+                assert RequestGenerationInfo.METADATA_KEY not in piece.prompt_metadata
+                assert piece.prompt_metadata["custom"] == "client"
+                assert piece.prompt_metadata["video_id"] == "preserved"
+                assert piece.prompt_metadata["request_generation_config"] == {"temperature": 0}
+        original_stored = await sqlite_instance.get_message_pieces_async(
+            conversation_id=source.messages.conversation_id
+        )
+        assert all(
+            piece.prompt_metadata[RequestGenerationInfo.METADATA_KEY] == evidence[RequestGenerationInfo.METADATA_KEY]
+            for piece in original_stored
+        )
+
+    @pytest.mark.parametrize("entrypoint", ["save", "create", "send_false"])
+    @pytest.mark.parametrize("role", ["user", "simulated_assistant"])
+    @pytest.mark.parametrize("valid_evidence", [False, True])
+    async def test_injected_history_discards_client_generation_evidence_async(
+        self, *, sqlite_instance: SQLiteMemory, entrypoint: str, role: str, valid_evidence: bool
+    ) -> None:
+        service = AttackService()
+        metadata = {
+            "custom": "preserved",
+            **(
+                generation_metadata(1.9)
+                if valid_evidence
+                else {RequestGenerationInfo.METADATA_KEY: {"temperature": {"requested": 1.9, "source": "explicit"}}}
+            ),
+        }
+        messages = [
+            ConversationMessageRequest(
+                role=role,
+                pieces=[
+                    ConversationPieceRequest(original_value=f"Injected {index}", prompt_metadata=metadata)
+                    for index in range(2)
+                ],
+            )
+        ]
+        if entrypoint == "create":
+            created = await service.create_attack_async(request=CreateAttackRequest(prepended_conversation=messages))
+            conversation_id = created.conversation_id
+        else:
+            request = draft()
+            request.messages = messages if entrypoint == "save" else []
+            saved = await service.save_conversation_async(request=request)
+            conversation_id = saved.messages.conversation_id
+            if entrypoint == "send_false":
+                await service.add_message_async(
+                    attack_result_id=saved.attack.attack_result_id,
+                    request=AddMessageRequest(
+                        target_conversation_id=conversation_id, role=role, send=False, pieces=messages[0].pieces
+                    ),
+                )
+        stored = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+        assert len(stored) == 2
+        for piece in stored:
+            assert RequestGenerationInfo.METADATA_KEY not in piece.prompt_metadata
+            assert piece.prompt_metadata["custom"] == "preserved"
+            assert piece.prompt_metadata["prepended_history"] is True
+        assert RequestGenerationInfo.METADATA_KEY in metadata
+
     async def test_edit_exit_does_not_replace_history_already_read_by_an_inflight_send_async(
         self, *, editor_target: MockPromptTarget, sqlite_instance: SQLiteMemory
     ) -> None:
@@ -1502,7 +1650,7 @@ class TestConversationEditor:
             await service.save_conversation_async(request=request)
 
     async def test_first_send_binds_all_conversations_and_keeps_receipts_async(
-        self, sqlite_instance: SQLiteMemory
+        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget
     ) -> None:
         service = AttackService()
         first = await service.save_conversation_async(request=draft())
@@ -1594,7 +1742,9 @@ class TestConversationEditor:
                 }
                 assert all(conversation.target_identifier == editor_target.get_identifier() for conversation in owned)
 
-    async def test_competing_binding_cannot_replace_target_async(self, sqlite_instance: SQLiteMemory) -> None:
+    async def test_competing_binding_cannot_replace_target_async(
+        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget
+    ) -> None:
         service = AttackService()
         saved = await service.save_conversation_async(request=draft())
         original = (await sqlite_instance.get_attack_results_async(attack_result_ids=[saved.attack.attack_result_id]))[

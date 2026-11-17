@@ -225,7 +225,7 @@ class _ConverterSpecification:
     deferred_kwargs: tuple[tuple[str, Callable[[], Any]], ...] = ()
     target_kwarg: str | None = None
 
-    def create(self, *, converter_target: PromptTarget) -> Converter:
+    def create(self, *, converter_target: PromptTarget | None) -> Converter:
         """
         Create a fresh converter from this specification.
 
@@ -234,10 +234,15 @@ class _ConverterSpecification:
 
         Returns:
             Converter: The configured converter instance.
+
+        Raises:
+            ValueError: If a target-backed converter has no supplied generation target.
         """
         kwargs = dict(self.kwargs)
         kwargs.update((name, factory()) for name, factory in self.deferred_kwargs)
         if self.target_kwarg:
+            if converter_target is None:
+                raise ValueError("This converter requires an explicitly configured adversarial target.")
             kwargs[self.target_kwarg] = converter_target
         return self.factory(**kwargs)
 
@@ -323,7 +328,7 @@ class RedTeamAgent(Scenario):
         Args:
             adversarial_chat (PromptTarget | None): Target for multi-turn attacks
                 like Crescendo and RedTeaming. Additionally used for scoring defaults.
-                If not provided, a default OpenAI target will be created using environment variables.
+                If not provided, the explicitly configured adversarial role is used when required.
             attack_scoring_config (AttackScoringConfig | None): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
@@ -332,13 +337,11 @@ class RedTeamAgent(Scenario):
         Raises:
             ValueError: If attack_techniques is empty or contains unsupported techniques.
         """
-        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
-        if not attack_scoring_config:
-            attack_scoring_config = AttackScoringConfig(objective_scorer=self._get_default_objective_scorer())
+        self._adversarial_chat = adversarial_chat
         self._attack_scoring_config = attack_scoring_config
 
-        objective_scorer = self._attack_scoring_config.objective_scorer
-        if not objective_scorer:
+        objective_scorer = attack_scoring_config.objective_scorer if attack_scoring_config is not None else None
+        if attack_scoring_config is not None and objective_scorer is None:
             raise ValueError(
                 "AttackScoringConfig must have an objective_scorer. "
                 "Please provide attack_scoring_config with objective_scorer set."
@@ -348,6 +351,7 @@ class RedTeamAgent(Scenario):
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
+            adversarial_target=adversarial_chat,
             technique_class=FoundryTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=4
@@ -357,6 +361,16 @@ class RedTeamAgent(Scenario):
         )
 
         self._scenario_composites: list[FoundryComposite] = []
+
+    def _requires_default_adversarial_target(self) -> bool:
+        return any(
+            composition.attack is not None
+            or any(
+                self._CONVERTER_SPECIFICATIONS[converter].target_kwarg is not None
+                for converter in composition.converters
+            )
+            for composition in self._scenario_composites
+        )
 
     def _resolve_scenario_techniques(
         self,
@@ -494,6 +508,10 @@ class RedTeamAgent(Scenario):
         Returns:
             list[AtomicAttack]: The configured Foundry attacks.
         """
+        if self._requires_default_adversarial_target():
+            self._adversarial_chat = self._resolved_adversarial_target or get_default_adversarial_target()
+        if self._attack_scoring_config is None:
+            self._attack_scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
         seed_groups = list(context.seed_groups)
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
@@ -563,7 +581,7 @@ class RedTeamAgent(Scenario):
             attack_technique=AttackTechnique(attack=attack),
             seed_groups=seed_groups,
             adversarial_chat=self._adversarial_chat,
-            objective_scorer=self._attack_scoring_config.objective_scorer,
+            objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
         )
 

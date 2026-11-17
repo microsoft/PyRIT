@@ -156,7 +156,9 @@ def test_workflow_checks_out_immutable_tested_ref_and_its_parent() -> None:
 def test_rendered_cache_uses_tested_workflow_and_exact_source_commit() -> None:
     workflow = _workflow()
     matrix_step = _step(job="versions", name="Compute matrix")
-    assert matrix_step["env"]["WORKFLOW_HASH"] == "${{ hashFiles('.github/workflows/docs.yml') }}"
+    assert " ".join(matrix_step["env"]["WORKFLOW_HASH"].split()) == (
+        "${{ hashFiles('.github/workflows/docs.yml', '.github/docs-versions.yml', 'build_scripts/pin_docs_theme.py') }}"
+    )
     assert ".github/workflows/docs.yml" in _checkout("versions")["with"]["sparse-checkout"].splitlines()
     assert 'echo "workflow_hash=$WORKFLOW_HASH" >> "$GITHUB_OUTPUT"' in matrix_step["run"]
     assert workflow["jobs"]["versions"]["outputs"]["workflow_hash"] == "${{ steps.matrix.outputs.workflow_hash }}"
@@ -170,14 +172,51 @@ def test_rendered_cache_uses_tested_workflow_and_exact_source_commit() -> None:
     assert "restore-keys" not in cache
 
 
+def test_workflow_pins_immutable_theme_from_current_config() -> None:
+    helper_checkout = _step(job="build", name="Checkout docs build helper")
+    assert helper_checkout["if"] == "steps.cache.outputs.cache-hit != 'true'"
+    assert helper_checkout["with"] == {
+        "ref": "${{ github.sha }}",
+        "path": ".docs-workflow",
+        "sparse-checkout": "build_scripts/pin_docs_theme.py",
+        "sparse-checkout-cone-mode": "false",
+    }
+    pin = _step(job="build", name="Pin MyST theme")
+    assert pin["if"] == "steps.cache.outputs.cache-hit != 'true'"
+    assert "python .docs-workflow/build_scripts/pin_docs_theme.py" in pin["run"]
+    assert "--config doc/myst.yml" in pin["run"]
+    assert '--template "${{ matrix.template }}"' in pin["run"]
+
+    config = resolve_docs_matrix.load_config(CONFIG)
+    for entry in config["versions"]:
+        assert entry["template"].startswith("https://github.com/myst-templates/book-theme/archive/")
+        assert entry["template"].endswith(".zip")
+        assert len(entry["template"].removesuffix(".zip").rsplit("/", 1)[-1]) == 40
+
+
 def test_only_main_push_or_dispatch_can_publish_with_write_permissions() -> None:
     workflow = _workflow()
     assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["cache-mode"] == "read"
     jobs = workflow["jobs"]
-    for name in ("versions", "build", "compose"):
+    for name in ("versions", "build", "seed-cache", "compose"):
         assert jobs[name].get("permissions", workflow["permissions"]) == {"contents": "read"}
         assert "environment" not in jobs[name]
+    cache_seed = jobs["seed-cache"]
+    assert cache_seed["if"] == "github.event_name == 'push'"
+    assert cache_seed["cache-mode"] == "write-only"
+    assert cache_seed["needs"] == ["versions", "build"]
+    assert cache_seed["strategy"]["matrix"] == "${{ fromJson(needs.versions.outputs.matrix) }}"
+    assert _step(job="seed-cache", name="Download built site")["with"] == {
+        "name": "site-${{ matrix.slug }}",
+        "path": "doc/_build/html",
+    }
+    cache_save = _step(job="seed-cache", name="Save built site to cache")
+    assert cache_save["uses"].startswith("actions/cache/save@")
+    assert cache_save["with"]["key"] == (
+        "docs-${{ needs.versions.outputs.workflow_hash }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}"
+    )
     deploy = jobs["deploy"]
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
     assert deploy["needs"] == "compose"
