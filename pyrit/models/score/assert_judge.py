@@ -221,37 +221,3 @@ class AssertJudgePreset(_AssertJudgeModel):
             return cls.model_validate(dict(loaded))
         except ValidationError as error:
             raise ValueError(f"Invalid judge preset file {path}: {error}") from error
-
-
-class AssertJudgeConfig(_AssertJudgeModel):
-    """
-    The judge dimensions an ASSERT evaluation scores.
-
-    Dimensions resolve in order: built-ins, then built-in ``presets`` by name, then ``preset_files``,
-    then inline ``dimensions``. A later definition replaces an earlier one with the same name, and
-    ``disabled_dimensions`` removes names from the result. ``samples`` repeats every judge call and
-    aggregates the verdicts. ``objective_dimension`` is the boolean dimension a scenario uses as its
-    objective; every other dimension is recorded as an auxiliary score.
-    """
-
-    DEFAULT_OBJECTIVE_DIMENSION: ClassVar[str] = "policy_violation"
-
-    presets: tuple[_PresetName, ...] = ()
-    preset_files: tuple[Path, ...] = ()
-    dimensions: tuple[AssertJudgeDimension, ...] = ()
-    disabled_dimensions: tuple[_Identifier, ...] = ()
-    samples: Annotated[int, Field(strict=True, ge=1, le=25)] = 1
-    objective_dimension: _Identifier = DEFAULT_OBJECTIVE_DIMENSION
-
-    @model_validator(mode="after")
-    def _validate_names(self) -> Self:
-        names = [dimension.name for dimension in self.dimensions]
-        if len(set(names)) != len(names):
-            raise ValueError("Inline judge dimension names must be unique.")
-        if len(set(self.disabled_dimensions)) != len(self.disabled_dimensions):
-            raise ValueError("disabled_dimensions must not repeat a name.")
-        if len(set(self.presets)) != len(self.presets):
-            raise ValueError("presets must not repeat a preset.")
-        if len(set(self.preset_files)) != len(self.preset_files):
-            raise ValueError("preset_files must not repeat a file.")
-        return self
