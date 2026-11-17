@@ -296,6 +296,11 @@ class Execute(Scenario):
             policy=context.incompatible_technique_policy,
         ):
             raise IncompatibleTechniqueError(f"Technique '{name}' is incompatible with the objective target")
+        needs = factory.requirements.objective_scorer_for(attack_class=factory.attack_class)
+        if needs.preserves_float_scale_value and not self._objective_scorer.capabilities.preserves_float_scale_value:
+            raise IncompatibleTechniqueError(
+                f"Technique '{name}' ranks by float feedback, which the objective scorer does not keep"
+            )
         if self.params.get("prompt") is not None and not factory.supports_prompt:
             raise IncompatibleTechniqueError(f"Technique '{name}' cannot send a separate prompt")
         groups = await asyncio.to_thread(

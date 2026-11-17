@@ -64,6 +64,19 @@ class _FallbackScorer(Scorer):
             sub_scorers=[self._scorer.get_identifier(), self._fallback_scorer.get_identifier()],
         )
 
+    def _preserves_float_scale_value(self) -> bool:
+        """
+        Promise float feedback only when both children do.
+
+        The wrapper keeps the selected child's value, so the promise holds whichever child decides.
+
+        Returns:
+            bool: Whether both the primary and the fallback guarantee the value.
+        """
+        return self._scorer.capabilities.preserves_float_scale_value and (
+            self._fallback_scorer.capabilities.preserves_float_scale_value
+        )
+
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return both children for shared condition validation."""
         return (self._scorer, self._fallback_scorer)

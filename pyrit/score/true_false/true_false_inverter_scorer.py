@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
+    FloatFeedback,
     Scorable,
     ScorableUnion,
     Score,
@@ -161,9 +162,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             # The wrapped threshold score's float describes the uninverted verdict, and
             # normalize_score_to_float would prefer it over this one.
             if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:
-                inv_score.score_metadata = {
-                    k: v for k, v in inv_score.score_metadata.items() if k != ORIGINAL_FLOAT_VALUE_KEY
-                }
+                inv_score.score_metadata = FloatFeedback.remove_from(inv_score.score_metadata)
             inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
             inv_score.score_rationale = (
                 f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"

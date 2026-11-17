@@ -228,6 +228,7 @@ if TYPE_CHECKING:
         ScenarioSuiteSubmissionState,
     )
     from pyrit.models.score import (
+        FLOAT_FEEDBACK_METADATA_KEY,
         Acquisition,
         AnswerMatches,
         Condition,
@@ -242,6 +243,8 @@ if TYPE_CHECKING:
         ExecutionStep,
         ExecutionStepKind,
         ExecutionTraceObservationPayload,
+        FloatFeedback,
+        InvalidFloatFeedbackError,
         MatchesObjective,
         MessageScorable,
         Observation,
@@ -568,6 +571,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
     "ScorerCapabilities": "pyrit.models.score",
+    "FLOAT_FEEDBACK_METADATA_KEY": "pyrit.models.score",
+    "FloatFeedback": "pyrit.models.score",
+    "InvalidFloatFeedbackError": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",

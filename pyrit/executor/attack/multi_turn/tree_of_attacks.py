@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast, overload
 
 from treelib.tree import Tree
 
-from pyrit.common import REQUIRED_VALUE, apply_defaults, combine_dict
+from pyrit.common import REQUIRED_VALUE, apply_defaults, combine_dict, print_deprecation_message
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.exceptions import (
     ComponentRole,
@@ -50,6 +50,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    FloatFeedback,
     Message,
     MessagePiece,
     Score,
@@ -64,6 +65,7 @@ from pyrit.score import (
     NumericRubric,
     Scorer,
     ScorerPromptValidator,
+    ScorerRequirements,
     SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
     TrueFalseInverterScorer,
@@ -123,25 +125,57 @@ def _validate_stateful_clone_history_compatibility(
         )
 
 
+def _require_float_feedback(objective_scorer: object) -> TrueFalseScorer:
+    """
+    Check that a TAP objective scorer keeps a float value on every complete verdict.
+
+    Returns:
+        TrueFalseScorer: The scorer, unchanged.
+
+    Raises:
+        ValueError: If the scorer is not a true/false scorer that guarantees float feedback.
+    """
+    if not isinstance(objective_scorer, TrueFalseScorer):
+        raise ValueError("TAP requires a TrueFalseScorer as the objective scorer.")
+    if not objective_scorer.capabilities.preserves_float_scale_value:
+        raise ValueError(
+            f"TAP ranks branches by float feedback, so its objective scorer must keep a float value on each "
+            f"true/false result. {type(objective_scorer).__name__} does not guarantee one. Use a scorer that does, "
+            "such as FloatScaleThresholdScorer, or a TrueFalseFallbackScorer whose scorers both do."
+        )
+    return objective_scorer
+
+
+def _rank_key(score: Score) -> tuple[bool, bool, float]:
+    """
+    Order an objective score for pruning and for choosing the best node.
+
+    A true verdict ranks first, then complete scores by the float value the scorer promised
+    to keep. An undetermined score has no value and gets no made-up rank: it sorts after
+    every complete score.
+
+    Returns:
+        tuple[bool, bool, float]: The verdict, whether the score is complete, and its float value.
+    """
+    if score.is_undetermined:
+        return (False, False, 0.0)
+    return (score_is_true(score), True, FloatFeedback.require(score).value)
+
+
 class TAPAttackScoringConfig(AttackScoringConfig):
     """
     Scoring configuration specifically for Tree of Attacks with Pruning (TAP).
 
-    TAP requires a FloatScaleThresholdScorer for its objective scorer because it needs:
-    1. Granular float scores (0-1) for comparing and ranking nodes in the attack tree
-    2. A threshold for determining when the attack objective has been achieved
-
-    The FloatScaleThresholdScorer provides both: it wraps a float scorer and applies
-    a threshold to produce true/false results, while storing the original float value
-    in score metadata for granular comparison.
-
-    The threshold is derived from the scorer's threshold property.
+    TAP takes success from the objective scorer's true/false verdict and ranks branches by the
+    float value that scorer keeps on each verdict. Any ``TrueFalseScorer`` that guarantees that
+    value qualifies (see ``Scorer.capabilities``), such as ``FloatScaleThresholdScorer`` or a
+    ``TrueFalseFallbackScorer`` whose scorers both guarantee it.
     """
 
     def __init__(
         self,
         *,
-        objective_scorer: FloatScaleThresholdScorer,
+        objective_scorer: TrueFalseScorer,
         refusal_scorer: TrueFalseScorer | None = None,
         auxiliary_scorers: list[Scorer] | None = None,
         use_score_as_feedback: bool = True,
@@ -150,24 +184,17 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         Initialize TAP scoring configuration.
 
         Args:
-            objective_scorer (FloatScaleThresholdScorer): The scorer for evaluating attack success.
-                Must be a FloatScaleThresholdScorer to provide both granular float scores
-                for node comparison and a threshold for success determination.
+            objective_scorer (TrueFalseScorer): The scorer for evaluating attack success. Its verdict
+                decides success, and it must keep a float value on each verdict for ranking.
             refusal_scorer (TrueFalseScorer | None): Optional scorer for detecting refusals.
             auxiliary_scorers (list[Scorer] | None): Additional scorers for auxiliary metrics.
             use_score_as_feedback (bool): Whether to use scoring results as feedback. Defaults to True.
 
         Raises:
-            ValueError: If objective_scorer is not a FloatScaleThresholdScorer or
+            ValueError: If objective_scorer does not guarantee float feedback or
                 if refusal_scorer is not a TrueFalseScorer.
         """
-        # Validate TAP-specific objective scorer type
-        if not isinstance(objective_scorer, FloatScaleThresholdScorer):
-            raise ValueError(
-                "TAP requires a FloatScaleThresholdScorer as the objective scorer. "
-                "This scorer provides both granular float scores for node comparison "
-                "and a threshold for success determination."
-            )
+        _require_float_feedback(objective_scorer)
 
         # Validate refusal scorer type
         if refusal_scorer is not None and not isinstance(refusal_scorer, TrueFalseScorer):
@@ -181,17 +208,28 @@ class TAPAttackScoringConfig(AttackScoringConfig):
     @property
     def threshold(self) -> float:
         """
-        The threshold from the objective scorer.
+        The threshold of a ``FloatScaleThresholdScorer`` objective scorer.
+
+        Deprecated: TAP takes success from the scorer's verdict and no longer reads a threshold.
+        Read ``FloatScaleThresholdScorer.threshold`` on the scorer instead.
 
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
 
         Raises:
-            TypeError: If the configured objective scorer has an unexpected type.
+            TypeError: If the configured objective scorer is not threshold-backed.
         """
+        print_deprecation_message(
+            old_item="TAPAttackScoringConfig.threshold",
+            new_item="FloatScaleThresholdScorer.threshold on the objective scorer",
+            removed_in="1.4.0",
+        )
         objective_scorer = self.objective_scorer
         if not isinstance(objective_scorer, FloatScaleThresholdScorer):
-            raise TypeError("TAP objective scorer must be a FloatScaleThresholdScorer")
+            raise TypeError(
+                f"TAPAttackScoringConfig.threshold needs a FloatScaleThresholdScorer objective scorer, "
+                f"not {type(objective_scorer).__name__}. TAP decides success from the scorer's verdict."
+            )
         return objective_scorer.threshold
 
 
@@ -1581,6 +1619,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
     )
     ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
+    #: TAP ranks branches by the float value its objective scorer keeps on each verdict.
+    OBJECTIVE_SCORER_REQUIREMENTS = ScorerRequirements(preserves_float_scale_value=True)
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
         system_prompt_parameters=("desired_prefix",),
@@ -1618,10 +1658,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_converter_config (AttackConverterConfig | None): Configuration for attack converters.
                 Defaults to None.
             attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration for TAP.
-                The objective_scorer must be a FloatScaleThresholdScorer, which provides both
-                granular float scores for node comparison and a threshold for determining success.
-                Can be either AttackScoringConfig or TAPAttackScoringConfig. If not provided,
-                a default configuration with SelfAskScaleScorer and threshold 0.7 is created.
+                Can be either AttackScoringConfig or TAPAttackScoringConfig. The objective scorer's
+                true/false verdict decides success, and the scorer must keep a float value on each
+                verdict for ranking branches (``Scorer.capabilities.preserves_float_scale_value``),
+                as ``FloatScaleThresholdScorer`` does. If not provided, a default configuration
+                with SelfAskScaleScorer and threshold 0.7 is created.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use. Defaults to None.
             tree_width (int): Number of branches to explore in parallel at each level. Defaults to 3.
             tree_depth (int): Maximum number of iterations to perform. Defaults to 5.
@@ -1634,7 +1675,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 application by role and request formatting for targets without editable history.
 
         Raises:
-            ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,
+            ValueError: If attack_scoring_config's objective scorer does not guarantee float feedback,
                 if the adversarial target does not natively support the capabilities TAP needs,
                 or if parameters are invalid.
 
@@ -1732,7 +1773,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_scoring_config: Optional scoring config, including legacy base configs from direct callers.
 
         Returns:
-            A TAP scoring config with a float-scale threshold scorer.
+            A TAP scoring config whose objective scorer guarantees float feedback.
 
         Raises:
             ValueError: If a base config has no objective scorer or an incompatible scorer.
@@ -1772,13 +1813,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             objective_scorer = attack_scoring_config.objective_scorer
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required")
-            if not isinstance(objective_scorer, FloatScaleThresholdScorer):
-                raise ValueError(
-                    "TAP attack requires a FloatScaleThresholdScorer for objective_scorer. "
-                    "Please wrap your scorer in FloatScaleThresholdScorer with an appropriate threshold."
-                )
             tap_scoring_config = TAPAttackScoringConfig(
-                objective_scorer=objective_scorer,
+                objective_scorer=_require_float_feedback(objective_scorer),
                 refusal_scorer=attack_scoring_config.refusal_scorer,
                 auxiliary_scorers=attack_scoring_config.auxiliary_scorers or None,
                 use_score_as_feedback=attack_scoring_config.use_score_as_feedback,
@@ -2052,21 +2088,19 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     def _is_objective_achieved(self, context: TAPAttackContext) -> bool:
         """
-        Check if the objective has been achieved based on the best score.
+        Check if the objective has been achieved, from the best node's verdict.
 
-        Determines success by comparing the best objective score found so far
-        against the threshold from the objective scorer. The objective
-        is considered achieved when the score meets or exceeds the threshold.
+        Success is the objective scorer's true/false verdict, not a comparison of its float
+        value against a threshold. Ranking puts true verdicts first, so a successful node is
+        the best node whenever one exists on the frontier.
 
         Args:
             context (TAPAttackContext): The attack context containing the best score.
 
         Returns:
-            bool: True if the best_objective_score exists and is greater than or
-                equal to the objective scorer's threshold, False otherwise.
+            bool: True if the best objective score is a complete true verdict, False otherwise.
         """
-        normalized_score = normalize_score_to_float(context.best_objective_score)
-        return normalized_score >= self._attack_scoring_config.threshold
+        return score_is_true(context.best_objective_score)
 
     def _all_nodes_pruned(self, context: TAPAttackContext) -> bool:
         """
@@ -2363,10 +2397,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         """
         Get completed, on-topic nodes sorted by score in descending order.
 
-        Filters out incomplete, off-topic, or unscored nodes. Only nodes that have
-        successfully completed execution with valid float scores are included. The
-        sorting is stable, so nodes with equal scores retain their frontier order.
-        Complete scores rank above undetermined scores.
+        Filters out incomplete, off-topic, or unscored nodes. Nodes with a true verdict
+        rank first, so a successful branch is never pruned in favor of a higher-valued
+        false one. Complete scores then rank above undetermined scores, and complete
+        scores rank by the float value the objective scorer promised to keep. The sorting
+        is stable, so nodes with equal keys retain their frontier order.
 
         Args:
             nodes (list[_TreeOfAttacksNode]): List of nodes to filter and sort. May
@@ -2375,6 +2410,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Returns:
             list[_TreeOfAttacksNode]: A list of nodes that are completed, on-topic,
                 and have valid objective scores, sorted by score in descending order.
+
+        Raises:
+            InvalidFloatFeedbackError: If a complete score lacks the float value its scorer promised.
         """
         completed_nodes_with_scores: list[tuple[_TreeOfAttacksNode, Score]] = []
         for node in nodes:
@@ -2382,13 +2420,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             if node.completed and not node.off_topic and objective_score is not None:
                 completed_nodes_with_scores.append((node, objective_score))
 
-        completed_nodes_with_scores.sort(
-            key=lambda item: (
-                not item[1].is_undetermined,
-                normalize_score_to_float(item[1]),
-            ),
-            reverse=True,
-        )
+        completed_nodes_with_scores.sort(key=lambda item: _rank_key(item[1]), reverse=True)
 
         return [node for node, _ in completed_nodes_with_scores]
 
@@ -2468,7 +2500,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Create a success result for the attack.
 
         Constructs a `TAPAttackResult` indicating successful objective achievement.
-        The outcome reason includes the achieved score and threshold for transparency.
+        The outcome reason includes the successful node's score for transparency.
         Delegates to `_create_attack_result` for common result construction logic.
 
         Args:
@@ -2478,8 +2510,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Returns:
             TAPAttackResult: The success result indicating the attack achieved its objective.
         """
-        score_value = normalize_score_to_float(context.best_objective_score)
-        outcome_reason = f"Achieved score {score_value:.2f} >= threshold {self._attack_scoring_config.threshold}"
+        feedback = FloatFeedback.read(context.best_objective_score)
+        outcome_reason = "Objective scorer returned true" + (
+            f" (score {feedback.value:.2f})" if feedback is not None else ""
+        )
 
         return await self._create_attack_result_async(
             context=context, outcome=AttackOutcome.SUCCESS, outcome_reason=outcome_reason
@@ -2533,7 +2567,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             )
 
         normalized_best = normalize_score_to_float(best_score)
-        outcome_reason = f"Did not achieve threshold score. Best score: {normalized_best:.2f}"
+        outcome_reason = f"Objective scorer did not return true. Best score: {normalized_best:.2f}"
 
         return await self._create_attack_result_async(
             context=context, outcome=AttackOutcome.FAILURE, outcome_reason=outcome_reason

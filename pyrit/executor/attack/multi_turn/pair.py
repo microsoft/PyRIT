@@ -76,7 +76,8 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
             attack_converter_config (AttackConverterConfig | None): Configuration for
                 attack converters. Defaults to None.
             attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration.
-                The objective scorer must be a FloatScaleThresholdScorer. If not
+                The objective scorer's verdict decides success, and it must keep a float
+                value on each verdict, as FloatScaleThresholdScorer does. If not
                 provided, a default FloatScaleThresholdScorer wrapping
                 SelfAskScaleScorer (threshold 0.7) is created. Defaults to None.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use.

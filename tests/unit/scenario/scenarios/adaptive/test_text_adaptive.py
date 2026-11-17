@@ -76,6 +76,8 @@ def mock_objective_target() -> MagicMock:
 def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
+    # Like the default composite scorer, it keeps no float value on its verdicts.
+    mock.capabilities.preserves_float_scale_value = False
     return mock
 
 
@@ -905,6 +907,46 @@ class TestTextAdaptiveAtomicAttacks:
         # The skip reason mentions the required config type so operators can
         # diagnose the mismatch.
         assert any("tap" in r.getMessage() and "StrictScoringConfig" in r.getMessage() for r in caplog.records)
+
+    async def test_a_technique_needing_float_feedback_is_skipped_with_its_reason(
+        self, mock_objective_target, mock_objective_scorer, caplog
+    ):
+        """A scorer without float feedback skips TAP before construction, naming why."""
+        import logging
+
+        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
+
+        groups = {"violence": [_make_seed_group(value="obj")]}
+        good_factory = _make_fake_factory()
+        ranking_factory = _make_fake_factory()
+        ranking_factory.attack_class = TreeOfAttacksWithPruningAttack
+
+        with patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
+            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+            technique_class = scenario.get_technique_class()
+            factories = {"role_play_movie_script": good_factory, "tap": ranking_factory}
+            with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
+                with caplog.at_level(logging.WARNING):
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_techniques": [technique_class("role_play_movie_script"), technique_class("tap")],
+                        }
+                    )
+                    await scenario.initialize_async()
+                    techniques = scenario._build_techniques_dict(
+                        context=scenario._build_scenario_context(seed_groups_by_dataset={})
+                    )
+
+        ranking_factory.create.assert_not_called()
+        assert {b.name for b in techniques.values()} == {"role_play_movie_script"}
+        assert any("does not keep the float value" in r.getMessage() for r in caplog.records)
 
     async def test_factory_create_failure_propagates_async(self, mock_objective_target, mock_objective_scorer):
         """Unrelated factory construction errors must not become skipped work."""

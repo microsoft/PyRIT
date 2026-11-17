@@ -34,6 +34,8 @@ def _mock_id(name: str) -> ComponentIdentifier:
 def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_id("MockObjectiveScorer")
+    # Like the default composite scorer, it keeps no float value on its verdicts.
+    mock.capabilities.preserves_float_scale_value = False
     return mock
 
 

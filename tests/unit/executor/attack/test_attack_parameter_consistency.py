@@ -349,7 +349,9 @@ def tap_attack(
     mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
     mock_threshold_scorer.threshold = 0.8
     mock_threshold_scorer.scorer_type = "true_false"
-    mock_threshold_scorer.score_async = AsyncMock(return_value=[success_score])
+    mock_threshold_scorer.score_async = AsyncMock(
+        return_value=[success_score.model_copy(update={"score_metadata": {"original_float_value": 0.9}})]
+    )
     mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
 
     adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
@@ -566,7 +568,9 @@ class TestNextMessageSentFirst:
         mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
         mock_threshold_scorer.threshold = 0.8
         mock_threshold_scorer.scorer_type = "true_false"
-        mock_threshold_scorer.score_async = AsyncMock(return_value=[success_score])
+        mock_threshold_scorer.score_async = AsyncMock(
+            return_value=[success_score.model_copy(update={"score_metadata": {"original_float_value": 0.9}})]
+        )
         mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
@@ -917,7 +921,9 @@ class TestPrependedConversationInMemory:
         mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
         mock_threshold_scorer.threshold = 0.8
         mock_threshold_scorer.scorer_type = "true_false"
-        mock_threshold_scorer.score_async = AsyncMock(return_value=[success_score])
+        mock_threshold_scorer.score_async = AsyncMock(
+            return_value=[success_score.model_copy(update={"score_metadata": {"original_float_value": 0.9}})]
+        )
         mock_threshold_scorer.get_identifier.return_value = _mock_scorer_id("FloatScaleThresholdScorer")
 
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)

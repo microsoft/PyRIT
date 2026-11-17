@@ -775,6 +775,11 @@ class TestExecute:
             with pytest.raises(IncompatibleTechniqueError, match="objective target"):
                 await scenario.initialize_async()
 
+    async def test_tap_needs_a_scorer_that_keeps_float_feedback_async(self) -> None:
+        scenario = _scenario(scorer=SubStringScorer(substring="x"), scenario_techniques=["tap"])
+        with pytest.raises(IncompatibleTechniqueError, match="'tap' ranks by float feedback"):
+            await scenario.initialize_async()
+
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_permitted_history_adaptation_is_applied_to_each_attempt_async(self, *, retries: int) -> None:
         scorer = SubStringScorer(substring="not in the target response")

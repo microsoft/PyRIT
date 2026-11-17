@@ -133,6 +133,14 @@ await output_attack_async(result)
 # `TAPAttack` explores several adversarial prompt branches in parallel, scoring each and pruning the
 # weak ones. `tree_width` and `tree_depth` control the search size — kept small here. (`PAIRAttack`
 # is the single-branch special case.)
+#
+# TAP takes success from the objective scorer's true/false verdict and ranks branches by the float
+# value that scorer keeps on each verdict, so a branch the scorer judged a success is never pruned in
+# favor of a higher-valued failure. Any `TrueFalseScorer` that guarantees that value qualifies, as
+# `scorer.capabilities.preserves_float_scale_value` reports: `FloatScaleThresholdScorer` does, and so
+# does a `TrueFalseFallbackScorer` whose scorers both do. Scenarios that build TAP from a technique
+# check this first: when their objective scorer does not keep the value, TAP is skipped, or setup
+# raises under `incompatible_technique_policy: raise`, rather than TAP being judged by another scorer.
 
 # %%
 from pyrit.executor.attack import TAPAttack

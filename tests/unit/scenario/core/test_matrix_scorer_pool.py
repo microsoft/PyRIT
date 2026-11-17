@@ -8,10 +8,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack
+from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, TreeOfAttacksWithPruningAttack
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.models import (
     AttackSeedGroup,
+    ComponentIdentifier,
+    MessageScorable,
     ScenarioRunPlanGroupKind,
+    Scorable,
+    Score,
+    ScoringExpectation,
     SeedObjective,
     ToolCallRequirement,
     ToolsCalled,
@@ -28,6 +34,8 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackB
 from pyrit.score import (
     CompatibleScorers,
     ConflictingScorerRequirementsError,
+    FloatScaleScorer,
+    FloatScaleThresholdScorer,
     MessageToolCallScorer,
     ScorerCandidate,
     ScorerRequirements,
@@ -38,12 +46,19 @@ HATE = "harm.hate"
 VIOLENCE = "harm.violence"
 
 
-def _factory(*, name: str, requirements: TechniqueRequirements | None = None) -> MagicMock:
+def _factory(
+    *,
+    name: str,
+    requirements: TechniqueRequirements | None = None,
+    attack_class: type = PromptSendingAttack,
+    scoring_config_type: type | None = None,
+) -> MagicMock:
     factory = MagicMock(spec=AttackTechniqueFactory)
     factory.name = name
     factory.seed_technique = None
     factory.adversarial_chat = None
-    factory.attack_class = PromptSendingAttack
+    factory.attack_class = attack_class
+    factory.scoring_config_type = scoring_config_type
     factory.requirements = requirements or TechniqueRequirements()
     factory.resolve_adversarial_chat.return_value = None
     factory.create.side_effect = lambda **_: AttackTechnique(attack=MagicMock(spec=AttackStrategy))
@@ -252,3 +267,44 @@ class TestPoolBaselines:
         ]
         assert all(a.objective_scorer_binding is None for a in attacks)
         assert attacks[0].seed_groups == [*DATASETS["airt_hate"], *DATASETS["airt_violence"]]
+
+
+class _Scale(FloatScaleScorer):
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTapSelection:
+    def _tap(self) -> MagicMock:
+        return _factory(
+            name="tap", attack_class=TreeOfAttacksWithPruningAttack, scoring_config_type=TAPAttackScoringConfig
+        )
+
+    def test_tap_gets_a_scorer_that_keeps_float_feedback_in_its_own_config_type(self) -> None:
+        plain, ranked = SubStringScorer(substring="x"), FloatScaleThresholdScorer(scorer=_Scale(), threshold=0.7)
+        tap = self._tap()
+        attacks = _builder(CompatibleScorers(candidates=[plain, ranked])).build(
+            technique_factories={"tap": tap}, dataset_groups={"d": [_group("o1")]}
+        )
+        assert attacks[0]._objective_scorer is ranked
+        config = tap.create.call_args.kwargs["attack_scoring_config"]
+        assert type(config) is TAPAttackScoringConfig
+        assert config.objective_scorer is ranked
+
+    def test_a_scenario_scorer_without_float_feedback_skips_tap_instead_of_being_replaced(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        tap = self._tap()
+        with caplog.at_level(logging.WARNING):
+            attacks = _builder(SubStringScorer(substring="x")).build(
+                technique_factories={"tap": tap}, dataset_groups={"d": [_group("o1")]}
+            )
+        assert attacks == []
+        tap.create.assert_not_called()
+        assert "float_feedback" in caplog.text

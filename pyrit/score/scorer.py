@@ -20,6 +20,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Condition,
     ContentScorable,
+    FloatFeedback,
     Identifiable,
     MatchesObjective,
     Message,
@@ -80,6 +81,18 @@ def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
     """
     raw: Any = score._snapshot_participation
     return raw if _is_snapshot_participation(raw) else None
+
+
+def _keeps_float_feedback(score: Score) -> bool:
+    """
+    Report whether a stored result meets the float feedback promise.
+
+    Returns:
+        bool: True for undetermined or non-true/false results, and for complete ones with a usable value.
+    """
+    if score.score_type != "true_false" or score.is_undetermined:
+        return True
+    return FloatFeedback.read(score) is not None
 
 
 def _is_snapshot_participation(value: Any) -> bool:
@@ -574,6 +587,22 @@ class Scorer(Identifiable, abc.ABC):
             preserves_float_scale_value=self._preserves_float_scale_value(),
         )
 
+    def _validate_float_feedback(self, *, scores: Sequence[Score]) -> None:
+        """
+        Hold this scorer to its float feedback promise, when it makes one.
+
+        Args:
+            scores (Sequence[Score]): Results this scorer is about to return.
+
+        Raises:
+            InvalidFloatFeedbackError: If a complete true/false result lacks a finite value in ``[0, 1]``.
+        """
+        if not self._preserves_float_scale_value():
+            return
+        for score in scores:
+            if score.score_type == "true_false" and not score.is_undetermined:
+                FloatFeedback.require(score)
+
     def _preserves_float_scale_value(self) -> bool:
         """
         Report whether every complete, applicable true/false result keeps its float value.
@@ -920,11 +949,13 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             ValueError: If a wrapper reuses an intermediate result ID.
+            InvalidFloatFeedbackError: If this scorer promises float feedback and a result lacks it.
         """
         if not scores:
             return []
 
         self.validate_return_scores(scores=scores)
+        self._validate_float_feedback(scores=scores)
         intermediate_ids = {str(score.id) for score in intermediate_scores}
         if any(str(score.id) in intermediate_ids for score in scores):
             raise ValueError("A wrapper must create a new result instead of reusing an intermediate score ID.")
@@ -960,6 +991,9 @@ class Scorer(Identifiable, abc.ABC):
 
         Returns:
             list[Score]: The validated child scores.
+
+        Raises:
+            InvalidFloatFeedbackError: If this scorer promises float feedback and a result lacks it.
         """
         self._validate_expectation(expectation=expectation)
         with _scoring_scorable_context(scorable):
@@ -967,6 +1001,7 @@ class Scorer(Identifiable, abc.ABC):
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
         if scores:
             self.validate_return_scores(scores=scores)
+            self._validate_float_feedback(scores=scores)
             _collect_scores(scores)
         return scores
 
@@ -1047,6 +1082,9 @@ class Scorer(Identifiable, abc.ABC):
         """
         prepared = self.prepare_expectation(expectation=expectation)
         candidates = self.find_matching_scores(scores=scores, scorable=scorable, expectation=prepared)
+        if self._preserves_float_scale_value():
+            # A stored result without the promised value cannot stand in for a fresh one.
+            candidates = [score for score in candidates if _keeps_float_feedback(score)]
         if not candidates:
             return []
         return await self._filter_matching_scores_by_snapshot_async(

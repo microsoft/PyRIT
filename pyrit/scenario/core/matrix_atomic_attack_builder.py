@@ -539,7 +539,7 @@ class MatrixAtomicAttackBuilder:
                         dataset_name=dataset_name,
                         target_name=target_name,
                     )
-                    scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
+                    scoring_config = self._scoring_config_for(factory=factory, objective_scorer=objective_scorer)
                     per_group = any(group.adversarial_prompts is not None for group in compatible_groups) or len(
                         {group.objective.value for group in compatible_groups}
                     ) != len(compatible_groups)
@@ -590,6 +590,30 @@ class MatrixAtomicAttackBuilder:
 
         return atomic_attacks
 
+    def _scoring_config_for(
+        self, *, factory: AttackTechniqueFactory, objective_scorer: TrueFalseScorer
+    ) -> AttackScoringConfig:
+        """
+        Build the scoring config type the technique's attack accepts, carrying the chosen scorer.
+
+        An attack that narrows its config type, as TAP does with ``TAPAttackScoringConfig``,
+        would otherwise drop a plain config and judge with its own default scorer, so the
+        selected scorer would not be the one that judges. The legacy path for scorers that
+        are not true/false scorers keeps the plain config.
+
+        Returns:
+            AttackScoringConfig: The config to pass to ``factory.create``.
+        """
+        required = factory.scoring_config_type
+        if (
+            self._pool is None
+            or not isinstance(required, type)
+            or required is AttackScoringConfig
+            or not issubclass(required, AttackScoringConfig)
+        ):
+            return AttackScoringConfig(objective_scorer=objective_scorer)
+        return required(objective_scorer=objective_scorer)
+
     def _select_objective_scorer(
         self,
         *,
@@ -615,7 +639,9 @@ class MatrixAtomicAttackBuilder:
         if self._pool is None:
             return None
         requirements = ScorerRequirements.combine(
-            self._scorer_requirements, factory.requirements.objective_scorer, dataset_requirements
+            self._scorer_requirements,
+            factory.requirements.objective_scorer_for(attack_class=factory.attack_class),
+            dataset_requirements,
         )
         expectations = [
             prepare_seed_group(

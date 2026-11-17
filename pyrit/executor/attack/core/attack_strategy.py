@@ -53,7 +53,7 @@ from pyrit.models import (
     UndeterminedScoreError,
 )
 from pyrit.prompt_target import TargetRequirements
-from pyrit.score import AttemptObserver
+from pyrit.score import AttemptObserver, ScorerRequirements
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Collection, Generator
@@ -736,6 +736,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
     ADVERSARIAL_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: What the attack's algorithm needs from its objective scorer, such as float feedback for
+    #: ranking. Scenarios combine this with technique and dataset requirements before selecting
+    #: a scorer. Never an evaluation, which belongs to the scenario or the dataset.
+    OBJECTIVE_SCORER_REQUIREMENTS: ClassVar[ScorerRequirements] = ScorerRequirements()
     #: A fixed execution-input contract for attacks that do not expose ``params_type``.
     FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 

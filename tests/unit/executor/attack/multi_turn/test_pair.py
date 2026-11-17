@@ -72,6 +72,8 @@ def _make_threshold_scorer(threshold: float = 0.7) -> FloatScaleThresholdScorer:
 def _make_true_false_scorer() -> TrueFalseScorer:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.scorer_type = "true_false"
+    # A plain true/false scorer makes no float feedback promise.
+    scorer.capabilities.preserves_float_scale_value = False
     scorer.score_async = AsyncMock(return_value=[])
     scorer.get_identifier.return_value = ComponentIdentifier(
         class_name="MockScorer",
