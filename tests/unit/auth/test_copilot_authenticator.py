@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.auth.copilot_authenticator import CopilotAuthenticator
+from pyrit.auth import CopilotAuthenticator
 
 
 @pytest.fixture

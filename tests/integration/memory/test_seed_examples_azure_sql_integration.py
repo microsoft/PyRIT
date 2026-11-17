@@ -9,8 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import delete
 
-from pyrit.memory import AzureSQLMemory
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import AzureSQLMemory, SeedEntry
 from pyrit.models import SeedObjective, SeedPrompt
 
 

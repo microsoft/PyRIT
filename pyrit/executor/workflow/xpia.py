@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, overload
 
-from pyrit.common.utils import combine_dict, get_kwarg_param, is_numeric_value
+from pyrit.common import combine_dict, get_kwarg_param
+from pyrit.common.utils import is_numeric_value
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow.core import (
     WorkflowContext,

@@ -12,11 +12,11 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.common.utils import combine_list
+from pyrit.common import combine_list
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed import (  # AwareDatetimeUTC is runtime-required by Pydantic
@@ -28,7 +28,7 @@ from pyrit.models.seeds.seed_group import (  # runtime-required by Pydantic fiel
     SeedGroup,
     SeedUnion,
 )
-from pyrit.models.seeds.seed_objective import SeedObjective
+from pyrit.models.seeds.seed_objective import SeedObjective, build_objective_decomposition_tree
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pydantic.types import NonNegativeInt
+
+    from pyrit.models.decomposition import DecompositionTree
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,10 @@ class SeedDataset(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    # YAML fields that nest decomposed objectives under their parent.
+    SUB_OBJECTIVES_KEY: ClassVar[str] = "sub_objectives"
+    SUB_OBJECTIVE_KEY_FIELD: ClassVar[str] = "key"
 
     data_type: str | None = "text"
     name: str | None = None
@@ -131,7 +137,7 @@ class SeedDataset(BaseModel):
         default_dataset_name = data.get("dataset_name") or data.get("name")
 
         normalized: list[Any] = []
-        for p in raw_seeds:
+        for p in cls._flatten_sub_objectives(raw_seeds):
             if isinstance(p, Seed):
                 normalized.append(p)
                 continue
@@ -170,7 +176,7 @@ class SeedDataset(BaseModel):
         return data
 
     @classmethod
-    def from_yaml_file(cls, file: str | Path) -> SeedDataset:
+    def from_yaml_file(cls, file: str | Path, *, default_dataset_name: str | None = None) -> SeedDataset:
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
@@ -180,6 +186,8 @@ class SeedDataset(BaseModel):
 
         Args:
             file: The input file path.
+            default_dataset_name: Dataset name used when the YAML declares neither
+                ``dataset_name`` nor ``name``.
 
         Returns:
             SeedDataset: The loaded dataset.
@@ -192,7 +200,7 @@ class SeedDataset(BaseModel):
         # it at the top of this module would create a circular import.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_dataset_from_yaml
 
-        return load_seed_dataset_from_yaml(file)
+        return load_seed_dataset_from_yaml(file, default_dataset_name=default_dataset_name)
 
     def get_values(
         self,
@@ -284,8 +292,12 @@ class SeedDataset(BaseModel):
         data = dict(data)
 
         # Shallow-copy each dict seed so alias resolution doesn't mutate caller-owned dicts;
-        # non-dict seeds (e.g. Seed instances) pass through untouched.
-        seeds_data: list[Any] = [dict(seed) if isinstance(seed, dict) else seed for seed in data.get("seeds", [])]
+        # non-dict seeds (e.g. Seed instances) pass through untouched. Nested sub_objectives are
+        # flattened first so they can share a prompt_group_alias with top-level prompts.
+        seeds_data: list[Any] = [
+            dict(seed) if isinstance(seed, dict) else seed
+            for seed in cls._flatten_sub_objectives(data.get("seeds", []))
+        ]
 
         dict_seeds = [s for s in seeds_data if isinstance(s, dict)]
         for seed in dict_seeds:
@@ -309,6 +321,145 @@ class SeedDataset(BaseModel):
         """
         for seed in self.seeds:
             seed.value = seed.render_template_value(**kwargs)
+
+    def get_decomposition_tree(self) -> DecompositionTree:
+        """
+        Build the decomposition trees of this dataset's objectives.
+
+        Only objectives with a parent, paths, or children are included.
+
+        Returns:
+            DecompositionTree: The validated trees.
+
+        Raises:
+            ValueError: If a parent is missing from the dataset, the parents form a cycle, or a path
+                step is not a direct child of the path's owner.
+        """
+        return build_objective_decomposition_tree(self.objectives)
+
+    @classmethod
+    def _flatten_sub_objectives(cls, raw_seeds: Sequence[Any]) -> list[Any]:
+        """
+        Expand nested ``sub_objectives`` into flat objectives linked to their parents.
+
+        Each sub-objective has a ``key`` that is unique among its siblings, and the parent's
+        ``paths`` name those keys. A path is either a mapping with ``steps`` (and optionally
+        ``name`` and ``description``) or a bare list of steps. Seeds without sub-objectives pass
+        through unchanged.
+
+        Args:
+            raw_seeds (Sequence[Any]): Seed dicts or Seed objects.
+
+        Returns:
+            list[Any]: The seeds, with each parent followed by its descendants.
+        """
+        flattened: list[Any] = []
+        for seed in raw_seeds:
+            if isinstance(seed, dict) and cls.SUB_OBJECTIVES_KEY in seed:
+                flattened.extend(cls._flatten_objective(seed=seed, parent_id=None))
+            else:
+                if isinstance(seed, dict):
+                    cls._require_children_for_symbolic_paths(seed)
+                flattened.append(seed)
+        return flattened
+
+    @classmethod
+    def _flatten_objective(cls, *, seed: dict[str, Any], parent_id: uuid.UUID | None) -> list[dict[str, Any]]:
+        """
+        Flatten one objective and its nested sub-objectives.
+
+        Returns:
+            list[dict[str, Any]]: The objective followed by its descendants, depth-first.
+
+        Raises:
+            ValueError: If a decomposed seed is not an objective, or a sub-objective key or path
+                step is invalid.
+        """
+        cls._require_children_for_symbolic_paths(seed)
+        seed = dict(seed)
+        if seed.setdefault("seed_type", "objective") != "objective":
+            raise ValueError(f"Only objectives can have {cls.SUB_OBJECTIVES_KEY}; got seed_type '{seed['seed_type']}'.")
+        seed_id = uuid.UUID(str(seed["id"])) if seed.get("id") else uuid.uuid4()
+        seed["id"] = seed_id
+        if parent_id is not None:
+            seed["parent_objective_id"] = parent_id
+        children = seed.pop(cls.SUB_OBJECTIVES_KEY, None) or []
+        keys: dict[str, uuid.UUID] = {}
+        descendants: list[dict[str, Any]] = []
+        for child in children:
+            key, child = cls._take_sub_objective_key(child=child, taken=keys)
+            child_id = uuid.UUID(str(child["id"])) if child.get("id") else uuid.uuid4()
+            child["id"] = keys[key] = child_id
+            descendants.extend(cls._flatten_objective(seed=child, parent_id=seed_id))
+        if children:
+            seed["paths"] = [cls._resolve_path_keys(path=path, keys=keys) for path in seed.get("paths") or []]
+        return [seed, *descendants]
+
+    @classmethod
+    def _require_children_for_symbolic_paths(cls, seed: dict[str, Any]) -> None:
+        """
+        Distinguish unresolved child keys from flat UUID-based path steps.
+
+        Raises:
+            ValueError: If symbolic path steps have no sub-objectives to resolve.
+        """
+        paths = seed.get("paths")
+        if seed.get(cls.SUB_OBJECTIVES_KEY) or not isinstance(paths, (list, tuple)):
+            return
+        for path in paths:
+            steps = path.get("steps") if isinstance(path, dict) else path
+            if not isinstance(steps, (list, tuple)):
+                continue
+            for step in steps:
+                if isinstance(step, str):
+                    try:
+                        uuid.UUID(step)
+                    except ValueError as exc:
+                        raise ValueError(f"Symbolic paths require non-empty {cls.SUB_OBJECTIVES_KEY}.") from exc
+
+    @classmethod
+    def _take_sub_objective_key(cls, *, child: Any, taken: dict[str, uuid.UUID]) -> tuple[str, dict[str, Any]]:
+        """
+        Separate a sub-objective's key from its seed fields.
+
+        Returns:
+            tuple[str, dict[str, Any]]: The key and the remaining seed fields.
+
+        Raises:
+            ValueError: If the sub-objective is not a mapping, its key is missing or repeated, or it
+                sets its own parent.
+        """
+        if not isinstance(child, dict):
+            raise ValueError(f"Each entry of {cls.SUB_OBJECTIVES_KEY} must be a mapping.")
+        child = dict(child)
+        key = child.pop(cls.SUB_OBJECTIVE_KEY_FIELD, None)
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"Each sub-objective needs a non-empty '{cls.SUB_OBJECTIVE_KEY_FIELD}'.")
+        if key in taken:
+            raise ValueError(f"Sub-objective key '{key}' is used more than once under the same parent.")
+        if "parent_objective_id" in child:
+            raise ValueError("A nested sub-objective takes its parent from its position, not parent_objective_id.")
+        return key, child
+
+    @staticmethod
+    def _resolve_path_keys(*, path: Any, keys: dict[str, uuid.UUID]) -> dict[str, Any]:
+        """
+        Replace a path's sub-objective keys with their IDs.
+
+        Returns:
+            dict[str, Any]: The path fields, with step IDs.
+
+        Raises:
+            ValueError: If the path is malformed or names an unknown key.
+        """
+        path = {"steps": path} if isinstance(path, list) else dict(path) if isinstance(path, dict) else None
+        if path is None or not isinstance(path.get("steps"), list):
+            raise ValueError("Each path must be a list of sub-objective keys or a mapping with 'steps'.")
+        unknown = [step for step in path["steps"] if step not in keys]
+        if unknown:
+            raise ValueError(f"Path steps name unknown sub-objective keys: {', '.join(map(str, unknown))}.")
+        path["steps"] = [keys[step] for step in path["steps"]]
+        return path
 
     @staticmethod
     def _set_seed_group_id_by_alias(seed_prompts: Sequence[dict[str, object]]) -> None:

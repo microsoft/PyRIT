@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
+from pyrit.common import AuthMode  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.param_markers import Param
@@ -50,6 +51,11 @@ class TargetIdentifier(ComponentIdentifier):
     top_p: Annotated[float | None, Evaluate.Include()] = None
     #: Maximum requests per minute.
     max_requests_per_minute: Annotated[int | None, Evaluate.Exclude()] = None
+    #: Hash of the request a raw HTTP target sends (method, path, query, body and headers, without
+    #: credentials), leaving out the deployment's scheme, host and port. Two such targets with
+    #: different request policies, such as different judge instructions, do not behave the same,
+    #: so the hash is part of evaluation. It is computed by the target, never a constructor argument.
+    http_request_fingerprint: Annotated[str | None, Evaluate.Include(), Param.Exclude()] = None
     #: Inner targets of a multi-target (e.g., ``RoundRobinTarget``), typed
     #: recursively. An included constructor parameter (the ctor arg is also
     #: ``targets``, a list) resolved by name from the target registry.
@@ -58,7 +64,7 @@ class TargetIdentifier(ComponentIdentifier):
     #: class attribute (not a constructor argument, not part of identity). Read by
     #: the registry so ``TargetMetadata`` can describe the class without building it.
     supported_auth_modes: Annotated[
-        list[Literal["api_key", "identity"]] | None,
+        list[AuthMode] | None,
         Evaluate.Exclude(),
         Param.ClassAttr(attr_name="supported_auth_modes"),
     ] = None

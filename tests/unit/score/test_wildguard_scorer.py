@@ -13,7 +13,7 @@ from openai.types.completion import Completion
 from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.prompt_target import OpenAICompletionTarget, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import MessageScorable, WildGuardLabel, WildGuardScorer, render_wildguard_prompt

@@ -91,7 +91,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           instance.setActiveAccount(redirectResult.account)
         } else if (!instance.getActiveAccount()) {
           const accounts = instance.getAllAccounts()
-          if (accounts.length > 0) instance.setActiveAccount(accounts[0])
+          if (accounts.length > 0 && accounts[0]) instance.setActiveAccount(accounts[0])
         }
 
         const requestedPath = typeof redirectResult?.state === 'string' ? redirectResult.state : null

@@ -11,7 +11,7 @@ parameters (no tree branching, no off-topic pruning) hardcoded.
 
 import logging
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.component import PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,

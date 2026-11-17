@@ -11,17 +11,18 @@ accessors, and the filter wiring. These tests drive a minimal subclass that keep
 every base default.
 """
 
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Event
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, assert_type
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.registry.registry import ParamBagRegistry, Registry, SupportsParamBag, _get_metadata_value, _matches_filters
-from pyrit.registry.registry_metadata import RegistryMetadata
+from pyrit.registry import ParamBagRegistry, Registry, RegistryMetadata
+from pyrit.registry.registry import SupportsParamBag, _get_metadata_value, _matches_filters
 
 
 class SampleWidget:
@@ -402,18 +403,39 @@ def test_matches_filters_unknown_include_key_fails():
     assert not _matches_filters(meta, include_filters={"nope": "x"})
 
 
+def test_matches_filters_falls_back_to_params() -> None:
+    metadata = SimpleNamespace(params={"mode": "slow"})
+
+    assert _matches_filters(metadata, include_filters={"mode": "slow"})
+    assert not _matches_filters(metadata, include_filters={"mode": "fast"})
+    assert not _matches_filters(metadata, exclude_filters={"mode": "slow"})
+    assert _matches_filters(metadata, exclude_filters={"mode": "fast"})
+
+
 def test_get_metadata_value_falls_back_to_params():
     class HasParams:
         def __init__(self) -> None:
             self.params = {"k": "v"}
 
-    found, value = _get_metadata_value(HasParams(), "k")
+    found, value = _get_metadata_value(HasParams(), key="k")
     assert found is True
     assert value == "v"
 
-    missing_found, missing_value = _get_metadata_value(HasParams(), "missing")
+    missing_found, missing_value = _get_metadata_value(HasParams(), key="missing")
     assert missing_found is False
     assert missing_value is None
+
+
+@pytest.mark.parametrize("value", ["attribute", None])
+def test_get_metadata_value_prefers_attributes_over_params(value: str | None) -> None:
+    metadata = SimpleNamespace(k=value, params={"k": "param"})
+
+    assert _get_metadata_value(metadata, key="k") == (True, value)
+
+
+def test_get_metadata_value_key_is_keyword_only() -> None:
+    parameter = inspect.signature(_get_metadata_value).parameters["key"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 class _WidgetBase:

@@ -3,7 +3,7 @@
 
 """The trace context emitted for one target request."""
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -33,12 +33,12 @@ class RequestTraceContext(BaseModel):
         return {self.METADATA_KEY: self.traceparent}
 
     @classmethod
-    def from_metadata(cls, metadata: dict[str, Any]) -> "RequestTraceContext | None":
+    def from_metadata(cls, metadata: dict[str, Any]) -> Self | None:
         """
         Read the request context, rejecting malformed stored metadata.
 
         Returns:
-            RequestTraceContext | None: The recorded context, or None if absent.
+            Self | None: The recorded context, or None if absent.
         """
         if cls.METADATA_KEY not in metadata:
             return None

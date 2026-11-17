@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 import pyrit.executor.attack as attack_module
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+from pyrit.executor.attack import AttackStrategy
 
 # tests/unit/docs -> tests/unit -> tests -> workspace_root
 _EXECUTOR_DOC_PATH = Path(__file__).parent.parent.parent.parent / "doc" / "code" / "executor"

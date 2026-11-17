@@ -9,11 +9,15 @@ import pytest
 
 from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
-from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+    DatasetSource,
+)
+from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
 
@@ -138,7 +142,7 @@ class TestEncodingInitialization:
         """Test that initialization raises DatasetConstraintError when datasets are unavailable."""
         from unittest.mock import patch
 
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
         # Don't mock _resolve_seed_groups_by_dataset_async; let it try to load from empty memory.
         # Disable the provider fallback so memory stays empty and the scenario raises.
@@ -619,7 +623,7 @@ class TestEncodingDatasetConfiguration:
     def test_default_dataset_config_has_max_size(self, mock_objective_scorer):
         """Test that each child of the default config caps samples at 10 per dataset."""
         config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
-        assert [child.max_dataset_size for child in config._configurations] == [10, 10]
+        assert [child.max_total for child in config._configurations] == [10, 10]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -628,7 +632,7 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
 
     def test_build_attack_groups_transforms_seeds(self, mock_memory_seeds):
         """Test that _build_attack_groups transforms raw seeds into objective-bearing AttackSeedGroups."""
-        config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"])
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")])
         result = config._build_attack_groups(mock_memory_seeds)
 
         assert len(result) == len(mock_memory_seeds)
@@ -644,14 +648,16 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
 
     def test_build_attack_groups_empty_returns_empty(self):
         """Test that _build_attack_groups returns an empty list when given no seeds."""
-        config = EncodingDatasetConfiguration(dataset_names=["empty_dataset"])
+        config = EncodingDatasetConfiguration(sources=[DatasetSource(name="empty_dataset")])
         assert config._build_attack_groups([]) == []
 
     async def test_get_attack_seed_groups_async_transforms_memory_seeds(self, mock_memory_seeds):
         """Test that get_attack_seed_groups_async loads seeds and shapes them via _build_attack_groups."""
         from unittest.mock import patch
 
-        config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], auto_fetch=False)
+        config = EncodingDatasetConfiguration(
+            sources=[DatasetSource(name="garak_slur_terms_en")], fetch=DatasetFetchPolicy.NEVER
+        )
         with patch.object(
             EncodingDatasetConfiguration,
             "_collect_named_seeds_async",
@@ -665,9 +671,11 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
 
     async def test_get_attack_seed_groups_async_raises_when_empty(self):
         """Test that get_attack_seed_groups_async raises DatasetConstraintError when nothing resolves."""
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
-        config = EncodingDatasetConfiguration(dataset_names=["empty_dataset"], auto_fetch=False)
+        config = EncodingDatasetConfiguration(
+            sources=[DatasetSource(name="empty_dataset")], fetch=DatasetFetchPolicy.NEVER
+        )
 
         with pytest.raises(DatasetConstraintError):
             await config.get_attack_seed_groups_async()
@@ -679,12 +687,12 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
     def test_encoding_dataset_config_can_be_initialized_with_dataset_names(self):
         """Test that EncodingDatasetConfiguration can be initialized with dataset_names."""
         config = EncodingDatasetConfiguration(
-            dataset_names=["garak_slur_terms_en", "garak_web_html_js"],
-            max_dataset_size=5,
+            sources=[DatasetSource(name="garak_slur_terms_en"), DatasetSource(name="garak_web_html_js")],
+            max_total=5,
         )
 
         assert config.dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
-        assert config.max_dataset_size == 5
+        assert config.max_total == 5
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -697,7 +705,7 @@ class TestEncodingBaselineUniformity:
         from pyrit.models import AttackSeedGroup, SeedObjective
 
         seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_total=3)
 
         first_sample = [("inline", group) for group in seed_groups[:3]]
         second_sample = [("inline", group) for group in seed_groups[5:8]]

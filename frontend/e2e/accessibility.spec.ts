@@ -294,9 +294,13 @@ test.describe("Accessibility", () => {
             }),
             makeTarget({
               target_registry_name: "a11y-second-target",
-              target_type: "TextTarget",
+              target_type: "OpenAIResponseTarget",
               endpoint: "https://test.com/text",
               model_name: "text-model",
+            }),
+            makeTarget({
+              target_registry_name: "a11y-sdk-target",
+              target_type: "TextTarget",
             }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
@@ -312,6 +316,8 @@ test.describe("Accessibility", () => {
     const table = page.getByRole("table");
     await expect(table).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Filter by type:", exact: true })).toBeVisible();
+    await expect(page.getByText("a11y-sdk-target", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("TextTarget", { exact: true })).toHaveCount(0);
   });
 
   test("major views expose page headings and one primary navigation landmark", async ({ page }) => {

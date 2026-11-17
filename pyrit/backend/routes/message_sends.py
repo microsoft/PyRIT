@@ -8,9 +8,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
+from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
-from pyrit.backend.services.attack_service import get_attack_service
+from pyrit.backend.services import get_attack_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.message_send_service import MessageSendNotFoundError, get_message_send_service
 from pyrit.memory.memory_interface import AttackStateConflictError
@@ -43,8 +44,11 @@ async def submit_message_send_async(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ManualSendQueueFullError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404 if "not found" in str(exc).lower() else 400, detail=str(exc)) from exc
+        is_not_found = "not found" in str(exc).lower() or "does not exist" in str(exc).lower()
+        raise HTTPException(status_code=404 if is_not_found else 400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to accept message send for attack '%s'", attack_result_id)
         raise HTTPException(status_code=500, detail="Could not accept the message send. Check server logs.") from exc

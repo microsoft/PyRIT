@@ -118,7 +118,7 @@ def test_true_false_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch
     """Test that TrueFalseScorer.get_scorer_metrics returns None when eval_hash is None."""
     from unittest.mock import patch as _patch
 
-    from pyrit.score.true_false.self_ask_true_false_scorer import (
+    from pyrit.score import (
         SelfAskTrueFalseScorer,
     )
 
@@ -137,7 +137,7 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
     """Test that TrueFalseScorer.get_scorer_metrics returns metrics when eval_hash is set."""
     from unittest.mock import patch as _patch
 
-    from pyrit.score.true_false.self_ask_true_false_scorer import (
+    from pyrit.score import (
         SelfAskTrueFalseScorer,
     )
 

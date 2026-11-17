@@ -17,7 +17,21 @@ from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])
 ```
 
-This configuration allows you to run most PyRIT notebooks immediately.
+This registers targets and scorers from your environment configuration. Custom
+initializers and directly constructed targets are also supported.
+
+## Scan targets
+
+You can browse and configure scenarios without model credentials. Before launching,
+select the target to test and any scoring or adversarial targets the chosen technique
+needs, or configure them through an initializer. Deterministic scorers do not need a
+scoring model, and techniques without generation do not need an adversarial model.
+
+In CoPyRIT, configure targets in the Registry and scorer defaults through initializers.
+Select registered targets and an objective scorer in the scan form; suite launches use
+configured scorer defaults. Missing launch requirements produce configuration errors
+rather than an implicit OpenAI target. Helper roles must be configured explicitly.
+See the [scanner options](../../scanner/0_scanner.md#running-scans) for CLI selections.
 
 ## Configuration Options
 

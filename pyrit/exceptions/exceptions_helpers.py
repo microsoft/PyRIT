@@ -73,6 +73,31 @@ def log_exception(retry_state: RetryCallState) -> None:
         collector.record(retry_state=retry_state)
 
 
+def summarize_exception(error: BaseException) -> str:
+    """
+    Describe an exception, including the child failures of exception groups.
+
+    ``str()`` of an exception group only gives its message and child count.
+
+    Args:
+        error: The exception to describe.
+
+    Returns:
+        str: ``str(error)``, followed by each child's type, summary, and direct explicit
+            cause if ``error`` is a group. Non-group errors are unchanged.
+    """
+    if not isinstance(error, BaseExceptionGroup):
+        return str(error)
+    children = []
+    for child in error.exceptions:
+        child_summary = summarize_exception(child)
+        if child.__cause__ is not None:
+            child_summary = f"{child_summary} Caused by {type(child.__cause__).__name__}: {child.__cause__}"
+        child_type = type(child).__name__
+        children.append(f"{child_type}: {child_summary}" if child_summary else child_type)
+    return f"{error}: [{'; '.join(children)}]"
+
+
 def remove_start_md_json(response_msg: str) -> str:
     """
     Check the message for supported start markers and remove them if present.

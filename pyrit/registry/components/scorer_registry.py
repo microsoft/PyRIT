@@ -27,15 +27,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.models.identifiers import ScorerIdentifier
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentType, ScorerIdentifier
 from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
     from types import ModuleType
 
-    from pyrit.score.scorer import Scorer
+    from pyrit.score import Scorer
 
 
 @dataclass(frozen=True)
@@ -85,7 +84,7 @@ class ScorerRegistry(InstanceHoldingRegistry["Scorer", ScorerMetadata]):
 
     def _base_type(self) -> type[Scorer]:
         """Return the ``Scorer`` base class, imported lazily."""
-        from pyrit.score.scorer import Scorer
+        from pyrit.score import Scorer
 
         return Scorer
 

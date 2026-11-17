@@ -14,10 +14,10 @@ from sqlalchemy.dialects import mssql
 from unit.mocks import add_legacy_attack_results_async, get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
-from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
+from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, TargetIdentifierEntry
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -399,6 +399,39 @@ async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface)
     objectives = {result.objective for result in retrieved_results}
     assert "Test objective for success" in objectives
     assert "Another objective for failure" in objectives
+
+
+@pytest.mark.parametrize(
+    ("searched", "matching_objective", "decoy_objective"),
+    [
+        ("100%", "Reach 100% coverage", "Reach 1000 coverage"),
+        ("snake_case", "Use snake_case names", "Use snakeXcase names"),
+    ],
+)
+async def test_get_attack_results_by_objective_treats_like_wildcards_literally_async(
+    *, sqlite_instance: MemoryInterface, searched: str, matching_objective: str, decoy_objective: str
+) -> None:
+    """The objective filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
+    matching = AttackResult(conversation_id="conv_match", objective=matching_objective, outcome=AttackOutcome.SUCCESS)
+    decoy = AttackResult(conversation_id="conv_decoy", objective=decoy_objective, outcome=AttackOutcome.SUCCESS)
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[matching, decoy])
+
+    retrieved_results = await sqlite_instance.get_attack_results_async(objective=searched)
+
+    assert [result.conversation_id for result in retrieved_results] == ["conv_match"]
+
+
+def test_attack_result_objective_filter_escapes_sql_server_bracket_wildcard() -> None:
+    """SQL Server also treats ``[`` as a LIKE wildcard, so the filter escapes it too."""
+    conditions = MemoryInterface._build_attack_result_scalar_conditions(query=_AttackResultQuery(objective="[a]%"))
+    sql = str(
+        select(AttackResultEntry.id)
+        .where(*conditions)
+        .compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+
+    assert "'%/[a]/%%'" in sql
+    assert "ESCAPE '/'" in sql
 
 
 async def test_get_attack_results_by_outcome(sqlite_instance: MemoryInterface):
@@ -928,7 +961,7 @@ async def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instan
     Simulates the race condition where entry is loaded, then another update modifies
     the DB, and finally the stale entry is used for an unrelated update.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     attack_result = AttackResult(
         conversation_id="conv_1",
@@ -1830,7 +1863,7 @@ async def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instan
 
 
 def _eval_hash_for(class_name: str) -> str:
-    from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+    from pyrit.models import AtomicAttackEvaluationIdentifier
 
     return AtomicAttackEvaluationIdentifier(
         AtomicAttackIdentifier.build(

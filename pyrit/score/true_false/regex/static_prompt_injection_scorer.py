@@ -17,6 +17,9 @@ class StaticPromptInjectionScorer(RegexScorer):
     injection, and encoding-based evasion. Complements the API-based
     PromptShieldScorer as a fast, local, zero-dependency pre-filter.
 
+    DeepSeek sentence and tool boundaries support canonical U+2581 separators
+    as well as space-separated variants, with fullwidth or ASCII pipes.
+
     Returns True if any prompt injection pattern is found in the text.
 
     Note:
@@ -62,6 +65,10 @@ class StaticPromptInjectionScorer(RegexScorer):
             r"(?i)(?:\[/?INST\]|<</?SYS>>|<\|im_start\|>|<\|im_end\|>"
             r"|<\|start_header_id\|>|<\|end_header_id\|>|<\|eot_id\|>|<\|begin_of_text\|>"
             r"|<start_of_turn>|<end_of_turn>"
+            r"|<\|(?:START_OF_TURN_TOKEN|END_OF_TURN_TOKEN|SYSTEM_TOKEN|USER_TOKEN|CHATBOT_TOKEN)\|>"
+            r"|<(?:｜|\|)(?:(?:begin|end)[ \u2581]of[ \u2581]sentence|User|Assistant|Thought|"
+            r"tool[ \u2581](?:calls?|outputs?)[ \u2581](?:begin|end)|tool[ \u2581]sep)(?:｜|\|)>"
+            r"|\[/?(?:AVAILABLE_TOOLS|TOOL_CALLS|TOOL_RESULTS)\]"
             r"|<\|system\|>|<\|user\|>|<\|assistant\|>|<\|endoftext\|>|<\|end\|>"
             r"|<\|pad\|>)"
         ),

@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from pyrit.analytics import (
+    compute_scenario_statistics,
+)
 from pyrit.analytics.scenario_statistics import (
     combine_execution_counts,
-    compute_scenario_statistics,
     select_execution_attack_result_ids,
 )
 

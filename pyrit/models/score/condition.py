@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_o
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
-from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.code_execution import (  # runtime-required by Pydantic
     _ProgramInvocation,
     _RuntimeProfileName,
 )
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
-from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.seeds.assert_generation import AssertTaxonomy  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from typing import Self
@@ -166,36 +167,106 @@ class MatchesObjective(Condition):
     condition_type: Literal["matches_objective"] = "matches_objective"
 
 
+class ToolArgumentRequirement(BaseModel):
+    """
+    One argument a tool call must have been made with, compared by a text matcher.
+
+    ``name`` is an exact, case-sensitive top-level argument key. A string value is compared
+    as it is; any other JSON value is compared as its compact JSON text, with sorted keys.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1, strict=True)
+    matcher: TextMatcher
+
+
 class ToolCallRequirement(BaseModel):
-    """One exact, case-sensitive tool name required as execution evidence."""
+    """
+    One exact, case-sensitive tool name required as execution evidence.
+
+    ``arguments`` optionally narrows the requirement to a call made with matching arguments:
+    one execution of the tool must satisfy every argument requirement. Evidence that does not
+    retain a call's arguments cannot show that it does, so it leaves the requirement
+    undetermined rather than satisfied.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: ToolName
+    #: Left out of serialization while empty, so name-only requirements keep their stored form and fingerprint.
+    arguments: tuple[ToolArgumentRequirement, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class ToolsCalled(Condition):
-    """Require every named tool to have an execution attempt, regardless of success."""
+    """
+    Require every named tool to have an execution attempt, regardless of success.
+
+    By default this is a subset match: other tools may also have run. ``exhaustive`` asks for
+    an exact match instead, so the named tools ran and no other tool did. An exhaustive
+    condition with no tools asks that no tool ran at all.
+
+    An exhaustive match can be disproved by one observed execution of an unnamed tool, but
+    confirming it needs evidence complete enough to rule out every other tool.
+    """
 
     condition_type: Literal["tools_called"] = "tools_called"
     tools: tuple[ToolCallRequirement, ...]
+    #: Left out of serialization while false, so subset conditions keep their stored form and fingerprint.
+    exhaustive: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
 
     @model_validator(mode="after")
     def _validate_tools(self) -> ToolsCalled:
         """
-        Require a nonempty set of distinct exact names.
+        Require distinct exact names, and at least one unless the match is exhaustive.
 
         Returns:
             ToolsCalled: The validated condition.
 
         Raises:
-            ValueError: If there are no tools or an exact name repeats.
+            ValueError: If a subset match names no tools or an exact name repeats.
         """
-        if not self.tools:
-            raise ValueError("ToolsCalled requires at least one tool.")
+        if not self.tools and not self.exhaustive:
+            raise ValueError("ToolsCalled requires at least one tool unless exhaustive is set.")
         names = [tool.name for tool in self.tools]
         if len(set(names)) != len(names):
             raise ValueError("ToolsCalled requires each tool name once.")
+        return self
+
+
+class ToolsCalledInOrder(Condition):
+    """
+    Require the named tools to have execution attempts in this relative order.
+
+    Each listed tool needs an execution attempt that finished before an execution attempt of
+    the next listed tool started. Other tools, and further attempts of the listed tools, may run
+    in between. Success is not required. Overlapping or unfinished attempts do not establish an
+    order in either direction.
+
+    Each tool may be named only once, so an order that returns to a tool (for example
+    ``read_file`` then ``send_email`` then ``read_file`` again) is out of scope. Distinct names
+    keep each tool's attempts in a single pool, which keeps the match sound.
+    """
+
+    condition_type: Literal["tools_called_in_order"] = "tools_called_in_order"
+    tools: tuple[ToolCallRequirement, ...]
+
+    @model_validator(mode="after")
+    def _validate_tools(self) -> ToolsCalledInOrder:
+        """
+        Require at least two distinct exact names.
+
+        Returns:
+            ToolsCalledInOrder: The validated condition.
+
+        Raises:
+            ValueError: If fewer than two tools are named or an exact name repeats.
+        """
+        if len(self.tools) < 2:
+            raise ValueError("ToolsCalledInOrder requires at least two tools; use ToolsCalled for one.")
+        names = [tool.name for tool in self.tools]
+        if len(set(names)) != len(names):
+            raise ValueError("ToolsCalledInOrder requires each tool name once.")
         return self
 
 
@@ -220,6 +291,20 @@ class AnswerMatches(Condition):
     correct_answer: str = Field(min_length=1)
     #: A nonempty choice label. It is not cross-checked against choices in prompt text.
     correct_answer_label: str | None = Field(default=None, min_length=1)
+
+
+class ViolatesAssertPolicy(Condition):
+    """
+    The conversation fails one of an ASSERT judge's dimensions under this policy.
+
+    ``taxonomy`` is the complete policy. ``application_context`` describes the application and
+    its capabilities, and ``target_instructions`` holds its actual instructions when known.
+    """
+
+    condition_type: Literal["violates_assert_policy"] = "violates_assert_policy"
+    taxonomy: AssertTaxonomy
+    application_context: str = ""
+    target_instructions: str | None = None
 
 
 class ContentWritten(Condition):

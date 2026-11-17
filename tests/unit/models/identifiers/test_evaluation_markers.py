@@ -3,19 +3,21 @@
 
 """Tests for pyrit.models.identifiers.evaluation_markers."""
 
-from pyrit.models.identifiers import (
+from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ConverterIdentifier,
-    EvalMarker,
     Evaluate,
-    Exclude,
-    Include,
     ScorerIdentifier,
     SeedIdentifier,
     TargetIdentifier,
+)
+from pyrit.models.identifiers import (
+    EvalMarker,
+    Exclude,
+    Include,
     Unwrap,
 )
 

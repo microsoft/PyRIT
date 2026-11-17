@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import MAX_FILE_CONTENT_LENGTH, PaginationInfo
 from pyrit.models import REGISTRY_NAME_PATTERN
-from pyrit.models.catalog.initializer import RegisteredInitializer
+from pyrit.models.catalog import RegisteredInitializer
 
 __all__ = [
     "CustomInitializerListResponse",
