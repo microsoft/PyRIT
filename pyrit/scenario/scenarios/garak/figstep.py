@@ -102,9 +102,6 @@ class FigStep(Scenario):
             objective_scorer (TrueFalseScorer | None): Scorer for harmful objective fulfillment.
             scenario_result_id (str | None): Optional scenario result ID to resume.
         """
-        objective_scorer = objective_scorer or self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
         super().__init__(
             version=self.VERSION,
             technique_class=FigStepTechnique,
@@ -213,7 +210,7 @@ class FigStep(Scenario):
         )
         attack_technique = _VISUAL_JAILBREAK_FACTORY.create(
             objective_target=context.objective_target,
-            attack_scoring_config=self._scorer_config,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
             extra_request_converters=user_converters,
         )
         atomic_attacks.append(

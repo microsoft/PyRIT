@@ -10,6 +10,7 @@ configurations together with consistent group IDs and roles.
 
 from __future__ import annotations
 
+import copy
 import logging
 import uuid
 from collections import defaultdict
@@ -351,13 +352,22 @@ class SeedGroup(BaseModel):
             Messages for conversation history, or None if empty.
 
         """
+        return self.get_prepended_conversation()
+
+    def get_prepended_conversation(self, *, include_final_assistant: bool = False) -> list[Message] | None:
+        """
+        Get history, optionally reserving the final assistant sequence for continuation.
+
+        Returns:
+            The prepended conversation, or None when no history exists.
+        """
         if not self.prompts:
             return None
 
         last_role = self._get_last_sequence_role()
         unique_sequences = sorted({prompt.sequence for prompt in self.prompts})
 
-        if last_role == "user":
+        if last_role == "user" or (include_final_assistant and last_role == "assistant"):
             if len(unique_sequences) <= 1:
                 return None
 
@@ -379,12 +389,21 @@ class SeedGroup(BaseModel):
             Message for the current/last turn if user role, or None otherwise.
 
         """
+        return self.get_next_message()
+
+    def get_next_message(self, *, include_final_assistant: bool = False) -> Message | None:
+        """
+        Get the outgoing final user turn, or an explicitly opted-in assistant prefix.
+
+        Returns:
+            The outgoing message, or None when no eligible final turn exists.
+        """
         if not self.prompts:
             return None
 
         last_role = self._get_last_sequence_role()
 
-        if last_role != "user":
+        if last_role != "user" and not (include_final_assistant and last_role == "assistant"):
             return None
 
         unique_sequences = sorted({prompt.sequence for prompt in self.prompts})
@@ -460,7 +479,7 @@ class SeedGroup(BaseModel):
                     original_value_data_type=prompt.data_type or "text",
                     conversation_id=str(prompt.prompt_group_id),
                     sequence=sequence,
-                    prompt_metadata=prompt.metadata or {},
+                    prompt_metadata=copy.deepcopy(prompt.metadata or {}),
                 )
                 if is_history or piece.api_role in {"assistant", "tool"}:
                     piece.set_simulated_role()

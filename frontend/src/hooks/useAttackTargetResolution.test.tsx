@@ -78,12 +78,19 @@ describe('useAttackTargetResolution', () => {
   })
 
   it('reconstructs a saved temperature without selecting the registered default', async () => {
+    const capabilities = {
+      supports_multi_turn: true, supports_system_prompt: true,
+      supports_json_output: false, supports_json_schema: false,
+      supported_input_modalities: ['text'], supported_output_modalities: ['text'],
+    }
     const binding = {
       version: 1 as const, source_name: 'target', source_hash: 'source-hash',
       temperature: 0.8, effective_hash: 'effective-hash',
+      capabilities,
     }
     jest.mocked(targetsApi.buildTarget).mockResolvedValue({
       identifier: { class_name: 'OpenAIChatTarget', hash: 'effective-hash', temperature: 0.8 },
+      capabilities: { ...capabilities, supports_multi_turn: false },
     })
     const savedTarget: TargetInfo = {
       ...targetInfo, target_type: 'OpenAIChatTarget', identifier_hash: 'effective-hash', binding,
@@ -94,6 +101,7 @@ describe('useAttackTargetResolution', () => {
       attackTargetSource: 'persisted',
     }))
     await waitFor(() => expect(result.current.activeTarget?.binding).toEqual(binding))
+    expect(result.current.activeTarget?.capabilities).toEqual(capabilities)
     expect(targetsApi.getTarget).not.toHaveBeenCalled()
     expect(targetsApi.buildTarget).toHaveBeenCalledWith('OpenAIChatTarget', {
       source_name: 'target', source_hash: 'source-hash', params: { temperature: 0.8 },
@@ -105,6 +113,36 @@ describe('useAttackTargetResolution', () => {
     expect(result.current.activeTarget).toBeNull()
     await waitFor(() => expect(result.current.resolutionStatus).toBe('error'))
     expect(result.current.activeTarget).toBeNull()
+  })
+
+  it.each(['named', 'hash'])('keeps saved default chat capabilities after a %s lookup', async (lookup: string) => {
+    const savedCapabilities = {
+      supports_multi_turn: true, supports_system_prompt: true,
+      supports_json_output: false, supports_json_schema: false,
+      supported_input_modalities: ['text'], supported_output_modalities: ['text'],
+    }
+    const detected = {
+      ...replacementTarget,
+      capabilities: { ...savedCapabilities, supports_multi_turn: false },
+      supports_history_replay: false,
+    }
+    jest.mocked(targetsApi.getTarget).mockResolvedValue(detected)
+    jest.mocked(listRegisteredTargets).mockResolvedValue([detected])
+    const savedTarget: TargetInfo = {
+      ...targetInfo, target_registry_name: lookup === 'named' ? 'target' : undefined,
+      capabilities: savedCapabilities, supports_history_replay: true,
+    }
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: savedTarget,
+      attackTargetSource: 'persisted',
+    }))
+    await waitFor(() => expect(result.current.resolutionStatus).toBe('resolved'))
+    expect(result.current.activeTarget?.capabilities).toEqual(savedCapabilities)
+    expect(result.current.activeTarget?.supports_history_replay).toBe(true)
+    expect(detected.capabilities.supports_multi_turn).toBe(false)
+    expect(detected.supports_history_replay).toBe(false)
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled()
   })
 
   it('resolves a created attack from the new registry after the runtime generation changes', async () => {

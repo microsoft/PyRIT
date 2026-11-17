@@ -21,6 +21,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     ObjectiveTargetEvaluationIdentifier,
+    RequestGenerationInfo,
     ScorerEvaluationIdentifier,
     ScoringExpectation,
     TargetIdentifier,
@@ -364,21 +365,13 @@ async def test_encoded_path_identity_matches_distinct_sent_routes_async(sqlite_i
 
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async(mock_request, mock_http_target, mock_http_response):
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
     mock_request.return_value = mock_http_response
     response = await mock_http_target.send_prompt_async(message=message)
     assert len(response) == 1
     assert response[0].get_value() == "value1"
+    assert RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata) is None
+    assert RequestGenerationInfo.from_metadata(metadata=response[0].get_piece().prompt_metadata) is None
     assert mock_request.call_count == 1
     mock_request.assert_called_with(
         method="POST",
@@ -392,17 +385,7 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
 @patch("httpx.AsyncClient.request", new_callable=AsyncMock)
 async def test_send_prompt_async_uses_data_for_dict_body(mock_request, mock_http_response, patch_central_database):
     target = HTTPTarget(http_request="POST / HTTP/1.1\nHost: example.com\n\n")
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
     mock_request.return_value = mock_http_response
 
     with patch.object(
@@ -457,17 +440,7 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
         # Create instance of HTTPTarget with httpx_client_kwargs
         # Use **httpx_client_kwargs to pass them as keyword arguments
         http_target = HTTPTarget(http_request=sample_request, **httpx_client_kwargs)
-        message = MagicMock()
-        message.message_pieces = [
-            MagicMock(
-                converted_value="",
-                converted_value_data_type="text",
-                attack_identifier=None,
-                conversation_id="",
-                labels={},
-                prompt_metadata={},
-            )
-        ]
+        message = Message.from_prompt(prompt="", role="user")
         mock_response = MagicMock()
         mock_response.content = b"Response content"
         mock_request.return_value = mock_response
@@ -633,17 +606,7 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
     callback_function = get_http_target_regex_matching_callback_function(key=r"Match: (\d+)")
     mock_http_target.callback_function = callback_function
 
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
 
     mock_response = httpx.Response(200, content=b"<html><body>Match: 1234</body></html>")
     mock_request.return_value = mock_response
@@ -667,17 +630,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     mock_request.return_value = mock_http_response
 
     # Send first prompt
-    message = MagicMock()
-    message.message_pieces = [
-        MagicMock(
-            converted_value="test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    message = Message.from_prompt(prompt="test_prompt", role="user")
     response = await mock_http_target.send_prompt_async(message=message)
 
     assert len(response) == 1
@@ -694,17 +647,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
     )
 
     # Send second prompt
-    second_message = MagicMock()
-    second_message.message_pieces = [
-        MagicMock(
-            converted_value="second_test_prompt",
-            converted_value_data_type="text",
-            attack_identifier=None,
-            conversation_id="",
-            labels={},
-            prompt_metadata={},
-        )
-    ]
+    second_message = Message.from_prompt(prompt="second_test_prompt", role="user")
     await mock_http_target.send_prompt_async(message=second_message)
 
     # Assert that the original template is still the same
@@ -750,17 +693,7 @@ async def test_http_target_with_injected_client(patch_central_database):
         mock_response.content = b'{"mock_key": "test_value"}'
         mock_request.return_value = mock_response
 
-        message = MagicMock()
-        message.message_pieces = [
-            MagicMock(
-                converted_value="test_prompt",
-                converted_value_data_type="text",
-                attack_identifier=None,
-                conversation_id="",
-                labels={},
-                prompt_metadata={},
-            )
-        ]
+        message = Message.from_prompt(prompt="test_prompt", role="user")
 
         response = await target.send_prompt_async(message=message)
 
@@ -941,3 +874,91 @@ async def test_send_prompt_async_sends_every_repeated_cookie(patch_central_datab
     await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
 
     assert captured_requests[0].headers["cookie"] == "session=abc; csrf=def"
+
+
+def test_parse_raw_http_request_drops_accept_encoding(patch_central_database):
+    request = "GET / HTTP/1.1\nHost: example.com\nAccept-Encoding: gzip, deflate, br, zstd\n\n"
+    target = HTTPTarget(http_request=request)
+
+    headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert "accept-encoding" not in headers
+
+
+@pytest.mark.parametrize("accept_encoding", ["gzip, deflate, br, zstd", "gzip, deflate, br"])
+async def test_send_prompt_async_stores_decoded_response_for_browser_accept_encoding(
+    accept_encoding, patch_central_database
+):
+    captured_requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        # Like most CDNs, answer with Brotli whenever the client offers it. These bytes are "ok" compressed.
+        if "br" in request.headers["accept-encoding"]:
+            return httpx.Response(200, content=b"\x8b\x00\x80ok\x03", headers={"Content-Encoding": "br"})
+        return httpx.Response(200, text="ok")
+
+    raw_request = f"POST / HTTP/1.1\nHost: example.com\nAccept-Encoding: {accept_encoding}\n\n{{PROMPT}}"
+    target = HTTPTarget(http_request=raw_request, transport=httpx.MockTransport(handle_request))
+
+    response = await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+
+    assert captured_requests[0].headers["accept-encoding"] == httpx.AsyncClient().headers["accept-encoding"]
+    assert response[0].get_value() == "ok"
+
+
+@pytest.mark.parametrize("injected_client", [True, False])
+async def test_send_prompt_async_keeps_accept_encoding_set_on_the_client(
+    patch_central_database, injected_client: bool
+) -> None:
+    captured_requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, text="ok")
+
+    raw_request = "POST / HTTP/1.1\nHost: example.com\nAccept-Encoding: gzip, deflate, br\n\n{PROMPT}"
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle_request), headers={"Accept-Encoding": "identity"}
+    ) as client:
+        if injected_client:
+            target = HTTPTarget(http_request=raw_request, client=client)
+        else:
+            target = HTTPTarget(
+                http_request=raw_request,
+                transport=httpx.MockTransport(handle_request),
+                headers={"Accept-Encoding": "identity"},
+            )
+
+        await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+
+    assert captured_requests[0].headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.parametrize("raw_encoding", ["", "Accept-Encoding: gzip, deflate, br, zstd\n"])
+async def test_parse_raw_http_request_preserves_client_encoding_async(
+    patch_central_database, raw_encoding: str
+) -> None:
+    request = f"GET / HTTP/1.1\nHost: example.com\n{raw_encoding}\n"
+    async with httpx.AsyncClient(headers={"Accept-Encoding": "identity"}) as client:
+        target = HTTPTarget(http_request=request, client=client)
+
+        headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.parametrize("raw_encoding", ["", "Accept-Encoding: gzip, deflate, br, zstd\n"])
+async def test_identifier_tracks_configured_client_encoding_async(patch_central_database, raw_encoding: str) -> None:
+    request = f"GET / HTTP/1.1\nHost: example.com\n{raw_encoding}\n"
+    async with (
+        httpx.AsyncClient(headers={"Accept-Encoding": "identity"}) as identity_client,
+        httpx.AsyncClient(headers={"Accept-Encoding": "gzip"}) as gzip_client,
+    ):
+        identity = HTTPTarget(http_request=request, client=identity_client)
+        gzip = HTTPTarget(http_request=request, client=gzip_client)
+        identity_kwargs = HTTPTarget(http_request=request, headers={"Accept-Encoding": "identity"})
+
+        assert identity.get_identifier().hash != gzip.get_identifier().hash
+        assert _target_eval_hash(identity) != _target_eval_hash(gzip)
+        assert identity.get_identifier().hash == identity_kwargs.get_identifier().hash

@@ -323,6 +323,7 @@ async def test_azure_disposal_failure_discards_engine_and_credential(failing_res
     memory._async_engines = {loop: engine}
     memory._async_auth = {loop: auth}
     memory._async_executors = {loop: executor}
+    memory._dataset_upload_leases = {}
     close = engine.dispose if failing_resource == "engine" else auth.close_async
     close.side_effect = [RuntimeError("close failed"), None]
 
@@ -383,6 +384,7 @@ async def test_azure_closed_loop_drops_both_owned_resources() -> None:
     memory._async_engines = {loop: engine}
     memory._async_auth = {loop: auth}
     memory._async_executors = {loop: executor}
+    memory._dataset_upload_leases = {}
     with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="owning event loops"):
         memory.dispose_engine()
     assert memory._async_engines == {loop: engine}
@@ -747,6 +749,7 @@ async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_ai
     memory._async_auth = {}
     memory._async_engines = {}
     memory._async_executors = {}
+    memory._dataset_upload_leases = {}
     engine = MagicMock(spec=AsyncEngine)
     engine.dialect = MSDialectAsync_aioodbc()
     credential = MagicMock(spec=AsyncAzureAuth)

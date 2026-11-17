@@ -96,7 +96,6 @@ SINGLE_VALUE_SETTINGS: dict[tuple[str, str], str] = {
 KNOWN_GAPS: dict[tuple[str, str], str] = {
     ("CodeChameleonConverter", "encrypt_function"): "custom functions are not identified yet, see #3761",
     ("CodeChameleonConverter", "decrypt_function"): "custom functions are not identified yet, see #3761",
-    ("PolicyPuppetryConverter", "prompt_template"): "custom templates are identified by name only, see #3759",
     ("TextJailbreakConverter", "jailbreak_template"): "inline templates share one identifier, see #3760",
 }
 

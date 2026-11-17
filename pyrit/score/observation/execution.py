@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, TypeAlias
@@ -11,6 +12,7 @@ from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
     ConversationObservationPayload,
+    ExecutionTraceObservationPayload,
     Message,
     MessagePiece,
     MessageScorable,
@@ -34,12 +36,13 @@ class NonReplayableObservationError(ValueError):
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Generator, Sequence
+    from collections.abc import Awaitable, Callable, Generator, Hashable, Sequence
 
 
 _ObservationEvidence: TypeAlias = (
     Message
     | ToolEventsObservationPayload
+    | ExecutionTraceObservationPayload
     | SurfaceObservationPayload
     | ProgramExecutionObservationPayload
     | tuple[MessagePiece, ...]
@@ -101,6 +104,29 @@ class _ScoringCollector:
         """Initialize empty observation and intermediate-score collections."""
         self._observations: dict[uuid.UUID, Observation] = {}
         self._scores: dict[str, Score] = {}
+        self._acquisitions: dict[Hashable, asyncio.Future[Observation]] = {}
+
+    async def acquire_once_async(self, *, key: Hashable, acquire: Callable[[], Awaitable[Observation]]) -> Observation:
+        """
+        Share one acquisition among every scorer in this operation that asks for the same evidence.
+
+        Returns:
+            Observation: The single observation acquired for the key.
+        """
+        shared = self._acquisitions.get(key)
+        if shared is None:
+            shared = asyncio.ensure_future(acquire())
+            # Retrieve a failure no waiter is left to observe; awaiters still see the exception.
+            shared.add_done_callback(lambda task: task.cancelled() or task.exception())
+            self._acquisitions[key] = shared
+        try:
+            # Wait without awaiting the shared future, so cancelling this scorer neither cancels the
+            # acquisition other scorers await nor, as asyncio.shield does on some versions, logs its failure.
+            await asyncio.wait([shared])
+            return shared.result()
+        finally:
+            if shared.cancelled() and self._acquisitions.get(key) is shared:
+                del self._acquisitions[key]
 
     def add_scores(self, scores: Sequence[Score]) -> None:
         """
@@ -180,6 +206,21 @@ def _collect_scores(scores: Sequence[Score]) -> None:
     collector = _CURRENT_SCORE_COLLECTOR.get()
     if collector is not None:
         collector.add_scores(scores)
+
+
+async def _acquire_once_async(*, key: Hashable, acquire: Callable[[], Awaitable[Observation]]) -> Observation:
+    """
+    Acquire evidence once per root scoring operation, so related scorers judge the same snapshot.
+
+    Outside a scoring operation, each call acquires afresh.
+
+    Returns:
+        Observation: The shared or newly acquired observation.
+    """
+    collector = _CURRENT_SCORE_COLLECTOR.get()
+    if collector is None:
+        return await acquire()
+    return await collector.acquire_once_async(key=key, acquire=acquire)
 
 
 def _collect_observation(observation: Observation) -> None:
@@ -294,7 +335,13 @@ class _ObservationEvidenceResolver:
         """
         payload = observation.payload
         if isinstance(
-            payload, (ToolEventsObservationPayload, SurfaceObservationPayload, ProgramExecutionObservationPayload)
+            payload,
+            (
+                ToolEventsObservationPayload,
+                ExecutionTraceObservationPayload,
+                SurfaceObservationPayload,
+                ProgramExecutionObservationPayload,
+            ),
         ):
             return payload
         pieces = await self._memory.get_message_pieces_async(prompt_ids=list(observation.evidence_message_piece_ids))
