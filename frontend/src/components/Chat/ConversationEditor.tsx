@@ -5,7 +5,7 @@ import {
   Field, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, MessageBar, MessageBarBody, Select, Text, Textarea, Tooltip,
 } from '@fluentui/react-components'
 import { AddRegular, AttachRegular, DismissRegular } from '@fluentui/react-icons'
-import { useBeforeUnload, useBlocker } from 'react-router'
+import { useBeforeUnload, useBlocker, type BlockerFunction } from 'react-router'
 
 import { usePieceConverters } from '@/hooks/useChatConverters'
 import { useAttachmentUploads } from '@/hooks/useAttachmentUploads'
@@ -17,6 +17,7 @@ import type {
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
 } from '@/utils/conversationDraft'
+import { isDatasetsPath } from '@/utils/routeParams'
 import { basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from '@/utils/media'
 
 import PromptEditor from './PromptEditor'
@@ -172,6 +173,7 @@ interface ConversationEditorProps {
   saveLabel?: string
   initialConverters?: ChatConverterSnapshot
   blockNavigation?: boolean
+  preserveOnDatasetNavigation?: boolean
 }
 
 export interface ConversationEditorHandle {
@@ -185,7 +187,7 @@ export interface ConversationEditorHandle {
 export default function ConversationEditor({
   controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit, onDiscard,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
-  initialConverters, blockNavigation = true, onUploadErrorChange,
+  initialConverters, blockNavigation = true, preserveOnDatasetNavigation = false, onUploadErrorChange,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const resizeBoundaryRef = useRef<HTMLDivElement>(null)
@@ -204,10 +206,10 @@ export default function ConversationEditor({
     return () => { onUploadErrorChange?.(undefined) }
   }, [onUploadErrorChange, uploadError])
   const target = draft?.target
-  const shouldBlock = useCallback(() => {
-    if (blockNavigation === false) return false
+  const shouldBlock = useCallback<BlockerFunction>(({ nextLocation }) => {
+    if (!blockNavigation || (preserveOnDatasetNavigation && !saving && isDatasetsPath(nextLocation.pathname))) return false
     return controller.shouldBlock()
-  }, [blockNavigation, controller])
+  }, [blockNavigation, preserveOnDatasetNavigation, controller, saving])
   const blocker = useBlocker(shouldBlock)
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
     if (controller.shouldBlock()) {
