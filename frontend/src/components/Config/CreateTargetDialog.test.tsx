@@ -2899,11 +2899,12 @@ describe("CreateTargetDialog", () => {
   }, 30000);
 
   describe("Only me", () => {
-    const ONLY_ME_HELP = "Only you can see and use this target and anything you build with it. "
-      + "Leave it off to share the target with everyone.";
+    const ONLY_ME_HELP = "Everyone can see and use a shared target. Only me keeps the target, "
+      + "and anything you build with it, visible and usable only by you.";
     const ENDPOINT = "https://my-resource.openai.azure.com/";
     const SHARED_WARNING = /Tokens and created targets can be used by anyone/;
-    const onlyMeSwitch = (): HTMLElement => screen.getByRole("switch", { name: /^Only me/ });
+    const onlyMeSwitch = (): HTMLElement => screen.getByRole("radio", { name: "Only me" });
+    const everyoneRadio = (): HTMLElement => screen.getByRole("radio", { name: "Everyone" });
 
     async function chooseOpenAiChatTarget(): Promise<void> {
       await selectTargetType("OpenAIChatTarget");
@@ -2925,16 +2926,17 @@ describe("CreateTargetDialog", () => {
       mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({ target_registry_name: "mine", private: true }));
     });
 
-    it("should show the control once a target type is chosen, with info help", async () => {
+    it("should show who can use it once a target type is chosen, with info help", async () => {
       const user = userEvent.setup();
       render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
       await flushTargetTypesFetch();
-      expect(screen.queryByRole("switch", { name: /^Only me/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("radiogroup", { name: /Who can use it/ })).not.toBeInTheDocument();
 
       await selectTargetType("OpenAIChatTarget");
 
-      expect(onlyMeSwitch()).toHaveAccessibleDescription(ONLY_ME_HELP);
-      await user.click(screen.getByRole("button", { name: /Only me.*information/i }));
+      expect(screen.getByRole("radiogroup", { name: /Who can use it/ })).toHaveAccessibleDescription(ONLY_ME_HELP);
+      expect(everyoneRadio()).toBeChecked();
+      await user.click(screen.getByRole("button", { name: /Who can use it.*information/i }));
       expect(await screen.findByRole("note")).toHaveTextContent(ONLY_ME_HELP);
     });
 
@@ -3002,7 +3004,7 @@ describe("CreateTargetDialog", () => {
       return user;
     }
 
-    const PRIVATE_MEMBER_HINT = "Stays on because it uses mine, which only you can use.";
+    const PRIVATE_MEMBER_HINT = "Only me, because it uses mine, which only you can use.";
 
     it("should make a round robin of shared members private when you turn it on", async () => {
       const user = await selectRoundRobinMembers(["shared_a", "shared_b"]);

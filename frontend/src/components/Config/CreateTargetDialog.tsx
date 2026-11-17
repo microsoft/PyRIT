@@ -436,6 +436,26 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     ))?.registryName
     : undefined
   const onlyMe = privateMemberName !== undefined || onlyMeChoice
+  // Who can use the target is the last decision about it, so it follows the connection and sign-in fields.
+  const visibilityField = targetType !== '' && (
+    <HelpField
+      className={styles.formField}
+      label="Who can use it"
+      help={HELP_DEFINITIONS.privateTarget}
+      hint={privateMemberName !== undefined
+        ? `Only me, because it uses ${privateMemberName}, which only you can use.`
+        : undefined}
+    >
+      <RadioGroup
+        value={onlyMe ? 'private' : 'shared'}
+        disabled={submitting || privateMemberName !== undefined}
+        onChange={(_, data) => setOnlyMeChoice(data.value === 'private')}
+      >
+        <Radio value="shared" label="Everyone" />
+        <Radio value="private" label="Only me" />
+      </RadioGroup>
+    </HelpField>
+  )
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -813,22 +833,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </section>
               )}
 
-              {targetType && (
-                <HelpField
-                  label="Only me"
-                  help={HELP_DEFINITIONS.privateTarget}
-                  hint={privateMemberName !== undefined
-                    ? `Stays on because it uses ${privateMemberName}, which only you can use.`
-                    : undefined}
-                >
-                  <Switch
-                    checked={onlyMe}
-                    disabled={submitting || privateMemberName !== undefined}
-                    onChange={(_, data) => setOnlyMeChoice(data.checked)}
-                  />
-                </HelpField>
-              )}
-
               {isGitHubCopilot && (
                 <>
                   <MessageBar intent="info">
@@ -951,6 +955,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </div>
                     </div>
                   )}
+                  {visibilityField}
                 </>
               )}
 
@@ -1124,6 +1129,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       />
                     </Field>
                   )}
+
+                  {visibilityField}
 
                   {(optionalMetadataParameters.length > 0 || customFunctionsReason) && (
                     <details className={styles.advancedSettings}>
