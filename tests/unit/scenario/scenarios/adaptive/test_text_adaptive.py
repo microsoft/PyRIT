@@ -606,7 +606,8 @@ class TestTextAdaptiveAtomicAttacks:
             len({ScenarioEvaluationIdentifier(result.scenario_identifier).eval_hash for result in stored_results}) == 1
         )
         assert mock_prepare.await_count == 2
-        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, False, True]
+        # Resume rebuilds the stored population and never resolves the datasets.
+        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, True]
 
     async def test_atomic_names_contain_dataset_and_objective_hash(self, mock_objective_target, mock_objective_scorer):
         groups = {
@@ -1098,12 +1099,13 @@ class TestTextAdaptiveResume:
         restored_selector.select_async.assert_not_awaited()
         assert [group.model_dump(mode="json") for group in groups] == snapshots
         if max_total == "all":
-            with pytest.raises(ValueError, match="planned seed-group occurrence.*missing"):
-                await initialize_async(
-                    selector=restored_selector,
-                    scenario_result_id=original._scenario_result_id,
-                    sources=groups[:1],
-                )
+            # Resume rebuilds the stored population, so a source losing an occurrence doesn't matter.
+            shrunk = await initialize_async(
+                selector=restored_selector,
+                scenario_result_id=original._scenario_result_id,
+                sources=groups[:1],
+            )
+            assert shrunk._build_run_plan() == plan
             restored_selector.select_async.assert_not_awaited()
 
     @pytest.mark.parametrize("simulated", [False, True])
@@ -1432,7 +1434,9 @@ class TestTextAdaptiveResume:
         selector.select_async.reset_mock()
         selector.select_async.side_effect = AssertionError("Resume selected techniques again")
 
-        with pytest.raises(ValueError, match="no saved adaptive technique choices"):
+        # A result without a run plan predates stored planned seeds, so base resume refuses it first.
+        expected = "no saved adaptive technique choices" if missing_data == "choices" else "created by an older PyRIT"
+        with pytest.raises(ValueError, match=expected):
             await self._initialize_scenario_async(
                 target=mock_objective_target,
                 scorer=mock_objective_scorer,

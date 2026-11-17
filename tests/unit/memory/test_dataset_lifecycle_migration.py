@@ -47,6 +47,7 @@ def test_dataset_lifecycle_migration_and_guarded_downgrade() -> None:
                 "DatasetLifecycleLock",
                 "DatasetLifecycleEntries",
                 "DatasetMediaEntries",
+                "ScenarioPlanSeedGroupEntries",
             }
             assert connection.scalar(sa.select(DatasetLifecycleLock.id)) == 1
             command.downgrade(config, PREVIOUS)
