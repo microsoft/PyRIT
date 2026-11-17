@@ -481,7 +481,10 @@ async def test_public_metadata_cannot_authorize_stale_nested_projection_async(
 
 @pytest.mark.parametrize("exit_mode", ["error", "cancel"])
 async def test_apply_target_judge_owner_restored_on_abnormal_exit_async(
-    latest_response_chat, sqlite_instance: SQLiteMemory, exit_mode: str
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    exit_mode: str,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     target = _ChatJudgeTarget()
@@ -494,32 +497,36 @@ async def test_apply_target_judge_owner_restored_on_abnormal_exit_async(
         attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
     )
     request = request.model_copy(update={"scorer": reference})
-    entered = asyncio.Event()
+    entered, release = asyncio.Event(), asyncio.Event()
     outer_owner = str(uuid.uuid4())
-    owners = []
-    restored = []
+    owners: list[str | None] = []
+    restored: list[str | None] = []
 
-    async def provider_io(*, normalized_conversation):
+    async def provider_io_async(*, normalized_conversation: list[Message]) -> list[Message]:
         owners.append(get_current_attack_result_id())
         entered.set()
-        if exit_mode == "error":
-            raise RuntimeError("Deterministic judge failure")
-        await asyncio.Event().wait()
+        if exit_mode == "cancel":
+            await release.wait()
+        raise RuntimeError("Deterministic judge failure")
 
-    async def apply():
+    async def apply_async() -> None:
         with attack_result_id_scope(attack_result_id=outer_owner):
             try:
-                return await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+                await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
             finally:
                 restored.append(get_current_attack_result_id())
 
-    with patch.object(target, "_send_prompt_to_target_async", side_effect=provider_io):
-        task = asyncio.create_task(apply())
-        await asyncio.wait_for(entered.wait(), timeout=5)
-        if exit_mode == "cancel":
-            task.cancel()
-        with pytest.raises(asyncio.CancelledError if exit_mode == "cancel" else ChatScoringError):
-            await asyncio.wait_for(task, timeout=5)
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=provider_io_async):
+        task = asyncio.create_task(apply_async())
+        try:
+            await wait_for_event_async(event=entered, tasks=[task])
+            if exit_mode == "cancel":
+                task.cancel()
+            with pytest.raises(asyncio.CancelledError if exit_mode == "cancel" else ChatScoringError):
+                await wait_for_completion_async(future=task)
+        finally:
+            release.set()
+            await drain_tasks_async(task)
     assert owners and set(owners) == {attack.attack_result_id}
     assert restored == [outer_owner]
     assert get_current_attack_result_id() is None
