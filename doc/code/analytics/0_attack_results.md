@@ -236,7 +236,8 @@ The result includes independent dimension rates, per-policy category rates,
 and exclusion counts. N/A and missing verdicts stay outside rate denominators.
 Grade counts and medians remain separate for each recorded scale. Rates use
 ASSERT's 90% Wilson interval and flag fewer than five applicable conversations.
-A supplied unmarked objective scorer is reported as `objective`.
+A supplied unmarked or composing objective scorer is reported as `objective`;
+its underlying ASSERT judgments remain independent dimension results.
 
 The run page exposes the same result through
 `GET /api/analytics/assert?scenario_result_id=<run-id>`. The filter selects a

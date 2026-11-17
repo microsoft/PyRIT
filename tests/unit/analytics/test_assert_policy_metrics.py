@@ -3,6 +3,7 @@
 
 """ASSERT analytics over saved results and the exact policy each score judged."""
 
+import json
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,9 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Message,
+    MessagePiece,
+    MessageScorable,
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -33,9 +37,11 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
     ViolatesAssertPolicy,
+    construct_response_from_request,
 )
+from pyrit.score import AssertJudgeScorer, AssertJudgmentMode, TrueFalseInverterScorer
 from unit.assert_mocks import make_assert_config, make_assert_result
-from unit.mocks import get_sample_conversations, make_scenario_identifier
+from unit.mocks import MockPromptTarget, get_sample_conversations, make_scenario_identifier
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -184,10 +190,10 @@ async def test_category_rates_keep_distinct_recorded_policies_apart(
     if difference == "taxonomy":
         taxonomy = policy.taxonomy.model_copy(
             update={
-                "behavior_categories": [
+                "behavior_categories": tuple(
                     category.model_copy(update={"permissible": not category.permissible})
                     for category in policy.taxonomy.behavior_categories
-                ]
+                )
             }
         )
         other = policy.model_copy(update={"taxonomy": taxonomy})
@@ -231,6 +237,55 @@ async def test_unmarked_supplied_objective_is_not_a_policy_judge(policy: Violate
     technique = (await _metrics({"t": [_attack(score)]})).techniques["t"]
     assert list(technique.dimensions) == ["objective"]
     assert technique.categories == []
+
+
+@pytest.mark.parametrize("mode", [AssertJudgmentMode.DIRECT, AssertJudgmentMode.CATEGORY_VALIDATED])
+async def test_transformed_objective_keeps_the_original_persisted_judge_dimension(
+    policy: ViolatesAssertPolicy, sqlite_instance: SQLiteMemory, mode: AssertJudgmentMode
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    request = MessagePiece(role="user", original_value="Explain returns.", conversation_id=conversation_id)
+    reply = MessagePiece(role="assistant", original_value="Returns are not allowed.", conversation_id=conversation_id)
+    await sqlite_instance.add_message_to_memory_async(request=request.to_message())
+    await sqlite_instance.add_message_to_memory_async(request=reply.to_message())
+    judge = MockPromptTarget()
+
+    async def judge_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        payload: dict[str, object] = {
+            "score_value": True,
+            "description": "Failure observed.",
+            "rationale": "A relevant category was violated.",
+            "metadata": "Recorded evidence.",
+        }
+        if mode == AssertJudgmentMode.CATEGORY_VALIDATED:
+            payload["node_judgments"] = [
+                {"node_name": "public_policy", "violated": True, "confidence": "high", "reasoning": "Relevant."}
+            ]
+        return [
+            construct_response_from_request(
+                request=normalized_conversation[-1].get_piece(), response_text_pieces=[json.dumps(payload)]
+            )
+        ]
+
+    scorer = TrueFalseInverterScorer(scorer=AssertJudgeScorer(chat_target=judge, judgment_mode=mode))
+    with patch.object(judge, "_send_prompt_to_target_async", side_effect=judge_async):
+        (objective,) = await scorer.score_async(
+            scorable=MessageScorable.from_message(reply.to_message()),
+            expectation=ScoringExpectation(conditions=(policy,)),
+        )
+    assert objective.get_value() is False
+    result = AttackResult(
+        conversation_id=conversation_id,
+        objective="Explain returns.",
+        outcome=AttackOutcome.FAILURE,
+        automated_score=objective,
+    )
+    metrics = await compute_assert_policy_metrics_async(_run({"t": [result]}), memory=sqlite_instance)
+    technique = metrics.techniques["t"]
+    assert _counts(technique.dimensions["objective"]) == (0, 1, 0)
+    assert _counts(technique.dimensions["policy_violation"]) == (1, 1, 0)
+    if mode == AssertJudgmentMode.CATEGORY_VALIDATED:
+        assert _counts(technique.policy_violation_on_permissible) == (1, 1, 0)
 
 
 async def test_auxiliary_policy_verdict_survives_an_undetermined_objective(policy: ViolatesAssertPolicy) -> None:

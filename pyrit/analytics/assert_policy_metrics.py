@@ -288,7 +288,9 @@ async def _load_scores_by_piece_async(
     piece_ids = sorted({piece_id for result in results if (piece_id := _scored_piece_id(result))})
     scores_by_piece: dict[str, list[Score]] = {}
     for start in range(0, len(piece_ids), _QUERY_CHUNK_SIZE):
-        scores = await memory.get_prompt_scores_async(prompt_ids=piece_ids[start : start + _QUERY_CHUNK_SIZE])
+        scores = await memory.get_prompt_scores_async(
+            prompt_ids=piece_ids[start : start + _QUERY_CHUNK_SIZE], include_intermediate=True
+        )
         for score in scores:
             scores_by_piece.setdefault(str(score.message_piece_id), []).append(score)
     return scores_by_piece
@@ -374,7 +376,7 @@ def _record_dimension(*, row: _Row, name: str, score: Score, result: AssertDimen
 
 def _dimension_result(score: Score) -> AssertDimensionResult | None:
     """
-    Read a score's ASSERT dimension data; None for scores that predate it.
+    Read a judge's own ASSERT dimension data, not metadata forwarded by a composing scorer.
 
     Returns:
         AssertDimensionResult | None: The recorded dimension data.
@@ -382,6 +384,10 @@ def _dimension_result(score: Score) -> AssertDimensionResult | None:
     Raises:
         ValueError: If the score's ASSERT dimension metadata is malformed.
     """
+    identifier = score.scorer_class_identifier
+    if identifier is not None and identifier.get_child_list("sub_scorers"):
+        # A wrapper can copy its child's metadata while changing the verdict.
+        return None
     try:
         return AssertDimensionResult.from_metadata(metadata=score.score_metadata)
     except ValueError as error:
