@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.conversation_summary import ConversationSummary
+    from pyrit.models.dataset_provider import DatasetProviderInfo
     from pyrit.models.decomposition import (
         DecompositionNode,
         DecompositionPath,
@@ -668,6 +669,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedRecord": "pyrit.models.seeds",
     "SeedDataset": "pyrit.models.seeds",
     "SeedDatasetSummary": "pyrit.models.seeds",
+    "DatasetProviderInfo": "pyrit.models.dataset_provider",
     "SeedGroup": "pyrit.models.seeds",
     "SeedGroupRequirements": "pyrit.models.seeds",
     "SeedIdentifier": "pyrit.models.identifiers",
