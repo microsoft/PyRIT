@@ -193,14 +193,16 @@ class TestJudgedFromStoredInvocations:
                 )
             )
         pieces.append(("assistant", "text", "Sent."))
+        stored = []
         for role, data_type, value in pieces:
             text = value if isinstance(value, str) else json.dumps(value)
             message = MessagePiece(
                 role=role, original_value=text, original_value_data_type=data_type, conversation_id=conversation_id
             ).to_message()
             await sqlite_instance.add_message_to_memory_async(request=message)
+            stored.append(message)
 
         (score,) = await scorer.score_async(
-            scorable=MessageScorable.from_message(message), expectation=group.scoring_expectation
+            scorable=MessageScorable.from_message(stored[-1]), expectation=group.scoring_expectation
         )
         assert score.status == ScoreStatus.UNDETERMINED
