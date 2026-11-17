@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Normalize model, tool, and agent spans into bounded execution evidence."""
+"""Normalize model, tool, and agent spans into execution evidence."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -19,14 +18,15 @@ from pyrit.models import (
     ExecutionStepKind,
     ExecutionTraceObservationPayload,
     Observation,
-    TraceContent,
     TraceCoverage,
     TraceSpanStatus,
 )
 from pyrit.score.observation.otel_trace_source import _query_trace_spans_async, _scoped_spans
 
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from pydantic import JsonValue
 
@@ -40,13 +40,11 @@ class OtelExecutionTraceSource:
 
     OpenInference attributes take precedence; GenAI attributes and events are the fallback.
     Model calls, tool calls with arguments and results, and agent, chain, and retrieval steps
-    are retained. Content is cut to ``max_content_chars`` per field, with the full value's
-    length and SHA-256 digest. A ``redactor`` sees every full value before it is measured,
-    hashed, or cut. With ``retain_content=False``, steps keep names, lengths, and digests only.
+    are retained, with their content and labels complete; what a judge is shown is bounded
+    when rendering.
     """
 
-    NORMALIZATION_VERSION: ClassVar[int] = 3
-    MAX_LABEL_CHARS: ClassVar[int] = 200
+    NORMALIZATION_VERSION: ClassVar[int] = 1
     _OPEN_INFERENCE_KINDS: ClassVar[dict[str, ExecutionStepKind]] = {
         "LLM": ExecutionStepKind.LLM,
         "TOOL": ExecutionStepKind.TOOL,
@@ -82,9 +80,6 @@ class OtelExecutionTraceSource:
         trace_client: TraceClient,
         max_spans: int = 10000,
         timeout_seconds: float = 30,
-        retain_content: bool = True,
-        max_content_chars: int = 4000,
-        redactor: Callable[[str], str] | None = None,
     ) -> None:
         """
         Initialize bounded acquisition through a caller-owned client.
@@ -93,40 +88,29 @@ class OtelExecutionTraceSource:
             trace_client (TraceClient): The client that retrieves spans by trace ID.
             max_spans (int): Maximum spans read per acquisition. Defaults to 10000.
             timeout_seconds (float): Acquisition timeout. Defaults to 30.
-            retain_content (bool): Whether to keep inputs and outputs. Defaults to True.
-            max_content_chars (int): Characters kept per input or output. Defaults to 4000.
-            redactor (Callable[[str], str] | None): Rewrites each full value before it is
-                measured, hashed, or cut. Defaults to None.
 
         Raises:
-            ValueError: If a limit or the timeout is not positive and finite.
+            ValueError: If the span limit or the timeout is not positive and finite.
         """
-        if max_spans < 1 or max_content_chars < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
-            raise ValueError("max_spans, max_content_chars, and timeout_seconds must be positive.")
+        if max_spans < 1 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("max_spans and timeout_seconds must be positive.")
         self._client = trace_client
         self._max_spans = max_spans
         self._timeout_seconds = timeout_seconds
-        self._retain_content = retain_content
-        self._max_content_chars = max_content_chars
-        self._redactor = redactor
 
     def get_identifier(self) -> ComponentIdentifier:
         """
-        Return the normalization and content policy without serializing the client.
+        Return the normalization settings without serializing the client.
 
         Returns:
             ComponentIdentifier: The source identity.
         """
-        redactor = getattr(self._redactor, "__qualname__", type(self._redactor).__name__) if self._redactor else None
         return ComponentIdentifier.of(
             self,
             params={
                 "normalization_version": self.NORMALIZATION_VERSION,
                 "max_spans": self._max_spans,
                 "timeout_seconds": self._timeout_seconds,
-                "retain_content": self._retain_content,
-                "max_content_chars": self._max_content_chars,
-                "redactor": redactor,
             },
             children={"trace_client": self._client.get_identifier()},
         )
@@ -175,8 +159,6 @@ class OtelExecutionTraceSource:
                 scope=scorable,
                 steps=steps,
                 coverage=TraceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
-                content_retained=self._retain_content,
-                max_content_chars=self._max_content_chars,
             ),
         )
 
@@ -193,7 +175,7 @@ class OtelExecutionTraceSource:
         attributes = span.attributes
         kind = self._kind(attributes)
         reasons: list[str] = []
-        tool_name = self._label(self._tool_name(attributes=attributes, kind=kind, reasons=reasons))
+        tool_name = self._tool_name(attributes=attributes, kind=kind, reasons=reasons)
         input_value, output_value = self._content_values(span=span, kind=kind)
         return (
             ExecutionStep(
@@ -204,37 +186,20 @@ class OtelExecutionTraceSource:
                 start_time=span.start_time,
                 end_time=span.end_time,
                 kind=kind,
-                name=tool_name or self._label(span.name) or kind.value,
+                name=tool_name or (span.name if span.name and span.name.strip() else kind.value),
                 status=span.status,
-                error_content=self._content(self._error_message(span)),
-                model=self._label(
-                    _first_str(attributes, "llm.model_name", "gen_ai.response.model", "gen_ai.request.model")
-                ),
+                error_content=_valid_text(self._error_message(span)),
+                model=_first_str(attributes, "llm.model_name", "gen_ai.response.model", "gen_ai.request.model"),
                 tool_name=tool_name,
-                call_id=self._label(_first_str(attributes, "tool_call.id", "gen_ai.tool.call.id")),
-                node_name=self._label(
-                    _first_str(attributes, "langgraph.node.name", "graph.node.id", "gen_ai.agent.name")
-                ),
-                input_content=self._content(input_value),
-                output_content=self._content(output_value),
+                call_id=_first_str(attributes, "tool_call.id", "gen_ai.tool.call.id"),
+                node_name=_first_str(attributes, "langgraph.node.name", "graph.node.id", "gen_ai.agent.name"),
+                input_content=_valid_text(input_value),
+                output_content=_valid_text(output_value),
                 input_tokens=_first_int(attributes, "llm.token_count.prompt", "gen_ai.usage.input_tokens"),
                 output_tokens=_first_int(attributes, "llm.token_count.completion", "gen_ai.usage.output_tokens"),
             ),
             reasons,
         )
-
-    def _label(self, value: str | None) -> str | None:
-        """
-        Redact a name-like value, flatten it to one line, and bound its length.
-
-        Returns:
-            str | None: The label, or None when nothing printable remains.
-        """
-        if value is None:
-            return None
-        redacted = self._redactor(value) if self._redactor else value
-        label = " ".join(redacted.split())[: self.MAX_LABEL_CHARS]
-        return label or None
 
     def _kind(self, attributes: Mapping[str, JsonValue]) -> ExecutionStepKind:
         open_inference = attributes.get("openinference.span.kind")
@@ -320,18 +285,15 @@ class OtelExecutionTraceSource:
         message = exception.attributes.get("exception.message") if exception else None
         return span.status_message or (message if isinstance(message, str) else None) or "error"
 
-    def _content(self, value: str | None) -> TraceContent | None:
-        if value is None:
-            return None
-        full = self._redactor(value) if self._redactor else value
-        text = full[: self._max_content_chars] if self._retain_content else ""
-        return TraceContent(
-            text=text,
-            original_length=len(full),
-            sha256=hashlib.sha256(full.encode("utf-8")).hexdigest(),
-            truncated=len(text) < len(full),
-            redacted=self._redactor is not None,
-        )
+
+def _valid_text(value: str | None) -> str | None:
+    """
+    Replace lone surrogates, which cannot be stored as UTF-8, with U+FFFD.
+
+    Returns:
+        str | None: The storable text.
+    """
+    return _LONE_SURROGATE.sub("\N{REPLACEMENT CHARACTER}", value) if value is not None else None
 
 
 def _text(value: JsonValue) -> str | None:

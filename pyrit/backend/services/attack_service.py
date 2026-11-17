@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pyrit.backend.mappers import (
     attack_result_to_summary_async,
@@ -59,6 +59,7 @@ from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendSt
 from pyrit.backend.services.chat_scoring_service import get_chat_scoring_service
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.history_replay import validate_history_replay
+from pyrit.backend.services.live_attack_reader import LiveAttackLookup
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.message_send_service import (
     MessageSendService,
@@ -82,7 +83,7 @@ from pyrit.memory import (
     data_serializer_factory,
     set_message_piece_sha256_async,
 )
-from pyrit.memory.memory_interface import AttackStateConflictError
+from pyrit.memory.memory_interface import AttackConversationPage, AttackStateConflictError
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -132,19 +133,35 @@ class AttackObjectiveConflictError(Exception):
     """The shared objective changed while it was being edited."""
 
 
+class _ReadableAttack(NamedTuple):
+    """A saved result, or the projection of an attack still running in a scan."""
+
+    result: AttackResult
+    in_progress: bool
+
+
 class AttackService:
     """
     Service for managing attacks.
 
-    Uses PyRIT memory (database) as the source of truth via AttackResult.
+    Uses PyRIT memory (database) as the source of truth via AttackResult. Read APIs also
+    resolve scan attacks that are still running through an optional read-only lookup;
+    a saved result always wins over that live projection.
     """
 
     def __init__(
-        self, *, message_send_service: MessageSendService | None = None, memory: MemoryInterface | None = None
+        self,
+        *,
+        message_send_service: MessageSendService | None = None,
+        memory: MemoryInterface | None = None,
+        live_attack_lookup: LiveAttackLookup | None = None,
     ) -> None:
         """Initialize the attack service."""
         self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
-        self._saved_conversation_reader = SavedConversationReadService(memory=self._memory)
+        self._live_attack_lookup = live_attack_lookup
+        self._saved_conversation_reader = SavedConversationReadService(
+            memory=self._memory, read_references=self._read_conversation_page_async
+        )
         self._message_send_service = (
             message_send_service if message_send_service is not None else get_message_send_service()
         )
@@ -362,16 +379,16 @@ class AttackService:
         """
         Get attack details (high-level metadata, no messages).
 
-        Queries the AttackResult from the database by its primary key.
+        Reads the saved AttackResult by its primary key, or projects a scan attack that is still running.
 
         Returns:
             AttackSummary if found, None otherwise.
         """
-        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-        if not results:
+        attack = await self._read_attack_async(attack_result_id=attack_result_id)
+        if attack is None:
             return None
 
-        return await self._summarize_attack_async(ar=results[0])
+        return await self._summarize_attack_async(ar=attack.result, in_progress=attack.in_progress)
 
     async def get_attack_metadata_async(
         self, *, attack_result_id: str, conversation_id: str | None = None
@@ -385,24 +402,25 @@ class AttackService:
         Returns:
             AttackMetadata | None: Metadata without reference arrays, or None for an absent attack.
         """
-        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-        if not results:
+        attack = await self._read_attack_async(attack_result_id=attack_result_id)
+        if attack is None:
             return None
-        ar = results[0]
-        references = await self._memory.get_attack_conversation_page_async(attack_result_id=attack_result_id, limit=1)
+        ar = attack.result
+        references = await self._read_conversation_page_async(attack_result_id=attack_result_id, limit=1)
         if references is None:
             return None
         selected_id = conversation_id if conversation_id is not None else ar.conversation_id
         selected_valid = bool(selected_id) and selected_id == references.main_conversation_id
         if not selected_valid:
-            selected = await self._memory.get_attack_conversation_page_async(
+            selected = await self._read_conversation_page_async(
                 attack_result_id=attack_result_id, conversation_id=selected_id, limit=1
             )
             if selected is None:
                 return None
             selected_valid = bool(selected.conversations)
         summary = await self._summarize_attack_async(
-            ar=ar.model_copy(update={"related_conversations": set(), "last_response": None})
+            ar=ar.model_copy(update={"related_conversations": set(), "last_response": None}),
+            in_progress=attack.in_progress,
         )
         return AttackMetadata(
             attack_result_id=summary.attack_result_id,
@@ -418,6 +436,8 @@ class AttackService:
             chat_scorer=summary.chat_scorer,
             chat_scorer_inherited=summary.chat_scorer_inherited,
             execution_read_only=summary.execution_read_only,
+            in_progress=summary.in_progress,
+            scenario_result_id=summary.scenario_result_id,
             manual_continuation=summary.manual_continuation,
             last_response_message_piece_id=str(ar.last_response.id) if ar.last_response is not None else None,
             related_conversation_count=references.total_count - int(bool(references.main_conversation_id)),
@@ -425,7 +445,42 @@ class AttackService:
             selected_conversation_valid=selected_valid,
         )
 
-    async def _summarize_attack_async(self, *, ar: AttackResult) -> AttackSummary:
+    async def _read_attack_async(self, *, attack_result_id: str) -> _ReadableAttack | None:
+        """
+        Read the saved result, or project the attack while a scan is still running it.
+
+        The live snapshot is taken before the storage read, so an attack that finishes in between
+        resolves to its saved result.
+
+        Returns:
+            _ReadableAttack | None: The readable attack, or None when it is neither saved nor running.
+        """
+        live = self._live_attack_lookup(attack_result_id) if self._live_attack_lookup else None
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+        if results:
+            return _ReadableAttack(result=results[0], in_progress=False)
+        if live is None:
+            return None
+        return _ReadableAttack(result=live.to_attack_result(), in_progress=True)
+
+    async def _read_conversation_page_async(
+        self, *, attack_result_id: str, offset: int = 0, limit: int = 50, conversation_id: str | None = None
+    ) -> AttackConversationPage | None:
+        """
+        Page saved conversation references, or a running scan attack's live references.
+
+        Returns:
+            AttackConversationPage | None: The reference page, or None when the attack is neither saved nor running.
+        """
+        live = self._live_attack_lookup(attack_result_id) if self._live_attack_lookup else None
+        page = await self._memory.get_attack_conversation_page_async(
+            attack_result_id=attack_result_id, offset=offset, limit=limit, conversation_id=conversation_id
+        )
+        if page is not None or live is None:
+            return page
+        return live.conversation_page(offset=offset, limit=limit, conversation_id=conversation_id)
+
+    async def _summarize_attack_async(self, *, ar: AttackResult, in_progress: bool = False) -> AttackSummary:
         """
         Map one loaded result with the shared presentation and scoring policy.
 
@@ -440,7 +495,8 @@ class AttackService:
             stats=stats,
             operation_name=operation_names.get(ar.operation_id) if ar.operation_id else None,
             scoring_inputs=get_chat_scoring_service().inputs(ar),
-            execution_read_only=get_chat_scoring_service().execution_read_only(ar),
+            execution_read_only=in_progress or get_chat_scoring_service().execution_read_only(ar),
+            in_progress=in_progress,
         )
 
     @staticmethod
@@ -545,12 +601,12 @@ class AttackService:
             raise ValueError("A message-page cursor requires a limit.")
 
         # Check attack exists
-        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-        if not results:
+        attack = await self._read_attack_async(attack_result_id=attack_result_id)
+        if attack is None:
             return None
 
         # Verify the conversation belongs to this attack
-        ar = results[0]
+        ar = attack.result
         if conversation_id not in ar.get_active_conversation_ids():
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
@@ -592,7 +648,7 @@ class AttackService:
                 return None
             attack_result_id = legacy_attack.attack_result_id
         attack = await self.get_attack_async(attack_result_id=attack_result_id)
-        if attack is None or conversation_id not in attack.get_active_conversation_ids():
+        if attack is None or attack.in_progress or conversation_id not in attack.get_active_conversation_ids():
             return None
         messages = await self.get_conversation_messages_async(
             attack_result_id=attack_result_id, conversation_id=conversation_id
@@ -1351,12 +1407,11 @@ class AttackService:
             )
         if cursor is not None:
             raise ValueError("A conversation-page cursor requires a limit.")
-        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-        if not results:
+        attack = await self._read_attack_async(attack_result_id=attack_result_id)
+        if attack is None:
             return None
 
-        # attack_result_id is a unique primary key, so at most one result is returned.
-        ar = results[0]
+        ar = attack.result
 
         # Collect all conversation IDs (main + PRUNED related) and fetch stats in one query.
         active_conv_ids = list(ar.get_active_conversation_ids())
@@ -1674,7 +1729,12 @@ def get_attack_service() -> AttackService:
     """
     Get the global attack service instance.
 
+    Wires the scenario run service's read-only lookup for scan attacks that are still running.
+
     Returns:
         The singleton AttackService instance.
     """
-    return AttackService()
+    # Composition root: AttackService depends only on the lookup type, not on scenario scheduling.
+    from pyrit.backend.services.scenario_run_service import find_live_attack
+
+    return AttackService(live_attack_lookup=find_live_attack)
