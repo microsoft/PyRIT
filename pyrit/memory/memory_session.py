@@ -16,6 +16,7 @@ from pyrit.memory.memory_models import (
     ObservationEntry,
     ObservationMessagePieceEntry,
     PromptMemoryEntry,
+    ScenarioPlanSeedGroupEntry,
     ScorableContentEntry,
     ScoreEntry,
     ScoreObservationEntry,
@@ -78,7 +79,7 @@ class MemorySession(Session):
         writes = [
             entry
             for entry in self.new | self.dirty | self.deleted
-            if isinstance(entry, (SeedEntry, PromptMemoryEntry, ScorableContentEntry))
+            if isinstance(entry, (SeedEntry, PromptMemoryEntry, ScorableContentEntry, ScenarioPlanSeedGroupEntry))
         ]
         if writes:
             from pyrit.memory.dataset_lifecycle import (
@@ -87,8 +88,8 @@ class MemorySession(Session):
                 validate_dataset_reference_writes,
             )
 
-            # Only seeds and media-bearing rows can reference dataset assets. Text-only message
-            # writes skip the global lifecycle lock so concurrent conversations are not serialized.
+            # Only seeds and media-bearing rows, including planned seed groups, can reference dataset assets.
+            # Text-only message writes skip the global lifecycle lock so concurrent conversations are not serialized.
             references = [entry for entry in writes if entry_references_dataset_assets(entry)]
             if references:
                 lock_dataset_lifecycle(self)
@@ -194,6 +195,7 @@ def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
         SeedEntry.__tablename__,
         PromptMemoryEntry.__tablename__,
         ScorableContentEntry.__tablename__,
+        ScenarioPlanSeedGroupEntry.__tablename__,
     }:
         return state.invoke_statement()
     from pyrit.memory.dataset_lifecycle import (
