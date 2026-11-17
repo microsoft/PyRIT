@@ -121,7 +121,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Manage datasets at scale and load them more intelligently. Expect some redesign here.
 - Finish moving components from file paths and providers to seeds passed in or read from memory.
 - Express expected results as objective conditions in every executor, including benchmarks, instead of adding new seed types.
-- Execute objective decomposition paths in attacks (likely compound attacks), and reuse the same parent/child model for findings.
+- Execute objective decomposition paths in attacks (likely compound attacks).
 
 **Contributing (difficulty easy)**: Add seed dataset providers, prompts, and jailbreak templates for what you're testing.
 
