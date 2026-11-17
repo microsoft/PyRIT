@@ -492,6 +492,8 @@ class MatrixAtomicAttackBuilder:
         )
 
         atomic_attacks: list[AtomicAttack] = []
+        # Each build reports its own grid, so entries from an earlier build do not carry over.
+        self._selection_entries = []
         # Pool runs compare each attack population with a baseline under its selected judge.
         pool_baselines: dict[tuple[str, tuple[str, ...], int], tuple[list[AttackSeedGroup], ScorerSelection]] = {}
         technique_converters = technique_converters or {}
@@ -541,7 +543,11 @@ class MatrixAtomicAttackBuilder:
                     scoring_config = self._scoring_config_for(factory=factory, objective_scorer=selection.scorer)
                     if scoring_config is None:
                         # Checked before the selection is recorded, so no binding or baseline names
-                        # a scorer the attack would not use.
+                        # a scorer the attack would not use, and the report shows the cell as skipped.
+                        self._report_selected_as_rejected(
+                            reason_kind="scoring_config",
+                            reason="the attack's scoring config type cannot carry this scorer.",
+                        )
                         self._reject(
                             message=(
                                 f"Technique '{technique_name}', dataset '{dataset_name}': the attack's scoring "
@@ -757,6 +763,22 @@ class MatrixAtomicAttackBuilder:
             self._pool.report_entry(technique=technique_name, dataset=dataset_name, outcome=selection)
         )
         return selection
+
+    def _report_selected_as_rejected(self, *, reason_kind: str, reason: str) -> None:
+        """Turn the latest report entry's selected candidate into a rejection, for a cell skipped after selection."""
+        if not self._selection_entries:
+            return
+        entry = self._selection_entries[-1]
+        self._selection_entries[-1] = entry.model_copy(
+            update={
+                "candidates": [
+                    verdict.model_copy(update={"status": "rejected", "reason_kind": reason_kind, "reason": reason})
+                    if verdict.status == "selected"
+                    else verdict
+                    for verdict in entry.candidates
+                ]
+            }
+        )
 
     @property
     def selection_report(self) -> ScorerSelectionReport:

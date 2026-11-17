@@ -282,6 +282,32 @@ class TestSelectionReport:
         assert [verdict.reason_kind for verdict in skipped.candidates] == ["evaluation", "evaluation"]
         assert skipped.required_evaluation == "harm.violance"
 
+    def test_each_build_reports_only_its_own_grid(self) -> None:
+        pool, _, _ = _pool()
+        builder = _builder(pool)
+        for dataset in ("airt_hate", "airt_violence"):
+            builder.build(
+                technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+                dataset_groups={dataset: DATASETS[dataset]},
+                dataset_scorer_requirements=REQUIREMENTS,
+            )
+        assert [entry.dataset for entry in builder.selection_report.entries] == ["airt_violence"]
+
+    def test_a_cell_skipped_after_selection_is_reported_as_skipped(self) -> None:
+        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+        builder = _builder(CompatibleScorers(candidates=[SubStringScorer(substring="other")]))
+        builder.build(technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]})
+
+        (entry,) = builder.selection_report.skipped
+        assert entry.selected is None
+        assert [(verdict.status, verdict.reason_kind) for verdict in entry.candidates] == [
+            ("rejected", "scoring_config")
+        ]
+        assert entry.describe() == [
+            "narrow / d: no compatible scorer, skipped",
+            "  #0 SubStringScorer: scoring_config, the attack's scoring config type cannot carry this scorer.",
+        ]
+
 
 class _NarrowScoringConfig(AttackScoringConfig):
     """A config type an attack narrows to, accepting only substring scorers that look for 'ok'."""
