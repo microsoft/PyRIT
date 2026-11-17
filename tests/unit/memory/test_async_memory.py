@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from azure.core.credentials import AccessToken
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.dialects.mssql.aioodbc import MSDialectAsync_aioodbc
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import Session
@@ -353,6 +353,7 @@ async def test_azure_async_token_connection_removes_trusted_connection(
     memory._verbose = False
     memory._async_auth = {}
     memory._async_executors = {}
+    memory._engine_pool_settings = AzureSQLMemory._pool_settings()
     engine = MagicMock()
     engine.dialect.create_connect_args.return_value = (
         [],
@@ -739,6 +740,45 @@ async def test_async_override_can_call_super_without_using_legacy_override(sqlit
     assert await memory.get_unique_attack_class_names_async() == []
 
 
+@pytest.mark.parametrize("updated_value", ["8", "invalid"])
+async def test_azure_pool_settings_stay_fixed_after_construction_async(
+    updated_value: str, mock_aioodbc_connect: AsyncMock
+) -> None:
+    settings = {
+        AzureSQLMemory.POOL_SIZE_ENV: "2",
+        AzureSQLMemory.MAX_OVERFLOW_ENV: "1",
+        AzureSQLMemory.POOL_TIMEOUT_ENV: "9",
+    }
+    sync_engine = MagicMock(spec=Engine)
+    async_engine = MagicMock(spec=AsyncEngine)
+    auth = MagicMock(spec=AsyncAzureAuth)
+    with (
+        patch.dict("os.environ", settings),
+        patch("pyrit.memory.azure_sql_memory.create_engine", return_value=sync_engine) as sync_factory,
+        patch("pyrit.memory.azure_sql_memory.create_async_engine", return_value=async_engine) as async_factory,
+        patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth", return_value=auth),
+        patch.object(AzureSQLMemory, "_enable_azure_authorization"),
+        patch.object(MemoryInterface, "_init_storage_io"),
+        patch.object(MemoryInterface, "cleanup"),
+    ):
+        memory = AzureSQLMemory.__new__(AzureSQLMemory)
+        memory.__init__(
+            connection_string="mssql+pyodbc://localhost/test?driver=unit",
+            results_container_url="https://example.invalid/results",
+            results_sas_token="unit-test",
+            _defer_initialization=True,
+        )
+        try:
+            with patch.dict("os.environ", dict.fromkeys(settings, updated_value)):
+                assert memory._get_async_engine() is async_engine
+            for name, value in {"pool_size": 2, "max_overflow": 1, "pool_timeout": 9}.items():
+                assert sync_factory.call_args.kwargs[name] == value
+                assert async_factory.call_args.kwargs[name] == value
+            assert memory._async_executors[asyncio.get_running_loop()]._max_workers == 3
+        finally:
+            await memory.dispose_loop_resources_async()
+
+
 async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_aioodbc_connect: AsyncMock) -> None:
     memory = AzureSQLMemory.__new__(AzureSQLMemory)
     memory._connection_string = (
@@ -749,6 +789,7 @@ async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_ai
     memory._async_auth = {}
     memory._async_engines = {}
     memory._async_executors = {}
+    memory._engine_pool_settings = AzureSQLMemory._pool_settings()
     memory._dataset_upload_leases = {}
     engine = MagicMock(spec=AsyncEngine)
     engine.dialect = MSDialectAsync_aioodbc()

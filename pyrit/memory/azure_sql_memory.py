@@ -136,6 +136,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._verbose = verbose
         self._silent = silent
         self._skip_schema_migration = skip_schema_migration
+        self._engine_pool_settings = self._pool_settings()
 
         self.results_path = self._results_container_url
 
@@ -189,7 +190,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         import aioodbc
 
         url = make_url(self._connection_string).set(drivername="mssql+aioodbc")
-        pool_settings = self._pool_settings()
+        pool_settings = self._engine_pool_settings
         # aioodbc runs every ODBC call on an executor thread for the whole round trip. On the shared
         # default executor, connections waiting on a SQL lock can occupy every thread while the lock
         # holder waits for a thread to commit, which hangs the process. One thread per pooled
@@ -336,7 +337,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 pool_recycle=1800,
                 pool_pre_ping=True,
                 echo=has_echo,
-                **self._pool_settings(),
+                **self._engine_pool_settings,
             )
             logger.info(f"Engine created successfully for database: {engine.name}")
             return engine
@@ -347,7 +348,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     @classmethod
     def _pool_settings(cls) -> dict[str, int]:
         """
-        Read the connection pool bounds for a new engine.
+        Read the connection pool bounds during memory construction.
 
         Returns:
             dict[str, int]: ``pool_size``, ``max_overflow`` and ``pool_timeout`` keyword arguments.
@@ -356,13 +357,15 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             ValueError: If an override is not an integer in range.
         """
         return {
-            "pool_size": cls._pool_setting(cls.POOL_SIZE_ENV, cls.DEFAULT_POOL_SIZE, minimum=1),
-            "max_overflow": cls._pool_setting(cls.MAX_OVERFLOW_ENV, cls.DEFAULT_MAX_OVERFLOW, minimum=0),
-            "pool_timeout": cls._pool_setting(cls.POOL_TIMEOUT_ENV, cls.DEFAULT_POOL_TIMEOUT_SECONDS, minimum=1),
+            "pool_size": cls._pool_setting(variable=cls.POOL_SIZE_ENV, default=cls.DEFAULT_POOL_SIZE, minimum=1),
+            "max_overflow": cls._pool_setting(variable=cls.MAX_OVERFLOW_ENV, default=cls.DEFAULT_MAX_OVERFLOW, minimum=0),
+            "pool_timeout": cls._pool_setting(
+                variable=cls.POOL_TIMEOUT_ENV, default=cls.DEFAULT_POOL_TIMEOUT_SECONDS, minimum=1
+            ),
         }
 
     @staticmethod
-    def _pool_setting(variable: str, default: int, *, minimum: int) -> int:
+    def _pool_setting(*, variable: str, default: int, minimum: int) -> int:
         raw = os.environ.get(variable, "").strip()
         if not raw:
             return default

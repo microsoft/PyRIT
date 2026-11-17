@@ -1459,6 +1459,7 @@ def test_sync_engine_is_created_with_the_pool_settings(
 ) -> None:
     monkeypatch.setenv(AzureSQLMemory.POOL_SIZE_ENV, "7")
     uninitialized_memory_interface._connection_string = "mssql+pyodbc:///?odbc_connect=DRIVER%3Dunit"
+    uninitialized_memory_interface._engine_pool_settings = AzureSQLMemory._pool_settings()
     with patch("pyrit.memory.azure_sql_memory.create_engine") as create_engine:
         engine = uninitialized_memory_interface._create_engine(has_echo=False)
 
@@ -1474,7 +1475,7 @@ def test_sync_engine_is_created_with_the_pool_settings(
     )
 
 
-async def test_async_engine_gets_pool_settings_and_one_sql_thread_per_connection(
+async def test_async_engine_gets_pool_settings_and_one_sql_thread_per_connection_async(
     uninitialized_memory_interface: AzureSQLMemory, no_pool_overrides: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(AzureSQLMemory.POOL_SIZE_ENV, "5")
@@ -1483,6 +1484,7 @@ async def test_async_engine_gets_pool_settings_and_one_sql_thread_per_connection
     uninitialized_memory_interface._verbose = False
     uninitialized_memory_interface._async_auth = {}
     uninitialized_memory_interface._async_executors = {}
+    uninitialized_memory_interface._engine_pool_settings = AzureSQLMemory._pool_settings()
     with patch("pyrit.memory.azure_sql_memory.create_async_engine") as create_async_engine:
         engine = uninitialized_memory_interface._create_async_engine()
 
