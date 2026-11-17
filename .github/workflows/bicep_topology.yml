@@ -40,7 +40,9 @@ jobs:
       - name: Install Bicep CLI
         env:
           AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
-        run: az bicep install --version v0.46.1
+        run: |
+          az bicep install --version v0.46.1
+          echo "$AZURE_CONFIG_DIR/bin" >> "$GITHUB_PATH"
 
       - name: Compile and test Bicep topology
         env:

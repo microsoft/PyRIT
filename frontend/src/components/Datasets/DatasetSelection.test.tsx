@@ -229,6 +229,29 @@ describe('DatasetSelection', () => {
     expect(await screen.findByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets')
   })
 
+  it('offers a return to the originating chat and carries its route state', async () => {
+    const chatState = { fromScenarioHistory: true, scenarioHistorySearch: '?target=local' }
+    renderSelection(datasetDetailPath(LOADED.selection_key), {
+      chatOrigin: {
+        path: '/attack/chat/attack-1/conversations/conversation-1',
+        state: chatState,
+        attackId: 'attack-1',
+        conversationId: 'conversation-1',
+      },
+    })
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    const returnLink = screen.getByRole('link', { name: 'Return to Chat' })
+    expect(returnLink).toHaveAttribute('href', '/attack/chat/attack-1/conversations/conversation-1')
+  })
+
+  it('does not expose an unrelated chat destination for direct dataset entry', async () => {
+    renderSelection(datasetDetailPath(LOADED.selection_key))
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    expect(screen.queryByRole('link', { name: 'Return to Chat' })).not.toBeInTheDocument()
+  })
+
   it('does not send catalog name search or sort to the seed API', async () => {
     renderSelection(`${datasetDetailPath(LOADED.selection_key)}&q=policy&sort=name&unlabeled=true`)
 
