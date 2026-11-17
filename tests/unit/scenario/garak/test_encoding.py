@@ -17,7 +17,7 @@ from pyrit.scenario import (
     DatasetConfiguration,
     DatasetSource,
 )
-from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
 
