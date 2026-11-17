@@ -471,3 +471,25 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # `OtelToolCallScorer` cannot confirm an argument requirement and leaves it
 # undetermined. Complete trace evidence with no execution of the tool still makes
 # it false, because no call means no matching call.
+#
+# ## Let a scenario choose the tool-call scorer
+#
+# A scenario that takes a `CompatibleScorers` pool, such as `RapidResponse`, picks a scorer for
+# each technique and dataset before it sends anything. A text judge does not evaluate
+# `ToolsCalled`, so a dataset whose objectives carry that condition goes to the tool-call scorer,
+# and a dataset of ordinary objectives keeps the text judge:
+#
+# ```python
+# from pyrit.scenario.airt import RapidResponse
+# from pyrit.score import CompatibleScorers, MessageToolCallScorer
+#
+# scorers = CompatibleScorers(candidates=[text_judge, MessageToolCallScorer()])
+# scenario = RapidResponse(objective_scorer=scorers)
+# ```
+#
+# When no candidate can evaluate a dataset's conditions, that technique and dataset are skipped
+# with each candidate's reason, or initialization stops under `incompatible_technique_policy:
+# raise`. Either way, no prompt is sent only to be judged by a scorer that would ignore the
+# condition. The selected `MessageToolCallScorer` then reads the run as described above: an
+# invocation attempt counts even when the tool reported an error, while a claim in the reply, a
+# request that never ran, a dispatch failure, or simulated history leaves the result undetermined.
