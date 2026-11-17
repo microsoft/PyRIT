@@ -23,28 +23,19 @@ import pyrit.backend.services.runtime_lifecycle as lifecycle_module
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health, initializers
-from pyrit.backend.services import InitializerService, ScenarioRunService, get_converter_service, get_target_service
+from pyrit.backend.routes import configuration, health
+from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
-from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
-from pyrit.models import ScenarioPreset, ScenarioRunState, ScenarioSuite
+from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.models import ScenarioRunState
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    ConverterRegistry,
-    InitializerRegistry,
-    Registry,
-    ScenarioPresetRegistry,
-    ScenarioSuiteRegistry,
-    ScorerRegistry,
-    TargetRegistry,
-)
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
@@ -181,61 +172,30 @@ async def test_failed_startup_keeps_liveness_and_configuration_recovery_async(ru
     assert saved_configuration.status_code == 200
 
 
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("failure_phase", ["environment", "memory"])
-async def test_failed_startup_keeps_configured_initializer_storage_async(
-    *, runtime: RuntimeLifecycle, tmp_path: Path, failure_phase: str
-) -> None:
+async def test_management_configures_scenario_suite_storage_source_async(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("memory_db_type: in_memory\n", encoding="utf-8")
+    source = ConfigurationFileService(config_file_value=str(config_path))
+    lifecycle = RuntimeLifecycle(app=FastAPI(), source=source)
+    suite_source = str(tmp_path / "scenario_suites")
     config = ConfigurationLoader(
         memory_db_type="in_memory",
         env_files=[],
-        initialization_scripts=[],
-        initializers=["scenario_suite"],
-        allow_custom_initializers=True,
-        custom_initializers_source=str(tmp_path / "requested_initializers"),
-        scenario_presets_source=str(tmp_path / "requested_presets"),
-        scenario_suites_source=str(tmp_path / "requested_suites"),
+        scenario_suites_source=suite_source,
     )
-    runtime.app.include_router(initializers.router, prefix="/api")
-    loop_thread = current_thread()
-    configure_sources = config._configure_registry_sources
-
-    def bind_sources() -> None:
-        assert current_thread() is not loop_thread
-        configure_sources()
+    initializer_registry = MagicMock()
+    preset_registry = MagicMock()
+    suite_registry = MagicMock()
 
     with (
-        patch.dict(Registry._singletons, {}, clear=True),
-        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
-        patch.object(runtime, "_load_async", AsyncMock(return_value=config)),
-        patch.object(runtime, "_management_async", wraps=RuntimeLifecycle._management_async.__get__(runtime)),
-        patch.object(config, "_configure_registry_sources", side_effect=bind_sources) as configure,
-        patch(
-            "pyrit.setup.initialization.load_environment_async",
-            AsyncMock(side_effect=RuntimeError("environment unavailable") if failure_phase == "environment" else None),
-        ) as load_environment,
-        patch.object(
-            SQLiteMemory, "initialize_async", AsyncMock(side_effect=RuntimeError("memory unavailable"))
-        ) as memory,
-        patch.object(InitializerRegistry, "register_stored_initializers") as load_scripts,
-        patch.object(initializers, "get_initializer_service", side_effect=InitializerService),
+        patch.object(lifecycle_module.InitializerRegistry, "get_registry_singleton", return_value=initializer_registry),
+        patch.object(lifecycle_module.ScenarioPresetRegistry, "get_registry_singleton", return_value=preset_registry),
+        patch.object(lifecycle_module.ScenarioSuiteRegistry, "get_registry_singleton", return_value=suite_registry),
     ):
-        await runtime.startup_async()
-        assert runtime.state == "restart-required"
-        assert runtime.outcome == "initialization-failed"
-        load_environment.assert_awaited_once()
-        if failure_phase == "memory":
-            memory.assert_awaited_once()
-        else:
-            memory.assert_not_awaited()
-        load_scripts.assert_not_called()
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-            response = await client.get("/api/initializers/custom")
-        assert response.status_code == 200
-        assert response.json()["source"] == config.custom_initializers_source
-        assert ScenarioPresetRegistry.get_registry_singleton().source == config.scenario_presets_source
-        assert ScenarioSuiteRegistry.get_registry_singleton().source == config.scenario_suites_source
-        configure.assert_called_once()
+        await lifecycle._management_async(config)
+
+    suite_registry.configure_source.assert_called_once_with(suite_source)
+    suite_registry.scan_stored_suites.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -353,19 +313,12 @@ async def test_shutdown_repeated_failure_preserves_original_error_async(runtime:
         lifecycle_module.close_services_async.assert_awaited_once()
 
 
-@pytest.mark.parametrize("allow_custom_initializers", [False, True])
-async def test_success_preflights_then_replaces_idle_runtime(
-    *, runtime: RuntimeLifecycle, allow_custom_initializers: bool
-) -> None:
-    config = await runtime._load_async()
-    config.allow_custom_initializers = allow_custom_initializers
+async def test_success_preflights_then_replaces_idle_runtime(runtime: RuntimeLifecycle) -> None:
     await apply_async(runtime)
     assert runtime.state == "ready"
     assert runtime.generation != "original"
-    config.preflight_reinitialization_async.assert_awaited_once_with(
-        environment_values={"NEW_VALUE": "new"},
-        load_stored_initializers=allow_custom_initializers,
-    )
+    config = await runtime._load_async()
+    config.preflight_reinitialization_async.assert_awaited_once_with(environment_values={"NEW_VALUE": "new"})
     lifecycle_module.close_services_async.assert_awaited_once()
     config.apply_prepared_reinitialization_async.assert_awaited_once()
     assert runtime.version == (await runtime.source.read_with_version_async())[1]
@@ -431,97 +384,6 @@ async def test_stale_version_and_invalid_preflight_do_not_mutate(runtime: Runtim
     assert runtime.state == "ready"
     assert "secret" not in runtime.message
     lifecycle_module.close_services_async.assert_not_awaited()
-
-
-async def test_invalid_suite_configuration_keeps_live_runtime_async(runtime: RuntimeLifecycle) -> None:
-    config = ConfigurationLoader(
-        memory_db_type="in_memory",
-        env_files=[],
-        initialization_scripts=[],
-        enable_live_reinitialization=True,
-        initializers=[{"name": "scenario_suite", "args": {"tags": ["default"]}}],
-    )
-    with patch.dict(Registry._singletons, {}, clear=True):
-        presets = ScenarioPresetRegistry.get_registry_singleton()
-        suites = ScenarioSuiteRegistry.get_registry_singleton()
-        preset = ScenarioPreset(name="live_preset", scenario_name="airt.jailbreak")
-        suite = ScenarioSuite(name="live_suite")
-        presets.instances.register(preset, name=preset.name)
-        suites.instances.register(suite, name=suite.name)
-        live_registries = dict(Registry._singletons)
-        with (
-            patch.object(runtime, "_load_async", AsyncMock(return_value=config)),
-            patch.object(
-                config,
-                "apply_prepared_reinitialization_async",
-                AsyncMock(side_effect=AssertionError("must not replace the runtime")),
-            ) as replace_runtime,
-        ):
-            await apply_async(runtime)
-
-        assert runtime.state == "ready"
-        assert runtime.outcome == "invalid-configuration"
-        assert runtime.generation == "original"
-        lifecycle_module.close_services_async.assert_not_awaited()
-        replace_runtime.assert_not_awaited()
-        assert Registry._singletons == live_registries
-        assert presets.instances.get(preset.name) is preset
-        assert suites.instances.get(suite.name) is suite
-
-
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("destination", ["custom", "default"])
-async def test_live_apply_configures_storage_before_initializers_async(
-    *, runtime: RuntimeLifecycle, tmp_path: Path, destination: str
-) -> None:
-    config = ConfigurationLoader(
-        memory_db_type="in_memory",
-        env_files=[],
-        initialization_scripts=[],
-        enable_live_reinitialization=True,
-        initializers=["scenario_suite"],
-        scenario_presets_source=str(tmp_path / "requested_presets") if destination == "custom" else None,
-        scenario_suites_source=str(tmp_path / "requested_suites") if destination == "custom" else None,
-    )
-    expected_presets = config.scenario_presets_source or str(tmp_path / "defaults" / "scenario_presets")
-    expected_suites = config.scenario_suites_source or str(tmp_path / "defaults" / "scenario_suites")
-    original_preset_version = ScenarioPresetRegistry._stored_version
-    original_suite_version = ScenarioSuiteRegistry._stored_version
-    loop_thread = current_thread()
-
-    def check_preset_source(registry: ScenarioPresetRegistry, *, name: str) -> str | None:
-        assert current_thread() is not loop_thread
-        assert registry.source == expected_presets
-        return original_preset_version(registry, name=name)
-
-    def check_suite_source(registry: ScenarioSuiteRegistry, *, name: str) -> str | None:
-        assert current_thread() is not loop_thread
-        assert registry.source == expected_suites
-        return original_suite_version(registry, name=name)
-
-    with (
-        patch.dict(Registry._singletons, {}, clear=True),
-        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
-        patch.object(runtime, "_load_async", AsyncMock(return_value=config)),
-        patch.object(runtime, "_management_async", wraps=RuntimeLifecycle._management_async.__get__(runtime)),
-        patch.object(runtime, "_restore_saved_entries_async", AsyncMock(return_value=True)),
-        patch.object(
-            ScenarioPresetRegistry, "_stored_version", autospec=True, side_effect=check_preset_source
-        ) as check_presets,
-        patch.object(
-            ScenarioSuiteRegistry, "_stored_version", autospec=True, side_effect=check_suite_source
-        ) as check_suites,
-    ):
-        ScenarioPresetRegistry.get_registry_singleton().configure_source(str(tmp_path / "old_presets"))
-        ScenarioSuiteRegistry.get_registry_singleton().configure_source(str(tmp_path / "old_suites"))
-        await apply_async(runtime)
-        assert runtime.state == "ready"
-        assert runtime.outcome == "success"
-        assert check_presets.call_count == 3
-        check_suites.assert_called_once()
-        assert ScenarioPresetRegistry.get_registry_singleton().source == expected_presets
-        assert ScenarioSuiteRegistry.get_registry_singleton().source == expected_suites
-        assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == ["horizontal_techniques"]
 
 
 async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: RuntimeLifecycle) -> None:
@@ -843,11 +705,7 @@ async def test_management_publishes_target_upload_directory(tmp_path: Path) -> N
         service = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=None))
     config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=str(tmp_path))
 
-    with (
-        patch.dict(Registry._singletons, {}, clear=True),
-        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
-    ):
-        await service._management_async(config)
+    await service._management_async(config)
 
     assert app.state.target_upload_directory == str(tmp_path)
 

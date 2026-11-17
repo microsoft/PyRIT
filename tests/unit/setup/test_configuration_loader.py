@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import pathlib
 import tempfile
 from collections.abc import Iterator
@@ -107,19 +106,6 @@ class TestConfigurationLoader:
         """Test rejecting empty or non-string sources for saved registry entries."""
         with pytest.raises(ValueError, match="registry_recipes_source"):
             ConfigurationLoader(registry_recipes_source=invalid_value)  # type: ignore[arg-type]
-
-    @pytest.mark.parametrize(
-        "field_name",
-        [
-            "custom_initializers_source",
-            "scenario_presets_source",
-            "scenario_suites_source",
-            "registry_recipes_source",
-        ],
-    )
-    def test_document_source_rejects_unsupported_uri_before_initialization(self, field_name: str) -> None:
-        with pytest.raises(ValueError, match=field_name):
-            ConfigurationLoader(**{field_name: "ftp://example.invalid/documents"})
 
     def test_target_upload_directory_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         config_path = tmp_path / "config.yaml"
@@ -503,7 +489,7 @@ class TestConfigurationLoaderInitialization:
         # Should map snake_case to internal constant
         assert call_kwargs["memory_db_type"] == "InMemory"
         assert call_kwargs["initialization_scripts"] is None
-        assert await asyncio.to_thread(call_kwargs["initializer_factory"]) == []
+        assert call_kwargs["initializers"] is None
         assert call_kwargs["env_files"] is None
         assert call_kwargs["env_akv_ref"] is None
         assert call_kwargs["env_akv_strict"] is True
@@ -544,12 +530,13 @@ class TestConfigurationLoaderInitialization:
         )
         await config.initialize_pyrit_async()
 
-        # Resolution is deferred until the core has loaded the environment and memory.
-        mock_registry.create_and_configure.assert_not_called()
+        # Verify registry was used to resolve and configure the initializer
+        mock_registry.create_and_configure.assert_called_once_with("simple", initializer_params=None)
+
+        # Verify initialize was called with resolved initializers
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args.kwargs
-        assert await asyncio.to_thread(call_kwargs["initializer_factory"]) == [mock_initializer_instance]
-        mock_registry.create_and_configure.assert_called_once_with("simple", initializer_params=None)
+        assert call_kwargs["initializers"] == [mock_initializer_instance]
 
     @mock.patch("pyrit.registry.InitializerRegistry")
     async def test_initialize_pyrit_async_unknown_initializer_raises_error(self, mock_registry_cls):
@@ -561,7 +548,6 @@ class TestConfigurationLoaderInitialization:
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",
-            env_files=[],
             initializers=["unknown_initializer"],
         )
 
@@ -580,8 +566,8 @@ class TestConfigurationLoaderInitialization:
 
         await config.initialize_pyrit_async(raise_on_initializer_error=False)
 
-        assert await asyncio.to_thread(mock_init.call_args.kwargs["initializer_factory"]) == [healthy]
         assert mock_registry.create_and_configure.call_count == 2
+        assert mock_init.call_args.kwargs["initializers"] == [healthy]
         assert mock_init.call_args.kwargs["raise_on_initializer_error"] is False
 
 

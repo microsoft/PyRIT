@@ -185,8 +185,6 @@ custom_initializers_source: https://account.blob.core.windows.net/pyrit-storage/
 
 With this configuration, PyRIT reads and writes scripts directly under the `custom-initializers/` prefix in the `pyrit-storage` container. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/custom_initializers`.
 
-Automatic discovery of these scripts is backend-only. Notebook/Python calls to `initialize_from_config_async` or `ConfigurationLoader.initialize_pyrit_async` do not automatically import them, even when the configuration sets `allow_custom_initializers: true`. Built-in initializers such as `scenario_suite` remain available. To run custom code in a notebook, supply explicit `initialization_scripts` or register the initializer class yourself.
-
 ```{warning}
 When `allow_custom_initializers: true`, the backend imports every script in this source at startup and during live reinitialization, under the backend's identity. PyRIT does not sign or verify these scripts, so write access to this source is code-execution authority on the backend. The same applies to write access to `.pyrit_conf`, which selects this source and `initialization_scripts`. Grant write access only to principals you already trust as backend administrators, and use a dedicated directory or blob prefix that less-trusted users and services cannot write to.
 ```
@@ -217,7 +215,7 @@ Suites store ordered references to scenario presets and resolve each preset's cu
 
 A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
 
-Custom initializer, preset, and suite storage sources are applied by `ConfigurationLoader` for both backend and programmatic initialization, before configured initializers are constructed for execution. Binding a source does not import its custom scripts; the backend opts into stored-script discovery separately. The backend also binds these sources before environment and memory setup so recovery routes use the configured storage if setup fails. At startup, environment and memory setup still precede initializer construction and script loading. During live reinitialization, code registrations are discarded and the requested storage sources are reapplied before initializers rebuild them; stored documents are not deleted. Removing a source setting selects its default location rather than retaining the previous source.
+`ConfigurationLoader` applies preset and suite storage sources before initializers register their definitions, including in notebooks and during live reload. Reload clears code registrations but preserves stored documents. Omitting a source setting restores its default location.
 
 ### `registry_recipes_source`
 

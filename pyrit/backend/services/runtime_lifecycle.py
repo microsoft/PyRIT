@@ -27,6 +27,7 @@ from pyrit.backend.services.service_lifecycle import (
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
+from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
@@ -91,8 +92,6 @@ class RuntimeLifecycle:
             return await asyncio.to_thread(ConfigurationLoader.load_with_overrides, config_file=file, strict=True)
 
     async def _management_async(self, config: ConfigurationLoader) -> None:
-        # Recovery routes must use the configured storage even if environment or memory setup fails.
-        await asyncio.to_thread(config._configure_registry_sources)
         resolved = config.resolve_env_files()
         read_only = {}
         if os.getenv("PYRIT_ENV_CONTENTS"):
@@ -107,6 +106,16 @@ class RuntimeLifecycle:
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         self.app.state.target_upload_directory = config.target_upload_directory
+        registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
+        registry.configure_custom_scripts_source(config.custom_initializers_source)
+        preset_registry = ScenarioPresetRegistry.get_registry_singleton()
+        # Constructing either storage creates its default directory when no source is
+        # configured, and each scan reads every stored document, so both stay off the event loop.
+        await asyncio.to_thread(preset_registry.configure_source, config.scenario_presets_source)
+        await asyncio.to_thread(preset_registry.scan_stored_presets)
+        suite_registry = ScenarioSuiteRegistry.get_registry_singleton()
+        await asyncio.to_thread(suite_registry.configure_source, config.scenario_suites_source)
+        await asyncio.to_thread(suite_registry.scan_stored_suites)
 
     def _publish(self, config: ConfigurationLoader) -> None:
         self.app.state.configured_initializers = [
@@ -177,12 +186,11 @@ class RuntimeLifecycle:
         try:
             config = await self._load_async()
             await self._management_async(config)
+            registry = InitializerRegistry.get_registry_singleton()
             if config.allow_custom_initializers:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
-            await config.initialize_pyrit_async(
-                raise_on_initializer_error=True,
-                load_stored_initializers=config.allow_custom_initializers,
-            )
+                await asyncio.to_thread(registry.register_stored_initializers, strict=True)
+            await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             if await self._restore_saved_entries_async(config):
@@ -246,10 +254,7 @@ class RuntimeLifecycle:
                 validate_reinitialization_memory(
                     memory_db_type=config._MEMORY_DB_TYPE_MAP[config.memory_db_type], environment=values
                 )
-                prepared = await config.preflight_reinitialization_async(
-                    environment_values=values,
-                    load_stored_initializers=config.allow_custom_initializers,
-                )
+                prepared = await config.preflight_reinitialization_async(environment_values=values)
                 _, checked_version = await self.source.read_with_version_async()
                 if checked_version != current_version:
                     self.outcome, self.message = "version-conflict", "Configuration changed during validation."

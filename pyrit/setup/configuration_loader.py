@@ -262,14 +262,10 @@ class ConfigurationLoader(YamlLoadable):
             value: The configured value.
 
         Raises:
-            ValueError: If the source is not a supported local directory or Azure Blob URI.
+            ValueError: If the source is not a non-empty string.
         """
-        from pyrit.registry.file_document_storage import FileDocumentStorage
-
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise ValueError(f"{name} must be a non-empty local directory or container URI.")
-        if value is not None:
-            FileDocumentStorage(source=value, extension="", source_label=name)
 
     def _validate_target_upload_directory(self) -> None:
         """
@@ -722,15 +718,9 @@ class ConfigurationLoader(YamlLoadable):
         self,
         *,
         environment_values: dict[str, str],
-        load_stored_initializers: bool = False,
     ) -> PreparedReinitialization:
         """
         Validate replacement scripts and initializer configuration without changing live PyRIT state.
-
-        Args:
-            environment_values (dict[str, str]): Replacement environment values to validate against.
-            load_stored_initializers (bool): Explicitly discover stored custom initializers. Defaults to False;
-                the backend supplies its ``allow_custom_initializers`` setting.
 
         Returns:
             PreparedReinitialization: Immutable inputs ready for the mutation phase.
@@ -742,8 +732,8 @@ class ConfigurationLoader(YamlLoadable):
         from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         registry = await asyncio.to_thread(InitializerRegistry)
-        await asyncio.to_thread(registry.configure_custom_scripts_source, self.custom_initializers_source)
-        if load_stored_initializers:
+        registry.configure_custom_scripts_source(self.custom_initializers_source)
+        if self.allow_custom_initializers:
             await asyncio.to_thread(registry.register_stored_initializers, strict=True)
 
         initializers = list(
@@ -789,7 +779,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
-        self._configure_registry_sources()
+        self._configure_scenario_sources()
         initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
         initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)
         if not initializers:
@@ -880,9 +870,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         return self.env_akv_ref
 
-    async def initialize_pyrit_async(
-        self, *, raise_on_initializer_error: bool = True, load_stored_initializers: bool = False
-    ) -> None:
+    async def initialize_pyrit_async(self, *, raise_on_initializer_error: bool = True) -> None:
         """
         Initialize PyRIT with the loaded configuration.
 
@@ -890,14 +878,16 @@ class ConfigurationLoader(YamlLoadable):
         ``initialize_pyrit_async`` function.
 
         Args:
-            raise_on_initializer_error (bool): Whether initializer resolution, loading, validation, or execution
+            raise_on_initializer_error: Whether initializer resolution, loading, validation, or execution
                 failures should abort initialization. Defaults to True.
-            load_stored_initializers (bool): Explicitly discover stored custom initializers. Defaults to False;
-                the backend supplies its ``allow_custom_initializers`` setting.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
+        await asyncio.to_thread(self._configure_scenario_sources)
+        resolved_initializers = self.resolve_initializers(
+            raise_on_initializer_error=raise_on_initializer_error,
+        )
         resolved_scripts = self.resolve_initialization_scripts()
         resolved_env_files = self.resolve_env_files()
 
@@ -907,10 +897,7 @@ class ConfigurationLoader(YamlLoadable):
         await initialize_pyrit_async(
             memory_db_type=internal_memory_db_type,
             initialization_scripts=resolved_scripts,
-            initializer_factory=lambda: self._construct_initializers(
-                raise_on_initializer_error=raise_on_initializer_error,
-                load_stored_initializers=load_stored_initializers,
-            ),
+            initializers=resolved_initializers if resolved_initializers else None,
             env_files=resolved_env_files,
             env_akv_ref=self.env_akv_ref,
             env_akv_strict=self.env_akv_strict,
@@ -919,38 +906,12 @@ class ConfigurationLoader(YamlLoadable):
             raise_on_initializer_error=raise_on_initializer_error,
         )
 
-    def _configure_registry_sources(self) -> None:
-        """Bind configuration-owned storage before initializer construction or execution."""
-        from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
+    def _configure_scenario_sources(self) -> None:
+        """Bind preset and suite storage before initializers register their definitions."""
+        from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
 
-        InitializerRegistry.get_registry_singleton().configure_custom_scripts_source(self.custom_initializers_source)
-        presets = ScenarioPresetRegistry.get_registry_singleton()
-        suites = ScenarioSuiteRegistry.get_registry_singleton()
-        presets.configure_source(self.scenario_presets_source)
-        suites.configure_source(self.scenario_suites_source)
-        presets.scan_stored_presets()
-        suites.scan_stored_suites()
-
-    def _construct_initializers(
-        self, *, raise_on_initializer_error: bool, load_stored_initializers: bool
-    ) -> Sequence["PyRITInitializer"]:
-        """
-        Construct configured initializers after setup, optionally discovering stored classes.
-
-        Args:
-            raise_on_initializer_error (bool): Whether loading or resolution failures should abort initialization.
-            load_stored_initializers (bool): Whether to discover stored custom initializer classes.
-
-        Returns:
-            Sequence[PyRITInitializer]: Configured instances ready to execute.
-        """
-        from pyrit.registry import InitializerRegistry
-
-        self._configure_registry_sources()
-        registry = InitializerRegistry.get_registry_singleton()
-        if load_stored_initializers:
-            registry.register_stored_initializers(strict=raise_on_initializer_error)
-        return self.resolve_initializers(raise_on_initializer_error=raise_on_initializer_error, registry=registry)
+        ScenarioPresetRegistry.get_registry_singleton().configure_source(self.scenario_presets_source)
+        ScenarioSuiteRegistry.get_registry_singleton().configure_source(self.scenario_suites_source)
 
 
 async def initialize_from_config_async(
