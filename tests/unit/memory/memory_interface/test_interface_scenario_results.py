@@ -166,6 +166,37 @@ async def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_re
     assert results[0].scenario_name == "Test Scenario Alpha"
 
 
+@pytest.mark.parametrize(
+    ("searched", "matching_name", "decoy_name"),
+    [
+        ("Alpha_Scenario", "Alpha_Scenario", "AlphaXScenario"),
+        ("100%", "Scenario 100%", "Scenario 1000"),
+    ],
+)
+async def test_filter_by_name_treats_like_wildcards_literally_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    sample_attack_results: list[AttackResult],
+    searched: str,
+    matching_name: str,
+    decoy_name: str,
+) -> None:
+    """The scenario name filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
+    scenario_result1 = create_scenario_result(
+        name=matching_name,
+        attack_results={"Attack1": [sample_attack_results[0]]},
+    )
+    scenario_result2 = create_scenario_result(
+        name=decoy_name,
+        attack_results={"Attack2": [sample_attack_results[1]]},
+    )
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1, scenario_result2]))
+
+    results = await sqlite_instance.get_scenario_results_async(scenario_name=searched)
+
+    assert [result.scenario_name for result in results] == [matching_name]
+
+
 async def test_filter_by_version(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test retrieving scenario results filtered by version."""
     # Create and add scenario results with different versions
@@ -877,7 +908,8 @@ async def test_delete_scenario_sets_attack_result_foreign_key_to_null(
     """
     from sqlalchemy import text as _sql_text
 
-    from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
+    from pyrit.memory import AttackResultEntry
+    from pyrit.memory.memory_models import ScenarioResultEntry
 
     scenario_result = create_scenario_result(name="To Be Deleted")
     (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))

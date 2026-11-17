@@ -27,6 +27,8 @@ if TYPE_CHECKING:
         ScenarioSuiteRegistry,
         ScorerMetadata,
         ScorerRegistry,
+        SourceMetadata,
+        SourceRegistry,
         TargetMetadata,
         TargetRegistry,
     )
@@ -39,6 +41,13 @@ if TYPE_CHECKING:
     )
     from pyrit.registry.registry import InstanceHoldingRegistry, ParamBagRegistry, Registry
     from pyrit.registry.registry_metadata import RegistryMetadata
+    from pyrit.registry.registry_recipe_save import (
+        NotSaveableError,
+        SavedEntryConflictError,
+        SavedEntryStorageError,
+        prepare_saved_params_async,
+        save_then_register_async,
+    )
     from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
     from pyrit.registry.scenario_suite_resolver import (
         ResolvedScenarioSuiteEntry,
@@ -64,6 +73,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ParamBagRegistry": "pyrit.registry.registry",
     "Registry": "pyrit.registry.registry",
     "RegistryMetadata": "pyrit.registry.registry_metadata",
+    "NotSaveableError": "pyrit.registry.registry_recipe_save",
+    "SavedEntryConflictError": "pyrit.registry.registry_recipe_save",
+    "SavedEntryStorageError": "pyrit.registry.registry_recipe_save",
+    "prepare_saved_params_async": "pyrit.registry.registry_recipe_save",
+    "save_then_register_async": "pyrit.registry.registry_recipe_save",
     "SupportsInstances": "pyrit.registry.instance_registry",
     "discover_in_directory": "pyrit.registry.discovery",
     "InitializerMetadata": "pyrit.registry.components",
@@ -90,6 +104,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioRegistry": "pyrit.registry.components",
     "ScorerRegistry": "pyrit.registry.components",
     "ScorerMetadata": "pyrit.registry.components",
+    "SourceRegistry": "pyrit.registry.components",
+    "SourceMetadata": "pyrit.registry.components",
     "TargetRegistry": "pyrit.registry.components",
     "TargetMetadata": "pyrit.registry.components",
     "TagQuery": "pyrit.registry.tag_query",

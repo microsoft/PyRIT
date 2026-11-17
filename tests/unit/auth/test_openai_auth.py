@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.auth.openai_auth import resolve_openai_auth
+from pyrit.auth import resolve_openai_auth
 
 AZURE_ENDPOINT = "https://my-resource.openai.azure.com/openai/v1"
 NON_AZURE_ENDPOINT = "https://api.openai.com/v1"

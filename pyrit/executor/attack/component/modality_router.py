@@ -16,11 +16,10 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, MessagePiece
-from pyrit.models.literals import MEDIA_PATH_DATA_TYPES, PromptDataType
+from pyrit.models import MEDIA_PATH_DATA_TYPES, Message, MessagePiece, PromptDataType
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 

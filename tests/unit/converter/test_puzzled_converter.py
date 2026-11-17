@@ -10,9 +10,9 @@ import regex
 from unit.mocks import MockPromptTarget
 
 from pyrit.common.random_context import configure_random_seed
-from pyrit.converter import PuzzledConverter
+from pyrit.converter import PuzzledConverter, PuzzleType
 from pyrit.converter.puzzled import keyword_masker
-from pyrit.converter.puzzled.puzzle_builders import PuzzleType, crossword_symbol_map
+from pyrit.converter.puzzled.puzzle_builders import crossword_symbol_map
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
 

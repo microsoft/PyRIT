@@ -5,7 +5,8 @@ import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
-import { useRegistryIdentityRowStyles } from '@/components/Registry/RegistryIdentityRow.styles'
+import { IdentityJson } from '@/components/Registry/IdentityDisclosure'
+import { useIdentityDisclosureStyles } from '@/components/Registry/IdentityDisclosure.styles'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { exceedsTechniqueLimit, type SelectableTechnique } from './scenarioLaunchForm'
@@ -46,8 +47,10 @@ export default function ScenarioTechniqueSection({
   onRemoveToken,
 }: ScenarioTechniqueSectionProps) {
   const styles = useScenarioDetailStyles()
-  const identityStyles = useRegistryIdentityRowStyles()
+  const identityStyles = useIdentityDisclosureStyles()
   const identityId = useId()
+  const techniqueLimitDescriptionId = `${identityId}-technique-limit`
+  const baselineUnavailableId = `${identityId}-baseline-unavailable`
   const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
   const toggleIdentity = (name: string): void => {
     setExpandedIdentities((current: Set<string>) => {
@@ -69,6 +72,12 @@ export default function ScenarioTechniqueSection({
           ? 'Select exactly one technique. Baseline comparison is optional and separate.'
           : 'Select individual techniques, or use a tag to select or clear all techniques with that tag.'}
       </Text>}
+      {supportsTechniques && !singleTechnique && maxConcreteTechniques != null && (
+        <Text id={techniqueLimitDescriptionId} size={200} className={styles.hint}>
+          Select at most {maxConcreteTechniques} concrete techniques.
+          {' '}Clear a selected technique or choose a smaller tag.
+        </Text>
+      )}
       {selectionError && (
         <Text className={styles.errorText} role="alert">
           {selectionError}
@@ -103,6 +112,9 @@ export default function ScenarioTechniqueSection({
       <div className={styles.techniqueList} role="group" aria-label="Techniques">
         {techniques.map((technique) => {
           const selected = isSelected(technique)
+          const limited = !technique.isBaseline && !selected
+            && maxConcreteTechniques != null
+            && selectedTechniques.length >= maxConcreteTechniques
           const expanded = expandedIdentities.has(technique.name)
           const regionId = `${identityId}-${encodeURIComponent(technique.name)}`
           return (
@@ -122,9 +134,9 @@ export default function ScenarioTechniqueSection({
               className={styles.selectionControl}
               label={technique.name}
               checked={selected}
-              disabled={disabled || technique.disabled || (!technique.isBaseline && !selected
-                && maxConcreteTechniques != null
-                && selectedTechniques.length >= maxConcreteTechniques)}
+              disabled={disabled || technique.disabled || limited}
+              aria-describedby={technique.disabled ? baselineUnavailableId
+                : limited ? techniqueLimitDescriptionId : undefined}
               onChange={(_, data) => onTechniqueChange(technique, data.checked === true)}
               data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
             />}
@@ -155,6 +167,8 @@ export default function ScenarioTechniqueSection({
                         appearance="outline"
                         checked={tagSelected}
                         disabled={disabled || tagMembers.length === 0 || (!tagSelected && exceedsLimit)}
+                        aria-describedby={tagMembers.length === 0 ? baselineUnavailableId
+                          : !tagSelected && exceedsLimit ? techniqueLimitDescriptionId : undefined}
                         onClick={() => onTagChange(tag)}
                         aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
                       >
@@ -165,7 +179,7 @@ export default function ScenarioTechniqueSection({
                 </div>
               )}
               {technique.disabled && (
-                <Text size={200} className={styles.hint}>
+                <Text id={baselineUnavailableId} size={200} className={styles.hint}>
                   This scenario does not support a baseline comparison.
                 </Text>
               )}
@@ -174,11 +188,13 @@ export default function ScenarioTechniqueSection({
               icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
               aria-label={`Identity for ${technique.name}`} aria-expanded={expanded} aria-controls={regionId}
               onClick={() => toggleIdentity(technique.name)} />
-            {expanded && <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
-              className={mergeClasses(styles.identityRegion, identityStyles.details)}>
-              {technique.identifier ? <pre className={identityStyles.json}>{JSON.stringify(technique.identifier, null, 2)}</pre>
-                : <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>}
-            </div>}
+            {expanded && (technique.identifier
+              ? <IdentityJson id={regionId} name={technique.name} identity={technique.identifier}
+                className={styles.identityRegion} />
+              : <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
+                className={mergeClasses(styles.identityRegion, identityStyles.details)}>
+                <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>
+              </div>)}
           </div>
           )
         })}

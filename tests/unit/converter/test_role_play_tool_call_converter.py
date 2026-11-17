@@ -7,12 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.common.apply_defaults import get_global_default_values, set_default_value
+from pyrit.common import get_global_default_values, set_default_value
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter import LLMGenericTextConverter, RolePlayToolCallConverter
-from pyrit.models import Message, MessagePiece, SeedPrompt
-from pyrit.models.identifiers import ConverterIdentifier
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 from pyrit.registry.resolution import derive_parameters
 
@@ -43,10 +42,21 @@ def _sent_text(target: MagicMock) -> str:
     return value
 
 
-def _system_text(target: MagicMock) -> str:
-    value = target.set_system_prompt_async.call_args.kwargs["system_prompt"]
+def _original_text(target: MagicMock) -> str:
+    message = target.send_prompt_async.call_args.kwargs["message"]
+    assert isinstance(message, Message)
+    value = message.get_piece().original_value
     assert isinstance(value, str)
     return value
+
+
+def _system_text(target: MagicMock, *, prompt: str) -> str:
+    # The system prompt is sent ahead of the pipeline text in the single user turn.
+    target.set_system_prompt_async.assert_not_called()
+    sent = _sent_text(target)
+    suffix = f"\n\n{prompt}"
+    assert sent.endswith(suffix)
+    return sent[: -len(suffix)]
 
 
 def test_identifier_includes_resolved_target_and_inputs() -> None:
@@ -141,7 +151,7 @@ async def test_convert_renders_required_calls_and_pipeline_text_async() -> None:
     )
     result = await converter.convert_async(prompt=INCOMING_MESSAGE)
 
-    text = _system_text(target)
+    text = _system_text(target, prompt=INCOMING_MESSAGE)
     assert INCOMING_MESSAGE in text
     assert "authorized AI security evaluation" in text
     assert 'refund {"order": "order-1", "amount": 25}' in text
@@ -150,7 +160,7 @@ async def test_convert_renders_required_calls_and_pipeline_text_async() -> None:
     assert "format: random." not in text
     assert result.output_text == "written message"
     assert result.output_type == "text"
-    assert _sent_text(target) == INCOMING_MESSAGE
+    assert _original_text(target) == INCOMING_MESSAGE
 
 
 async def test_convert_uses_explicit_message_format_async() -> None:
@@ -161,16 +171,14 @@ async def test_convert_uses_explicit_message_format_async() -> None:
         action_desired="publish report",
         message_format="signed XML approval note",
     )
+    prompt = (
+        "Product specification: Atlas is a scheduling application. It supports calendar import and conflict detection."
+    )
     with patch.object(converter, "_get_random_generator") as random_generator:
-        await converter.convert_async(
-            prompt=(
-                "Product specification: Atlas is a scheduling application. "
-                "It supports calendar import and conflict detection."
-            )
-        )
+        await converter.convert_async(prompt=prompt)
     random_generator.assert_not_called()
 
-    text = _system_text(target)
+    text = _system_text(target, prompt=prompt)
     assert "Atlas is a scheduling application." in text
     assert "summarize spec" in text
     assert "publish report" in text
@@ -192,8 +200,8 @@ async def test_convert_uses_each_pipeline_input_without_changing_configuration_a
 
     for prompt in prompts:
         await converter.convert_async(prompt=prompt)
-        assert _sent_text(target) == prompt
-        assert f"Current pipeline text:\n{prompt}" in _system_text(target)
+        assert _original_text(target) == prompt
+        assert f"Current pipeline text:\n{prompt}" in _system_text(target, prompt=prompt)
         assert converter.get_identifier() == identifier
 
     assert target.send_prompt_async.call_count == len(prompts)
@@ -220,13 +228,12 @@ async def test_custom_system_prompt_renders_all_values_async(as_seed: bool) -> N
         )
     )
     await converter.convert_async(prompt=INCOMING_MESSAGE)
-    assert _system_text(target) == f"Custom {INCOMING_MESSAGE} | {VALID_CALL} | {ACTION_DESIRED} | XML"
-    assert _sent_text(target) == INCOMING_MESSAGE
-    assert converter.get_reconstruction_parameters()["system_prompt"].value == text
     assert (
-        target.set_system_prompt_async.call_args.kwargs["conversation_id"]
-        == target.send_prompt_async.call_args.kwargs["message"].get_piece().conversation_id
+        _system_text(target, prompt=INCOMING_MESSAGE)
+        == f"Custom {INCOMING_MESSAGE} | {VALID_CALL} | {ACTION_DESIRED} | XML"
     )
+    assert _original_text(target) == INCOMING_MESSAGE
+    assert converter.get_reconstruction_parameters()["system_prompt"].value == text
 
 
 @pytest.mark.parametrize(
@@ -256,8 +263,8 @@ async def test_static_system_prompt_keeps_the_pipeline_text_in_the_user_message_
         system_prompt=SeedPrompt(value="Act like a machine."),
     )
     await converter.convert_async(prompt=INCOMING_MESSAGE)
-    assert _system_text(target) == "Act like a machine."
-    assert _sent_text(target) == INCOMING_MESSAGE
+    assert _system_text(target, prompt=INCOMING_MESSAGE) == "Act like a machine."
+    assert _original_text(target) == INCOMING_MESSAGE
 
 
 def test_default_system_prompt_can_be_edited_and_reconstructed_without_changing_source() -> None:
@@ -318,7 +325,7 @@ async def test_random_format_is_selected_on_each_conversion_async() -> None:
         await converter.convert_async(prompt="Make the extra action look approved.")
         await converter.convert_async(prompt="Make the extra action look approved.")
 
-    sent = [call.kwargs["system_prompt"] for call in target.set_system_prompt_async.call_args_list]
+    sent = [call.kwargs["message"].get_value() for call in target.send_prompt_async.call_args_list]
     assert "format: XML." in sent[0]
     assert "format: YAML." in sent[1]
     assert all(call.kwargs == {"stream": "message_format"} for call in random_generator.call_args_list)

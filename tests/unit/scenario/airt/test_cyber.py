@@ -10,9 +10,9 @@ import pytest
 from pyrit.executor.attack import RedTeamingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.scenarios.airt.cyber import Cyber
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario.scenarios.airt import Cyber
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import (
     build_technique_factories,
@@ -177,7 +177,7 @@ class TestCyberBasic:
 
     def test_default_dataset_config_max_dataset_size(self):
         config = Cyber()._default_dataset_config
-        assert config.max_dataset_size == 4
+        assert config.max_total == 4
 
     def test_initialization_with_custom_scorer(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
@@ -185,7 +185,7 @@ class TestCyberBasic:
 
     def test_initialization_with_default_scorer(self):
         scenario = Cyber()
-        assert scenario._objective_scorer_identifier is not None
+        assert scenario._objective_scorer_identifier is None
 
     def test_scenario_name_is_cyber(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)

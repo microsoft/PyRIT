@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.common.random_context import get_random_generator
 from pyrit.common.yaml_helper import safe_load_yaml

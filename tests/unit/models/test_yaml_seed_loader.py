@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.models.seeds import (
+from pyrit.models import (
     SeedDataset,
     SeedObjective,
     SeedOrigin,
     SeedPrompt,
+)
+from pyrit.models.seeds import (
     load_seed_dataset_from_yaml,
     load_seed_from_yaml,
     load_seed_prompt_from_yaml_with_required_parameters,
@@ -156,6 +158,37 @@ def test_load_seed_dataset_from_yaml_empty_raises(tmp_path):
 
     with pytest.raises(ValueError, match="is empty"):
         load_seed_dataset_from_yaml(yaml_file)
+
+
+def test_load_seed_dataset_from_yaml_default_dataset_name_fills_only_unnamed_seeds(tmp_path: Path) -> None:
+    yaml_file = _write(
+        tmp_path,
+        "ds.yaml",
+        "seeds:\n  - value: a\n  - value: b\n    dataset_name: per_seed\n",
+    )
+
+    dataset = load_seed_dataset_from_yaml(yaml_file, default_dataset_name="fallback")
+
+    assert dataset.dataset_name == "fallback"
+    assert [s.dataset_name for s in dataset.seeds] == ["fallback", "per_seed"]
+
+
+@pytest.mark.parametrize("name_key", ["dataset_name", "name"])
+def test_load_seed_dataset_from_yaml_declared_name_wins_over_default(tmp_path: Path, name_key: str) -> None:
+    yaml_file = _write(tmp_path, "ds.yaml", f"{name_key}: declared\nseeds:\n  - value: a\n")
+
+    dataset = load_seed_dataset_from_yaml(yaml_file, default_dataset_name="fallback")
+
+    assert dataset.seeds[0].dataset_name == "declared"
+
+
+def test_load_seed_dataset_from_yaml_without_default_leaves_unnamed_seeds(tmp_path: Path) -> None:
+    yaml_file = _write(tmp_path, "ds.yaml", "seeds:\n  - value: a\n")
+
+    dataset = load_seed_dataset_from_yaml(yaml_file)
+
+    assert dataset.dataset_name is None
+    assert dataset.seeds[0].dataset_name is None
 
 
 def test_load_seed_prompt_from_yaml_with_required_parameters_succeeds(tmp_path):

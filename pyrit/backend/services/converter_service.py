@@ -29,8 +29,8 @@ from typing import Any
 import aiofiles
 import aiofiles.os
 
-from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.models.converters import (
+from pyrit.backend.mappers import converter_object_to_instance
+from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
@@ -39,6 +39,8 @@ from pyrit.backend.models.converters import (
     ConverterTypeResponse,
     CreateConverterRequest,
     PreviewStep,
+)
+from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async
@@ -49,10 +51,9 @@ from pyrit.backend.services.media_persistence import (
 )
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
-from pyrit.models import ConverterIdentifier, MessagePiece, PromptDataType
-from pyrit.models.parameter import Parameter
+from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry import ConverterRegistry
 from pyrit.registry.registry import Reconstructable
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
@@ -99,7 +100,7 @@ class ConverterService:
                 from pyrit.registry.resolution import project_parameter_value
 
                 for parameter in metadata.parameters if metadata else []:
-                    if not parameter.is_external_input or parameter.sensitive:
+                    if not parameter.is_external_input or parameter.sensitive or parameter.copy_locked:
                         continue
                     try:
                         value = project_parameter_value(
@@ -236,7 +237,7 @@ class ConverterService:
         """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
-        if request.register:
+        if request.register_instance:
             if request.name is None:
                 raise ValueError("name is required when register=true")
             self._registry.instances.validate_name_available(request.name)
@@ -255,7 +256,7 @@ class ConverterService:
         upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
-            if request.register:
+            if request.register_instance:
                 if request.name is None:
                     raise ValueError("name is required when register=true")
                 self._registry.instances.validate_name_available(request.name)
@@ -281,7 +282,7 @@ class ConverterService:
                 and (converter_obj.get_identifier().hash != request.source.effective_hash)
             ):
                 raise ValueError("Temporary converter configuration has changed")
-            if not request.register:
+            if not request.register_instance:
                 return UnregisteredConverter(
                     identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
                 )
@@ -309,11 +310,11 @@ class ConverterService:
                     },
                 )
         except (Exception, asyncio.CancelledError):
-            if request.register:
+            if request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
         finally:
-            if not request.register:
+            if not request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
 
         return converter

@@ -500,7 +500,7 @@ class LocalFileSurfaceSource:
 # --- platform seams (module-level so tests can count or fault them) ---------------------------
 
 
-def _scandir(path: Path) -> os._ScandirIterator[str]:  # noqa: SLF001
+def _scandir(path: Path) -> os._ScandirIterator[str]:
     return os.scandir(path)
 
 

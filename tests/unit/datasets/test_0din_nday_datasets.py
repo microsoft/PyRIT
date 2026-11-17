@@ -6,8 +6,7 @@ import pathlib
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import SeedDataset
-from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt
 
 ODIN_DIR = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "0din"
 

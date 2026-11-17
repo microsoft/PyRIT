@@ -21,11 +21,11 @@ import asyncio
 import logging
 from enum import Enum
 
-from pyrit.models.parameter import Parameter
-from pyrit.registry.components.attack_technique_registry import (
+from pyrit.models import Parameter
+from pyrit.registry import (
     AttackTechniqueRegistry,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import AttackTechniqueFactory
 from pyrit.setup.initializers.techniques import core, extra
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 

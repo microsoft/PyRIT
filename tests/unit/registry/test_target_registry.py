@@ -6,21 +6,28 @@ Tests for the merged ``TargetRegistry`` (buildable catalog + instance container)
 and its introspection helpers.
 """
 
+import asyncio
 import re
+import threading
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.prompt_target import (
     CopilotType,
+    HuggingFaceChatTarget,
     PlaywrightCopilotTarget,
     PromptTarget,
     RoundRobinTarget,
     TargetCapabilities,
     TargetConfiguration,
+    TextTarget,
 )
-from pyrit.registry.components import TargetMetadata, TargetRegistry
+from pyrit.registry import TargetMetadata, TargetRegistry
+from pyrit.registry.instance_registry import registration_origin
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -165,6 +172,38 @@ class TestTargetRegistryRegisterInstance:
             registry.instances.register(NotATarget())  # type: ignore[arg-type]
 
         assert len(registry.instances) == 0
+
+
+class TestTargetRegistryTemporaryClasses:
+    """Tests for telling which classes a scan's launch scripts added."""
+
+    def test_a_class_that_first_appears_in_a_launch_script_is_temporary(self, registry: TargetRegistry):
+        registry.register_class(MockPromptChatTarget)
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register_class(TextTarget)
+            registry.register_class(MockPromptTarget)
+            registry.register_class(MockPromptChatTarget)
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            registry.register_class(MockPromptTarget, name="startup_mock")
+
+        assert registry.is_temporary_class("MockPromptTarget")
+        assert not any(
+            registry.is_temporary_class(name)
+            for name in ("TextTarget", "OpenAIChatTarget", "MockPromptChatTarget", "startup_mock")
+        )
+
+    def test_classes_found_on_first_use_in_a_launch_script_are_not_temporary(self, registry: TargetRegistry):
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            assert registry.get_class("TextTarget") is TextTarget
+
+        assert not registry.is_temporary_class("TextTarget")
+
+    def test_a_class_a_launch_script_puts_in_place_of_another_is_temporary(self, registry: TargetRegistry):
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register_class(MockPromptTarget, name="TextTarget")
+
+        assert registry.get_class("TextTarget") is MockPromptTarget
+        assert registry.is_temporary_class("TextTarget")
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -360,9 +399,13 @@ class TestClassMetadata:
         assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
-        # OpenAI targets expose all three modes; api-key-only targets expose one.
+        # Identity-capable targets expose their modes; api-key-only targets expose one.
         assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity", "none")
-        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
+        assert self._metadata_for(registry, "GitHubCopilotTarget").supported_auth_modes == ("api_key",)
+
+    def test_metadata_supported_auth_modes_empty_for_credential_free_target(self, registry: TargetRegistry):
+        # TextTarget writes to a local stream, so it must not advertise api-key auth.
+        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ()
 
     def test_metadata_supported_auth_modes_sourced_from_class_attributes(self, registry: TargetRegistry):
         # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.
@@ -384,8 +427,8 @@ class TestClassMetadata:
 
         assert params["endpoint"].param_type == str | None
         assert params["model_name"].param_type == str | None
-        assert params["endpoint"].type_name == "str"
-        assert params["model_name"].type_name == "str"
+        assert params["endpoint"].type_name == "str | None"
+        assert params["model_name"].type_name == "str | None"
         assert "api_key" in params
 
     def test_http_request_metadata_is_multiline(self, registry: TargetRegistry) -> None:
@@ -424,7 +467,7 @@ class TestRegistrationGate:
         assert "RoundRobinTarget" in names
 
     def test_every_target_reference_maps_to_a_wired_registry(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
@@ -437,7 +480,7 @@ class TestRegistrationGate:
                     )
 
     def test_credential_parameters_are_sensitive(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
@@ -470,3 +513,34 @@ class TestRegistrationGate:
             assert target_cls.get_auth_mode_parameters(auth_mode="none") == {"auth_mode": "none"}, (
                 f"{name} advertises no-key support but does not forward an explicit auth_mode"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateInstanceAsync:
+    @pytest.mark.parametrize(("use_cuda", "asks_for_cuda"), [("false", False), ("true", True)])
+    async def test_hugging_face_prepares_torch_off_the_calling_loop_then_builds_on_it_async(
+        self, registry: TargetRegistry, use_cuda: str, asks_for_cuda: bool
+    ) -> None:
+        prepared: list[tuple[threading.Thread, bool]] = []
+        torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+
+        def import_torch(*, use_cuda: bool) -> None:
+            prepared.append((threading.current_thread(), use_cuda))
+
+        with (
+            patch.dict("sys.modules", {"torch": torch}),
+            patch.object(HuggingFaceChatTarget, "_import_torch", side_effect=import_torch),
+            patch.object(HuggingFaceChatTarget, "load_model_and_tokenizer_async", new_callable=AsyncMock),
+        ):
+            target = await registry.create_instance_async(
+                name="HuggingFaceChatTarget", params={"model_path": "test-model", "use_cuda": use_cuda}
+            )
+            await target.load_model_and_tokenizer_task
+
+        [(thread, cuda)] = prepared
+        assert thread is not threading.current_thread()
+        assert cuda is asks_for_cuda
+        assert isinstance(target, HuggingFaceChatTarget)
+        assert target.use_cuda is asks_for_cuda
+        assert target.load_model_and_tokenizer_task.get_loop() is asyncio.get_running_loop()
+        assert registry.instances.get_names() == []

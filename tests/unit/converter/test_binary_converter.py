@@ -7,8 +7,7 @@ from contextlib import nullcontext
 
 import pytest
 
-from pyrit.converter import BinaryConverter, ConverterResult
-from pyrit.converter.text_selection_strategy import WordIndexSelectionStrategy
+from pyrit.converter import BinaryConverter, ConverterResult, WordIndexSelectionStrategy
 
 
 async def test_binary_converter_8_bit_ascii():

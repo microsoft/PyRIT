@@ -16,14 +16,13 @@ torch = pytest.importorskip("torch", reason="torch not installed")
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
+from pyrit.executor.promptgen.gcg import CandidateFilter, LengthPreservingFilter, SamplingStrategy, StandardGCGSampling
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import ModelWorker, ModelWorkerOperation, PromptManager
 from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import (
     CandidateProposalBatch,
     GCGCandidateProposer,
 )
 from pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack import GCGMultiPromptAttack
-from pyrit.executor.promptgen.gcg.default_implementations import LengthPreservingFilter, StandardGCGSampling
-from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, SamplingStrategy
 
 
 def _create_mock_worker(gradient_shape: tuple[int, ...]) -> MagicMock:

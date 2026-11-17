@@ -5,17 +5,17 @@
 
 import pytest
 
-from pyrit.models.identifiers import (
+from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    ComponentType,
     ConverterIdentifier,
     ScorerIdentifier,
     SeedIdentifier,
     TargetIdentifier,
 )
-from pyrit.models.parameter import ComponentType
 
 
 def _target_identifier() -> ComponentIdentifier:

@@ -71,7 +71,8 @@ export function applyConvertedValues(
   if (Object.keys(conversions).length === 0) return pieces
   if (pieces.length !== pieceIds.length) throw new Error('Message pieces do not match the draft identities.')
   return pieces.map((piece: MessagePieceRequest, index: number): MessagePieceRequest => {
-    const conversion = conversions[pieceIds[index]]
+    const pieceId = pieceIds[index]
+    const conversion = pieceId !== undefined ? conversions[pieceId] : undefined
     return conversion ? {
       ...piece,
       converted_value: conversion.convertedValue,

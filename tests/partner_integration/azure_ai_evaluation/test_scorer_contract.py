@@ -16,10 +16,7 @@ that implements ``_score_piece_async`` must extend ``MessageTrueFalseScorer``, w
 both axes. Both ``AzureRAIServiceTrueFalseScorer`` and ``RAIServiceScorer`` need that change.
 """
 
-from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator
-from pyrit.score.message_scorer import MessageScorer
-from pyrit.score.scorer import Scorer
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score import MessageScorer, MessageTrueFalseScorer, Scorer, ScorerPromptValidator, TrueFalseScorer
 
 
 class TestScorerContract:
@@ -71,7 +68,7 @@ class TestScorerUtilities:
 
     def test_scorer_identifier_importable(self):
         """RAIServiceScorer uses ScorerEvaluationIdentifier for identity tracking."""
-        from pyrit.models.identifiers import ScorerEvaluationIdentifier
+        from pyrit.models import ScorerEvaluationIdentifier
 
         assert ScorerEvaluationIdentifier is not None
 

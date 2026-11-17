@@ -13,9 +13,8 @@ from typing_extensions import override
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt, SeedUnion
+from pyrit.models import ChatMessageRole, Modality, SeedDataset, SeedObjective, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
-from pyrit.models.literals import ChatMessageRole
 
 logger = logging.getLogger(__name__)
 

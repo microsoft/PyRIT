@@ -8,12 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     VLGuardCategory,
     VLGuardSubcategory,
     VLGuardSubset,
-    _load_metadata,
     _VLGuardDataset,
+)
+from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
+    _load_metadata,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 

@@ -25,8 +25,23 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
 
-# Data types that render as a plain text content part.
-_TEXT_DATA_TYPES = ("text", "error")
+
+def _renders_as_text(piece: MessagePiece) -> bool:
+    """
+    Return whether the piece renders as a plain text content part.
+
+    Text pieces and blocked (content-filtered) error pieces render as text; blocked turns
+    are real provider round trips that stay in history, so they replay as the stored text.
+    Other error pieces are failed exchanges and are rejected.
+
+    Args:
+        piece (MessagePiece): The piece to inspect.
+
+    Returns:
+        bool: True if the piece renders as a text content part.
+    """
+    return piece.converted_value_data_type == "text" or piece.is_blocked_error()
+
 
 # Audio formats accepted by the OpenAI Chat Completions ``input_audio`` content part.
 # OpenAI SDK: openai/types/chat/chat_completion_content_part_input_audio_param.py
@@ -36,7 +51,7 @@ _INPUT_AUDIO_EXTENSIONS = (".wav", ".mp3")
 
 def is_text_only_conversation(conversation: MutableSequence[Message]) -> bool:
     """
-    Return whether every message in the conversation is a single text (or error) piece.
+    Return whether every message in the conversation is a single text (or blocked error) piece.
 
     When true, the simpler text-only message format can be used, which is more broadly
     compatible with OpenAI-compatible providers that don't accept multipart content.
@@ -45,12 +60,12 @@ def is_text_only_conversation(conversation: MutableSequence[Message]) -> bool:
         conversation (MutableSequence[Message]): The conversation to inspect.
 
     Returns:
-        bool: True if all messages are a single text/error piece, False otherwise.
+        bool: True if all messages are a single text or blocked-error piece, False otherwise.
     """
     for turn in conversation:
         if len(turn.message_pieces) != 1:
             return False
-        if turn.message_pieces[0].converted_value_data_type not in _TEXT_DATA_TYPES:
+        if not _renders_as_text(turn.message_pieces[0]):
             return False
     return True
 
@@ -64,13 +79,13 @@ def build_text_chat_messages(conversation: MutableSequence[Message]) -> list[dic
 
     Args:
         conversation (MutableSequence[Message]): The conversation to convert. Each message
-            must have exactly one text or error piece.
+            must have exactly one text or blocked-error piece.
 
     Returns:
         list[dict[str, Any]]: The list of constructed chat messages.
 
     Raises:
-        ValueError: If any message does not have exactly one text/error piece.
+        ValueError: If any message does not have exactly one text or blocked-error piece.
     """
     chat_messages: list[dict[str, Any]] = []
     for message in conversation:
@@ -78,9 +93,9 @@ def build_text_chat_messages(conversation: MutableSequence[Message]) -> list[dic
             raise ValueError("build_text_chat_messages only supports a single message piece per message.")
 
         message_piece = message.message_pieces[0]
-        if message_piece.converted_value_data_type not in _TEXT_DATA_TYPES:
+        if not _renders_as_text(message_piece):
             raise ValueError(
-                f"build_text_chat_messages only supports text and error data types."
+                f"build_text_chat_messages only supports text and blocked error pieces."
                 f" Received: {message_piece.converted_value_data_type}."
             )
 
@@ -95,7 +110,7 @@ def build_text_content_entry(*, message_piece: MessagePiece) -> dict[str, Any]:
     Build a text content part for a multipart chat message.
 
     Args:
-        message_piece (MessagePiece): The text/error piece.
+        message_piece (MessagePiece): The text or blocked-error piece.
 
     Returns:
         dict[str, Any]: A ``{"type": "text", "text": ...}`` content part.
@@ -246,7 +261,7 @@ async def build_multimodal_chat_messages_async(
                 continue
 
             data_type = message_piece.converted_value_data_type
-            if data_type in _TEXT_DATA_TYPES:
+            if _renders_as_text(message_piece):
                 content.append(build_text_content_entry(message_piece=message_piece))
             elif data_type == "image_path":
                 content.append(await build_image_content_entry_async(message_piece=message_piece))

@@ -11,10 +11,12 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from pyrit.memory import AzureSQLMemory
-from pyrit.memory.memory_models import (
+from pyrit.memory import (
     AttackResultEntry,
+    AzureSQLMemory,
     PromptMemoryEntry,
+)
+from pyrit.memory.memory_models import (
     ScenarioResultEntry,
 )
 from pyrit.models import (
@@ -289,7 +291,7 @@ async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory)
         def cleanup(session: Session) -> None:
             try:
                 # Delete seeds by their IDs
-                from pyrit.memory.memory_models import SeedEntry
+                from pyrit.memory import SeedEntry
 
                 session.query(SeedEntry).filter(SeedEntry.id.in_([sp1.id, sp2.id])).delete(synchronize_session=False)
                 session.commit()

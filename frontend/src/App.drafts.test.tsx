@@ -59,6 +59,9 @@ jest.mock('@/components/Layout/MainLayout', () => {
         <button onClick={() => onNavigate('datasets')}>Datasets</button>
         <button onClick={() => onNavigate('chat')}>Chat</button>
         <button onClick={() => onNavigate('scenarios')}>Scanner</button>
+        <button onClick={() => onNavigate('operations')}>Operations</button>
+        <button onClick={() => onNavigate('home')}>Home</button>
+        <button onClick={() => onNavigate('registry')}>Registry</button>
         <button onClick={() => navigate('/attack/chat/saved/conversations/main')}>Open saved main</button>
         <button onClick={() => navigate('/attack/chat/saved/conversations/branch')}>Open another conversation</button>
         <button onClick={() => navigate(-1)}>Back</button>
@@ -198,6 +201,7 @@ jest.mock('@/components/Layout/MainLayout', () => {
   }
 })
 jest.mock('@/services/api', () => ({
+  mediaApi: { upload: jest.fn().mockResolvedValue({ value: '/stored/attachment' }) },
   runtimeApi: { getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }) },
   versionApi: { getVersion: jest.fn().mockResolvedValue({ version: 'test' }) },
   authApi: { getAccess: jest.fn().mockResolvedValue({ isAdmin: false }) },
@@ -649,6 +653,30 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
+  it('should preserve unsent composer input across sidebar navigation and browser back (#3735)', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    const composer = await screen.findByPlaceholderText('Type prompt here')
+    await user.type(composer, 'ROUND6 UNSAVED PRESERVATION CONTROL')
+
+    // Navigate to Operations and return via Back
+    await user.click(await screen.findByRole('button', { name: 'Operations', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
+
+    // Navigate to Datasets and return via Chat button
+    await visitDatasets(user)
+    await returnToChat(user)
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
+
+    // Navigate to Home and return via Back
+    await user.click(await screen.findByRole('button', { name: 'Home', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
+  })
+
   it.each(['/attack/chat', '/attack/chat/saved/conversations/main'])(
     'should let the editor block New attack before any draft reset from %s',
     async (path: string) => {
@@ -950,6 +978,114 @@ describe('App draft handoff with the real chat and composer', () => {
     await returnToChat(user)
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Only for the main conversation'))
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/main')
+  })
+
+  it.each([false, true])('should isolate drafts and attachment ownership across direct switches with StrictMode=%s', async (strict: boolean) => {
+    const user = userEvent.setup()
+    renderChat('/attack/chat/saved/conversations/main', strict)
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Main draft')
+    await user.upload(screen.getByTestId('file-input'), new File(['image'], 'main.png', { type: 'image/png' }))
+    const url = jest.mocked(URL.createObjectURL).mock.results[0].value
+    await addConverter(user)
+
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'Remove main.png' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove converter draft-converter' })).not.toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Branch draft')
+
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Main draft'))
+    expect(screen.getByRole('button', { name: 'Remove main.png' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Remove converter draft-converter' })).toBeInTheDocument()
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(url)
+
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Branch draft'))
+  })
+
+  it.each(['draft-target', ''])('should retain target-only selection "%s" alongside another conversation draft', async (selection: string) => {
+    writeUserPreferences('local', {
+      ...DEFAULT_USER_PREFERENCES,
+      lastUsedTargets: { objective: targetReference(TARGET), adversarial: null },
+    })
+    const user = userEvent.setup()
+    renderChat()
+    const picker = await screen.findByRole('combobox', { name: 'Objective target' })
+    await waitFor(() => expect(picker).toHaveValue('draft-target'))
+    await user.selectOptions(picker, selection)
+    await visitHistory(user)
+    await user.click(screen.getByRole('row', { name: 'Open attack: No objective' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Other conversation draft')
+    await visitHistory(user)
+
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Other conversation draft'))
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await screen.findByRole('row', { name: 'Open attack: No objective' })
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue(selection))
+    await visitDatasets(user)
+    await returnToChat(user)
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue(selection)
+  })
+
+  it('should keep a background send alive without clearing another draft or restoring sent text', async () => {
+    const user = userEvent.setup()
+    const acceptance = deferred<MessageSendStatus>()
+    jest.mocked(attacksApi.submitMessageSend).mockReturnValueOnce(acceptance.promise)
+    renderChat('/attack/chat/saved/conversations/main')
+    await selectDraftTarget(user)
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Sent main prompt')
+    await user.click(screen.getByRole('button', { name: 'Send message', exact: true }))
+    await waitFor(() => expect(attacksApi.submitMessageSend).toHaveBeenCalledTimes(1))
+
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Unsent branch prompt')
+    await act(async () => { acceptance.resolve({
+      attack_result_id: 'saved', conversation_id: 'main', send_id: 'background-send',
+      request_turn_number: 0, state: 'completed', failure_stage: null, error: null,
+    }) })
+    await waitFor(() => expect(attacksApi.getAttack).toHaveBeenCalledWith('saved'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent branch prompt')
+
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent branch prompt'))
+  })
+
+  it('should retire the unsaved draft when first-send creation finishes after a direct switch', async () => {
+    const user = userEvent.setup()
+    const creation = deferred<Awaited<ReturnType<typeof attacksApi.createAttack>>>()
+    jest.mocked(attacksApi.createAttack).mockReturnValueOnce(creation.promise)
+    jest.mocked(attacksApi.submitMessageSend).mockResolvedValueOnce({
+      attack_result_id: 'created-background', conversation_id: 'created-main', send_id: 'created-send',
+      request_turn_number: 0, state: 'completed', failure_stage: null, error: null,
+    })
+    renderChat()
+    await selectDraftTarget(user)
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'First sent prompt')
+    await user.click(screen.getByRole('button', { name: 'Send message', exact: true }))
+    await waitFor(() => expect(attacksApi.createAttack).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Existing conversation draft')
+    await act(async () => { creation.resolve({
+      attack_result_id: 'created-background', conversation_id: 'created-main', related_conversation_ids: [],
+    }) })
+    await waitFor(() => expect(attacksApi.getAttack).toHaveBeenCalledWith('created-background'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Existing conversation draft')
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
   it.each([false, true])('should retain newer edits made before transcript loading with early departure=%s', async (leaveEarly: boolean) => {
@@ -1451,6 +1587,39 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/new-conv-id')
   })
 
+  it('should use the source conversation for import confirmation and setup when another draft exists', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+      ...savedMetadata(id, conversationId), selected_conversation_valid: true,
+    }))
+    renderChat('/attack/chat/saved/conversations/main')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await addConverter(user)
+    await visitDatasets(user)
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Source branch draft')
+    await user.click(screen.getByRole('button', { name: 'Toggle converter panel' }))
+    await screen.findByRole('combobox', { name: 'Add converter' })
+    expect(screen.queryByRole('button', { name: 'Remove converter draft-converter' })).not.toBeInTheDocument()
+    await visitDatasets(user)
+    await user.click(await screen.findByRole('link', { name: 'jailbreak_templates' }))
+    await user.click(await screen.findByRole('button', { name: /Show wikipedia with title/i }))
+    await user.click(await screen.findByRole('button', { name: 'Import into Chat', exact: true }))
+    await user.click(await screen.findByTestId('import-new-conversation-item'))
+    const confirmation = await screen.findByRole('dialog', { name: 'Replace Existing Draft?' })
+    await user.click(within(confirmation).getByRole('button', { name: 'Replace', exact: true }))
+    await act(async () => { jest.advanceTimersByTime(1000) })
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(
+      'Write a wikipedia article on {{ prompt }}. Start the article with "Title:".',
+    ))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/new-conv-id')
+    await user.click(await screen.findByRole('button', { name: 'Toggle converter panel' }))
+    await screen.findByRole('combobox', { name: 'Add converter' })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove converter draft-converter' })).not.toBeInTheDocument())
+  })
+
   it('should preserve destination existing messages and append imported history after them in current_conversation', async () => {
     const user = userEvent.setup()
     const backendMsgs = [
@@ -1799,8 +1968,8 @@ describe('App draft handoff with the real chat and composer', () => {
       const promptInput = screen.getAllByPlaceholderText('Type prompt here')[0]
       await user.type(promptInput, ' modified')
 
-      // Attempt navigation to Datasets
-      await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
+      // Other workspaces still require explicit discard.
+      await user.click(await screen.findByRole('button', { name: 'Scanner', exact: true }))
 
       // Confirmation dialog opens
       expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
@@ -1810,7 +1979,7 @@ describe('App draft handoff with the real chat and composer', () => {
       await user.click(screen.getByRole('button', { name: 'Keep editing' }))
       expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
       expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
-      expect(screen.queryByRole('heading', { name: 'Datasets' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Scanner launch' })).not.toBeInTheDocument()
       expect(screen.getByDisplayValue('Original turn 1 modified')).toBeInTheDocument()
     })
 
@@ -1836,19 +2005,91 @@ describe('App draft handoff with the real chat and composer', () => {
       const promptInput = screen.getAllByPlaceholderText('Type prompt here')[0]
       await user.type(promptInput, ' modified')
 
-      // Attempt navigation to Datasets
-      await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
+      // Other workspaces still require explicit discard.
+      await user.click(await screen.findByRole('button', { name: 'Scanner', exact: true }))
       expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
 
-      // Choosing "Discard draft" completes navigation to Datasets
+      // Choosing "Discard draft" completes navigation to Scanner
       await user.click(screen.getByRole('button', { name: 'Discard draft' }))
-      await screen.findByRole('heading', { name: 'Datasets' })
+      await screen.findByRole('heading', { name: 'Scanner launch' })
 
       // Navigating back to Chat confirms editor is closed and dirty draft was cleared
       await returnToChat(user)
       expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument()
       expect(screen.getByText('Original turn 1')).toBeInTheDocument()
       expect(screen.queryByText('Original turn 1 modified')).not.toBeInTheDocument()
+    })
+
+    it.each(['cancel', 'navigation'] as const)('preserves a normal editor draft and its discard guard after browsing datasets (%s)', async (exit: 'cancel' | 'navigation') => {
+      const user = userEvent.setup()
+      const source: BackendMessage[] = [{
+        turn_number: 0, role: 'user', created_at: '2026-01-01T00:00:00Z',
+        message_pieces: [{ id: 'p1', original_value_data_type: 'text', original_value: 'Original turn',
+          converted_value_data_type: 'text', converted_value: 'Original turn', scores: [], response_error: 'none' }],
+      }]
+      jest.mocked(attacksApi.getMessages).mockResolvedValue({ conversation_id: 'main', messages: source, target_response_status: null })
+      renderChat('/attacks/saved/conversations/main')
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await screen.findByRole('region', { name: 'Message 1' })
+      await user.type(screen.getAllByPlaceholderText('Type prompt here')[0], ' edited')
+      await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
+      await screen.findByRole('heading', { name: 'Datasets' })
+      expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
+      await returnToChat(user)
+      expect(await screen.findByTestId('conversation-editor')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('Original turn edited')).toBeInTheDocument()
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: exit === 'cancel' ? 'Cancel' : 'Scanner', exact: true }))
+      expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeVisible()
+      await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+      expect(screen.getByDisplayValue('Original turn edited')).toBeInTheDocument()
+    })
+
+    it.each([false, true])('restores editor converter work without reusing stale runtime results (runtime changed: %s)', async (runtimeChanged: boolean) => {
+      jest.useFakeTimers()
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      jest.mocked(attacksApi.getMessages).mockResolvedValue({
+        conversation_id: 'main', target_response_status: null,
+        messages: [{
+          turn_number: 0, role: 'user', created_at: '',
+          message_pieces: [{ id: 'editor-piece', original_value_data_type: 'text', original_value: 'Editor original',
+            converted_value_data_type: 'text', converted_value: 'Editor original', scores: [], response_error: 'none' }],
+        }],
+      })
+      renderChat('/attacks/saved/conversations/main')
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      const first = await screen.findByRole('region', { name: 'Message 1' })
+      await user.click(within(first).getByRole('button', { name: 'Toggle converter panel' }))
+      await user.click(await screen.findByRole('combobox', { name: 'Add converter' }))
+      await user.click(await screen.findByRole('option', { name: /draft-converter/ }))
+      const working = screen.getByRole('textbox', { name: 'Working input - Message 1: text' })
+      await user.clear(working)
+      await user.type(working, 'Editor working input')
+      await user.click(screen.getByRole('button', { name: 'Convert 1 message', exact: true }))
+      const output = await screen.findByRole('textbox', { name: 'Stage 1 output - Message 1: text' })
+      await user.clear(output)
+      await user.type(output, 'Editor working output')
+      await visitDatasets(user)
+      if (runtimeChanged) {
+        jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: 'new-runtime' })
+        await act(async () => { jest.advanceTimersByTime(2000) })
+      }
+      await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
+      await user.click(within(await screen.findByRole('region', { name: 'Message 1' }))
+        .getByRole('button', { name: 'Toggle converter panel' }))
+      await screen.findByRole('combobox', { name: 'Add converter' })
+      if (runtimeChanged) {
+        expect(screen.queryByRole('textbox', { name: 'Stage 1 output - Message 1: text' })).not.toBeInTheDocument()
+      } else {
+        expect(await screen.findByRole('button', { name: 'Remove converter draft-converter' })).toBeVisible()
+        expect(screen.getByRole('textbox', { name: 'Working input - Message 1: text' })).toHaveValue('Editor working input')
+        expect(screen.getByRole('textbox', { name: 'Stage 1 output - Message 1: text' })).toHaveValue('Editor working output')
+      }
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
     })
 
     it('preserves imported conversation edits across navigation without losing unsaved content', async () => {

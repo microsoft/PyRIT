@@ -3,9 +3,16 @@
 
 import pytest
 
-from pyrit.models import AnswerMatches, MatchesObjective, SeedIdentifier, SeedObjective, SeedPrompt
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
-from pyrit.models.identifiers.seed_identifier import compute_seed_group_hash
+from pyrit.models import (
+    AnswerMatches,
+    ComponentIdentifier,
+    MatchesObjective,
+    SeedIdentifier,
+    SeedObjective,
+    SeedPrompt,
+    compute_seed_group_hash,
+    config_hash,
+)
 
 
 @pytest.mark.parametrize("version", ["1.1.0", "1.2.0.dev0", "1.2.0", "1.3.0.dev0"])

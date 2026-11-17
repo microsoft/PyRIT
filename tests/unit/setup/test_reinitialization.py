@@ -12,10 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.common.apply_defaults import get_global_default_values
+from pyrit.common import get_global_default_values
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
-from pyrit.models.catalog import ScenarioSuite
+from pyrit.models import ScenarioSuite
 from pyrit.registry import (
     AttackRegistry,
     InitializerRegistry,
@@ -24,7 +24,7 @@ from pyrit.registry import (
     ScenarioSuiteStorage,
     TargetRegistry,
 )
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
 from pyrit.setup.initializers.targets import TARGET_CONFIGS

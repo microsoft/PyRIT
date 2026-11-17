@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.exceptions import InvalidJsonException
 from pyrit.score import CallableResponseHandler, JsonSchemaResponseHandler
 
 

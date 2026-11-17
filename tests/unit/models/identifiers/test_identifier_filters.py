@@ -4,7 +4,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+from pyrit.models import IdentifierFilter, IdentifierType
 
 # --- IdentifierType enum ---
 

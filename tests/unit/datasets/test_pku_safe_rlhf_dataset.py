@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.pku_safe_rlhf_dataset import _PKUSafeRLHFDataset
+from pyrit.datasets.seed_datasets.remote import _PKUSafeRLHFDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 PKU_EXPECTED_HARM_CATEGORIES = [

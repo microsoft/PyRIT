@@ -43,6 +43,7 @@ export default function SaveConversationDialog({
               }}
             >
               <Tooltip content={sameAttackDisabledReason ?? 'Add a related conversation. Keep the main conversation.'} relationship="description">
+                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
                 <span tabIndex={sameAttackDisabledReason ? 0 : undefined} aria-label={sameAttackDisabledReason}>
                   <Radio value="same_attack" label="Same attack" disabled={Boolean(sameAttackDisabledReason)} />
                 </span>

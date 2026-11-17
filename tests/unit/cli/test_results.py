@@ -192,7 +192,7 @@ def test_resolve_output_sink_none_for_stdout():
 
 
 def test_resolve_output_sink_json_returns_file_sink(tmp_path):
-    from pyrit.output.sink import FileSink
+    from pyrit.output import FileSink
 
     sink = resolve_output_sink(output_path=str(tmp_path / "out.json"), output_format="json")
     assert isinstance(sink, FileSink)
@@ -214,7 +214,7 @@ def test_resolve_output_sink_html_requires_output():
 
 
 def test_resolve_output_sink_html_returns_file_sink(tmp_path):
-    from pyrit.output.sink import FileSink
+    from pyrit.output import FileSink
 
     sink = resolve_output_sink(output_path=str(tmp_path / "report.html"), output_format="html")
     assert isinstance(sink, FileSink)

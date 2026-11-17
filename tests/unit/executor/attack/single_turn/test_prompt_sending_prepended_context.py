@@ -13,10 +13,8 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, Message, MessagePiece, SeedObjective
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
+from pyrit.scenario import AttackTechniqueFactory
 
 
 class _RecordingPromptTarget(PromptTarget):

@@ -24,10 +24,10 @@ import time
 from tqdm import tqdm
 
 from pyrit.common.path import SCORER_EVALS_PATH
-from pyrit.exceptions.exception_context import ComponentRole, execution_context
+from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.registry import ScorerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags, TargetInitializer
 
 
 async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int = 5) -> None:
@@ -37,7 +37,7 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
     This will:
     1. Initialize PyRIT with in-memory database
     2. Register all scorers from ScorerInitializer into the ScorerRegistry
-    3. Iterate through registered scorers (optionally filtered by tags)
+    3. Select registered scorers by tags, excluding those tagged skip_batch_evaluation
     4. Run evaluate_async() on each scorer
     5. Save results to scorer_evals directory
 
@@ -46,13 +46,14 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
 
     Args:
         tags: Optional list of tags to filter which scorers to evaluate.
-            When provided, only scorers matching any of the tags are evaluated.
-            When None, all scorers are evaluated.
+            When provided, only eligible scorers matching any of the tags are evaluated.
+            When None, all eligible scorers are evaluated. Explicit batch-evaluation
+            exclusions apply in both cases.
         max_concurrency: Maximum number of concurrent scoring requests per scorer.
             Defaults to 5.
 
     Raises:
-        RuntimeError: If any scorer evaluation fails or returns no metrics.
+        RuntimeError: If no eligible scorers are selected, or any evaluation fails or returns no metrics.
     """
     print("Initializing PyRIT...")
     target_init = TargetInitializer()
@@ -76,11 +77,18 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
     else:
         scorer_names = registry.instances.get_names()
 
+    excluded_names = {
+        entry.name for entry in registry.instances.get_by_tag(tag=ScorerInitializerTags.SKIP_BATCH_EVALUATION)
+    }
+    for scorer_name in scorer_names:
+        if scorer_name in excluded_names:
+            print(f"Skipping {scorer_name}: tagged '{ScorerInitializerTags.SKIP_BATCH_EVALUATION.value}'.")
+    scorer_names = [name for name in scorer_names if name not in excluded_names]
+
     if not scorer_names:
-        print("No scorers registered. Check environment variable configuration.")
-        if tags:
-            print(f"  (filtered by tags: {tags})")
-        return
+        raise RuntimeError(
+            "No eligible scorers selected for evaluation. Check environment variable configuration and tag filters."
+        )
 
     print(f"\nEvaluating {len(scorer_names)} scorer(s)...\n")
 
@@ -164,7 +172,10 @@ def parse_args() -> argparse.Namespace:
         "--tags",
         type=str,
         default=None,
-        help="Comma-separated list of tags to filter which scorers to evaluate (e.g., --tags refusal,default)",
+        help=(
+            "Comma-separated list of tags to filter which scorers to evaluate (e.g., --tags refusal,default). "
+            "Scorers tagged skip_batch_evaluation remain excluded."
+        ),
     )
     parser.add_argument(
         "--max-concurrency",

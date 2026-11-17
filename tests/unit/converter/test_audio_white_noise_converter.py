@@ -10,7 +10,7 @@ import pytest
 from scipy.io import wavfile
 
 from pyrit.common.random_context import configure_random_seed
-from pyrit.converter.audio_white_noise_converter import AudioWhiteNoiseConverter
+from pyrit.converter import AudioWhiteNoiseConverter
 from pyrit.registry import ConverterRegistry
 
 

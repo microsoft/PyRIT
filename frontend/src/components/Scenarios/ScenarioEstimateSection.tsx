@@ -88,14 +88,14 @@ export default function ScenarioEstimateSection({
         </Text>
       )}
       {state.status === 'refreshing' && (
-        <div className={styles.inlineStatus}>
+        <div className={styles.inlineStatus} role="status">
           <Spinner size="tiny" />
           <Text size={200} className={styles.hint}>Updating estimate...</Text>
         </div>
       )}
       {state.status === 'stale' && (
-        <Text size={200} className={styles.warningText}>
-          {state.error}
+        <Text size={200} className={styles.warningText} role="status">
+          {state.label} {state.error}
         </Text>
       )}
     </section>

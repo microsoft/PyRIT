@@ -6,8 +6,7 @@ import logging
 from typing import Literal
 
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.models import ComponentIdentifier
-from pyrit.models.literals import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
 

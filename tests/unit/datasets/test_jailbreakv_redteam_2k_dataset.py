@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from pyrit.datasets.seed_datasets.remote import (
+    _JailbreakVRedteam2KDataset,
+)
 from pyrit.datasets.seed_datasets.remote.jailbreakv_redteam_2k_dataset import (
     _HarmCategory,
-    _JailbreakVRedteam2KDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective
 

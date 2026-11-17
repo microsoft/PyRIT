@@ -14,20 +14,20 @@ import sqlalchemy as sa
 from pydantic import PydanticUserError
 from sqlalchemy.orm import Session
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     CreateAttackRequest,
     CreateConversationRequest,
     MessagePieceRequest,
     MessageRequest,
-    SaveConversationRequest,
     ScoreView,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
+from pyrit.backend.models.attacks import SaveConversationRequest
 from pyrit.backend.models.message_sends import MessageSendRequest
 from pyrit.backend.models.scores import ApplyChatScorerRequest
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringError, ChatScoringService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService
@@ -61,6 +61,7 @@ from pyrit.registry import ScorerRegistry
 from pyrit.score import (
     FloatScaleThresholdScorer,
     ManualScorer,
+    MessageFloatScaleScorer,
     MessageToolCallScorer,
     MessageTrueFalseScorer,
     ScorerPromptValidator,
@@ -73,8 +74,12 @@ from pyrit.score import (
     XSSOutputScorer,
     create_conversation_scorer,
 )
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, run_memory_session_async
 
 
@@ -476,7 +481,10 @@ async def test_public_metadata_cannot_authorize_stale_nested_projection_async(
 
 @pytest.mark.parametrize("exit_mode", ["error", "cancel"])
 async def test_apply_target_judge_owner_restored_on_abnormal_exit_async(
-    latest_response_chat, sqlite_instance: SQLiteMemory, exit_mode: str
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    exit_mode: str,
 ) -> None:
     policy, attack, request, _ = latest_response_chat
     target = _ChatJudgeTarget()
@@ -489,32 +497,36 @@ async def test_apply_target_judge_owner_restored_on_abnormal_exit_async(
         attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
     )
     request = request.model_copy(update={"scorer": reference})
-    entered = asyncio.Event()
+    entered, release = asyncio.Event(), asyncio.Event()
     outer_owner = str(uuid.uuid4())
-    owners = []
-    restored = []
+    owners: list[str | None] = []
+    restored: list[str | None] = []
 
-    async def provider_io(*, normalized_conversation):
+    async def provider_io_async(*, normalized_conversation: list[Message]) -> list[Message]:
         owners.append(get_current_attack_result_id())
         entered.set()
-        if exit_mode == "error":
-            raise RuntimeError("Deterministic judge failure")
-        await asyncio.Event().wait()
+        if exit_mode == "cancel":
+            await release.wait()
+        raise RuntimeError("Deterministic judge failure")
 
-    async def apply():
+    async def apply_async() -> None:
         with attack_result_id_scope(attack_result_id=outer_owner):
             try:
-                return await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+                await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
             finally:
                 restored.append(get_current_attack_result_id())
 
-    with patch.object(target, "_send_prompt_to_target_async", side_effect=provider_io):
-        task = asyncio.create_task(apply())
-        await asyncio.wait_for(entered.wait(), timeout=5)
-        if exit_mode == "cancel":
-            task.cancel()
-        with pytest.raises(asyncio.CancelledError if exit_mode == "cancel" else ChatScoringError):
-            await asyncio.wait_for(task, timeout=5)
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=provider_io_async):
+        task = asyncio.create_task(apply_async())
+        try:
+            await wait_for_event_async(event=entered, tasks=[task])
+            if exit_mode == "cancel":
+                task.cancel()
+            with pytest.raises(asyncio.CancelledError if exit_mode == "cancel" else ChatScoringError):
+                await wait_for_completion_async(future=task)
+        finally:
+            release.set()
+            await drain_tasks_async(task)
     assert owners and set(owners) == {attack.attack_result_id}
     assert restored == [outer_owner]
     assert get_current_attack_result_id() is None
@@ -618,8 +630,11 @@ async def scoring_chat(
     with (
         patch.object(CentralMemory, "get_memory_instance", return_value=sqlite_instance),
         patch("pyrit.backend.services.message_send_service.get_target_service") as targets,
+        patch("pyrit.backend.services.attack_service.get_target_service") as attack_targets,
     ):
         targets.return_value.get_target_object.return_value = target
+        attack_targets.return_value = targets.return_value
+        targets.return_value.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
         service = MessageSendService(scheduler=ManualSendScheduler())
         try:
             yield service, attack, target, scorer
@@ -1834,16 +1849,21 @@ async def test_late_score_does_not_overwrite_changed_settings_async(
             service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
         )
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await wait_for_event_async(event=entered, tasks=[task])
+            if task.done():
+                task.result()
+            assert not task.done(), "The scoring operation completed before settings could be changed."
             update = (
                 UpdateAttackRequest(objective="New objective")
                 if change == "objective"
                 else UpdateAttackRequest(chat_scorer=None)
             )
             await AttackService().update_attack_async(attack_result_id=attack.attack_result_id, request=update)
+            release.set()
+            await wait_for_completion_async(future=task)
         finally:
             release.set()
-            await task
+            await drain_tasks_async(task)
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.automated_score is None
     assert stored.get_scoring_failure(stored.conversation_id) is None

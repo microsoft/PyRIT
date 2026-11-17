@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import Field, WrapValidator, field_validator, model_validator
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_prompt import SeedPrompt

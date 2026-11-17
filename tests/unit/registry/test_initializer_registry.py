@@ -9,11 +9,11 @@ import pytest
 
 from pyrit.cli._cli_args import _parse_initializer_arg
 from pyrit.common import REQUIRED_VALUE
-from pyrit.models.parameter import Parameter
-from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
+from pyrit.models import Parameter
+from pyrit.registry import InitializerRegistry, discover_in_directory
+from pyrit.registry.components.initializer_registry import PYRIT_PATH
 from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
-from pyrit.registry.discovery import discover_in_directory
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import _execute_initializers_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -180,7 +180,7 @@ def test_unregister_and_cleanup_removes_entry_and_file(lazy_registry):
 def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_registry: InitializerRegistry) -> None:
     """Test that failed storage cleanup leaves the runtime registration retryable."""
     storage = MagicMock(spec=CustomInitializerStorage)
-    storage.list_scripts.return_value = {"custom": _VALID_SCRIPT}
+    storage.list_script_names.return_value = {"custom"}
     storage.delete_script.side_effect = OSError("storage unavailable")
     lazy_registry._custom_storage = storage
     lazy_registry._classes["custom"] = _ParamInitializer
@@ -194,7 +194,7 @@ def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_regis
 def test_unregister_and_cleanup_removes_invalid_stored_source(lazy_registry: InitializerRegistry) -> None:
     """Test invalid stored scripts can be removed without a runtime registration."""
     storage = MagicMock(spec=CustomInitializerStorage)
-    storage.list_scripts.return_value = {"invalid": "not Python"}
+    storage.list_script_names.return_value = {"invalid"}
     lazy_registry._custom_storage = storage
 
     lazy_registry.unregister_and_cleanup("invalid")
@@ -205,7 +205,7 @@ def test_unregister_and_cleanup_removes_invalid_stored_source(lazy_registry: Ini
 def test_unregister_and_cleanup_removes_source_shadowed_by_builtin(lazy_registry: InitializerRegistry) -> None:
     """Test deleting stored source preserves a built-in registration with the same name."""
     storage = MagicMock(spec=CustomInitializerStorage)
-    storage.list_scripts.return_value = {"builtin": _VALID_SCRIPT}
+    storage.list_script_names.return_value = {"builtin"}
     lazy_registry._custom_storage = storage
     lazy_registry._classes["builtin"] = _ParamInitializer
     lazy_registry._builtin_names.add("builtin")
@@ -214,6 +214,24 @@ def test_unregister_and_cleanup_removes_source_shadowed_by_builtin(lazy_registry
 
     storage.delete_script.assert_called_once_with("builtin")
     assert lazy_registry.get_class("builtin") is _ParamInitializer
+
+
+def test_unregister_and_cleanup_removes_a_script_that_cannot_be_read(
+    lazy_registry: InitializerRegistry, tmp_path: Path
+) -> None:
+    """Test that a stored script the listing reports as unreadable, or can't decode, can still be deleted."""
+    lazy_registry.configure_custom_scripts_source(str(tmp_path))
+    (tmp_path / "not_utf8.py").write_bytes(b"\xff\xfe")
+    try:
+        (tmp_path / "broken_link.py").symlink_to(tmp_path / "missing_target.py")
+    except OSError:
+        pytest.skip("Creating symbolic links isn't permitted here")
+
+    lazy_registry.unregister_and_cleanup("not_utf8")
+    lazy_registry.unregister_and_cleanup("broken_link")
+
+    assert not (tmp_path / "not_utf8.py").exists()
+    assert not (tmp_path / "broken_link.py").is_symlink()
 
 
 def test_register_from_content_uses_configured_storage(lazy_registry: InitializerRegistry, tmp_path: Path) -> None:

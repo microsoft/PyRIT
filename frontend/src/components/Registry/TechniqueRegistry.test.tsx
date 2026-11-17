@@ -59,7 +59,8 @@ function tree() {
 
 async function openCreate() {
   const user = userEvent.setup()
-  await user.click(await screen.findByRole('button', { name: 'New technique' }))
+  await screen.findByRole('table', { name: 'Registered techniques' })
+  await user.click(screen.getByRole('button', { name: 'New technique' }))
   await screen.findByRole('combobox', { name: 'Attack type' })
   return user
 }
@@ -302,8 +303,9 @@ describe('TechniqueRegistry', () => {
     })
     render(tree())
     const user = userEvent.setup()
+    await screen.findByRole('table', { name: 'Registered techniques' })
     await user.click(await screen.findByRole('button', { name: 'New technique' }))
-    await screen.findByText('The registry returned an invalid page cursor.')
+    await screen.findByText('Target registry pagination did not advance')
     expect(screen.queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
     targets.listTargets.mockResolvedValue({
       items: [makeTarget({ target_registry_name: 'local' })], pagination: { limit: 200, has_more: false },
@@ -316,6 +318,7 @@ describe('TechniqueRegistry', () => {
     techniques.listTypes.mockRejectedValueOnce(new Error('Metadata unavailable'))
     render(tree())
     const user = userEvent.setup()
+    await screen.findByRole('table', { name: 'Registered techniques' })
     await user.click(screen.getByRole('button', { name: 'New technique' }))
     await screen.findByText('Metadata unavailable')
     await user.click(screen.getByRole('button', { name: 'Retry metadata' }))
