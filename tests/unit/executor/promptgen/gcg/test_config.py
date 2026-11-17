@@ -21,7 +21,7 @@ from pyrit.executor.promptgen.gcg.config import (
     GCGOutputConfig,
     GCGStrategyConfig,
 )
-from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import GCGSeedMetadata, SeedDataset, SeedObjective, SeedPrompt
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -297,7 +297,12 @@ def test_to_json_file_round_trip(tmp_path: Path) -> None:
 
 
 def _seed_dataset_with_targets(pairs: list[tuple[str, str]]) -> SeedDataset:
-    return SeedDataset(seeds=[SeedObjective(value=goal, metadata={"gcg_target": target}) for goal, target in pairs])
+    return SeedDataset(
+        seeds=[
+            SeedObjective(value=goal, metadata=GCGSeedMetadata(target_prefix=target).to_metadata())
+            for goal, target in pairs
+        ]
+    )
 
 
 def test_from_seed_dataset_materializes_train_goals_and_targets() -> None:
@@ -311,7 +316,13 @@ def test_from_seed_dataset_materializes_train_goals_and_targets() -> None:
 
 @pytest.mark.parametrize("seed_class", [SeedObjective, SeedPrompt])
 def test_from_seed_dataset_accepts_text_seeds(seed_class: type[SeedObjective] | type[SeedPrompt]) -> None:
-    dataset = SeedDataset(seeds=[seed_class(value="text goal", data_type="text", metadata={"gcg_target": "Prefix"})])
+    dataset = SeedDataset(
+        seeds=[
+            seed_class(
+                value="text goal", data_type="text", metadata=GCGSeedMetadata(target_prefix="Prefix").to_metadata()
+            )
+        ]
+    )
 
     config = GCGDataConfig.from_seed_dataset(dataset, test_dataset=dataset)
 
@@ -320,9 +331,9 @@ def test_from_seed_dataset_accepts_text_seeds(seed_class: type[SeedObjective] | 
 
 
 @pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path"])
-@pytest.mark.parametrize("metadata", [{"gcg_target": "Prefix"}, {}])
+@pytest.mark.parametrize("metadata", [GCGSeedMetadata(target_prefix="Prefix").to_metadata(), {}])
 @pytest.mark.parametrize("held_out", [False, True])
-def test_from_seed_dataset_rejects_nontext_seeds(*, data_type: str, metadata: dict[str, str], held_out: bool) -> None:
+def test_from_seed_dataset_rejects_nontext_seeds(*, data_type: str, metadata: dict[str, Any], held_out: bool) -> None:
     dataset = SeedDataset(seeds=[SeedPrompt(value="example.media", data_type=data_type, metadata=metadata)])
     train = _seed_dataset_with_targets([("train goal", "Train prefix")]) if held_out else dataset
 
@@ -339,9 +350,17 @@ def test_from_seed_dataset_includes_test_dataset() -> None:
     assert config.test_targets == ["Sure, t"]
 
 
-def test_from_seed_dataset_honors_custom_metadata_key() -> None:
-    dataset = SeedDataset(seeds=[SeedObjective(value="goal a", metadata={"completion": "Sure, a"})])
-    config = GCGDataConfig.from_seed_dataset(dataset, target_metadata_key="completion")
+def test_from_seed_dataset_uses_normalized_external_metadata() -> None:
+    external_row = {"objective": "goal a", "completion": "Sure, a"}
+    dataset = SeedDataset(
+        seeds=[
+            SeedObjective(
+                value=external_row["objective"],
+                metadata=GCGSeedMetadata(target_prefix=external_row["completion"]).to_metadata(),
+            )
+        ]
+    )
+    config = GCGDataConfig.from_seed_dataset(dataset)
     assert config.train_targets == ["Sure, a"]
 
 
@@ -397,14 +416,18 @@ def test_data_config_json_explains_legacy_migration() -> None:
 
 @pytest.mark.parametrize("target", ["", " ", False, 1, [], {"wrong": "schema"}])
 def test_from_seed_dataset_rejects_invalid_target_metadata(target: object) -> None:
-    dataset = SeedDataset(seeds=[SeedObjective(value="goal", metadata={"gcg_target": target})])
+    dataset = SeedDataset(
+        seeds=[SeedObjective(value="goal", metadata={GCGSeedMetadata.METADATA_KEY: {"target_prefix": target}})]
+    )
 
-    with pytest.raises(ValueError, match="metadata"):
+    with pytest.raises(ValueError, match="target_prefix"):
         GCGDataConfig.from_seed_dataset(dataset)
 
 
 def test_from_seed_dataset_rejects_blank_goal() -> None:
-    dataset = SeedDataset(seeds=[SeedObjective(value=" ", metadata={"gcg_target": "target"})])
+    dataset = SeedDataset(
+        seeds=[SeedObjective(value=" ", metadata=GCGSeedMetadata(target_prefix="target").to_metadata())]
+    )
 
     with pytest.raises(ValueError, match="Seed goal must be a nonblank string"):
         GCGDataConfig.from_seed_dataset(dataset)

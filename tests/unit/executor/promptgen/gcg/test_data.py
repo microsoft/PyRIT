@@ -14,7 +14,7 @@ from unit.mocks import get_mock_target
 
 from pyrit.executor.promptgen.gcg.config import GCGDataConfig
 from pyrit.executor.promptgen.gcg.data import create_gcg_data_config_async, load_goals_and_targets
-from pyrit.models import Message, MessagePiece, Score, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import GCGSeedMetadata, Message, MessagePiece, Score, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -45,8 +45,8 @@ def completion_scorer() -> MagicMock:
 async def test_create_config_preserves_provided_targets_without_adversarial_target() -> None:
     dataset = SeedDataset(
         seeds=[
-            SeedObjective(value="goal a", metadata={"gcg_target": "Provided a"}),
-            SeedObjective(value="goal b", metadata={"gcg_target": "Provided b"}),
+            SeedObjective(value="goal a", metadata=GCGSeedMetadata(target_prefix="Provided a").to_metadata()),
+            SeedObjective(value="goal b", metadata=GCGSeedMetadata(target_prefix="Provided b").to_metadata()),
         ]
     )
 
@@ -61,7 +61,7 @@ async def test_create_config_preserves_provided_targets_without_adversarial_targ
 async def test_create_config_accepts_text_seeds_async(
     *, seed_class: type[SeedObjective] | type[SeedPrompt], provided_target: bool, completion_scorer: MagicMock
 ) -> None:
-    metadata = {"gcg_target": "Provided"} if provided_target else {}
+    metadata = GCGSeedMetadata(target_prefix="Provided").to_metadata() if provided_target else {}
     dataset = SeedDataset(seeds=[seed_class(value="text goal", data_type="text", metadata=metadata)])
     target = _mock_adversarial_target("Generated", "Generated")
 
@@ -75,14 +75,18 @@ async def test_create_config_accepts_text_seeds_async(
 
 
 @pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path"])
-@pytest.mark.parametrize("metadata", [{"gcg_target": "Prefix"}, {}])
+@pytest.mark.parametrize("metadata", [GCGSeedMetadata(target_prefix="Prefix").to_metadata(), {}])
 @pytest.mark.parametrize("held_out", [False, True])
 async def test_create_config_rejects_nontext_seeds_before_generation_async(
-    *, data_type: str, metadata: dict[str, str], held_out: bool, completion_scorer: MagicMock
+    *, data_type: str, metadata: dict[str, Any], held_out: bool, completion_scorer: MagicMock
 ) -> None:
     dataset = SeedDataset(seeds=[SeedPrompt(value="example.media", data_type=data_type, metadata=metadata)])
     train = (
-        SeedDataset(seeds=[SeedObjective(value="train", metadata={"gcg_target": "Provided"})]) if held_out else dataset
+        SeedDataset(
+            seeds=[SeedObjective(value="train", metadata=GCGSeedMetadata(target_prefix="Provided").to_metadata())]
+        )
+        if held_out
+        else dataset
     )
     target = _mock_adversarial_target("Generated")
 
@@ -101,9 +105,9 @@ async def test_create_config_rejects_nontext_seeds_before_generation_async(
 async def test_create_config_generates_only_missing_targets(completion_scorer: MagicMock) -> None:
     dataset = SeedDataset(
         seeds=[
-            SeedObjective(value="goal a", metadata={"gcg_target": "Provided a"}),
+            SeedObjective(value="goal a", metadata=GCGSeedMetadata(target_prefix="Provided a").to_metadata()),
             SeedObjective(value="goal b"),
-            SeedObjective(value="goal c", metadata={"gcg_target": "  "}),
+            SeedObjective(value="goal c", metadata=GCGSeedMetadata(target_prefix="  ").to_metadata()),
         ]
     )
     target = _mock_adversarial_target("  Generated b  ", "Generated c")
@@ -131,7 +135,9 @@ async def test_create_config_generates_only_missing_targets(completion_scorer: M
 
 
 async def test_create_config_resolves_test_dataset(completion_scorer: MagicMock) -> None:
-    train = SeedDataset(seeds=[SeedObjective(value="train", metadata={"gcg_target": "Provided"})])
+    train = SeedDataset(
+        seeds=[SeedObjective(value="train", metadata=GCGSeedMetadata(target_prefix="Provided").to_metadata())]
+    )
     test = SeedDataset(seeds=[SeedObjective(value="test")])
     target = _mock_adversarial_target("Generated test")
 
@@ -191,7 +197,9 @@ async def test_create_config_overlong_generated_target_raises(completion_scorer:
 
 @pytest.mark.parametrize("maximum_length", [0, -1, True, 1.5, "256", None])
 async def test_create_config_rejects_invalid_maximum_length(maximum_length: Any) -> None:
-    dataset = SeedDataset(seeds=[SeedObjective(value="goal", metadata={"gcg_target": "Provided"})])
+    dataset = SeedDataset(
+        seeds=[SeedObjective(value="goal", metadata=GCGSeedMetadata(target_prefix="Provided").to_metadata())]
+    )
 
     with pytest.raises(ValueError, match="must be positive"):
         await create_gcg_data_config_async(dataset=dataset, max_generated_target_length=maximum_length)
@@ -210,17 +218,21 @@ async def test_create_config_requires_scorer_before_generating() -> None:
 
 @pytest.mark.parametrize("target_metadata", [False, 1, [], {"wrong": "schema"}])
 async def test_create_config_rejects_nonstring_metadata(target_metadata: object) -> None:
-    dataset = SeedDataset(seeds=[SeedObjective(value="goal", metadata={"gcg_target": target_metadata})])
+    dataset = SeedDataset(
+        seeds=[SeedObjective(value="goal", metadata={GCGSeedMetadata.METADATA_KEY: {"target_prefix": target_metadata}})]
+    )
     target = _mock_adversarial_target("Generated")
 
-    with pytest.raises(ValueError, match="must be a string"):
+    with pytest.raises(ValueError, match="target_prefix"):
         await create_gcg_data_config_async(dataset=dataset, adversarial_target=target)
 
     target.send_prompt_async.assert_not_awaited()
 
 
 async def test_create_config_rejects_blank_goal() -> None:
-    dataset = SeedDataset(seeds=[SeedObjective(value=" ", metadata={"gcg_target": "Provided"})])
+    dataset = SeedDataset(
+        seeds=[SeedObjective(value=" ", metadata=GCGSeedMetadata(target_prefix="Provided").to_metadata())]
+    )
 
     with pytest.raises(ValueError, match="Seed goal must be a nonblank string"):
         await create_gcg_data_config_async(dataset=dataset)
@@ -228,7 +240,9 @@ async def test_create_config_rejects_blank_goal() -> None:
 
 async def test_create_config_generates_for_none_metadata(completion_scorer: MagicMock) -> None:
     config = await create_gcg_data_config_async(
-        dataset=SeedDataset(seeds=[SeedObjective(value="goal", metadata={"gcg_target": None})]),
+        dataset=SeedDataset(
+            seeds=[SeedObjective(value="goal", metadata=GCGSeedMetadata(target_prefix=None).to_metadata())]
+        ),
         adversarial_target=_mock_adversarial_target("Prefix"),
         completion_scorer=completion_scorer,
     )

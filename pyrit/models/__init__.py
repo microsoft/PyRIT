@@ -314,6 +314,7 @@ if TYPE_CHECKING:
         AssertTaxonomy,
         AssertTerm,
     )
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -336,6 +337,7 @@ if TYPE_CHECKING:
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
     "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",

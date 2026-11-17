@@ -18,7 +18,7 @@ AzureML job is submitted. The prompt normalizer retains generation requests and
 all returned messages in memory, including exchanges whose completion is rejected.
 
 The bundled ``adv_bench`` dataset already carries its canonical completion
-strings under ``metadata["gcg_target"]``, so it needs no generation calls.
+prefixes as ``GCGSeedMetadata``, so it needs no generation calls.
 """
 
 from __future__ import annotations
@@ -28,10 +28,9 @@ from typing import TYPE_CHECKING
 from pyrit.executor.promptgen.gcg.config import (
     GCGDataConfig,
     _get_seed_goal,
-    _get_seed_target,
     _validate_nonblank_string,
 )
-from pyrit.models import Message, SeedDataset, SeedPrompt
+from pyrit.models import GCGSeedMetadata, Message, SeedDataset, SeedPrompt
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
@@ -83,14 +82,13 @@ async def create_gcg_data_config_async(
     completion_scorer: TrueFalseScorer | None = None,
     completion_prompt: SeedPrompt | None = None,
     test_dataset: SeedDataset | None = None,
-    target_metadata_key: str = "gcg_target",
     max_generated_target_length: int = 256,
 ) -> GCGDataConfig:
     """
     Resolve a text-only ``SeedDataset`` into inline GCG goals and target completions.
 
-    A nonempty target completion under ``metadata[target_metadata_key]`` is
-    preserved. When metadata is missing or blank, ``adversarial_target`` is
+    A nonempty ``GCGSeedMetadata.target_prefix`` in seed metadata is
+    preserved. When the prefix is missing or blank, ``adversarial_target`` is
     asked to generate a short affirmative response prefix and
     ``completion_scorer`` must accept it. Supplied completions are trusted and
     are not scored. Resolution happens before serialization, so the compute-side
@@ -108,8 +106,6 @@ async def create_gcg_data_config_async(
             with ``objective`` and ``max_length`` Jinja variables. Defaults to
             the standard short affirmative prefix prompt.
         test_dataset (SeedDataset | None): Optional held-out objectives.
-        target_metadata_key (str): Metadata key containing a provided target
-            completion. Defaults to ``"gcg_target"``.
         max_generated_target_length (int): Maximum allowed character count for
             generated completions. Defaults to 256.
 
@@ -142,7 +138,6 @@ async def create_gcg_data_config_async(
         adversarial_target=adversarial_target,
         completion_scorer=completion_scorer,
         completion_prompt=prompt_template,
-        target_metadata_key=target_metadata_key,
         max_generated_target_length=max_generated_target_length,
     )
     if test_dataset is None:
@@ -153,7 +148,6 @@ async def create_gcg_data_config_async(
             adversarial_target=adversarial_target,
             completion_scorer=completion_scorer,
             completion_prompt=prompt_template,
-            target_metadata_key=target_metadata_key,
             max_generated_target_length=max_generated_target_length,
         )
 
@@ -171,7 +165,6 @@ async def _resolve_goals_and_targets_async(
     adversarial_target: PromptTarget | None,
     completion_scorer: TrueFalseScorer | None,
     completion_prompt: SeedPrompt,
-    target_metadata_key: str,
     max_generated_target_length: int,
 ) -> tuple[list[str], list[str]]:
     """
@@ -188,13 +181,14 @@ async def _resolve_goals_and_targets_async(
 
     for seed in dataset.seeds:
         goal = _get_seed_goal(seed=seed)
-        provided_target = _get_seed_target(seed=seed, target_metadata_key=target_metadata_key)
+        metadata = GCGSeedMetadata.from_metadata(metadata=seed.metadata or {})
+        provided_target = metadata.target_prefix if metadata is not None else None
         if provided_target is not None:
             resolved_target = provided_target
         else:
             if adversarial_target is None:
                 raise ValueError(
-                    f"Seed {goal!r} has no nonempty metadata[{target_metadata_key!r}] and no "
+                    f"Seed {goal!r} has no nonempty GCGSeedMetadata.target_prefix and no "
                     "adversarial_target was provided to generate one."
                 )
             if completion_scorer is None:

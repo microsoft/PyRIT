@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
+
+from pyrit.models import GCGSeedMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,15 +49,6 @@ def _get_seed_goal(*, seed: SeedUnion) -> str:
     if seed.data_type != "text":
         raise ValueError(f"GCG requires text seeds; got data_type={seed.data_type!r} for seed {seed.value!r}.")
     return _validate_nonblank_string(value=seed.value, field_name="Seed goal")
-
-
-def _get_seed_target(*, seed: SeedUnion, target_metadata_key: str) -> str | None:
-    target = (seed.metadata or {}).get(target_metadata_key)
-    if target is None:
-        return None
-    if not isinstance(target, str):
-        raise ValueError(f"Seed {seed.value!r} metadata[{target_metadata_key!r}] must be a string.")
-    return target if target.strip() else None
 
 
 def _default_model_kwargs() -> dict[str, Any]:
@@ -129,8 +122,6 @@ class GCGDataConfig:
             list.
     """
 
-    TARGET_METADATA_KEY: ClassVar[str] = "gcg_target"
-
     train_goals: list[str] = field(default_factory=list)
     train_targets: list[str] = field(default_factory=list)
     test_goals: list[str] = field(default_factory=list)
@@ -166,25 +157,22 @@ class GCGDataConfig:
         dataset: SeedDataset,
         *,
         test_dataset: SeedDataset | None = None,
-        target_metadata_key: str = TARGET_METADATA_KEY,
     ) -> GCGDataConfig:
         """
         Materialize fully specified ``SeedDataset``(s) into an inline config.
 
         Each text seed's ``value`` becomes a goal and its
-        ``metadata[target_metadata_key]`` becomes the paired target string.
+        ``GCGSeedMetadata.target_prefix`` becomes the paired target string.
         This strict synchronous path requires every seed to carry a target.
         Use ``create_gcg_data_config_async`` when missing targets should be
         generated through an adversarial target.
 
         Args:
             dataset (SeedDataset): Training dataset. Every seed must carry a
-                target string under ``metadata[target_metadata_key]``.
+                prefix stored with ``GCGSeedMetadata.to_metadata()``.
             test_dataset (SeedDataset | None): Optional held-out dataset with the
                 same per-seed target requirement. Defaults to None (no held-out
                 evaluation).
-            target_metadata_key (str): Seed metadata key holding the target
-                completion string. Defaults to ``"gcg_target"``.
 
         Returns:
             GCGDataConfig: A config with goals and targets stored inline.
@@ -193,13 +181,9 @@ class GCGDataConfig:
             ValueError: If a seed is not text, a goal is blank, or target metadata
                 is missing, blank, or not a string.
         """
-        train_goals, train_targets = cls._resolve_goals_and_targets(
-            dataset=dataset, target_metadata_key=target_metadata_key
-        )
+        train_goals, train_targets = cls._resolve_goals_and_targets(dataset=dataset)
         if test_dataset is not None:
-            test_goals, test_targets = cls._resolve_goals_and_targets(
-                dataset=test_dataset, target_metadata_key=target_metadata_key
-            )
+            test_goals, test_targets = cls._resolve_goals_and_targets(dataset=test_dataset)
         else:
             test_goals, test_targets = [], []
         return cls(
@@ -210,14 +194,13 @@ class GCGDataConfig:
         )
 
     @staticmethod
-    def _resolve_goals_and_targets(*, dataset: SeedDataset, target_metadata_key: str) -> tuple[list[str], list[str]]:
+    def _resolve_goals_and_targets(*, dataset: SeedDataset) -> tuple[list[str], list[str]]:
         """
         Extract paired goal/target lists from a ``SeedDataset``.
 
         Args:
             dataset (SeedDataset): The dataset whose seeds carry goals (``value``)
-                and targets (``metadata[target_metadata_key]``).
-            target_metadata_key (str): Seed metadata key holding the target string.
+                and targets stored using ``GCGSeedMetadata``.
 
         Returns:
             tuple[list[str], list[str]]: ``(goals, targets)`` in seed order.
@@ -230,10 +213,11 @@ class GCGDataConfig:
         targets: list[str] = []
         for seed in dataset.seeds:
             goal = _get_seed_goal(seed=seed)
-            target = _get_seed_target(seed=seed, target_metadata_key=target_metadata_key)
+            metadata = GCGSeedMetadata.from_metadata(metadata=seed.metadata or {})
+            target = metadata.target_prefix if metadata is not None else None
             if target is None:
                 raise ValueError(
-                    f"Seed {seed.value!r} is missing metadata[{target_metadata_key!r}] or it is blank; "
+                    f"Seed {seed.value!r} is missing metadata from GCGSeedMetadata or its target_prefix is blank; "
                     "GCG requires a nonblank target completion string for every goal."
                 )
             goals.append(goal)

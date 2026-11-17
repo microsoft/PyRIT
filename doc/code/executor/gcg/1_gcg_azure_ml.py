@@ -107,7 +107,7 @@ ml_client.environments.create_or_update(env_docker_context)
 # The new public API takes a typed ``GCGConfig`` (strategy) and a separate
 # ``GCGDataConfig`` (resolved goals and targets). We load the bundled
 # ``adv_bench`` dataset through the standard ``SeedDatasetProvider``; each seed
-# already preserves its canonical target completion in ``metadata["gcg_target"]``.
+# already preserves its canonical target completion as ``GCGSeedMetadata``.
 # We materialize those values inline via ``from_seed_dataset``, so the serialized
 # JSON the AML job reads already embeds the data and the compute container never
 # fetches it from the public internet. We build both configs locally, serialize
@@ -121,13 +121,13 @@ ml_client.environments.create_or_update(env_docker_context)
 # ``create_gcg_data_config_async`` with an adversarial target and a
 # ``completion_scorer``. The scorer must return True only for a suitable
 # affirmative prefix, not a refusal, unrelated response, or complete answer.
-# Provided ``gcg_target`` strings are trusted and preserved without scoring;
-# missing, None, or blank values trigger generation. Other metadata types are
-# rejected rather than converted to strings.
+# Provided ``GCGSeedMetadata.target_prefix`` strings are trusted and preserved
+# without scoring; missing, None, or blank prefixes trigger generation. Malformed
+# payloads are rejected rather than converted to strings.
 #
 # Configure your own ``adversarial_target`` and ``scoring_target`` before running
 # this optional example; neither is instantiated in this notebook. This small
-# dataset has no ``gcg_target`` metadata, so its completion will be generated:
+# dataset has no ``GCGSeedMetadata`` payload, so its completion will be generated:
 #
 # ```python
 # from pyrit.executor.promptgen.gcg import create_gcg_data_config_async
@@ -170,7 +170,7 @@ ml_client.environments.create_or_update(env_docker_context)
 # n_train_data=..., n_test_data=...)`` and the ``random_seed`` argument to
 # ``load_goals_and_targets`` are no longer supported. Load public or private
 # datasets before submitting the job and supply each completion as
-# ``metadata["gcg_target"]`` (or generate it as above). Select and split seeds
+# ``GCGSeedMetadata(target_prefix=...).to_metadata()`` (or generate it as above). Select and split seeds
 # locally instead of supplying CSV URLs and row counts. For example, after
 # loading ``objectives`` through the standard provider:
 #
@@ -188,6 +188,26 @@ ml_client.environments.create_or_update(env_docker_context)
 #
 # This makes the submitted split explicit and reproducible. The compute-side
 # ``load_goals_and_targets(data=data_config)`` only reads the inline lists.
+#
+# Seed metadata uses one fixed namespace, ``pyrit_gcg``, owned by
+# ``GCGSeedMetadata``. The experimental ``gcg_target`` key and
+# ``target_metadata_key`` argument are no longer supported. Normalize external
+# field names once when loading your data, before calling either adapter:
+#
+# ```python
+# from pyrit.models import GCGSeedMetadata, SeedDataset, SeedObjective
+#
+# external_row = {"goal": "Explain how rainbows form.", "completion": "Rainbows form when"}
+# private_dataset = SeedDataset(
+#     seeds=[
+#         SeedObjective(
+#             value=external_row["goal"],
+#             metadata=GCGSeedMetadata(target_prefix=external_row["completion"]).to_metadata(),
+#         )
+#     ],
+# )
+# data_config = GCGDataConfig.from_seed_dataset(private_dataset)
+# ```
 #
 # We also have to specify a GPU compute target. In our experience, a GPU instance with
 # at least 24GB of vRAM is required (e.g., Standard_NC24ads_A100_v4).
