@@ -113,19 +113,22 @@ await output_scenario_async(result)  # type: ignore
 # %% [markdown]
 # ## Inspect the primed conversations
 #
-# The injected history appears with simulated roles: the target never made these calls. Scorers ignore
+# For each technique, this shows a successful attempt if there is one, and otherwise a failed one. The
+# injected history appears with simulated roles: the target never made these calls. Scorers ignore
 # simulated messages and only judge the target's own reply.
 
 # %%
 from pyrit.memory import CentralMemory
+from pyrit.models import AttackOutcome
 
 memory = CentralMemory.get_memory_instance()
 for name, attack_results in result.attack_results.items():
-    if not name.startswith("tool_priming"):
+    if not name.startswith("tool_priming") or not attack_results:
         continue
-    for attack_result in attack_results:
-        print(f"===== {name}: {attack_result.outcome.value}\n")
-        for message in await memory.get_conversation_messages_async(conversation_id=attack_result.conversation_id):  # type: ignore
-            for piece in message.message_pieces:
-                if piece.converted_value_data_type != "reasoning" and piece.converted_value.strip():
-                    print(f"[{piece.role} / {piece.converted_value_data_type}] {piece.converted_value[:300]}\n")
+    successes = [attack_result for attack_result in attack_results if attack_result.outcome == AttackOutcome.SUCCESS]
+    attack_result = (successes or attack_results)[0]
+    print(f"===== {name}: {attack_result.outcome.value}\n")
+    for message in await memory.get_conversation_messages_async(conversation_id=attack_result.conversation_id):  # type: ignore
+        for piece in message.message_pieces:
+            if piece.converted_value_data_type != "reasoning" and piece.converted_value.strip():
+                print(f"[{piece.role} / {piece.converted_value_data_type}] {piece.converted_value[:300]}\n")
