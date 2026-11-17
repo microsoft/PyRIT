@@ -141,6 +141,11 @@ class PromptTarget(Identifiable):
     # settings say. A server can put a credential there, so a saved target isn't built while one is set.
     server_header_variables: ClassVar[tuple[str, ...]] = ()
 
+    # Required settings the constructor reads from this server's environment when they're left empty, such
+    # as an endpoint or a model name. Targets built from API input set each one, and so do saved targets,
+    # which restore builds the same way.
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset()
+
     # Why this target type can't be saved even without a credential, or None when it can.
     not_saveable_reason: ClassVar[str | None] = None
 
@@ -987,6 +992,16 @@ class PromptTarget(Identifiable):
             tuple[float, float] | None: Inclusive bounds, or None when unspecified.
         """
         return None
+
+    @property
+    def trace_config(self) -> TargetTraceConfig:
+        """
+        The request tracing configuration of this target instance.
+
+        Returns:
+            TargetTraceConfig: Whether and how each send records a trace context.
+        """
+        return self._trace_config
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """
