@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.prompt_target import (
     CopilotType,
     HuggingFaceChatTarget,
@@ -23,8 +24,10 @@ from pyrit.prompt_target import (
     RoundRobinTarget,
     TargetCapabilities,
     TargetConfiguration,
+    TextTarget,
 )
 from pyrit.registry import TargetMetadata, TargetRegistry
+from pyrit.registry.instance_registry import registration_origin
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -169,6 +172,38 @@ class TestTargetRegistryRegisterInstance:
             registry.instances.register(NotATarget())  # type: ignore[arg-type]
 
         assert len(registry.instances) == 0
+
+
+class TestTargetRegistryTemporaryClasses:
+    """Tests for telling which classes a scan's launch scripts added."""
+
+    def test_a_class_that_first_appears_in_a_launch_script_is_temporary(self, registry: TargetRegistry):
+        registry.register_class(MockPromptChatTarget)
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register_class(TextTarget)
+            registry.register_class(MockPromptTarget)
+            registry.register_class(MockPromptChatTarget)
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            registry.register_class(MockPromptTarget, name="startup_mock")
+
+        assert registry.is_temporary_class("MockPromptTarget")
+        assert not any(
+            registry.is_temporary_class(name)
+            for name in ("TextTarget", "OpenAIChatTarget", "MockPromptChatTarget", "startup_mock")
+        )
+
+    def test_classes_found_on_first_use_in_a_launch_script_are_not_temporary(self, registry: TargetRegistry):
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            assert registry.get_class("TextTarget") is TextTarget
+
+        assert not registry.is_temporary_class("TextTarget")
+
+    def test_a_class_a_launch_script_puts_in_place_of_another_is_temporary(self, registry: TargetRegistry):
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register_class(MockPromptTarget, name="TextTarget")
+
+        assert registry.get_class("TextTarget") is MockPromptTarget
+        assert registry.is_temporary_class("TextTarget")
 
 
 @pytest.mark.usefixtures("patch_central_database")

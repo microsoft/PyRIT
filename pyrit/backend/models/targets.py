@@ -12,7 +12,14 @@ from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common import AuthMode
-from pyrit.models import GenerationRange, JSONValue, Parameter, TargetCapabilities, TargetIdentifier
+from pyrit.models import (
+    GenerationRange,
+    JSONValue,
+    Parameter,
+    TargetCapabilities,
+    TargetIdentifier,
+    validate_registry_name,
+)
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 
@@ -75,6 +82,14 @@ class CreateTargetRequest(BaseModel):
         description="Unique registry name; omitted only for legacy UI compatibility",
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
+            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
+        ),
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
@@ -102,6 +117,17 @@ class CreateTargetRequest(BaseModel):
             raise ValueError("a copy takes its overrides in source.params")
         if "auth_mode" in self.model_fields_set:
             raise ValueError("a copy uses its source's auth mode, so auth_mode can't be set")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> "CreateTargetRequest":
+        if not self.persist:
+            return self
+        if not self.register:
+            raise ValueError("persist requires register=true")
+        if self.name is None:
+            raise ValueError("persist requires a name")
+        validate_registry_name(self.name)
         return self
 
 
