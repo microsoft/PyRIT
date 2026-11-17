@@ -138,14 +138,7 @@ def _binding(selection: ScorerSelection) -> ScenarioRunPlanScorerBinding:
     Returns:
         ScenarioRunPlanScorerBinding: The selected candidate and the inputs it accepted.
     """
-    return ScenarioRunPlanScorerBinding(
-        candidate_index=selection.candidate_index,
-        evaluation=selection.evaluation,
-        scorer_hash=selection.scorer.get_identifier().hash,
-        required_evaluation=selection.requirements.evaluation,
-        requires_float_scale_value=selection.requirements.preserves_float_scale_value,
-        expectation_fingerprints=list(selection.expectation_fingerprints),
-    )
+    return selection.to_run_plan_binding()
 
 
 def build_baseline_atomic_attack(

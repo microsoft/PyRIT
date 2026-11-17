@@ -28,6 +28,8 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     SeedObjective,
     SeedPrompt,
+    ToolCallRequirement,
+    ToolsCalled,
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
@@ -40,6 +42,7 @@ from pyrit.scenario import (
     DatasetFetchPolicy,
     DatasetSource,
     IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
     Scenario,
 )
 from pyrit.scenario.core import (
@@ -53,7 +56,14 @@ from pyrit.scenario.scenarios.airt.psychosocial import (
     _SUB_HARMS,
     _converter_for_technique,
 )
-from pyrit.score import TrueFalseScorer
+from pyrit.score import (
+    CompatibleScorers,
+    ConflictingScorerRequirementsError,
+    ScorerCandidate,
+    ScorerRequirements,
+    SubStringScorer,
+    TrueFalseScorer,
+)
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -532,7 +542,7 @@ class TestPsychosocialConstruction:
         assert Psychosocial().uses_default_adversarial_target is True
 
     def test_version(self):
-        assert Psychosocial.VERSION == 6
+        assert Psychosocial.VERSION == 7
 
     def test_default_technique_is_default(self):
         assert _scenario_with_mock_scorers()._default_technique == PsychosocialTechnique.DEFAULT
@@ -989,3 +999,126 @@ class TestPsychosocialBaselines:
         by_group = {a.display_group: a for a in _baselines(scenario)}
         assert _attack_scorer(by_group["imminent_crisis"]) is crisis
         assert _attack_scorer(by_group["licensed_therapist"]) is therapist
+
+
+def _harm_name(atomic) -> str:
+    return next(harm.name for harm in _SUB_HARMS if atomic.atomic_attack_name.startswith(harm.name))
+
+
+async def _initialize_with_real_scorers_async(
+    *,
+    target,
+    groups: dict[str, list[AttackSeedGroup]] | None = None,
+    dataset_config: DatasetAttackConfiguration | None = None,
+    policy: str = "skip",
+) -> tuple[Psychosocial, dict[str, SubStringScorer]]:
+    scorers = {
+        "imminent_crisis": SubStringScorer(substring="crisis"),
+        "licensed_therapist": SubStringScorer(substring="x"),
+    }
+    scenario = Psychosocial(
+        imminent_crisis_scorer=scorers["imminent_crisis"], licensed_therapist_scorer=scorers["licensed_therapist"]
+    )
+    args: dict[str, Any] = {
+        "objective_target": target,
+        "scenario_techniques": [PsychosocialTechnique.NoConverter],
+        "incompatible_technique_policy": policy,
+    }
+    if dataset_config is not None:
+        args["dataset_config"] = dataset_config
+    with _patch_base_seed_groups(groups or _make_seed_groups()):
+        scenario.set_params_from_args(args=args)
+        await scenario.initialize_async()
+    return scenario, scorers
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestPsychosocialSharedSelection:
+    """Each sub-harm's slot requires its own evaluation, and selection binds the matching scorer."""
+
+    async def test_each_sub_harm_is_judged_by_the_scorer_bound_to_its_evaluation(self, mock_objective_target):
+        scenario, scorers = await _initialize_with_real_scorers_async(target=mock_objective_target)
+
+        assert len(scenario._atomic_attacks) == 4
+        for atomic in scenario._atomic_attacks:
+            harm = _harm_name(atomic)
+            assert atomic._objective_scorer is scorers[harm]
+            assert atomic.objective_scorer_binding.evaluation == f"psychosocial.{harm}"
+            assert atomic.objective_scorer_binding.required_evaluation == f"psychosocial.{harm}"
+
+    async def test_the_run_plan_records_each_sub_harms_binding(self, mock_objective_target):
+        scenario, scorers = await _initialize_with_real_scorers_async(target=mock_objective_target)
+
+        plan = scenario._build_run_plan()
+        assert {
+            group.atomic_attack_name: group.objective_scorer_binding.scorer_hash for group in plan.atomic_groups
+        } == {
+            atomic.atomic_attack_name: scorers[_harm_name(atomic)].get_identifier().hash
+            for atomic in scenario._atomic_attacks
+        }
+
+    async def test_a_plain_dataset_source_still_requires_its_slots_evaluation(self, mock_objective_target):
+        plain = DatasetAttackConfiguration(sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS])
+        scenario, scorers = await _initialize_with_real_scorers_async(
+            target=mock_objective_target, dataset_config=plain
+        )
+
+        therapist = [a for a in scenario._atomic_attacks if _harm_name(a) == "licensed_therapist"]
+        assert therapist
+        assert all(atomic._objective_scorer is scorers["licensed_therapist"] for atomic in therapist)
+
+    async def test_a_source_cannot_name_another_sub_harms_evaluation(self, mock_objective_target):
+        swapped = DatasetAttackConfiguration(
+            sources=[
+                DatasetSource(
+                    name="airt_imminent_crisis",
+                    scorer_requirements=ScorerRequirements(evaluation="psychosocial.licensed_therapist"),
+                ),
+                DatasetSource(name="airt_licensed_therapist"),
+            ]
+        )
+        with pytest.raises(ConflictingScorerRequirementsError, match="cannot both decide success"):
+            await _initialize_with_real_scorers_async(target=mock_objective_target, dataset_config=swapped)
+
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_a_sub_harm_its_scorer_cannot_judge_follows_policy(self, mock_objective_target, policy):
+        groups = _make_seed_groups()
+        send_email = ToolsCalled(tools=(ToolCallRequirement(name="send_email"),))
+        groups["airt_licensed_therapist"] = [
+            AttackSeedGroup(seeds=[SeedObjective(value="therapist seed", conditions=(send_email,))])
+        ]
+        if policy == "raise":
+            with pytest.raises(IncompatibleTechniqueError, match="Sub-harm 'licensed_therapist'"):
+                await _initialize_with_real_scorers_async(target=mock_objective_target, groups=groups, policy=policy)
+            return
+        scenario, _ = await _initialize_with_real_scorers_async(
+            target=mock_objective_target, groups=groups, policy=policy
+        )
+        assert {_harm_name(atomic) for atomic in scenario._atomic_attacks} == {"imminent_crisis"}
+
+    def test_candidate_order_cannot_exchange_rubrics(self):
+        crisis, therapist = SubStringScorer(substring="crisis"), SubStringScorer(substring="x")
+        groups = _make_seed_groups()
+        for candidates in (
+            [
+                ScorerCandidate(scorer=crisis, evaluation="psychosocial.imminent_crisis"),
+                ScorerCandidate(scorer=therapist, evaluation="psychosocial.licensed_therapist"),
+            ],
+            [
+                ScorerCandidate(scorer=therapist, evaluation="psychosocial.licensed_therapist"),
+                ScorerCandidate(scorer=crisis, evaluation="psychosocial.imminent_crisis"),
+            ],
+        ):
+            pool = CompatibleScorers(candidates=candidates)
+            chosen = {
+                harm.name: Psychosocial._select_harm_scorer(
+                    pool=pool,
+                    harm=harm,
+                    seed_groups=groups[harm.dataset_name],
+                    source_requirements=None,
+                    technique_requirements=[],
+                    policy=IncompatibleTechniquePolicy.RAISE,
+                ).scorer
+                for harm in _SUB_HARMS
+            }
+            assert chosen == {"imminent_crisis": crisis, "licensed_therapist": therapist}

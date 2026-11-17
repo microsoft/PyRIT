@@ -36,6 +36,7 @@ from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
     DatasetSelectionMode,
+    MessageScorable,
     Parameter,
     ScenarioDatasetOptions,
     ScenarioDatasetSizeEstimate,
@@ -62,13 +63,20 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atom
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
     TechniqueRequirements,
     check_target_compatibility,
     filter_seed_groups,
 )
 from pyrit.score import (
+    CompatibleScorers,
     FloatScaleThresholdScorer,
+    NoCompatibleScorerError,
     NumericRange,
+    ScorerCandidate,
+    ScorerRequirements,
+    ScorerSelection,
     SelfAskGeneralFloatScaleScorer,
     create_conversation_scorer,
 )
@@ -113,6 +121,25 @@ class _SubHarm:
     dataset_name: str
     escalation_prompt_path: pathlib.Path
     build_scorer: Callable[[PromptTarget], TrueFalseScorer]
+
+    @property
+    def evaluation(self) -> str:
+        """The evaluation key this sub-harm's objectives require, bound to its scorer."""
+        return f"psychosocial.{self.name}"
+
+    @property
+    def scorer_requirements(self) -> ScorerRequirements:
+        """What any scorer for this sub-harm's slot must judge, whatever its dataset source says."""
+        return ScorerRequirements(evaluation=self.evaluation)
+
+    def dataset_source(self) -> DatasetSource:
+        """
+        Build this sub-harm's default dataset source, carrying its evaluation.
+
+        Returns:
+            DatasetSource: The source for this sub-harm's seed objectives.
+        """
+        return DatasetSource(name=self.dataset_name, scorer_requirements=self.scorer_requirements)
 
 
 def _imminent_crisis_scorer(chat_target: PromptTarget) -> TrueFalseScorer:
@@ -367,6 +394,12 @@ class Psychosocial(Scenario):
     harm. The secondary axis is the ``PsychosocialTechnique`` converter sweep, selected with
     ``--techniques``.
 
+    **Scorers are chosen by shared selection.** Each sub-harm's scorer is a candidate bound to the
+    sub-harm's evaluation key (``psychosocial.imminent_crisis`` or ``psychosocial.licensed_therapist``),
+    and each sub-harm's slot requires that key, whatever its dataset source carries. Selection checks
+    that the bound scorer accepts every objective before any prompt is sent, and the run plan records
+    the choice so a resumed run is judged by the same rubric.
+
     **The base technique is a simulated crescendo.** For each sub-harm the scenario builds an
     escalating simulated conversation (via ``AttackTechniqueFactory.with_simulated_conversation``
     using that sub-harm's escalation prompt) and delivers the final message to the target. Each
@@ -379,7 +412,7 @@ class Psychosocial(Scenario):
     The total must cover each selected sub-harm. Unrelated dataset names are rejected.
     """
 
-    VERSION: int = 6
+    VERSION: int = 7
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
@@ -452,7 +485,7 @@ class Psychosocial(Scenario):
             adversarial_target=adversarial_chat,
             technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
-                sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
+                sources=[harm.dataset_source() for harm in _SUB_HARMS],
             ),
             # No single scenario objective scorer -- each sub-harm scores itself. The base contract
             # still requires one for scenario identity; the imminent-crisis scorer stands in.
@@ -531,10 +564,7 @@ class Psychosocial(Scenario):
         config = self._default_dataset_config
         by_name = {source.name: source for source in config.sources}
         return config.with_overrides(
-            sources=[
-                by_name.get(harm.dataset_name, DatasetSource(name=harm.dataset_name))
-                for harm in self._selected_sub_harms()
-            ]
+            sources=[by_name.get(harm.dataset_name, harm.dataset_source()) for harm in self._selected_sub_harms()]
         )
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
@@ -672,12 +702,34 @@ class Psychosocial(Scenario):
 
         baselines: list[AtomicAttack] = []
         atomic_attacks: list[AtomicAttack] = []
+        pool = self._build_scorer_pool(sub_harms=sub_harms)
+        source_requirements = self._dataset_config.get_scorer_requirements_by_dataset()
         for harm in sub_harms:
             seed_groups = seed_groups_by_dataset.get(harm.dataset_name)
             if not seed_groups:
                 raise ValueError(f"No seed groups loaded for selected sub-harm dataset '{harm.dataset_name}'.")
 
-            scorer = self._scorers_by_harm[harm.name]
+            # Building the base factory reads the sub-harm's escalation prompt from disk, so keep
+            # it off the event loop.
+            base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
+
+            selection = self._select_harm_scorer(
+                pool=pool,
+                harm=harm,
+                seed_groups=seed_groups,
+                source_requirements=source_requirements.get(harm.dataset_name),
+                technique_requirements=[
+                    TechniqueRequirements().objective_scorer_for(attack_class=CrescendoAttack)
+                    if technique is PsychosocialTechnique.Crescendo
+                    else base_factory.requirements.objective_scorer_for(attack_class=base_factory.attack_class)
+                    for technique in techniques
+                ],
+                policy=context.incompatible_technique_policy,
+            )
+            if selection is None:
+                continue
+            scorer = selection.scorer
+            binding = selection.to_run_plan_binding()
             scoring_config = AttackScoringConfig(objective_scorer=scorer)
 
             if context.include_baseline:
@@ -689,12 +741,9 @@ class Psychosocial(Scenario):
                         memory_labels=context.memory_labels,
                         atomic_attack_name=f"{harm.name}_baseline",
                         display_group=harm.name,
+                        objective_scorer_binding=binding,
                     )
                 )
-
-            # Building the base factory reads the sub-harm's escalation prompt from disk, so keep
-            # it off the event loop.
-            base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
             for technique in techniques:
                 live = technique is PsychosocialTechnique.Crescendo
@@ -748,12 +797,69 @@ class Psychosocial(Scenario):
                         seed_groups=compatible_groups,
                         adversarial_chat=adversarial_chat,
                         objective_scorer=scorer,
+                        objective_scorer_binding=binding,
                         memory_labels=context.memory_labels,
                         display_group=harm.name,
                     )
                 )
 
         return baselines + atomic_attacks
+
+    def _build_scorer_pool(self, *, sub_harms: list[_SubHarm]) -> CompatibleScorers:
+        """
+        Bind each selected sub-harm's scorer to that sub-harm's evaluation key.
+
+        The binding is explicit, from the sub-harm the scorer was built or supplied for, so a
+        scorer never inherits a key from its position in the pool.
+
+        Returns:
+            CompatibleScorers: One candidate per selected sub-harm, in sub-harm order.
+        """
+        return CompatibleScorers(
+            candidates=[
+                ScorerCandidate(scorer=self._scorers_by_harm[harm.name], evaluation=harm.evaluation)
+                for harm in sub_harms
+            ]
+        )
+
+    @staticmethod
+    def _select_harm_scorer(
+        *,
+        pool: CompatibleScorers,
+        harm: _SubHarm,
+        seed_groups: list[AttackSeedGroup],
+        source_requirements: ScorerRequirements | None,
+        technique_requirements: list[ScorerRequirements],
+        policy: IncompatibleTechniquePolicy,
+    ) -> ScorerSelection | None:
+        """
+        Choose the scorer for one sub-harm's objectives before anything is sent.
+
+        The sub-harm's slot always requires its own evaluation; a dataset source may add the same
+        key but cannot name another. The baseline and every technique cell share the selection,
+        so they are judged by the same rubric.
+
+        Returns:
+            ScorerSelection | None: The selection, or None when the sub-harm is skipped.
+
+        Raises:
+            IncompatibleTechniqueError: If no candidate can judge the sub-harm and the policy is RAISE.
+        """
+        requirements = ScorerRequirements.combine(
+            harm.scorer_requirements, source_requirements, *technique_requirements
+        )
+        try:
+            return pool.select(
+                requirements=requirements,
+                scorable_type=MessageScorable,
+                expectations=[group.scoring_expectation for group in seed_groups],
+            )
+        except NoCompatibleScorerError as exc:
+            message = f"Sub-harm '{harm.name}': {exc}"
+            if policy is IncompatibleTechniquePolicy.RAISE:
+                raise IncompatibleTechniqueError(message) from exc
+            logger.warning("Skipping %s", message)
+            return None
 
     @staticmethod
     def _build_crescendo_technique(

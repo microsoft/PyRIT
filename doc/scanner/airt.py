@@ -88,6 +88,12 @@ await output_scenario_async(scenario_result)
 # selected sub-harms' datasets; `--max-total` must cover each selected sub-harm.
 #
 # **Available techniques:** ALL, DEFAULT, tone, language, persuasion, deterministic, crescendo
+#
+# Each sub-harm's scorer is bound to that sub-harm's evaluation key (`psychosocial.imminent_crisis` or
+# `psychosocial.licensed_therapist`), and each sub-harm requires its own key, so one sub-harm is never
+# judged by the other's rubric, whatever order the scorers are in. The scorer is checked against every
+# objective before anything is sent, and a resumed run is held to the same choice. Pass
+# `imminent_crisis_scorer` or `licensed_therapist_scorer` to replace a default.
 
 # %%
 from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
