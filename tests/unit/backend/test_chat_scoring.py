@@ -1986,7 +1986,9 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
             pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
             scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id for piece in pieces])
             assert len(scores) == 2
-            assert published.automated_score.id == max(scores, key=lambda score: score.timestamp).id
+            # A coarse clock can give both evaluations one timestamp; either is then the latest.
+            latest = max(score.timestamp for score in scores)
+            assert published.automated_score.id in {score.id for score in scores if score.timestamp == latest}
         else:
             await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
 
@@ -2080,6 +2082,69 @@ async def test_older_write_only_evaluation_cannot_replace_newer_conversation_sco
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.last_response is None
     assert stored.automated_score is not None and stored.automated_score.id == newer.automated_score.id
+    assert stored.outcome == AttackOutcome.SUCCESS
+
+
+async def test_equal_time_multipart_write_only_delivery_replaces_earlier_score_async(
+    *,
+    scoring_chat: tuple[MessageSendService, AttackResult, MockPromptTarget, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    tmp_path: Path,
+) -> None:
+    service, attack, target, _ = scoring_chat
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_responses": False}))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="tied-file-judge")
+    reference = RegisteredComponentReference(
+        registry_name="tied-file-judge", identifier_hash=scorer.get_identifier().hash
+    )
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id,
+        update_fields={
+            "attack_metadata": AttackScoringInputs(
+                scorer=reference,
+                revision="tied-file",
+                expectation=ScoringExpectation(conditions=(ContentWritten(uri="/result.txt"),)),
+            ).to_metadata()
+        },
+    )
+    branch = await AttackService().create_related_conversation_async(
+        attack_result_id=attack.attack_result_id, request=CreateConversationRequest()
+    )
+    assert branch is not None
+
+    async def deliver_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if normalized_conversation[-1].get_piece().conversation_id == branch.conversation_id:
+            await asyncio.to_thread((tmp_path / "result.txt").write_text, "delivered", encoding="utf-8")
+        return []
+
+    multipart = chat_request(attack).model_copy(
+        update={
+            "pieces": [
+                MessagePieceRequest(original_value="Write the result"),
+                MessagePieceRequest(original_value="Keep this request as one multipart turn"),
+            ]
+        }
+    )
+    # A coarse clock gives both deliveries' pieces one timestamp; storage spaces out each message's later piece.
+    tick = datetime.now(UTC)
+    with (
+        patch.object(target, "_send_prompt_to_target_async", side_effect=deliver_async),
+        patch("pyrit.models.messages.message_piece.datetime") as clock,
+    ):
+        clock.now.return_value = tick
+        for conversation_id in (attack.conversation_id, branch.conversation_id):
+            await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=multipart.model_copy(update={"target_conversation_id": conversation_id}),
+            )
+
+    pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
+    spaced = tick + timedelta(microseconds=1)
+    assert sorted(piece.timestamp for piece in pieces) == [tick, tick, spaced, spaced]
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+    assert stored.last_response is None
+    assert stored.automated_score is not None and stored.automated_score.get_value() is True
     assert stored.outcome == AttackOutcome.SUCCESS
 
 
