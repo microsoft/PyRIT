@@ -583,9 +583,9 @@ skip this section. The details live at
    with the CoPyRIT maintainers on who queues it and when, rather than assuming that falls to the
    release owner; they have taken it themselves in the past. Wait until the public package release
    and the production database migration in step 8 are complete. Neither condition establishes
-   client compatibility with the production image: `gui-deploy.yml` builds source from `main`,
-   not the release-branch wheel on PyPI, and permits production only from `refs/heads/main`.
-   Do not relax that branch policy or claim that installing the PyPI release matches production.
+   client compatibility with the production image: `gui-deploy.yml` builds source from the
+   queued commit, not the wheel on PyPI, and permits production only from `main` or
+   `releases/v*`. Do not claim that installing the PyPI release matches production.
 
 ### Matching Clients for the Production Commit
 

@@ -40,6 +40,7 @@ def mocks() -> Iterator[dict[str, MagicMock]]:
             "memory_class": memory_class,
             "run": stack.enter_context(patch.object(pyrit.memory.migration, "run_schema_migrations")),
             "check": stack.enter_context(patch.object(pyrit.memory.migration, "check_schema_migrations")),
+            "upgradable": stack.enter_context(patch.object(pyrit.memory.migration, "check_schema_upgradable")),
         }
 
 
@@ -50,9 +51,27 @@ def test_main_upgrades_and_checks_schema(mocks: dict[str, MagicMock]) -> None:
     mocks["memory_class"].assert_called_once_with(
         connection_string=CONNECTION_STRING, _defer_initialization=True, skip_schema_migration=True, silent=True
     )
-    mocks["run"].assert_called_once_with(engine="engine", silent=True)
+    mocks["run"].assert_called_once_with(engine="engine", silent=False)
     mocks["check"].assert_called_once_with(engine="engine", silent=True)
+    mocks["upgradable"].assert_not_called()
     mocks["memory"].dispose_engine_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("unknown_revision", [False, True])
+def test_main_check_upgradable_never_upgrades(*, mocks: dict[str, MagicMock], unknown_revision: bool) -> None:
+    if unknown_revision:
+        mocks["upgradable"].side_effect = RuntimeError("unknown revision")
+    assert pyrit_migrate.main(args=[*ARGS, "--check-upgradable"]) == (1 if unknown_revision else 0)
+    mocks["upgradable"].assert_called_once_with(engine="engine")
+    mocks["run"].assert_not_called()
+    mocks["check"].assert_not_called()
+    mocks["memory"].dispose_engine_async.assert_awaited_once()
+
+
+def test_main_rejects_combined_check_modes(mocks: dict[str, MagicMock]) -> None:
+    with pytest.raises(SystemExit):
+        pyrit_migrate.main(args=[*ARGS, "--check-only", "--check-upgradable"])
+    mocks["memory_class"].assert_not_called()
 
 
 def test_main_rejects_non_azure_sql_memory(mocks: dict[str, MagicMock]) -> None:

@@ -183,18 +183,24 @@ prepare_database_migration() {
 
 start_database_job_execution() (
   set -euo pipefail
-  local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file
+  local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file check_argument
   local job_args=(--resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" --query name -o tsv)
-  if [[ "$mode" == check ]]; then
+  case "$mode" in
+    check) check_argument=--check-only ;;
+    upgradable) check_argument=--check-upgradable ;;
+    migrate) check_argument="" ;;
+    *) deployment_error "Unknown database job mode $mode" >&2 ;;
+  esac
+  if [[ -n "$check_argument" ]]; then
     template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-schema-check.XXXXXX") \
       || deployment_error "Could not create database schema check template" >&2
     trap 'rm -f -- "$template_file"' EXIT
     if ! az containerapp job show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
-      --query properties.template -o json | jq -e '
+      --query properties.template -o json | jq -e --arg check_argument "$check_argument" '
         if ([.containers[] | select(.name == "pyrit-migrate" and (.image | type == "string" and length > 0))] | length) != 1
         then error("Expected one pyrit-migrate container with an image")
-        else .containers |= map(if .name == "pyrit-migrate" then .args = ["--check-only"] else . end)
+        else .containers |= map(if .name == "pyrit-migrate" then .args = [$check_argument] else . end)
         end' > "$template_file"; then
       deployment_error "Could not prepare database schema check template" >&2
     fi
@@ -203,16 +209,30 @@ start_database_job_execution() (
   az containerapp job start "${job_args[@]}"
 )
 
+stop_database_job_execution() {
+  local action="$1" execution="$2"
+  if ! az containerapp job stop \
+    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME-migrate" \
+    --job-execution-name "$execution" -o none; then
+    echo "##vso[task.logissue type=warning]Could not stop database $action execution $execution; stop it before retrying"
+  fi
+}
+
 run_database_job() {
-  local mode="$1" action="migration"
-  [[ "$mode" == check ]] && action="schema check"
+  local mode="$1" action poll_attempts
+  case "$mode" in
+    check) action="schema check" poll_attempts=${PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS:-30} ;;
+    upgradable) action="revision check" poll_attempts=${PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS:-30} ;;
+    migrate) action="migration" poll_attempts=${PYRIT_MIGRATION_POLL_ATTEMPTS:-375} ;;
+    *) deployment_error "Unknown database job mode $mode" ;;
+  esac
   local job_name="$PYRIT_APP_NAME-migrate"
   local execution status="" attempt
   if ! execution=$(start_database_job_execution "$mode"); then
     deployment_error "Database $action job did not start"
   fi
   [[ -n "$execution" ]] || deployment_error "Database $action job did not start"
-  for ((attempt = 1; attempt <= ${PYRIT_MIGRATION_POLL_ATTEMPTS:-90}; attempt++)); do
+  for ((attempt = 1; attempt <= poll_attempts; attempt++)); do
     if ! status=$(az containerapp job execution show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
       --job-execution-name "$execution" --query properties.status -o tsv); then
@@ -222,10 +242,15 @@ run_database_job() {
     case "$status" in
       Succeeded) return 0 ;;
       Failed)
-        if [[ "$mode" == check ]]; then
-          echo "Schema check failed; migrating with the app stopped"
-          return 1
-        fi
+        case "$mode" in
+          check)
+            echo "Schema check failed; checking that this image can upgrade the database"
+            return 1
+            ;;
+          upgradable)
+            deployment_error "Database revision check $execution failed; this image cannot upgrade the database (see the job logs). The app was not stopped or deployed"
+            ;;
+        esac
         deployment_error "Database migration $execution ended with status $status; the app is stopped and was not deployed"
         ;;
       Stopped | Degraded)
@@ -234,11 +259,19 @@ run_database_job() {
     esac
     sleep "${PYRIT_MIGRATION_POLL_SECONDS:-20}"
   done
-  deployment_error "Database $action $execution did not finish in time; deployment was not continued"
+  stop_database_job_execution "$action" "$execution"
+  if [[ "$mode" == migrate ]]; then
+    deployment_error "Database migration $execution did not finish in time and was stopped; the app is stopped and was not deployed"
+  fi
+  deployment_error "Database $action $execution did not finish in time and was stopped; deployment was not continued"
 }
 
 schema_is_current() {
   run_database_job check
+}
+
+ensure_schema_upgradable() {
+  run_database_job upgradable
 }
 
 run_database_migration() {
@@ -266,6 +299,8 @@ main() {
   if schema_is_current; then
     echo "Schema is current; deploying without stopping the app"
   else
+    ensure_schema_upgradable
+    echo "This image can upgrade the database; migrating with the app stopped"
     stop_app
     run_database_migration
   fi
