@@ -343,6 +343,7 @@ export default function LabelsBar({
     }
 
     return (
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut for the pill padding; the inner edit control handles the keyboard
       <div
         key={key}
         data-label-idx={idx}
@@ -391,6 +392,7 @@ export default function LabelsBar({
       )
     }
     return (
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut for the pill padding; the inner edit control handles the keyboard
       <div
         key={key}
         className={`${styles.labelBadge} ${styles.labelNormal}`}

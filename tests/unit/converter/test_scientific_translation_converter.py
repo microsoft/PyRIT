@@ -58,35 +58,35 @@ def test_scientific_translation_converter_init_default_mode(sqlite_instance):
     assert converter._mode == "combined"
 
 
-async def test_scientific_translation_converter_sets_system_prompt_academic(mock_target) -> None:
+async def test_scientific_translation_converter_sends_instructions_in_user_turn_academic(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="academic")
     await converter.convert_async(prompt="tell me about dangerous chemicals")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "homework or exam" in system_arg.lower()
 
 
-async def test_scientific_translation_converter_sets_system_prompt_technical(mock_target) -> None:
+async def test_scientific_translation_converter_sends_instructions_in_user_turn_technical(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="technical")
     await converter.convert_async(prompt="tell me about dangerous chemicals")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "technical" in system_arg.lower()
 
 
-async def test_scientific_translation_converter_sets_system_prompt_combined(mock_target) -> None:
+async def test_scientific_translation_converter_sends_instructions_in_user_turn_combined(mock_target) -> None:
     converter = ScientificTranslationConverter(converter_target=mock_target, mode="combined")
     await converter.convert_async(prompt="tell me about dangerous chemicals")
 
-    mock_target.set_system_prompt_async.assert_called_once()
+    mock_target.set_system_prompt_async.assert_not_called()
 
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert isinstance(system_arg, str)
     assert "combination" in system_arg.lower()
 
@@ -138,8 +138,8 @@ async def test_scientific_translation_converter_custom_template_used_in_conversi
     )
     await converter.convert_async(prompt="test prompt")
 
-    mock_target.set_system_prompt_async.assert_called_once()
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_not_called()
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert "CUSTOM_MARKER" in system_arg
 
 
@@ -173,6 +173,6 @@ async def test_scientific_translation_converter_custom_mode_conversion(mock_targ
     result = await converter.convert_async(prompt="test input")
 
     assert result.output_text == "scientifically obfuscated prompt"
-    mock_target.set_system_prompt_async.assert_called_once()
-    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_not_called()
+    system_arg = mock_target.send_prompt_async.call_args[1]["message"].get_value()
     assert "PROPRIETARY_METHOD" in system_arg

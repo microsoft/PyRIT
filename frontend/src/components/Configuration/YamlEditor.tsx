@@ -14,7 +14,7 @@ interface YamlEditorProps {
 }
 
 function highlightYaml(value: string): string {
-  return Prism.highlight(value, Prism.languages.yaml, 'yaml')
+  return Prism.highlight(value, Prism.languages.yaml ?? {}, 'yaml')
 }
 
 export default function YamlEditor({ value, disabled, onChange }: YamlEditorProps) {

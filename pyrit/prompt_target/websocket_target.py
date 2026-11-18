@@ -206,7 +206,7 @@ class WebsocketTarget(PromptTarget):
                 return
             try:
                 await websocket.close()
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 logger.warning("Error closing WebSocket conversation %s: %s", conversation_id, error)
                 return
             logger.info("Disconnected WebSocket conversation: %s", conversation_id)

@@ -3,8 +3,11 @@
 
 import abc
 import logging
-from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, final
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from types import MappingProxyType
+from typing import Any, ClassVar, Self, final
 
 from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
@@ -18,6 +21,9 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    PromptDataType,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
     RequestTraceContext,
     TargetIdentifier,
     WebSearchConfig,
@@ -69,6 +75,16 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
+    _SUPPORTED_GENERATION_CAPABILITIES: ClassVar[frozenset[CapabilityName]] = frozenset()
+    # Adapters that only deliver content (e.g. to a stream or a blob) and never reply set this to
+    # False. ``supports_responses`` is then False under every configuration, including saved ones.
+    _SUPPORTS_RESPONSES: ClassVar[bool] = True
+    _DISPATCH_CAPABILITIES: ClassVar[ContextVar[tuple["PromptTarget", TargetCapabilities] | None]] = ContextVar(
+        "target_dispatch_capabilities", default=None
+    )
+    _CONFIGURATION_SCOPES: ClassVar[ContextVar[tuple[tuple["PromptTarget", TargetConfiguration], ...]]] = ContextVar(
+        "target_configuration_scopes", default=()
+    )
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -109,6 +125,38 @@ class PromptTarget(Identifiable):
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
 
+    # Credential parameters that, left empty, let the target fall back to a credential from this
+    # server (an environment variable, or the server's Azure identity), each mapped to the value
+    # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
+    # parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls back
+    # to this server's credentials, so a saved entry that would is refused. Choosing ``"identity"``
+    # isn't a fallback.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
+
+    # Parameters that say where the target sends requests (a URL, or a path the target adds to
+    # one), each mapped to whether an empty value takes this server's setting. A saved target sets
+    # each one that would, since a server setting can carry a credential, and none can carry a
+    # credential itself: a user name or password, a SAS token, a fragment, or a query other than
+    # ``api-version``.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({})
+
+    # Environment variables the target's client reads extra headers from, whatever the target's own
+    # settings say. A server can put a credential there, so a saved target isn't built while one is set.
+    server_header_variables: ClassVar[tuple[str, ...]] = ()
+
+    # Required settings the constructor reads from this server's environment when they're left empty, such
+    # as an endpoint or a model name. Targets built from API input set each one, and so do saved targets,
+    # which restore builds the same way.
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset()
+
+    # Why this target type can't be saved even without a credential, or None when it can.
+    not_saveable_reason: ClassVar[str | None] = None
+
+    # Constructor parameters that choose where requests go or how they authenticate. A private
+    # copy built from API input keeps its source's values for these, so a credential stays
+    # with the endpoint it was configured for.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
@@ -142,6 +190,23 @@ class PromptTarget(Identifiable):
             dict[str, object]: Additional constructor parameters.
         """
         return {}
+
+    @classmethod
+    async def create_async(cls, **kwargs: Any) -> Self:
+        """
+        Build the target on the calling event loop.
+
+        Targets whose construction needs slow setup, such as a first import, override this to do that setup in a
+        worker thread first. The constructor itself still runs on the calling loop, so the tasks and locks it creates
+        belong to that loop.
+
+        Args:
+            **kwargs (Any): The constructor arguments.
+
+        Returns:
+            Self: The new target.
+        """
+        return cls(**kwargs)
 
     @classmethod
     def _validate_auth_mode(cls, auth_mode: AuthMode | None) -> None:
@@ -201,6 +266,9 @@ class PromptTarget(Identifiable):
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
+        capabilities = self._mask_unimplemented_capabilities(capabilities=self.capabilities)
+        if capabilities is not self.capabilities:
+            self.apply_capabilities(capabilities=capabilities)
         if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
             known = get_known_capabilities(model_name)
             if known is not None:
@@ -312,6 +380,7 @@ class PromptTarget(Identifiable):
         3. Validates the normalized conversation against the target's capabilities.
         4. Delegates to ``_send_prompt_to_target_async`` with the normalized conversation.
 
+        System-prompt support is checked here even when a target overrides ``_validate_request``.
         Subclasses MUST NOT override this method. Override
         ``_send_prompt_to_target_async`` instead.
 
@@ -325,12 +394,18 @@ class PromptTarget(Identifiable):
             list[Message]: Response messages from the target.
 
         Raises:
-            ValueError: If the message or normalized conversation are empty.
+            ValueError: If the message or normalized conversation are empty, or unsupported system messages remain.
         """
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
+        generation_config = self.validate_request_generation_config(message)
+        for piece in message.message_pieces:
+            piece_config = RequestGenerationConfig.from_metadata(metadata=piece.prompt_metadata)
+            RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+            piece.prompt_metadata.update(piece_config.to_metadata())
         web_search_config = self._get_web_search_config(message)
         self.validate_web_search_config(web_search_config)
         conversation_id = message.get_piece().conversation_id or ""
@@ -348,15 +423,42 @@ class PromptTarget(Identifiable):
             )
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
-            if self._get_web_search_config(normalized_conversation[-1]) != web_search_config:
+            # Normalizers can merge history or discard piece metadata. Only the original
+            # outbound message selects this send's options, never normalized history.
+            normalized_request = normalized_conversation[-1]
+            for piece in normalized_request.message_pieces:
+                RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+                RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
+            normalized_request.get_piece().prompt_metadata.update(generation_config.to_metadata())
+            if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
+            if not self.configuration.includes(capability=CapabilityName.SYSTEM_PROMPT) and any(
+                piece.api_role == "system" for turn in normalized_conversation for piece in turn.message_pieces
+            ):
+                raise ValueError(
+                    "This target does not support system prompts and no normalizer adapted the system message. "
+                    "If your target does support this, set the custom_configuration parameter accordingly."
+                )
             self._validate_request(normalized_conversation=normalized_conversation)
+            self.validate_request_generation_config(normalized_request)
             with target_trace_context(
                 config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
             ):
                 if send_context:
                     send_context.mark_target_invoked()
-                response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                try:
+                    response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                finally:
+                    generation_info = RequestGenerationInfo.from_metadata(
+                        metadata=normalized_request.get_piece().prompt_metadata
+                    )
+                    if generation_info is not None:
+                        generation_info = generation_info.model_copy(
+                            update={"request_piece_ids": tuple(str(piece.id) for piece in message.message_pieces)}
+                        )
+                        for piece in message.message_pieces:
+                            piece.prompt_metadata.update(generation_info.to_metadata())
+            self._validate_request_generation_info(config=generation_config, info=generation_info)
             for response_message in response:
                 for piece in response_message.message_pieces:
                     piece.prompt_metadata = {
@@ -364,11 +466,62 @@ class PromptTarget(Identifiable):
                         for key, value in piece.prompt_metadata.items()
                         if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
                     }
+                    RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
+                    RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
+                    if generation_info is not None:
+                        piece.prompt_metadata.update(generation_info.to_metadata())
             send_succeeded = True
             return response
         finally:
             if send_context:
                 send_context.finish_send(succeeded=send_succeeded)
+
+    def validate_request_generation_config(self, message: Message) -> RequestGenerationConfig:
+        """
+        Validate current-message options without loading history or performing provider I/O.
+
+        Returns:
+            RequestGenerationConfig: The validated request options.
+
+        Raises:
+            ValueError: The override is invalid or unsupported.
+        """
+        config = RequestGenerationConfig.from_message(message)
+        for capability in sorted(config.required_capabilities):
+            if capability not in self._SUPPORTED_GENERATION_CAPABILITIES or not self.capabilities.includes(
+                capability=capability
+            ):
+                raise ValueError(
+                    f"{type(self).__name__} does not support runtime {capability.name.lower()} "
+                    "for this model configuration."
+                )
+        for name, capability in config.FIELD_CAPABILITIES.items():
+            value = getattr(config, name)
+            if value is not None:
+                bounds = self.generation_range(capability=capability)
+                if bounds is not None and not bounds[0] <= value <= bounds[1]:
+                    raise ValueError(f"{name} must be between {bounds[0]:g} and {bounds[1]:g} inclusive.")
+        self._validate_request_generation_config(config)
+        return config
+
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        """Validate adapter-specific joint parameter and model/mode restrictions."""
+
+    def _validate_request_generation_info(
+        self, *, config: RequestGenerationConfig, info: RequestGenerationInfo | None
+    ) -> None:
+        """
+        Check that adapter evidence agrees with explicit overrides.
+
+        Raises:
+            RuntimeError: The adapter omitted or contradicted the selected override.
+        """
+        recorded = info.model_dump() if info is not None else {}
+        for name, value in config.model_dump(exclude_none=True).items():
+            if recorded.get(name) != {"requested": value, "resolved": value, "source": "request"}:
+                raise RuntimeError(
+                    f"{type(self).__name__} returned missing or inconsistent generation evidence for {name}."
+                )
 
     @abc.abstractmethod
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
@@ -376,6 +529,18 @@ class PromptTarget(Identifiable):
         Target-specific send logic.
 
         Called by ``send_prompt_async`` after validation and normalization.
+
+        Adapters opting into ``_SUPPORTED_GENERATION_CAPABILITIES`` declare bounds via
+        ``generation_range`` and validate modes in ``_validate_request_generation_config``.
+        After asynchronous payload preparation, revalidate before provider I/O,
+        apply overrides to the actual payload (including passthrough settings),
+        and write ``RequestGenerationInfo`` to the normalized request's first piece.
+        Record it immediately before I/O and reuse the resolution on transport
+        retries or tool continuations. The base associates evidence with original
+        request pieces and responses; missing or inconsistent override evidence
+        is an adapter error, not a successful send.
+        Wrappers dispatching directly to children must clear incoming generation
+        evidence before each child invocation, not between that child's retries.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -386,13 +551,32 @@ class PromptTarget(Identifiable):
             list[Message]: Response messages from the target.
         """
 
+    async def _send_with_capabilities_async(
+        self, *, normalized_conversation: list[Message], capabilities: TargetCapabilities
+    ) -> list[Message]:
+        """
+        Send already-normalized messages with the owning composite's capability flags.
+
+        Args:
+            normalized_conversation: Messages normalized by the owning composite.
+            capabilities: The composite's effective capability flags.
+
+        Returns:
+            list[Message]: Responses from the child target.
+        """
+        token = self._DISPATCH_CAPABILITIES.set((self, capabilities))
+        try:
+            return await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        finally:
+            self._DISPATCH_CAPABILITIES.reset(token)
+
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
         Validate the normalized conversation before sending to the target.
 
         Called after the normalization pipeline has run. Validates the last
-        message (the current request) for piece count, data types, and checks
-        whether the full conversation violates multi-turn constraints.
+        message (the current request) for piece count, every normalized turn for
+        supported data types, and the full conversation for multi-turn constraints.
 
         Args:
             normalized_conversation: The normalized conversation to validate.
@@ -426,17 +610,39 @@ class PromptTarget(Identifiable):
                 f"{custom_configuration_message}"
             )
 
-        for piece in message.message_pieces:
-            piece_type = piece.converted_value_data_type
-            if piece_type not in supported_types_flat:
-                supported_types = ", ".join(sorted(supported_types_flat))
-                raise ValueError(
-                    f"This target supports only the following data types: {supported_types}. Received: {piece_type}. "
-                    f"{custom_configuration_message}"
-                )
+        for turn in normalized_conversation:
+            has_text_piece = any(piece.converted_value_data_type == "text" for piece in turn.message_pieces)
+            for piece in turn.message_pieces:
+                piece_type = piece.converted_value_data_type
+                if turn is not message:
+                    piece_type = self._get_history_piece_data_type(message_piece=piece, has_text_piece=has_text_piece)
+                    if piece_type is None:
+                        continue
+                if piece_type not in supported_types_flat:
+                    supported_types = ", ".join(sorted(supported_types_flat))
+                    raise ValueError(
+                        f"This target supports only the following data types: {supported_types}. "
+                        f"Received: {piece_type}. "
+                        f"{custom_configuration_message}"
+                    )
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Return the historical piece's wire modality, or None when the adapter omits it.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The modality to validate against supported input types.
+        """
+        return message_piece.converted_value_data_type
 
     @staticmethod
     def _get_web_search_config(message: Message) -> WebSearchConfig:
@@ -724,19 +930,81 @@ class PromptTarget(Identifiable):
         Returns:
             TargetConfiguration: The configuration for this target.
         """
+        for target, configuration in reversed(self._CONFIGURATION_SCOPES.get()):
+            if target is self:
+                return configuration
         return self._configuration
+
+    @contextmanager
+    def capabilities_scope(self, capabilities: TargetCapabilities) -> Generator[None, None, None]:
+        """
+        Use saved capabilities for this task without replacing the live target or its state.
+
+        Args:
+            capabilities: Capabilities used for normalization, validation, and provider serialization.
+
+        Yields:
+            None: The task-local configuration scope, restored even on cancellation.
+        """
+        configuration = self.configuration
+        scoped = TargetConfiguration(
+            capabilities=self._mask_unimplemented_capabilities(capabilities=capabilities),
+            policy=configuration.policy,
+            normalizer_overrides=configuration.normalizer_overrides,
+        )
+        token = self._CONFIGURATION_SCOPES.set((*self._CONFIGURATION_SCOPES.get(), (self, scoped)))
+        try:
+            yield
+        finally:
+            self._CONFIGURATION_SCOPES.reset(token)
 
     @property
     def capabilities(self) -> TargetCapabilities:
         """
-        The capabilities of this target instance.
+        The effective capabilities of this target for the current dispatch.
 
-        Shorthand for ``self.configuration.capabilities``.
+        Normally these are ``self.configuration.capabilities``. A composite can
+        supply task-local flags during child dispatch without changing the
+        child's configuration or independently initiated sends.
 
         Returns:
             TargetCapabilities: The capabilities for this target.
         """
-        return self._configuration.capabilities
+        override = self._DISPATCH_CAPABILITIES.get()
+        if override is not None and override[0] is self:
+            return override[1]
+        return self.configuration.capabilities
+
+    @property
+    def generation_ranges(self) -> dict[str, tuple[float, float]]:
+        """Known runtime bounds keyed by generation option name, independent of capability support."""
+        return {
+            name: bounds
+            for name, capability in RequestGenerationConfig.FIELD_CAPABILITIES.items()
+            if (bounds := self.generation_range(capability=capability)) is not None
+        }
+
+    def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Look up inclusive runtime bounds independently of capability support.
+
+        Args:
+            capability (CapabilityName): The generation option to look up.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds, or None when unspecified.
+        """
+        return None
+
+    @property
+    def trace_config(self) -> TargetTraceConfig:
+        """
+        The request tracing configuration of this target instance.
+
+        Returns:
+            TargetTraceConfig: Whether and how each send records a trace context.
+        """
+        return self._trace_config
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """
@@ -757,16 +1025,37 @@ class PromptTarget(Identifiable):
                 this instance.
         """
         self._configuration = TargetConfiguration(
-            capabilities=capabilities,
+            capabilities=self._mask_unimplemented_capabilities(capabilities=capabilities),
             policy=self._configuration.policy,
             normalizer_overrides=self._configuration.normalizer_overrides,
         )
+
+    @classmethod
+    def _mask_unimplemented_capabilities(cls, *, capabilities: TargetCapabilities) -> TargetCapabilities:
+        """
+        Disable capabilities that this adapter does not implement.
+
+        These are generation options outside ``_SUPPORTED_GENERATION_CAPABILITIES`` and, for an
+        adapter with ``_SUPPORTS_RESPONSES = False``, responses.
+
+        Returns:
+            TargetCapabilities: Capabilities restricted to what the adapter implements.
+        """
+        unsupported = {
+            capability.value: False
+            for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()
+            if capability not in cls._SUPPORTED_GENERATION_CAPABILITIES and capabilities.includes(capability=capability)
+        }
+        if not cls._SUPPORTS_RESPONSES and capabilities.supports_responses:
+            unsupported[CapabilityName.RESPONSES.value] = False
+        return capabilities.model_copy(update=unsupported) if unsupported else capabilities
 
     @classmethod
     def get_default_configuration(cls, underlying_model: str | None = None) -> TargetConfiguration:
         """
         Return the configuration for the given underlying model, falling back to
         the class-level ``_DEFAULT_CONFIGURATION`` when the model is not recognized.
+        Prefill request support always follows the adapter's class default.
 
         Args:
             underlying_model (str | None): The underlying model name (e.g., "gpt-4o"),
@@ -780,15 +1069,18 @@ class PromptTarget(Identifiable):
             known = get_known_capabilities(underlying_model)
             if known is not None:
                 return TargetConfiguration(
-                    capabilities=known.model_copy(
-                        update={
-                            "input_modalities": frozenset(
-                                combo
-                                for combo in known.input_modalities
-                                if cls._SUPPORTS_TOOL_CALL_HISTORY
-                                or not combo & {"function_call", "function_call_output"}
-                            )
-                        }
+                    capabilities=cls._mask_unimplemented_capabilities(
+                        capabilities=known.model_copy(
+                            update={
+                                "supports_prefill": cls._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
+                                "input_modalities": frozenset(
+                                    combo
+                                    for combo in known.input_modalities
+                                    if cls._SUPPORTS_TOOL_CALL_HISTORY
+                                    or not combo & {"function_call", "function_call_output"}
+                                ),
+                            }
+                        )
                     )
                 )
             logger.info(
@@ -796,7 +1088,15 @@ class PromptTarget(Identifiable):
                 underlying_model,
                 cls.__name__,
             )
-        return cls._DEFAULT_CONFIGURATION
+        configuration = cls._DEFAULT_CONFIGURATION
+        capabilities = cls._mask_unimplemented_capabilities(capabilities=configuration.capabilities)
+        if capabilities is configuration.capabilities:
+            return configuration
+        return TargetConfiguration(
+            capabilities=capabilities,
+            policy=configuration.policy,
+            normalizer_overrides=configuration.normalizer_overrides,
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

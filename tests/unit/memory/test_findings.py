@@ -66,6 +66,47 @@ async def test_update_operation_keeps_names_unique_and_valid(sqlite_instance: SQ
     assert await sqlite_instance.get_operations_async() == [other, saved]
 
 
+@pytest.mark.parametrize(
+    ("title", "query"),
+    [
+        ("CAF\u00c9 security review", "caf\u00e9"),
+        ("caf\u00e9 security review", "CAF\u00c9"),
+        ("\u0391\u03a3\u03a4\u03a1\u039f navigation", "\u0391\u03a3"),
+        ("Stra\u00dfe crossing", "STRASSE"),
+    ],
+)
+async def test_get_findings_title_search_folds_non_ascii_case(
+    *, sqlite_instance: SQLiteMemory, title: str, query: str
+) -> None:
+    """The title search matches non-ASCII titles in both fold directions and keeps wildcards literal."""
+    operation = await sqlite_instance.add_operation_async(Operation(name="Search"))
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title=title, severity="informational")
+    )
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="100% reviewed", severity="low")
+    )
+
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="100XX reviewed", severity="low")
+    )
+    by_fold = await sqlite_instance.get_findings_async(operation_id=operation.id, title_query=query)
+    assert [finding.title for finding in by_fold] == [title]
+    literal = await sqlite_instance.get_findings_async(operation_id=operation.id, title_query="100%")
+    assert [finding.title for finding in literal] == ["100% reviewed"]
+
+
+async def test_finding_patterns_preserve_single_character_wildcards(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Pattern search"))
+    for title in ["\u00df", "ss"]:
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=operation.id, title=title, severity="low"))
+
+    pattern = await sqlite_instance.get_findings_async(operation_id=operation.id, title_pattern="_")
+    assert [finding.title for finding in pattern] == ["\u00df"]
+    literal = await sqlite_instance.get_findings_async(operation_id=operation.id, title_query="SS")
+    assert {finding.title for finding in literal} == {"\u00df", "ss"}
+
+
 async def test_add_finding_rejects_a_missing_operation(sqlite_instance: SQLiteMemory) -> None:
     with pytest.raises(LookupError, match="Operation"):
         await sqlite_instance.add_finding_async(finding=Finding(operation_id=uuid4(), title="Orphan", severity="low"))
@@ -413,6 +454,40 @@ async def test_one_attack_result_can_support_multiple_findings_and_counts(sqlite
     assert await sqlite_instance.get_finding_evidence_counts_async(finding_ids=[]) == {}
 
 
+async def test_get_findings_for_attack_result_spans_operations_in_dashboard_order(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    first = await sqlite_instance.add_operation_async(Operation(name="First"))
+    second = await sqlite_instance.add_operation_async(Operation(name="Second"))
+    low = await sqlite_instance.add_finding_async(finding=Finding(operation_id=first.id, title="Low", severity="low"))
+    critical = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=second.id, title="Critical", severity="critical")
+    )
+    unlinked = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=first.id, title="Unlinked", severity="critical")
+    )
+    attack_result_id, other_attack_id = uuid4(), uuid4()
+    evidence = {
+        finding.id: await sqlite_instance.add_finding_evidence_async(
+            evidence=FindingEvidence(finding_id=finding.id, attack_result_id=attack_result_id)
+        )
+        for finding in (low, critical)
+    }
+    await sqlite_instance.add_finding_evidence_async(
+        evidence=FindingEvidence(finding_id=unlinked.id, attack_result_id=other_attack_id)
+    )
+
+    linked = await sqlite_instance.get_findings_for_attack_result_async(attack_result_id=attack_result_id)
+
+    assert [(finding.id, item.id) for finding, item in linked] == [
+        (critical.id, evidence[critical.id].id),
+        (low.id, evidence[low.id].id),
+    ]
+    assert {finding.operation_id for finding, _ in linked} == {first.id, second.id}
+    assert all(item.attack_result_id == attack_result_id for _, item in linked)
+    assert await sqlite_instance.get_findings_for_attack_result_async(attack_result_id=uuid4()) == []
+
+
 async def test_get_findings_by_ids_follows_dashboard_order_and_scope(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Selected"))
     other = await sqlite_instance.add_operation_async(Operation(name="Other"))
@@ -540,7 +615,10 @@ async def test_finding_search_escapes_sql_server_bracket_wildcards(sqlite_instan
         await sqlite_instance.get_findings_async(title_query="[Proof]")
     statement = session.scalars.call_args.args[0]
     compiled = statement.compile(dialect=mssql.dialect())
-    assert compiled.params["title_1"] == "%/[Proof]%"
+    # The pattern folds in SQL on both sides, so the bound parameter carries
+    # the raw escaped title and the fold wrappers appear in the SQL itself.
+    assert "%/[Proof]%" in compiled.params.values()
+    assert "LOWER(" in str(compiled)
     assert "ESCAPE '/'" in str(compiled)
 
 

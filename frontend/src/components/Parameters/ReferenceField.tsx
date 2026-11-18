@@ -30,12 +30,22 @@ export default function ReferenceField({
   const selected = Array.isArray(value) ? value : []
 
   const move = (index: number, delta: number): void => {
+    const target = index + delta
+    if (index < 0 || target < 0 || index >= selected.length || target >= selected.length) return
     const next = [...selected]
     const ids = selected.map((_, position) => entryIds[position] ?? `${id}-initial-${position}`)
-    ;[next[index], next[index + delta]] = [next[index + delta], next[index]]
-    ;[ids[index], ids[index + delta]] = [ids[index + delta], ids[index]]
-    setEntryIds(ids)
-    onChange(next)
+    const itemA = next[index]
+    const itemB = next[target]
+    const idA = ids[index]
+    const idB = ids[target]
+    if (itemA !== undefined && itemB !== undefined && idA !== undefined && idB !== undefined) {
+      next[index] = itemB
+      next[target] = itemA
+      ids[index] = idB
+      ids[target] = idA
+      setEntryIds(ids)
+      onChange(next)
+    }
   }
 
   return (

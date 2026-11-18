@@ -16,8 +16,10 @@ from pyrit import setup
 from pyrit.exceptions import handle_bad_request_exception
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
-from pyrit.registry import ScorerRegistry
+from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
+    DecisionScorer,
+    FloatScaleThresholdScorer,
     ScorerEvalDatasetFiles,
     ScorerMetrics,
     SelfAskRefusalScorer,
@@ -27,7 +29,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
 )
 from pyrit.setup import IN_MEMORY
-from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags, TargetInitializer
 from pyrit.setup.initializers.targets import TargetInitializerTags
 
 
@@ -39,6 +41,156 @@ def evaluation_path(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+@pytest.fixture
+def decision_registry(patch_central_database: None) -> tuple[ScorerRegistry, MockPromptTarget]:
+    registry = ScorerRegistry()
+    targets = TargetRegistry()
+    target = MockPromptTarget()
+    targets.instances.register(target, name="microsoft_decision")
+    with (
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(TargetRegistry, "get_registry_singleton", return_value=targets),
+    ):
+        ScorerInitializer()._register_decision_scorers()
+    return registry, target
+
+
+@pytest.mark.parametrize("tags", [None, [ScorerInitializerTags.MICROSOFT_DECISION]])
+@pytest.mark.parametrize("evaluation_fails", [False, True])
+async def test_evaluate_scorers_evaluates_only_decision_wrapper_async(
+    *,
+    tags: list[str] | None,
+    evaluation_fails: bool,
+    decision_registry: tuple[ScorerRegistry, MockPromptTarget],
+    evaluation_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry, target = decision_registry
+    raw = registry.instances.get("task_achieved_microsoft_decision")
+    wrapped = registry.instances.get("task_achieved_microsoft_decision_threshold_07")
+    assert isinstance(raw, DecisionScorer)
+    assert isinstance(wrapped, FloatScaleThresholdScorer)
+    assert raw.evaluation_file_mapping is None
+    assert wrapped.evaluation_file_mapping is not None
+    wrapped.evaluation_file_mapping = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["synthetic.csv"], result_file="metrics.jsonl"
+    )
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if evaluation_fails:
+            raise ValueError("Synthetic decision evaluation failure")
+        request = normalized_conversation[-1].message_pieces[0]
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value='{"answers": {"objective_achieved": {"type": "noul", "noul": 0.83}}}',
+                conversation_id=request.conversation_id,
+            ).to_message()
+        ]
+
+    with (
+        patch.object(evaluate_scorers, "initialize_pyrit_async", new_callable=AsyncMock),
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=registry),
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH", evaluation_path),
+        patch.object(raw, "evaluate_async", new_callable=AsyncMock) as raw_eval,
+        patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=send_async) as send,
+    ):
+        if evaluation_fails:
+            with pytest.raises(
+                RuntimeError,
+                match=r"Evaluation failed for 1 scorer\(s\): task_achieved_microsoft_decision_threshold_07$",
+            ):
+                await evaluate_scorers.evaluate_scorers(tags=tags, max_concurrency=1)
+            send.assert_awaited()
+        else:
+            await evaluate_scorers.evaluate_scorers(tags=tags, max_concurrency=1)
+            assert send.await_count == 6
+        raw_eval.assert_not_awaited()
+
+    assert registry.instances.get("task_achieved_microsoft_decision") is raw
+    assert registry.instances.get("task_achieved_microsoft_decision_threshold_07") is wrapped
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "Skipping task_achieved_microsoft_decision: tagged 'skip_batch_evaluation'." in output
+    assert "Evaluating 1 scorer(s)..." in output
+    result_path = evaluation_path / "metrics.jsonl"
+    if evaluation_fails:
+        assert "Synthetic decision evaluation failure" in captured.err
+        assert "Evaluation complete" not in output
+        assert not result_path.exists()
+    else:
+        record = json.loads(await asyncio.to_thread(result_path.read_text, encoding="utf-8"))
+        assert record["metrics"]["num_responses"] == 2
+        assert record["metrics"]["num_input_responses"] == 2
+        assert record["metrics"]["f1_score"] == 1.0
+        assert "Coverage: 2/2 responses evaluated; 0 excluded." in output
+
+
+async def test_evaluate_scorers_does_not_skip_unmarked_missing_mapping_async(
+    *,
+    decision_registry: tuple[ScorerRegistry, MockPromptTarget],
+    evaluation_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    decision_scorers, _ = decision_registry
+    raw = decision_scorers.instances.get("task_achieved_microsoft_decision")
+    assert isinstance(raw, DecisionScorer)
+    succeeding = SubStringScorer(substring="marker")
+    succeeding.evaluation_file_mapping = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["synthetic.csv"], result_file="metrics.jsonl"
+    )
+    registry = ScorerRegistry()
+    registry.instances.register(raw, name="a_unconfigured")
+    registry.instances.register(succeeding, name="b_succeeding")
+    with (
+        patch.object(evaluate_scorers, "initialize_pyrit_async", new_callable=AsyncMock),
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=registry),
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH", evaluation_path),
+    ):
+        with pytest.raises(RuntimeError, match=r"Evaluation failed for 1 scorer\(s\): a_unconfigured$"):
+            await evaluate_scorers.evaluate_scorers(max_concurrency=1)
+
+    output = capsys.readouterr().out
+    assert "no evaluation_file_mapping configured for DecisionScorer" in output
+    assert "Skipping" not in output
+    assert "Coverage: 2/2 responses evaluated; 0 excluded." in output
+    assert "Results location:" not in output
+    assert (evaluation_path / "metrics.jsonl").exists()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("registered", "tags"),
+    [(False, None), (True, None), (True, ["missing"]), (True, ["skip_batch_evaluation"])],
+)
+def test_evaluate_scorers_exits_nonzero_without_eligible_scorers(
+    *, registered: bool, tags: list[str] | None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = ScorerRegistry()
+    scorer = SubStringScorer(substring="marker")
+    if registered:
+        registry.instances.register(scorer, name="excluded", tags=["skip_batch_evaluation"])
+    argv = ["evaluate_scorers"]
+    if tags:
+        argv.extend(["--tags", ",".join(tags)])
+
+    with (
+        patch.object(setup, "initialize_pyrit_async", new_callable=AsyncMock),
+        patch.object(ScorerRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(scorer, "evaluate_async", new_callable=AsyncMock) as evaluate,
+        patch.object(sys, "argv", argv),
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            runpy.run_path(evaluate_scorers.__file__, run_name="__main__")
+
+    assert exit_info.value.code == 1
+    evaluate.assert_not_awaited()
+    output = capsys.readouterr().out
+    assert "No eligible scorers selected for evaluation" in output
+    assert "Evaluation complete" not in output
+    assert ("Skipping excluded:" in output) == (registered and tags != ["missing"])
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -219,7 +371,8 @@ async def test_evaluate_scorers_preserves_initializer_defaults_async() -> None:
         patch.object(evaluate_scorers, "initialize_pyrit_async", new_callable=AsyncMock) as initialize_mock,
         patch.object(ScorerRegistry, "get_registry_singleton", return_value=ScorerRegistry()),
     ):
-        await evaluate_scorers.evaluate_scorers()
+        with pytest.raises(RuntimeError, match="No eligible scorers selected for evaluation"):
+            await evaluate_scorers.evaluate_scorers()
 
     initialize_mock.assert_awaited_once()
     assert initialize_mock.await_args is not None

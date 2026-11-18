@@ -166,6 +166,37 @@ async def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_re
     assert results[0].scenario_name == "Test Scenario Alpha"
 
 
+@pytest.mark.parametrize(
+    ("searched", "matching_name", "decoy_name"),
+    [
+        ("Alpha_Scenario", "Alpha_Scenario", "AlphaXScenario"),
+        ("100%", "Scenario 100%", "Scenario 1000"),
+    ],
+)
+async def test_filter_by_name_treats_like_wildcards_literally_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    sample_attack_results: list[AttackResult],
+    searched: str,
+    matching_name: str,
+    decoy_name: str,
+) -> None:
+    """The scenario name filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
+    scenario_result1 = create_scenario_result(
+        name=matching_name,
+        attack_results={"Attack1": [sample_attack_results[0]]},
+    )
+    scenario_result2 = create_scenario_result(
+        name=decoy_name,
+        attack_results={"Attack2": [sample_attack_results[1]]},
+    )
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1, scenario_result2]))
+
+    results = await sqlite_instance.get_scenario_results_async(scenario_name=searched)
+
+    assert [result.scenario_name for result in results] == [matching_name]
+
+
 async def test_filter_by_version(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test retrieving scenario results filtered by version."""
     # Create and add scenario results with different versions
@@ -1001,6 +1032,39 @@ async def test_try_update_scenario_run_state_preserves_a_terminal_state(
     assert hydrated.scenario_run_state == ScenarioRunState.CANCELLED
     assert hydrated.error_message == "Run was cancelled by user"
     assert hydrated.error_type == "CancelledError"
+
+
+async def test_try_update_scenario_run_state_compares_expected_metadata_fields(
+    sqlite_instance: MemoryInterface,
+):
+    """A state transition can also be guarded by an execution-specific metadata value."""
+    scenario_result = create_scenario_result(name="CAS Metadata", attack_results={"a": []})
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+    sid = str(scenario_result.id)
+    token_key = "scenario_run_execution_token_v1"
+    await sqlite_instance.update_scenario_run_state_and_metadata_fields_async(
+        scenario_result_id=sid,
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        metadata_fields={token_key: "resumed-execution"},
+    )
+
+    stale_update = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        expected_metadata_fields={token_key: "original-execution"},
+    )
+    matching_update = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        expected_metadata_fields={token_key: "resumed-execution"},
+    )
+
+    assert stale_update is False
+    assert matching_update is True
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
 
 
 async def test_try_update_scenario_run_state_reports_a_missing_row(

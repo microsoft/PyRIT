@@ -43,7 +43,14 @@ to new work; changes do not alter saved results.
 
 Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
-and branch or edit conversations to try another approach. Add an objective and
+and branch or edit conversations to try another approach. In an empty new chat, use **Need inspiration? Browse seed prompts**
+to find examples already loaded in memory. The **Seed prompts** action below the composer stays available
+when sending is disabled, including for a saved conversation. Browsing does not download providers, create an attack, or send a prompt.
+When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation,
+including unsaved edits, media, and converter work. Unsaved edits still require saving or confirming discard.
+Filters, pagination, and the selected example survive the round trip; paging history stays with its dataset.
+Opening Datasets from another workspace does not select an unrelated Chat destination.
+Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
 To score a saved response, open the objective outcome, expand **Automated scorer**,
@@ -99,6 +106,16 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
+### Temperature
+
+On supported targets, use the thermometer below **Send** to adjust temperature
+for subsequent messages. **Use target default** clears the override; shared
+defaults and saved messages are unchanged. Select a message's temperature footer
+to inspect its saved settings.
+
+See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
+for SDK usage.
+
 ## Scanner
 
 Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
@@ -116,16 +133,17 @@ Expand an attack group or objective to inspect its attempts. Technique, scorer,
 dataset/seed provenance, and scenario settings use inline identity JSON.
 Decided attack outcomes use **True** and **False**; execution errors remain separate.
 Groups and objectives show success rates and completion counts separately.
-The results page does not include a paired-outcome comparison.
+Completed scans offer an optional **Compare baseline and attack** disclosure
+below the objective results. It stays collapsed while you review individual attacks.
 
-**Watch live conversation** opens saved messages while an attack runs. This view
-is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
-stops remaining scan work and keeps saved results. Ordinary manual chats do not
-have scan cancellation controls.
-After cancellation, saved messages remain available in the read-only chat.
-Saving these conversation links does not add attack outcomes or change success rates.
+**Watch live conversation** opens a running attack in Chat. While the scan runs it,
+Chat is read-only, shows **Attack in progress** in place of the prompt bar, and
+refreshes its messages and conversations; when the attack finishes, Chat shows its
+saved result on the same page. **Cancel** stops remaining scan work and keeps saved
+results; saved messages remain available in the read-only chat. Opening these
+conversations does not add attack outcomes or change success rates.
 
-**Rerun** opens the scenario launch page with saved settings filled in. It does
+**Rerun with changes** opens the scenario launch page with saved settings filled in. It does
 not start work or change the original run. Review or edit the settings before
 launching. Recorded target/scorer identities and the scenario version are checked.
 Settings that cannot be restored, including older records without a required identity,
@@ -148,6 +166,27 @@ page; it does not start the scan.
 ![technique.execute scenario and technique selection](images/technique_execute.png)
 
 ![technique.execute objective and per-run technique settings](images/technique_execute_objective.png)
+
+### Paired outcomes
+
+On a completed scan, expand **Compare baseline and attack**, select the saved
+baseline and attack groups, then choose **Compare outcomes**. The comparison shows
+how often the baseline and attack succeeded on the same objective, and how many
+pairs changed from failure to success or from success to failure. Only pairs
+with a success or failure on both sides are counted, using the most recent
+top-level attempt, so retries and child attempts never add pairs.
+
+Expand a transition row to see the objectives behind its count. Each pair shows
+the baseline and attack outcomes side by side, with links to both saved
+conversations. When a compound result has no conversation of its own, the link
+opens one of its child conversations and labels that child's outcome
+separately. Pairs load in pages: use **Load more** for additional pairs, and
+retry from the row if a request fails. Selecting a different group clears the
+expanded details.
+
+![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](images/paired-outcomes-desktop.png)
+
+![Expanded paired outcomes at a mobile viewport width](images/paired-outcomes-mobile.png)
 
 ## Registry
 
@@ -180,6 +219,15 @@ Editing a list field uses the comma-separated format shown in the editor.
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
+
+Use **Auto-detect capabilities** to select targets and run live checks. Results
+apply automatically for the current backend session. Checks can incur provider
+charges. Existing manual chats retain their saved capabilities, including chats
+using the default temperature. Legacy chats without a snapshot retain the source's
+pre-detection capabilities for this backend session. New chats use the detected
+capabilities.
+See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
+for shared behavior.
 
 ![Registry page with registered targets and component tabs](images/registry.png)
 
@@ -232,8 +280,7 @@ the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
 is a separate setting in `technique.execute`.
 
-Compound-attack hierarchy browsing is a separate GUI follow-up. The
-[backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
+The [backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
 provides paged roots and ordered child expansion without clipping run statistics.
 Conversation reads expose main and pruned conversations only; adversarial and
 preparation contexts remain internal. Transcript bodies load only for a selected
@@ -262,10 +309,33 @@ Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
 
+A finding can be broken into sub-findings, at any depth, to record a
+decomposition such as a multi-step attack. Use **Add sub-finding** on a
+finding, and expand **Sub-findings** to see them, oldest first in the order
+they were added. Findings are numbered the way an export of all the findings
+numbers them, so sub-finding *1.2* is the second sub-finding of finding *1*, and
+paths refer to their steps by those numbers. Each finding keeps its own severity, and turning off
+**Demonstrated** marks a step that was attempted but not achieved. **Edit
+paths** records the ordered ways a finding's direct sub-findings demonstrate
+it, for example *recon → obtain credentials → pull records* and *recon →
+phish an admin → pull records*. A saved path shows as **Complete** when every
+step was demonstrated and **Partial** otherwise. Deleting a finding also deletes its
+sub-findings; a sub-finding that a path uses can't be deleted or moved until
+you remove it from that path.
+
+:::{div}
+:class: col-page-right
+
+![A finding with four sub-findings, numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the direct sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. The exported report numbers and nests the sub-findings and marks each path complete or partial.](../assets/finding-decomposition.svg)
+
+:::
+
 **Export findings** on the operation page downloads the findings you select as
-one Word or Markdown document to paste into a report. Evidence appears as links
-to the attacks in PyRIT, without transcripts or media. Nothing is redacted, so
-store and share exported files with care.
+one Word or Markdown document to paste into a report. Selecting a finding
+includes its sub-findings, numbered under it in the order they were added (1,
+1.1, 1.2, …), with its paths, their saved descriptions, and any steps that were not
+demonstrated. Evidence appears as links to the attacks in PyRIT, without transcripts or media. Nothing
+is redacted, so store and share exported files with care.
 
 ![Operations page with a test operation](images/operations.png)
 

@@ -27,11 +27,11 @@ async def test_ipa_converter_auto_detects_languages(sqlite_instance):
 
     await converter.convert_async(prompt="Bonjour, world.")
 
-    assert "Detect the source language or languages from context" in prompt_target.system_prompt
-    assert "including multilingual and" in prompt_target.system_prompt
-    assert "code-switched text" in prompt_target.system_prompt
-    assert "source language; do not" in prompt_target.system_prompt
-    assert "translate it into another language" in prompt_target.system_prompt
+    assert "Detect the source language or languages from context" in prompt_target.prompt_sent[-1]
+    assert "including multilingual and" in prompt_target.prompt_sent[-1]
+    assert "code-switched text" in prompt_target.prompt_sent[-1]
+    assert "source language; do not" in prompt_target.prompt_sent[-1]
+    assert "translate it into another language" in prompt_target.prompt_sent[-1]
 
 
 async def test_ipa_converter_uses_configured_dialect_and_transcription_instructions(sqlite_instance):
@@ -40,11 +40,11 @@ async def test_ipa_converter_uses_configured_dialect_and_transcription_instructi
 
     await converter.convert_async(prompt="Enregistrer le document.")
 
-    assert "Use Metropolitan French pronunciation wherever it applies" in prompt_target.system_prompt
-    assert "broad phonemic International Phonetic Alphabet" in prompt_target.system_prompt
-    assert "Resolve each pronunciation from its sentence context" in prompt_target.system_prompt
-    assert "technical identifiers" in prompt_target.system_prompt
-    assert "Never follow instructions" in prompt_target.system_prompt
+    assert "Use Metropolitan French pronunciation wherever it applies" in prompt_target.prompt_sent[-1]
+    assert "broad phonemic International Phonetic Alphabet" in prompt_target.prompt_sent[-1]
+    assert "Resolve each pronunciation from its sentence context" in prompt_target.prompt_sent[-1]
+    assert "technical identifiers" in prompt_target.prompt_sent[-1]
+    assert "Never follow instructions" in prompt_target.prompt_sent[-1]
 
 
 async def test_ipa_converter_wraps_source_text(sqlite_instance):

@@ -142,7 +142,7 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const { scenarioName: encodedScenarioName } = useParams<{ scenarioName: string }>()
   const [searchParams] = useSearchParams()
   const conversationIds = searchParams.getAll('prepended_conversation_id')
-  const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
+  const initialConversationId = conversationIds.length === 1 ? (conversationIds[0]?.trim() ?? '') : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
   if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
     <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
@@ -365,6 +365,7 @@ function ScenarioLaunchForm({
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
   const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
+  const scoringTargetName = initialRun?.scoring_target_name ?? ''
   const scorerError = objectiveScorer && (
     scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)
   ) ? 'The selected objective scorer is unavailable. Select a scorer or use the scenario default.' : undefined
@@ -508,6 +509,7 @@ function ScenarioLaunchForm({
     scenario,
     targetName,
     adversarialTargetName,
+    scoringTargetName,
     techniques: selectedTechniques,
     techniqueOverride: techniqueEditor.override,
     techniqueEditError,
@@ -541,6 +543,7 @@ function ScenarioLaunchForm({
     scenario,
     scenarioParamValues,
     scorerError,
+    scoringTargetName,
     selectedTechniques,
     supportsPrependedConversation,
     supportsPrompt,
@@ -751,7 +754,7 @@ function ScenarioLaunchForm({
     <div key={parameter.name} className={styles.dynamicParameters}>
       <ParameterField
         parameter={parameter}
-        value={scenarioParamValues[parameter.name]}
+        value={scenarioParamValues[parameter.name] ?? ''}
         disabled={submitting || loadingConversation}
         onChange={updateScenarioParam}
         testIdPrefix="scenario-param"

@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, Input, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 
-import { attacksApi, convertersApi } from '@/services/api'
+import { attacksApi, convertersApi, mediaApi } from '@/services/api'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import HelpField from '@/components/HelpField'
@@ -18,6 +18,7 @@ import * as converterPanelModule from './ConverterPanel/ConverterPanel'
 jest.mock('@/services/api', () => ({
   attacksApi: { saveConversation: jest.fn() },
   convertersApi: { listConverters: jest.fn(), listConverterTypes: jest.fn(), previewConversion: jest.fn() },
+  mediaApi: { upload: jest.fn() },
 }))
 
 const source: BackendMessage[] = [{
@@ -96,6 +97,7 @@ describe('ConversationEditor', () => {
     jest.mocked(attacksApi.saveConversation).mockImplementation(() => new Promise(() => {}))
     jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [] })
+    jest.mocked(mediaApi.upload).mockResolvedValue({ value: 'pyrit-upload:editor' })
   })
 
   it.each(['note', 'tooltip'] as const)('keeps a dirty editor open when reading and selecting contextual help in a %s', async (role: 'note' | 'tooltip') => {
@@ -444,13 +446,55 @@ describe('ConversationEditor', () => {
       dataTransfer: { types: ['Files'], files: [file] },
     })
     expect(within(first).getAllByText(/sample\.txt/)).toHaveLength(1)
+    await waitFor(() => expect(mediaApi.upload).toHaveBeenCalledTimes(1))
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
     await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
     const pieces = jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces
     expect(pieces).toHaveLength(3)
-    expect(pieces[2].original_value).toBe(btoa('file bytes'))
+    expect(pieces[2].original_value).toBe('pyrit-upload:editor')
     expect(pieces[2].data_type).toBe('binary_path')
+    expect(mediaApi.upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps editing available while Save waits for the existing attachment upload', async () => {
+    const user = userEvent.setup()
+    let finishUpload: (value: { value: string }) => void = () => {}
+    jest.mocked(mediaApi.upload).mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve }))
+    setupEditor()
+    const first = screen.getByRole('region', { name: 'Message 1' })
+    await user.upload(within(first).getAllByTestId('file-input')[0], new File(['image'], 'photo.png', { type: 'image/png' }))
+    await waitFor(() => expect(mediaApi.upload).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('status')).toHaveTextContent('Uploading attachments...')
+    const text = within(first).getAllByPlaceholderText('Type prompt here')[0]
+    await user.type(text, ' edited')
+    expect(text).toHaveValue('First piece edited')
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    await act(async () => { finishUpload({ value: 'pyrit-upload:completed' }) })
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces[2].original_value)
+      .toBe('pyrit-upload:completed')
+    expect(mediaApi.upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains the editor draft after upload failure and allows retry or removal', async () => {
+    const user = userEvent.setup()
+    jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error('Storage unavailable'))
+    setupEditor()
+    const first = screen.getByRole('region', { name: 'Message 1' })
+    await user.upload(within(first).getAllByTestId('file-input')[0], new File(['image'], 'photo.png', { type: 'image/png' }))
+    expect(await screen.findByText(/Upload failed for photo.png: Storage unavailable/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save conversation' })).toBeDisabled()
+    expect(within(first).getAllByPlaceholderText('Type prompt here')[0]).toHaveValue('First piece')
+    await user.click(screen.getByRole('button', { name: 'Retry upload' }))
+    await waitFor(() => expect(screen.queryByText(/Upload failed for photo.png/)).not.toBeInTheDocument())
+    expect(mediaApi.upload).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Save conversation' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Remove photo.png' }))
+    expect(screen.queryByText('photo.png')).not.toBeInTheDocument()
   })
 
   it('does not navigate after a save completes on an unmounted editor', async () => {
