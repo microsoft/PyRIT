@@ -78,9 +78,10 @@ print(f"Score: {score.get_value()} - {score.score_rationale}")
 # runtime profile name and invocation inputs must still match the saved run.
 #
 # Replay repeats judgment, not execution, so a stored run cannot show that a program is
-# deterministic. To check, set `repetitions` on `ProgramBehaves`: each case runs that many times,
-# and a case whose runs reach different verdicts is undetermined. Output a case does not check
-# never counts as a difference.
+# deterministic. To run a case more than once, list it more than once in `cases`: every copy runs in
+# the same acquisition, and if any run fails, the score is false and names that case. To repeat whole
+# acquisitions instead, combine copies of the scorer with
+# `TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[scorer] * 3)`.
 
 # %%
 memory = CentralMemory.get_memory_instance()
