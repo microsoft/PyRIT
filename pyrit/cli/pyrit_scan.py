@@ -132,13 +132,13 @@ Examples:
   # Run single-turn cyber attacks against a target
   pyrit_scan run airt.cyber --target openai_chat --techniques single_turn
 
-  # Run rapid response with specific datasets and concurrency
-  pyrit_scan run airt.rapid_response --target openai_chat
-    --techniques role_play_movie_script --dataset-names airt_hate
-    --max-dataset-size 5 --max-concurrency 4
+  # Sweep a technique across a dataset with a size limit and concurrency
+  pyrit_scan run technique.sweep --target openai_chat
+    --techniques role_play_movie_script --datasets airt_hate
+    --max-total 5 --max-concurrency 4
 
   # Attach registered converters to a technique (repeatable, applied in order)
-  pyrit_scan run airt.rapid_response --target openai_chat
+  pyrit_scan run technique.sweep --target openai_chat --datasets airt_hate
     --techniques role_play_movie_script:converter.translation_spanish:converter.leetspeak
 
   # List recent runs, then inspect one (overview by default; --view attacks for per-attack rows,

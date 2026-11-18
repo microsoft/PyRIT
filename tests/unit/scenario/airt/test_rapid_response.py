@@ -209,6 +209,18 @@ class TestRapidResponseBasic:
     def test_version_is_3(self):
         assert RapidResponse.VERSION == 3
 
+    def test_construction_is_deprecated_in_favor_of_sweep(self, mock_objective_scorer):
+        with pytest.warns(
+            DeprecationWarning, match=r"airt\.rapid_response is deprecated .* 1\.5\.0\. Use technique\.sweep"
+        ):
+            RapidResponse(objective_scorer=mock_objective_scorer)
+
+    def test_technique_export_is_deprecated_in_favor_of_sweep_technique(self):
+        from pyrit.scenario.scenarios import airt
+
+        with pytest.warns(DeprecationWarning, match=r"RapidResponseTechnique is deprecated .* Use SweepTechnique"):
+            assert airt.RapidResponseTechnique is _technique_class()  # type: ignore[attr-defined]
+
     def test_get_technique_class(self, mock_objective_scorer):
         strat = _technique_class()
         with patch(

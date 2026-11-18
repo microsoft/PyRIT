@@ -6,6 +6,8 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from pyrit.common import print_deprecation_message
+
 if TYPE_CHECKING:
     from pyrit.scenario.core import ScenarioTechnique
 
@@ -38,6 +40,9 @@ _REGISTRY_TECHNIQUE_BUILDERS = {
     "SweepTechnique": ("pyrit.scenario.scenarios.technique.sweep", "_build_sweep_technique"),
 }
 
+# Deprecated technique-class exports and their replacements.
+_DEPRECATED_TECHNIQUES = {"RapidResponseTechnique": "SweepTechnique"}
+
 _TECHNIQUE_BUILDERS = {
     **_REGISTRY_TECHNIQUE_BUILDERS,
     # Fixed scenario-owned pools must keep enum identity across unrelated registry resets.
@@ -53,6 +58,8 @@ def __getattr__(name: str) -> object:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
 
     builder = getattr(import_module(module_name), builder_name)
+    if name in _DEPRECATED_TECHNIQUES:
+        print_deprecation_message(old_item=name, new_item=_DEPRECATED_TECHNIQUES[name], removed_in="1.5.0")
     return builder()
 
 
