@@ -649,7 +649,7 @@ class TargetService:
         # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
         # Remove it when the name becomes required for registered targets.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        if request.register:
+        if request.register_instance:
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
             except RegistryNameTakenError as error:
@@ -676,7 +676,7 @@ class TargetService:
                 allowed_path_params=self._allowed_path_params(target_cls=target_cls),
             )
         )
-        if not request.register:
+        if not request.register_instance:
             try:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),

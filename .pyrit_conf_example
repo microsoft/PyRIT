@@ -28,6 +28,7 @@ memory_db_type: sqlite
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
 # - load_default_datasets: Optionally preloads all registered datasets into memory
 # - preload_scenario_metadata: Preloads scenario metadata into the registry
+# - scenario_suite: Registers curated scenario suites and their presets
 #
 # Each initializer can be specified as:
 # - A simple string (name only)
@@ -60,6 +61,8 @@ initializers:
   # If intentional preload exceeds backend startup time, increase
   # server.startup_timeout below.
   # - name: load_default_datasets
+  # Optional one-click suites with fixed presets, listed in the GUI Scanner.
+  # - name: scenario_suite
 
   # Operator and Operation Defaults
 # -------------------------------

@@ -148,6 +148,7 @@ A conversation belongs to one attack execution. Registering a conversation that 
 
 During execution the ID is available as `AttackContext.attack_result_id`, and `get_current_attack_result_id()` from `pyrit.common.attack_result_scope` returns it to any code running within the attack, including targets, scorers and converters. Manual sends establish the same scope with their existing attack result ID. A custom target can read it before it sends and pass it to the system under test, which can then tag the files, logs or traces it writes for that attack.
 
+(componentidentifiers)=
 ## ComponentIdentifiers
 
 [`ComponentIdentifier`](../../../pyrit/models/identifiers/component_identifier.py) is an immutable snapshot of a component's behavioral configuration. A single type is used for all components — targets, scorers, converters, and attacks — enabling uniform storage and composition.
