@@ -1585,6 +1585,24 @@ class TestTargetRoutes:
             data = response.json()
             assert data["target_registry_name"] == "target-1"
 
+    def test_get_target_named_saveability_reaches_the_lookup(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_target_async = AsyncMock(
+                return_value=TargetInstance(
+                    target_registry_name="saveability",
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/targets/saveability")
+
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["target_registry_name"] == "saveability"
+            assert mock_service.get_target_async.call_args.kwargs["target_registry_name"] == "saveability"
+
     def test_get_target_not_found(self, client: TestClient) -> None:
         """Test getting a non-existent target."""
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
