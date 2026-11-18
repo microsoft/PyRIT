@@ -51,7 +51,7 @@ def test_main_upgrades_and_checks_schema(mocks: dict[str, MagicMock]) -> None:
         connection_string=CONNECTION_STRING, _defer_initialization=True, skip_schema_migration=True, silent=True
     )
     mocks["run"].assert_called_once_with(engine="engine", silent=True)
-    mocks["check"].assert_called_once_with(engine="engine", silent=True)
+    mocks["check"].assert_called_once_with(engine="engine", silent=True, classify_upgrade=False)
     mocks["memory"].dispose_engine_async.assert_awaited_once()
 
 
@@ -78,8 +78,38 @@ def test_main_check_only_never_upgrades(*, mocks: dict[str, MagicMock], check_fa
         mocks["check"].side_effect = CommandError("Target database is not up to date.")
     assert pyrit_migrate.main(args=[*ARGS, "--check-only"]) == (1 if check_fails else 0)
     mocks["run"].assert_not_called()
-    mocks["check"].assert_called_once_with(engine="engine", silent=True)
+    mocks["check"].assert_called_once_with(engine="engine", silent=True, classify_upgrade=True)
     mocks["memory"].dispose_engine_async.assert_awaited_once()
+
+
+def test_main_check_only_returns_normal_failure_for_supported_upgrade(mocks: dict[str, MagicMock]) -> None:
+    mocks["check"].side_effect = pyrit.memory.migration.SchemaUpgradeRequiredError("Known older revision")
+    assert pyrit_migrate.main(args=[*ARGS, "--check-only"]) == 1
+    mocks["run"].assert_not_called()
+    mocks["memory"].dispose_engine_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("state", ["upgrade-required", "current", "invalid-config", "SQL-unreachable"])
+def test_upgrade_predicate_is_read_only_and_succeeds_only_for_supported_upgrade(
+    *, mocks: dict[str, MagicMock], state: str
+) -> None:
+    if state == "upgrade-required":
+        mocks["check"].side_effect = pyrit.memory.migration.SchemaUpgradeRequiredError("Known older revision")
+    elif state == "invalid-config":
+        mocks["check"].side_effect = ValueError("Invalid configuration")
+    elif state != "current":
+        mocks["check"].side_effect = ConnectionError("SQL unreachable")
+    assert pyrit_migrate.main(args=[*ARGS, "--check-upgrade-required"]) == (0 if state == "upgrade-required" else 1)
+    mocks["run"].assert_not_called()
+    mocks["check"].assert_called_once_with(engine="engine", silent=True, classify_upgrade=True)
+    mocks["memory"].dispose_engine_async.assert_awaited_once()
+
+
+def test_upgrade_predicate_rejects_conflicting_check_flags(mocks: dict[str, MagicMock]) -> None:
+    with pytest.raises(SystemExit) as error:
+        pyrit_migrate.main(args=[*ARGS, "--check-only", "--check-upgrade-required"])
+    assert error.value.code == 2
+    mocks["run"].assert_not_called()
 
 
 @pytest.mark.parametrize(

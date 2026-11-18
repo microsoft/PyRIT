@@ -176,73 +176,84 @@ prepare_database_migration() {
     "tags=$deployment_tags"
   )
   preview_deployment job "$migration_template" "${migration_parameters[@]}"
+  assert_migration_job_idle --allow-missing
   az deployment group create \
     --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
     --template-file "$migration_template" --mode Incremental --parameters "${migration_parameters[@]}" -o none
 }
 
+assert_migration_job_idle() {
+  local helper="${BASH_SOURCE[0]%/*}/validate_migration_job.py"
+  local jobs presence executions
+  if ! jobs=$(az containerapp job list --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" -o json); then
+    deployment_error "Could not establish whether the migration job exists"
+  fi
+  if ! presence=$(python3 "$helper" job-presence --job-id "$expected_job_id" "$@" <<< "$jobs"); then
+    deployment_error "Could not establish migration job provisioning state"
+  fi
+  [[ "$presence" != missing ]] || return 0
+  if ! executions=$(az containerapp job execution list \
+    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME-migrate" -o json); then
+    deployment_error "Could not read migration job executions"
+  fi
+  if ! python3 "$helper" idle-executions <<< "$executions"; then
+    deployment_error "Migration job is not confirmed idle; wait for its execution or investigate it without canceling it"
+  fi
+}
+
 start_database_job_execution() (
   set -euo pipefail
   local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file
-  local job_args=(--resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" --query name -o tsv)
-  if [[ "$mode" == check ]]; then
-    template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-schema-check.XXXXXX") \
-      || deployment_error "Could not create database schema check template" >&2
-    trap 'rm -f -- "$template_file"' EXIT
-    if ! az containerapp job show \
-      --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
-      --query properties.template -o json | jq -e '
-        if ([.containers[] | select(.name == "pyrit-migrate" and (.image | type == "string" and length > 0))] | length) != 1
-        then error("Expected one pyrit-migrate container with an image")
-        else .containers |= map(if .name == "pyrit-migrate" then .args = ["--check-only"] else . end)
-        end' > "$template_file"; then
-      deployment_error "Could not prepare database schema check template" >&2
-    fi
-    job_args+=(--yaml "$template_file")
+  local helper="${BASH_SOURCE[0]%/*}/validate_migration_job.py"
+  local job_args=(--resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name")
+  template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-migration.XXXXXX") \
+    || deployment_error "Could not create database job template" >&2
+  trap 'rm -f -- "$template_file"' EXIT
+  if ! az containerapp job show "${job_args[@]}" --query properties.template -o json |
+    python3 "$helper" prepare-template --image "$immutable_image" --mode "$mode" \
+      --expected-server "$PYRIT_SQL_SERVER_FQDN" --expected-database "$PYRIT_SQL_DATABASE_NAME" > "$template_file"; then
+    deployment_error "Could not prepare database job template" >&2
   fi
-  az containerapp job start "${job_args[@]}"
+  assert_migration_job_idle >&2
+  az containerapp job start "${job_args[@]}" --yaml "$template_file" --query name -o tsv
 )
 
 run_database_job() {
   local mode="$1" action="migration"
   [[ "$mode" == check ]] && action="schema check"
+  [[ "$mode" == upgrade-required ]] && action="upgrade-required check"
   local job_name="$PYRIT_APP_NAME-migrate"
-  local execution status="" attempt
+  local execution metadata result attempt
   if ! execution=$(start_database_job_execution "$mode"); then
     deployment_error "Database $action job did not start"
   fi
-  [[ -n "$execution" ]] || deployment_error "Database $action job did not start"
+  [[ "$execution" =~ ^[a-zA-Z0-9._()-]+$ ]] || deployment_error "Database $action job returned an invalid execution name"
+  local execution_id="$expected_job_id/executions/$execution"
+  local helper="${BASH_SOURCE[0]%/*}/validate_migration_job.py"
   for ((attempt = 1; attempt <= ${PYRIT_MIGRATION_POLL_ATTEMPTS:-90}; attempt++)); do
-    if ! status=$(az containerapp job execution show \
+    if ! metadata=$(az containerapp job execution show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
-      --job-execution-name "$execution" --query properties.status -o tsv); then
+      --job-execution-name "$execution" -o json); then
       deployment_error "Could not read database $action execution $execution"
     fi
-    echo "Database $action $execution: $status"
-    case "$status" in
-      Succeeded) return 0 ;;
-      Failed)
-        if [[ "$mode" == check ]]; then
-          echo "Schema check failed; migrating with the app stopped"
-          return 1
-        fi
-        deployment_error "Database migration $execution ended with status $status; the app is stopped and was not deployed"
+    if ! result=$(python3 "$helper" execution-result --execution-id "$execution_id" \
+      --image "$immutable_image" --mode "$mode" \
+      --expected-server "$PYRIT_SQL_SERVER_FQDN" --expected-database "$PYRIT_SQL_DATABASE_NAME" <<< "$metadata"); then
+      deployment_error "Database $action execution did not prove a safe result; deployment was not continued"
+    fi
+    echo "Database $action $execution: $result"
+    case "$result" in
+      succeeded) return 0 ;;
+      failed)
+        [[ "$mode" == migrate ]] || return 1
+        deployment_error "Database migration $execution failed; the app is stopped and was not deployed"
         ;;
-      Stopped | Degraded)
-        deployment_error "Database $action $execution ended with status $status; deployment was not continued"
-        ;;
+      pending) ;;
+      *) deployment_error "Unknown database $action result; deployment was not continued" ;;
     esac
     sleep "${PYRIT_MIGRATION_POLL_SECONDS:-20}"
   done
   deployment_error "Database $action $execution did not finish in time; deployment was not continued"
-}
-
-schema_is_current() {
-  run_database_job check
-}
-
-run_database_migration() {
-  run_database_job migrate
 }
 
 warn_if_sql_public() {
@@ -263,11 +274,12 @@ main() {
   build_app_parameters
   preview_deployment app "$template_file" "${parameters[@]}"
   prepare_database_migration
-  if schema_is_current; then
+  if run_database_job check; then
     echo "Schema is current; deploying without stopping the app"
   else
+    run_database_job upgrade-required || deployment_error "A supported schema upgrade was not confirmed; the app was not stopped"
     stop_app
-    run_database_migration
+    run_database_job migrate
   fi
   az deployment group create \
     --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \

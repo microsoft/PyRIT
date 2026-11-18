@@ -65,7 +65,7 @@ async def _migrate_async(
             raise RuntimeError("Azure SQL engine was not created.")
         if not check_only:
             await asyncio.to_thread(run_schema_migrations, engine=engine, silent=True)
-        await asyncio.to_thread(check_schema_migrations, engine=engine, silent=True)
+        await asyncio.to_thread(check_schema_migrations, engine=engine, silent=True, classify_upgrade=check_only)
     finally:
         await memory.dispose_engine_async()
 
@@ -75,25 +75,43 @@ def main(*, args: list[str] | None = None) -> int:
     Run the schema check, with an optional upgrade first.
 
     Returns:
-        int: 0 when the schema is current, otherwise 1.
+        int: 0 if the requested check or migration succeeded, otherwise 1.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-file", required=True)
     parser.add_argument("--expected-server", required=True)
     parser.add_argument("--expected-database", required=True)
-    parser.add_argument("--check-only", action="store_true", help="Check the schema without applying migrations.")
+    checks = parser.add_mutually_exclusive_group()
+    checks.add_argument("--check-only", action="store_true", help="Check the schema without applying migrations.")
+    checks.add_argument(
+        "--check-upgrade-required",
+        action="store_true",
+        help="Read-only predicate: succeed only when a supported schema upgrade is required.",
+    )
     parsed = parser.parse_args(args)
+    from pyrit.memory.migration import SchemaUpgradeRequiredError
+
+    read_only = parsed.check_only or parsed.check_upgrade_required
     try:
         asyncio.run(
             _migrate_async(
                 config_file=parsed.config_file,
                 expected_server=parsed.expected_server,
                 expected_database=parsed.expected_database,
-                check_only=parsed.check_only,
+                check_only=read_only,
             )
         )
+    except SchemaUpgradeRequiredError:
+        if parsed.check_upgrade_required:
+            print("Database schema requires a supported upgrade.")
+            return 0
+        logger.warning("Database schema is not current.")
+        return 1
     except Exception:
-        logger.exception("Database schema check failed." if parsed.check_only else "Database migration failed.")
+        logger.exception("Database schema check failed." if read_only else "Database migration failed.")
+        return 1
+    if parsed.check_upgrade_required:
+        print("Database schema is current; no upgrade is required.")
         return 1
     print("Database schema is current.")
     return 0

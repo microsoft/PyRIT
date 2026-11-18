@@ -26,6 +26,7 @@ from pyrit.memory.migration import (
     _INITIAL_REVISION,
     ALEMBIC_OUTPUT_PREFIX,
     PYRIT_MEMORY_ALEMBIC_VERSION_TABLE,
+    SchemaUpgradeRequiredError,
     _begin_sqlite_migration_transaction,
     _is_fresh_database,
     _make_config,
@@ -972,7 +973,8 @@ def test_migration_downgrade_restores_dropped_column():
             engine.dispose()
 
 
-def test_check_schema_migrations_calls_alembic_check():
+@pytest.mark.parametrize("classify_upgrade", [False, True])
+def test_check_schema_migrations_calls_alembic_check(classify_upgrade: bool) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = os.path.join(temp_dir, "check-test.db")
         engine = create_engine(f"sqlite:///{db_path}")
@@ -980,9 +982,65 @@ def test_check_schema_migrations_calls_alembic_check():
             # First apply migrations so schema matches models
             run_schema_migrations(engine=engine)
             # Now check should succeed (no diffs)
-            check_schema_migrations(engine=engine)
+            check_schema_migrations(engine=engine, classify_upgrade=classify_upgrade)
         finally:
             engine.dispose()
+
+
+def test_schema_check_identifies_supported_upgrade_without_writing() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with pytest.raises(SchemaUpgradeRequiredError):
+            check_schema_migrations(engine=engine, silent=True, classify_upgrade=True)
+        assert inspect(engine).get_table_names() == []
+        with engine.begin() as connection:
+            command.upgrade(_make_config(connection=connection), _INITIAL_REVISION)
+        with pytest.raises(SchemaUpgradeRequiredError):
+            check_schema_migrations(engine=engine, silent=True, classify_upgrade=True)
+        with engine.connect() as connection:
+            revision = connection.execute(
+                text(f"SELECT version_num FROM {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE}")
+            ).scalar()
+            assert revision == _INITIAL_REVISION
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("matches_baseline", [True, False])
+def test_classifying_unversioned_schema_validates_legacy_baseline_without_stamping(matches_baseline: bool) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_make_config(connection=connection), _INITIAL_REVISION)
+            connection.execute(text(f"DROP TABLE {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE}"))
+            if not matches_baseline:
+                connection.execute(text("DROP TABLE AttackResultEntries"))
+        with pytest.raises(SchemaUpgradeRequiredError if matches_baseline else RuntimeError):
+            check_schema_migrations(engine=engine, silent=True, classify_upgrade=True)
+        assert not inspect(engine).has_table(PYRIT_MEMORY_ALEMBIC_VERSION_TABLE)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "revisions", [[], ["unknown-or-newer-revision"], [_INITIAL_REVISION[:8]], ["base"], [_INITIAL_REVISION, "other"]]
+)
+def test_schema_check_does_not_classify_invalid_version_metadata_as_upgradable(revisions: list[str]) -> None:
+    from alembic.util.exc import CommandError
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f"CREATE TABLE {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE} (version_num VARCHAR(64))"))
+            for revision in revisions:
+                connection.execute(
+                    text(f"INSERT INTO {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE} VALUES (:revision)"), {"revision": revision}
+                )
+        with pytest.raises(CommandError) as error:
+            check_schema_migrations(engine=engine, silent=True, classify_upgrade=True)
+        assert not isinstance(error.value, SchemaUpgradeRequiredError)
+    finally:
+        engine.dispose()
 
 
 def test_generate_schema_migration_force_creates_revision():

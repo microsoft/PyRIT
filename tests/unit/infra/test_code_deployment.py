@@ -53,16 +53,16 @@ JOB_TEMPLATE = {
             "name": "pyrit-migrate",
             "image": IMAGE,
             "command": ["/app/start.sh"],
-            "args": ["original-argument"],
             "env": [
                 {"name": "PYRIT_MODE", "value": "migrate"},
+                {"name": "AZURE_SQL_SERVER", "value": APP_INPUTS["PYRIT_SQL_SERVER_FQDN"]},
+                {"name": "AZURE_SQL_DATABASE", "value": APP_INPUTS["PYRIT_SQL_DATABASE_NAME"]},
                 {"name": "PYRIT_ENV_AKV_REF", "value": "https://copyrit-kv.vault.azure.net/secrets/pyrit-env"},
                 {"name": "PYRIT_CONFIG_FILE", "secretRef": "config-file-uri"},
             ],
             "resources": {"cpu": 1.0, "memory": "2.0Gi"},
             "volumeMounts": [{"volumeName": "data", "mountPath": "/data"}],
         },
-        {"name": "sidecar", "image": "example.azurecr.io/sidecar:1", "args": ["unchanged"]},
     ],
     "volumes": [{"name": "data", "storageType": "EmptyDir"}],
 }
@@ -237,24 +237,24 @@ class TestPypiBuild(unittest.TestCase):
                     assert "matching Python and frontend stamps is required" in result.stderr
 
 
-@unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")
-class TestCodeDeployment(unittest.TestCase):
+class _DeploymentScript(unittest.TestCase):
     def _run(
         self, *, script: str, command: str = "", inputs: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
-        assert BASH is not None and JQ is not None
+        assert BASH is not None
         environment = {key: value for key, value in os.environ.items() if not key.startswith("PYRIT_")}
         environment.update(COMMON_INPUTS | (inputs or {}))
         environment["MSYS2_ARG_CONV_EXCL"] = "*"
         environment.pop("BASH_ENV", None)
         jq_flags = "-b" if os.name == "nt" else ""
+        jq_command = f'jq() {{ {shlex.quote(Path(JQ).as_posix())} {jq_flags} "$@"; }}\n' if JQ else ""
         prelude = (
             "set -euo pipefail\n"
             "az() { echo 'Unexpected Azure call' >&2; exit 97; }\n"
             "curl() { echo 'Unexpected network call' >&2; exit 97; }\n"
             "sleep() { echo 'Unexpected wait' >&2; exit 97; }\n"
             f'python3() {{ {shlex.quote(Path(sys.executable).as_posix())} "$@"; }}\n'
-            f'jq() {{ {shlex.quote(Path(JQ).as_posix())} {jq_flags} "$@"; }}\n'
+            f"{jq_command}"
             "before_options=$(set +o); before_traps=$(trap -p); before_directory=$PWD\n"
             f"source {shlex.quote((PIPELINES / script).as_posix())}\n"
             '[[ "$(set +o)" == "$before_options" && "$(trap -p)" == "$before_traps" '
@@ -272,6 +272,9 @@ class TestCodeDeployment(unittest.TestCase):
         assert "Unexpected " not in result.stderr, result.stderr
         return result
 
+
+@unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")
+class TestDeploymentParameters(_DeploymentScript):
     def test_source_defines_helpers_without_initializing_deployment(self) -> None:
         for script in ("deployment_common.sh", "deploy_infra.sh", "deploy_app.sh"):
             with self.subTest(script=script):
@@ -372,6 +375,9 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
                 assert parameters["requireCurrentSchema"] == "true"
                 assert parameters["allowedCidr"] == parameters["pyritConfigFileUri"] == ""
 
+
+@unittest.skipIf(BASH is None, "Native Bash is required")
+class TestDatabaseJobs(_DeploymentScript):
     def _run_migration(
         self,
         *,
@@ -382,9 +388,9 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
         job_template: dict[str, object] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = (
-            "if schema_is_current; then echo current; else echo migration-needed; fi"
+            "if run_database_job check; then echo current; else echo not-current; fi"
             if check_only
-            else "run_database_migration"
+            else "run_database_job migrate"
         )
         template_json = shlex.quote(json.dumps(JOB_TEMPLATE if job_template is None else job_template))
         return self._run(
@@ -392,17 +398,21 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
             inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
             command=f"""
 immutable_image={shlex.quote(IMAGE)}
+expected_job_id={shlex.quote(f"{RESOURCE_GROUP}/providers/Microsoft.App/jobs/copyrit-test-migrate")}
 deployment_name=pyrit-test-42-app
 deployment_tags='{{"owner":"copyrit"}}'
 statuses=({" ".join(statuses)})
 poll_file=$(mktemp)
-trap 'rm -f "$poll_file"' EXIT
+launched_template=$(mktemp)
+trap 'rm -f "$poll_file" "$launched_template"' EXIT
 preview_deployment() {{ echo "preview $1 $deployment_name ${{2##*/}}"; }}
 sleep() {{ :; }}
 az() {{
   if [[ "$3" == {shlex.quote(azure_failure)} ]]; then return 1; fi
   case "$1 $2 $3" in
     "deployment group create") echo "create $3 $5" ;;
+    "containerapp job list")
+      printf '[{{"id":"%s","properties":{{"provisioningState":"Succeeded"}}}}]' "$expected_job_id" ;;
     "containerapp job show") printf '%s\\n' {template_json} ;;
     "containerapp job start")
       echo "start $*" >&2
@@ -412,7 +422,8 @@ az() {{
             shift
             echo "template-file $1" >&2
             printf 'template ' >&2
-            jq -c . "$1" >&2
+            cp "$1" "$launched_template"
+            cat "$1" >&2; echo >&2
             ;;
           --container-name | --args* | --image) echo "Partial container override" >&2; return 98 ;;
         esac
@@ -420,7 +431,11 @@ az() {{
       done
       echo execution-1
       ;;
-    "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
+    "containerapp job execution")
+      if [[ "$4" == list ]]; then echo '[]'; return; fi
+      echo poll >> "$poll_file"
+      printf '{{"id":"%s/executions/execution-1","properties":{{"status":"%s","template":%s}}}}' \
+        "$expected_job_id" "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" "$(cat "$launched_template")" ;;
     *) echo "Unexpected az $*" >&2; exit 97 ;;
   esac
 }}
@@ -436,13 +451,13 @@ echo done
         lines = result.stdout.splitlines()
         assert lines[0] == "preview job pyrit-test-42-app-migrate migration.bicep"
         assert lines[1] == "create create pyrit-test-42-app-migrate"
-        assert "Database migration execution-1: Succeeded" in lines
+        assert "Database migration execution-1: succeeded" in lines
         assert lines[-1] == "done"
 
     def test_database_migration_failure_stops_deployment(self) -> None:
         result = self._run_migration(statuses=["Running", "Failed"])
         assert result.returncode == 1
-        assert "ended with status Failed; the app is stopped and was not deployed" in result.stdout
+        assert "the app is stopped and was not deployed" in result.stdout
         assert "done" not in result.stdout
 
     def test_database_migration_timeout_stops_deployment(self) -> None:
@@ -471,13 +486,14 @@ echo done
                 )
                 assert "XXXXXX" not in Path(template_file).name
                 assert not Path(template_file).exists()
-                assert ("migration-needed" in result.stdout) == (status == "Failed")
-                assert ("current" in result.stdout) == (status == "Succeeded")
+                assert ("not-current" in result.stdout.splitlines()) == (status == "Failed")
+                assert ("current" in result.stdout.splitlines()) == (status == "Succeeded")
         result = self._run_migration(statuses=["Succeeded"])
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "--yaml" not in result.stderr
-        assert "--container-name" not in result.stderr
-        assert "--args" not in result.stderr
+        template = next(
+            line.removeprefix("template ") for line in result.stderr.splitlines() if line.startswith("template ")
+        )
+        assert json.loads(template) == JOB_TEMPLATE
 
     def test_schema_check_timeout_or_interruption_aborts_deployment(self) -> None:
         for status in ("Running", "Stopped", "Degraded"):
@@ -485,7 +501,7 @@ echo done
                 result = self._run_migration(statuses=[status], attempts=1, check_only=True)
                 assert result.returncode == 1
                 assert "deployment was not continued" in result.stdout
-                assert "migration-needed" not in result.stdout
+                assert "not-current" not in result.stdout
                 assert "done" not in result.stdout
 
     def test_schema_check_azure_errors_do_not_fall_through_to_migration(self) -> None:
@@ -493,7 +509,7 @@ echo done
             with self.subTest(command=command):
                 result = self._run_migration(statuses=["Succeeded"], check_only=True, azure_failure=command)
                 assert result.returncode == 1
-                assert "migration-needed" not in result.stdout
+                assert "not-current" not in result.stdout
                 assert "done" not in result.stdout
                 for line in result.stderr.splitlines():
                     if line.startswith("template-file "):
@@ -506,15 +522,16 @@ echo done
             {"containers": [{"name": "other", "image": IMAGE}]},
             {"containers": [{"name": "pyrit-migrate"}]},
             {"containers": [{"name": "pyrit-migrate", "image": ""}]},
+            {**JOB_TEMPLATE, "initContainers": [{"name": "unexpected", "image": IMAGE}]},
         ):
             with self.subTest(template=template):
                 result = self._run_migration(statuses=["Succeeded"], check_only=True, job_template=template)
                 assert result.returncode == 1
-                assert "Could not prepare database schema check template" in result.stderr
+                assert "Could not prepare database job template" in result.stderr
                 assert "start containerapp job start" not in result.stderr
-                assert "migration-needed" not in result.stdout
+                assert "not-current" not in result.stdout
 
-    def test_app_deployment_migrates_only_when_schema_check_fails(self) -> None:
+    def test_app_deployment_checks_for_supported_upgrade_before_stopping(self) -> None:
         for check_exit in (0, 1):
             with self.subTest(check_exit=check_exit):
                 self._assert_app_deployment_order(check_exit=check_exit)
@@ -525,11 +542,11 @@ echo done
             inputs=APP_INPUTS,
             command=f"""
 for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
-  build_app_parameters prepare_database_migration stop_app run_database_migration start_unchanged_revision \
+  build_app_parameters prepare_database_migration stop_app start_unchanged_revision \
   verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
   eval "$step() {{ echo $step; }}"
 done
-schema_is_current() {{ echo schema-check; return {check_exit}; }}
+run_database_job() {{ echo "job $1"; if [[ "$1" == check ]]; then return {check_exit}; fi; }}
 preview_deployment() {{ echo "preview $1"; }}
 az() {{ echo "az $1 $2 $3"; }}
 revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
@@ -543,9 +560,9 @@ main
             "build_app_parameters",
             "preview app",
             "prepare_database_migration",
-            "schema-check",
+            "job check",
             *(
-                ["stop_app", "run_database_migration"]
+                ["job upgrade-required", "stop_app", "job migrate"]
                 if check_exit
                 else ["Schema is current; deploying without stopping the app"]
             ),
@@ -557,6 +574,9 @@ main
             "Deployment healthy: r; verified h; ACA public access: Enabled; egress IPv4: e",
         ]
 
+
+@unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")
+class TestCodeDeployment(_DeploymentScript):
     def test_stop_app_deactivates_active_revision_not_latest_and_waits_for_replicas(self) -> None:
         result = self._run(
             script="deploy_app.sh",
@@ -1008,9 +1028,8 @@ build_app_parameters() {{
 }}
 preview_deployment() {{ :; }}
 prepare_database_migration() {{ :; }}
-schema_is_current() {{ return 0; }}
+run_database_job() {{ return 0; }}
 stop_app() {{ :; }}
-run_database_migration() {{ :; }}
 start_unchanged_revision() {{ :; }}
 warn_if_sql_public() {{ :; }}
 az() {{ :; }}
