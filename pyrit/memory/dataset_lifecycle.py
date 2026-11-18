@@ -23,15 +23,17 @@ from pyrit.memory.memory_models import (
     DatasetLifecycleEntry,
     DatasetLifecycleLock,
     DatasetMediaEntry,
+    PromptGenerationEntry,
     PromptMemoryEntry,
     ScorableContentEntry,
     SeedEntry,
 )
-from pyrit.models import MEDIA_PATH_DATA_TYPES
+from pyrit.models import DATASET_NAME_RELEASING_STATUSES, MEDIA_PATH_DATA_TYPES
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable, Collection, Sequence
 
+    from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import Session
 
     from pyrit.memory.memory_interface import MemoryInterface
@@ -42,7 +44,45 @@ logger = logging.getLogger(__name__)
 
 
 class DatasetNameConflictError(ValueError):
-    """A stored dataset or another import already uses this exact name."""
+    """A stored dataset, another import, or an unfinished prompt generation already uses this exact name."""
+
+
+async def find_unavailable_dataset_names_async(
+    session: AsyncSession, *, dataset_names: Collection[str], exclude_generation_id: uuid.UUID | None = None
+) -> set[str]:
+    """
+    Apply the create-only dataset name rule shared by uploads and prompt generations.
+
+    A name is unavailable when stored seeds use it, a staging upload reserved it, or a prompt
+    generation whose status doesn't release names holds it. Names are matched the way the database
+    compares them, so a case variant the database matches is also unavailable. Hold
+    ``lock_dataset_lifecycle`` in the same transaction to act on the answer.
+
+    Args:
+        session (AsyncSession): The session to read with.
+        dataset_names (Collection[str]): The names to check.
+        exclude_generation_id (uuid.UUID | None): A generation whose own hold doesn't count.
+
+    Returns:
+        set[str]: The requested names that are unavailable.
+    """
+    requested = sorted(set(dataset_names))
+    held = PromptGenerationEntry.status.not_in([status.value for status in DATASET_NAME_RELEASING_STATUSES])
+    if exclude_generation_id is not None:
+        held = held & (PromptGenerationEntry.id != exclude_generation_id)
+    matched: set[str] = set()
+    # Chunk for SQL Server's parameter limit.
+    for start in range(0, len(requested), 500):
+        chunk = requested[start : start + 500]
+        for statement in (
+            select(SeedEntry.dataset_name).where(SeedEntry.dataset_name.in_(chunk)),
+            select(DatasetLifecycleEntry.dataset_name).where(
+                DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name.in_(chunk)
+            ),
+            select(PromptGenerationEntry.dataset_name).where(held, PromptGenerationEntry.dataset_name.in_(chunk)),
+        ):
+            matched.update(name.casefold() for name in (await session.scalars(statement.distinct())).all() if name)
+    return {name for name in requested if name.casefold() in matched}
 
 
 def media_key(value: str, *, storage: StorageIO | None = None) -> str:
@@ -313,15 +353,17 @@ async def _reserve_upload_async(
     keys = await asyncio.to_thread(lambda: [media_key(path, storage=memory.results_storage_io) for path in paths])
     async with await memory.get_session_async() as session:
         await session.run_sync(lock_dataset_lifecycle)
-        stored = await session.scalar(select(SeedEntry.id).where(SeedEntry.dataset_name == dataset_name).limit(1))
-        staging = await session.scalar(
-            select(DatasetLifecycleEntry.id)
-            .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == dataset_name)
-            .limit(1)
-        )
-        if staging is not None or (stored is not None and not mutation):
-            raise DatasetNameConflictError("A stored dataset or upload already uses this name.")
+        if not mutation and await find_unavailable_dataset_names_async(session, dataset_names=[dataset_name]):
+            raise DatasetNameConflictError("A stored dataset, upload, or prompt generation already uses this name.")
         if mutation:
+            # Editing changes an existing dataset, so only another upload's reservation conflicts.
+            staging = await session.scalar(
+                select(DatasetLifecycleEntry.id)
+                .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == dataset_name)
+                .limit(1)
+            )
+            if staging is not None:
+                raise DatasetNameConflictError("A stored dataset or upload already uses this name.")
             names = (
                 await session.scalars(select(SeedEntry.dataset_name).where(SeedEntry.dataset_name == dataset_name))
             ).all()

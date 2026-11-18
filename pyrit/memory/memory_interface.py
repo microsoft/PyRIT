@@ -112,6 +112,7 @@ from pyrit.memory.memory_models import (
     ObservationMessagePieceEntry,
     OperationEntry,
     PromptConverterIdentifierEntry,
+    PromptGenerationEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
@@ -131,6 +132,7 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    DATASET_NAME_RELEASING_STATUSES,
     MEDIA_PATH_DATA_TYPES,
     AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
@@ -164,6 +166,8 @@ from pyrit.models import (
     Operation,
     OperationUsage,
     PromptDataType,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
     RequestTraceContext,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -319,6 +323,42 @@ def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
         for item in items
         if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
     }
+
+
+def _prompt_generation_filters(
+    *,
+    generation_id: uuid.UUID,
+    expected_statuses: Collection[PromptGenerationStatus],
+    expected_execution_id: uuid.UUID | None,
+) -> "list[ColumnElement[bool]]":
+    """
+    Match a generation that is still in an expected status and, optionally, owned by a run attempt.
+
+    Returns:
+        list[ColumnElement[bool]]: Conditions for a compare-and-set statement.
+    """
+    filters = [
+        PromptGenerationEntry.id == generation_id,
+        PromptGenerationEntry.status.in_([status.value for status in expected_statuses]),
+    ]
+    if expected_execution_id is not None:
+        filters.append(PromptGenerationEntry.execution_id == expected_execution_id)
+    return filters
+
+
+def _raise_for_taken_dataset_names(names: Collection[str]) -> None:
+    """
+    Reject dataset names that the shared create-only name rule reports as taken.
+
+    Raises:
+        DatasetNameConflictError: If any name is taken.
+    """
+    from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+
+    if names:
+        raise DatasetNameConflictError(
+            " ".join(f"A dataset or generation named '{name}' already exists." for name in sorted(names))
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1017,6 +1057,237 @@ class MemoryInterface(abc.ABC):
             raise OperationInUseError(operation_id=operation_id, usage=usage) from exc
         usage = await self.get_operation_usage_async(operation_id=operation_id)
         raise OperationInUseError(operation_id=operation_id, usage=usage)
+
+    async def add_prompt_generations_async(self, *, generations: Sequence[PromptGenerationRecord]) -> None:
+        """
+        Save new prompt generations together, holding each one's dataset name.
+
+        Args:
+            generations (Sequence[PromptGenerationRecord]): The generations to save.
+
+        Raises:
+            DatasetNameConflictError: If a dataset name is used by stored seeds, a staging upload, or
+                another unfinished generation. Nothing is saved.
+        """
+        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async, lock_dataset_lifecycle
+
+        entries = [PromptGenerationEntry(generation) for generation in generations]
+        async with await self.get_session_async() as session:
+            await session.run_sync(lock_dataset_lifecycle)
+            holding = [
+                generation.dataset_name
+                for generation in generations
+                if generation.status not in DATASET_NAME_RELEASING_STATUSES
+            ]
+            _raise_for_taken_dataset_names(await find_unavailable_dataset_names_async(session, dataset_names=holding))
+            session.add_all(entries)
+            await session.commit()
+
+    async def get_prompt_generations_async(
+        self, *, generation_ids: Sequence[uuid.UUID] | None = None
+    ) -> list[PromptGenerationRecord]:
+        """
+        Read prompt generations, newest first. Generations created at the same time are ordered by ID.
+
+        Args:
+            generation_ids (Sequence[uuid.UUID] | None): Only these generations. Defaults to all.
+
+        Returns:
+            list[PromptGenerationRecord]: The matching generations.
+        """
+        statement = select(PromptGenerationEntry).order_by(
+            PromptGenerationEntry.created_at.desc(), PromptGenerationEntry.id
+        )
+        async with await self.get_session_async() as session:
+            if generation_ids is None:
+                entries = list((await session.scalars(statement)).all())
+            else:
+                requested = list(dict.fromkeys(generation_ids))
+                entries = []
+                # Chunk for SQL Server's parameter limit.
+                for start in range(0, len(requested), 500):
+                    chunk = statement.where(PromptGenerationEntry.id.in_(requested[start : start + 500]))
+                    entries.extend((await session.scalars(chunk)).all())
+                entries.sort(key=lambda entry: entry.id)
+                entries.sort(key=lambda entry: entry.created_at, reverse=True)
+            return [entry.get_prompt_generation() for entry in entries]
+
+    async def get_unavailable_dataset_names_async(
+        self, *, dataset_names: Sequence[str], exclude_generation_id: uuid.UUID | None = None
+    ) -> set[str]:
+        """
+        Report which dataset names a new dataset can't use, without reserving any.
+
+        A name is unavailable when stored seeds use it, a staging upload reserved it, or an unfinished
+        prompt generation holds it. Uploads and generations enforce the same rule when they reserve a name.
+
+        Args:
+            dataset_names (Sequence[str]): The names to check.
+            exclude_generation_id (uuid.UUID | None): A generation whose own hold doesn't count.
+
+        Returns:
+            set[str]: The unavailable names.
+        """
+        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async
+
+        async with await self.get_session_async() as session:
+            return await find_unavailable_dataset_names_async(
+                session, dataset_names=dataset_names, exclude_generation_id=exclude_generation_id
+            )
+
+    async def try_update_prompt_generation_async(
+        self,
+        *,
+        generation: PromptGenerationRecord,
+        expected_statuses: Collection[PromptGenerationStatus],
+        expected_execution_id: uuid.UUID | None = None,
+        reserve_dataset_name: bool = False,
+    ) -> bool:
+        """
+        Replace a stored generation only while it is in one of ``expected_statuses``.
+
+        The compare and the write are one UPDATE, so a generation that another task or process moved
+        on is never overwritten.
+
+        Args:
+            generation (PromptGenerationRecord): The new state of the generation.
+            expected_statuses (Collection[PromptGenerationStatus]): Statuses the stored generation may be in.
+            expected_execution_id (uuid.UUID | None): When set, the run attempt that must still own the
+                generation.
+            reserve_dataset_name (bool): Whether to recheck, under the dataset lifecycle lock, that no
+                stored dataset, staging upload, or other generation took the name. Use it when a
+                generation that released its name is queued again.
+
+        Returns:
+            bool: True if the generation was updated, False if it is missing or moved on.
+
+        Raises:
+            ValueError: If ``expected_statuses`` is empty.
+            DatasetNameConflictError: If ``reserve_dataset_name`` is set and the name is taken. Nothing changes.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async, lock_dataset_lifecycle
+
+        if not expected_statuses:
+            raise ValueError("expected_statuses must not be empty")
+        statement = (
+            update(PromptGenerationEntry)
+            .where(
+                *_prompt_generation_filters(
+                    generation_id=generation.id,
+                    expected_statuses=expected_statuses,
+                    expected_execution_id=expected_execution_id,
+                )
+            )
+            .values(PromptGenerationEntry.column_values(generation))
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session:
+            if reserve_dataset_name:
+                await session.run_sync(lock_dataset_lifecycle)
+            result = await session.execute(statement)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation update did not return a database cursor result.")
+            if result.rowcount and reserve_dataset_name:
+                taken = await find_unavailable_dataset_names_async(
+                    session, dataset_names=[generation.dataset_name], exclude_generation_id=generation.id
+                )
+                if taken:
+                    await session.rollback()
+                    _raise_for_taken_dataset_names(taken)
+            await session.commit()
+        return bool(result.rowcount)
+
+    async def commit_prompt_generation_dataset_async(
+        self,
+        *,
+        generation: PromptGenerationRecord,
+        expected_execution_id: uuid.UUID,
+        dataset: SeedDataset,
+        added_by: str,
+    ) -> bool:
+        """
+        Create a generation's dataset and record its completion in one transaction.
+
+        The dataset is created only: seeds are inserted as they are, never deduplicated or added to
+        an existing dataset. A generation therefore never has a saved dataset with an unfinished record.
+
+        Args:
+            generation (PromptGenerationRecord): The completed generation to store.
+            expected_execution_id (uuid.UUID): The run attempt that must still own the saving generation.
+            dataset (SeedDataset): The dataset to create, named ``generation.dataset_name``.
+            added_by (str): Who the seeds are attributed to.
+
+        Returns:
+            bool: True if the dataset and the generation were saved, False if the generation is missing,
+                isn't saving, or another run attempt owns it. Nothing is saved then.
+
+        Raises:
+            ValueError: If the dataset is empty or a seed belongs to another dataset.
+            DatasetNameConflictError: If stored seeds, a staging upload, or another generation use the
+                dataset name. Nothing is saved.
+        """
+        from pyrit.memory.dataset_lifecycle import find_unavailable_dataset_names_async, lock_dataset_lifecycle
+
+        seeds = (await self.prepare_seed_batch_async(seeds=dataset.seeds, added_by=added_by)).seeds
+        if not seeds or any(seed.dataset_name != generation.dataset_name or not seed.value_sha256 for seed in seeds):
+            raise ValueError(
+                "A generated dataset needs storage-ready seeds that all belong to the generation's dataset."
+            )
+        filters = _prompt_generation_filters(
+            generation_id=generation.id,
+            expected_statuses=[PromptGenerationStatus.SAVING],
+            expected_execution_id=expected_execution_id,
+        )
+        async with await self.get_session_async() as session:
+            await session.run_sync(lock_dataset_lifecycle)
+            entry = await session.scalar(select(PromptGenerationEntry).where(*filters))
+            if entry is None:
+                return False
+            _raise_for_taken_dataset_names(
+                await find_unavailable_dataset_names_async(
+                    session, dataset_names=[generation.dataset_name], exclude_generation_id=generation.id
+                )
+            )
+            session.add_all(SeedEntry(entry=seed) for seed in seeds)
+            for column, value in PromptGenerationEntry.column_values(generation).items():
+                setattr(entry, column, value)
+            await session.commit()
+        return True
+
+    async def delete_prompt_generation_async(
+        self, *, generation_id: uuid.UUID, expected_statuses: Collection[PromptGenerationStatus]
+    ) -> bool:
+        """
+        Delete a generation only while it is in one of ``expected_statuses``. Its dataset is kept.
+
+        Args:
+            generation_id (uuid.UUID): The generation to delete.
+            expected_statuses (Collection[PromptGenerationStatus]): Statuses the generation may be in.
+
+        Returns:
+            bool: True if the generation was deleted, False if it is missing or in another status.
+
+        Raises:
+            ValueError: If ``expected_statuses`` is empty.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        if not expected_statuses:
+            raise ValueError("expected_statuses must not be empty")
+        statement = (
+            delete(PromptGenerationEntry)
+            .where(
+                *_prompt_generation_filters(
+                    generation_id=generation_id, expected_statuses=expected_statuses, expected_execution_id=None
+                )
+            )
+            .execution_options(synchronize_session=False)
+        )
+        async with await self.get_session_async() as session, session.begin():
+            result = await session.execute(statement)
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Prompt generation deletion did not return a database cursor result.")
+            return bool(result.rowcount)
 
     async def resolve_operation_id_async(
         self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None

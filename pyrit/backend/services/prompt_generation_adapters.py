@@ -17,11 +17,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.backend.models.prompt_generations import (
-    PromptGenerationProgress,
     PromptGeneratorDescriptor,
     PromptGeneratorStage,
     PromptGeneratorTargetRole,
-    TargetObjectiveGenerationRequest,
 )
 from pyrit.datasets import AssertProvider, TargetObjectiveProvider
 from pyrit.executor.promptgen import AssertGenerator, TargetObjectiveGenerator, TargetObjectiveGeneratorResult
@@ -33,6 +31,8 @@ from pyrit.models import (
     AssertGroupMetadata,
     AssertTaxonomy,
     PromptGenerationEstimate,
+    PromptGenerationProgress,
+    TargetObjectiveGenerationRequest,
 )
 
 if TYPE_CHECKING:
@@ -149,15 +149,6 @@ class PromptGenerationAdapter(ABC):
             dict[str, Any] | None: The request, or None when the seeds don't record it.
         """
         return None
-
-    def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
-        """
-        Report whether stored seeds were saved from this checkpoint, so a retried save can finish.
-
-        Returns:
-            bool: False unless the generator can recognize its own output.
-        """
-        return False
 
 
 class AssertGenerationAdapter(PromptGenerationAdapter):
@@ -338,23 +329,6 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
         metadata = self._read_metadata(seeds)
         return metadata.config.model_dump(mode="json") if metadata is not None else None
 
-    def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
-        """
-        Report whether stored seeds came from this checkpoint's generation conversations.
-
-        Returns:
-            bool: True when a stored group's research and seed-group conversations belong to the checkpoint.
-        """
-        metadata = self._read_metadata(seeds)
-        if metadata is None:
-            return False
-        current = AssertGenerationCheckpoint.model_validate(dict(checkpoint))
-        provenance = metadata.provenance
-        return (
-            provenance.systematization_conversation_id == current.provenance.systematization_conversation_id
-            and provenance.group_generation_conversation_id in current.conversation_ids
-        )
-
     @staticmethod
     def _read_metadata(seeds: Sequence[SeedRecord]) -> AssertGroupMetadata | None:
         for seed in seeds:
@@ -519,16 +493,6 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
             if request is not None:
                 return self.normalize_request(request)
         return None
-
-    def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
-        """
-        Report whether stored objectives came from this checkpoint's generation conversation.
-
-        Returns:
-            bool: True when a stored objective names the checkpoint's conversation.
-        """
-        conversation_id = TargetObjectiveGeneratorResult.model_validate(dict(checkpoint)).conversation_id
-        return any((seed.metadata or {}).get("generation_conversation_id") == conversation_id for seed in seeds)
 
 
 def create_prompt_generation_adapters() -> dict[str, PromptGenerationAdapter]:

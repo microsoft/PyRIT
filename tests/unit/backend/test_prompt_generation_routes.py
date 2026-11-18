@@ -14,10 +14,8 @@ from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name
 from pyrit.backend.models.prompt_generations import (
     PromptGenerationPreflightResponse,
-    PromptGenerationRecord,
     PromptGenerationRequestFromDataset,
     PromptGenerationReview,
-    PromptGenerationStatus,
 )
 from pyrit.backend.services.prompt_generation_adapters import create_prompt_generation_adapters
 from pyrit.backend.services.prompt_generation_service import (
@@ -25,7 +23,7 @@ from pyrit.backend.services.prompt_generation_service import (
     PromptGenerationNotFoundError,
     PromptGenerationService,
 )
-from pyrit.models import PromptGenerationEstimate
+from pyrit.models import PromptGenerationEstimate, PromptGenerationRecord, PromptGenerationStatus
 
 GENERATION_ID = "11111111-1111-4111-8111-111111111111"
 GROUP_ID = "22222222-2222-4222-8222-222222222222"
@@ -102,6 +100,7 @@ def test_create_records_user_and_hides_checkpoint(client: TestClient, service: M
     assert body["id"] == GENERATION_ID
     assert body["request"] == CREATE_BODY["request"]
     assert "checkpoint" not in body
+    assert "execution_id" not in body
     assert service.create_async.call_args.kwargs["created_by"] == "Ada"
 
 
@@ -142,10 +141,11 @@ def test_preflight_returns_validation_and_estimate(client: TestClient, service: 
 
 
 def test_list_and_lifecycle_actions(client: TestClient, service: MagicMock) -> None:
-    service.list_async = AsyncMock(return_value=[_record()])
+    service.list_async = AsyncMock(return_value=[_record(execution_id="33333333-3333-4333-8333-333333333333")])
     listed = client.get("/api/prompt-generations").json()["items"]
     assert listed[0]["id"] == GENERATION_ID
     assert "request" not in listed[0]
+    assert "execution_id" not in listed[0]
 
     for action, method in (
         ("continue", "continue_async"),

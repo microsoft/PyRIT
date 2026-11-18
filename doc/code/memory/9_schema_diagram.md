@@ -66,9 +66,25 @@ flowchart LR
         Sc_timestamp["timestamp (TIMESTAMP)"]
         Sc_objective["objective (VARCHAR)"]
   end
+ subgraph PromptGenerationEntries["PromptGenerationEntries"]
+        G_id["id (UUID)"]
+        G_generator["generator (VARCHAR)"]
+        G_dataset_name["dataset_name (VARCHAR)"]
+        G_status["status (VARCHAR)"]
+        G_execution_id["execution_id (UUID)"]
+        G_request["request (JSON)"]
+        G_targets["targets (JSON)"]
+        G_group_id["group_id (UUID)"]
+        G_progress["progress (JSON)"]
+        G_checkpoint["checkpoint (JSON)"]
+        G_summary["summary (JSON)"]
+        G_created_at["created_at (TIMESTAMP)"]
+        G_updated_at["updated_at (TIMESTAMP)"]
+  end
     S_value_sha256 -- N:N relationship to query --> P_original_value_sha256
     P_id -- 1:N relationship to query --> Sc_prompt_request_response_id
     P_conversation_id -- N:1 relationship to query --> C_conversation_id
+    G_dataset_name -- creates once, by name --> S_dataset_name
 
     style S_value_sha256 fill:#ff8800ff
     style P_id fill:#14a519ff

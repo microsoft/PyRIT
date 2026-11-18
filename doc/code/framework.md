@@ -327,7 +327,6 @@ The backend is an adapter, not a second library. It owns HTTP and process concer
 - **Don't add domain models.** `pyrit/backend/models` holds backend-only envelopes, such as pagination and presentation views, built from `pyrit.models` types. If a backend model or a service's dataclass would describe a domain concept, put it in `pyrit.models` instead.
 - Keep each layer thin. Routes and middleware handle HTTP, services call the library for a request, and mappers translate library objects into API views. None of them make domain decisions.
 - Build components through the registry and persist through memory, as everywhere else.
-- `PromptGenerationService` owns prompt generation jobs: admission, queueing, checkpoint persistence, review pauses, cancellation, retry, and saving the dataset. Generators own model calls, stages, and checkpoints; dataset providers package results.
 
 **Framework Plans**:
 

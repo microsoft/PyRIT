@@ -4,10 +4,9 @@
 """
 Run prompt generations as background jobs and save their results as datasets.
 
-Generators own model interaction and resumable progress. This service owns the job lifecycle:
-admission, a concurrency limit, persistence of each checkpoint, review pauses, cancellation,
-retry from the last checkpoint, dataset-name reservation, and reconciliation after a restart.
-One backend instance owns the generation records.
+Generators own model interaction and resumable progress, and memory stores the generation records.
+This service owns the job lifecycle: admission, a concurrency limit, persistence of each checkpoint,
+review pauses, cancellation, retry from the last checkpoint, and reconciliation after a restart.
 """
 
 from __future__ import annotations
@@ -21,18 +20,13 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from pyrit.backend.models.prompt_generations import (
-    ACTIVE_GENERATION_STATUSES,
-    RETRYABLE_GENERATION_STATUSES,
     PromptGenerationBatchCreateRequest,
     PromptGenerationBatchItem,
     PromptGenerationCreateRequest,
     PromptGenerationPreflightResponse,
-    PromptGenerationProgress,
-    PromptGenerationRecord,
     PromptGenerationRequestFromDataset,
     PromptGenerationReview,
     PromptGenerationReviewUpdate,
-    PromptGenerationStatus,
     PromptGenerationSummary,
     PromptGeneratorDescriptor,
 )
@@ -41,21 +35,30 @@ from pyrit.backend.services.prompt_generation_adapters import (
     PromptGenerationAdapter,
     create_prompt_generation_adapters,
 )
-from pyrit.backend.services.prompt_generation_store import PromptGenerationStore
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+from pyrit.models import (
+    ACTIVE_GENERATION_STATUSES,
+    RETRYABLE_GENERATION_STATUSES,
+    PromptGenerationProgress,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Collection, Mapping
 
     from pyrit.memory import MemoryInterface
-    from pyrit.models import PromptGenerationEstimate, SeedDataset, SeedRecord
+    from pyrit.models import PromptGenerationEstimate, SeedRecord
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 _INTERRUPTED_MESSAGE = "The backend stopped before this generation finished. Retry to resume from the last checkpoint."
-_NAME_RELEASING_STATUSES = frozenset({PromptGenerationStatus.COMPLETED, PromptGenerationStatus.CANCELLED})
+_CANCELLABLE_STATUSES = frozenset(
+    {PromptGenerationStatus.QUEUED, PromptGenerationStatus.RUNNING, PromptGenerationStatus.AWAITING_REVIEW}
+)
 
 
 class PromptGenerationNotFoundError(LookupError):
@@ -66,8 +69,19 @@ class PromptGenerationConflictError(Exception):
     """The generation's state doesn't allow the request, or a dataset name is taken."""
 
 
+class _OwnershipLostError(Exception):
+    """Another task or backend cancelled or requeued the generation, so this run attempt stops."""
+
+
 class PromptGenerationService:
-    """Own the lifecycle of prompt generation jobs."""
+    """
+    Own the lifecycle of prompt generation jobs.
+
+    Each change to a record is a compare-and-set on the statuses it comes from. A run takes a fresh
+    ``execution_id`` when it starts, and its checkpoint, review, saving, completion, and failure writes
+    require it, so a run that another backend cancelled or retried stops at its next write instead of
+    overwriting the record.
+    """
 
     DEFAULT_MAX_CONCURRENT_GENERATIONS = 1
     DEFAULT_ADDED_BY = "PromptGenerationService"
@@ -76,17 +90,16 @@ class PromptGenerationService:
         self,
         *,
         memory: MemoryInterface | None = None,
-        store: PromptGenerationStore | None = None,
         adapters: Mapping[str, PromptGenerationAdapter] | None = None,
         target_lookup: Callable[[str], PromptTarget | None] | None = None,
         max_concurrent_generations: int = DEFAULT_MAX_CONCURRENT_GENERATIONS,
     ) -> None:
         """
-        Configure storage, generators, target lookup, and the concurrency limit.
+        Configure memory, generators, target lookup, and the concurrency limit.
 
         Args:
-            memory (MemoryInterface | None): Memory that receives datasets. Defaults to the central memory.
-            store (PromptGenerationStore | None): Record storage. Defaults to the memory's results storage.
+            memory (MemoryInterface | None): Memory that stores generations and receives datasets. Defaults to
+                the central memory.
             adapters (Mapping[str, PromptGenerationAdapter] | None): Generators by name. Defaults to every
                 built-in generator.
             target_lookup (Callable[[str], PromptTarget | None] | None): Resolves a target registry name.
@@ -99,14 +112,14 @@ class PromptGenerationService:
         if max_concurrent_generations < 1:
             raise ValueError("max_concurrent_generations must be at least 1.")
         self._memory = memory or CentralMemory.get_memory_instance()
-        self._store = store or PromptGenerationStore(memory=self._memory)
         self._adapters = dict(adapters) if adapters is not None else create_prompt_generation_adapters()
         self._target_lookup = target_lookup or _lookup_registered_target
         self._semaphore = asyncio.Semaphore(max_concurrent_generations)
         self._lock = asyncio.Lock()
-        self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._cancel_requested: set[str] = set()
-        self._saving: set[str] = set()
+        self._tasks: dict[uuid.UUID, asyncio.Task[None]] = {}
+        self._executions: dict[uuid.UUID, uuid.UUID] = {}
+        self._cancel_requested: set[uuid.UUID] = set()
+        self._saving: set[uuid.UUID] = set()
         self._admission_open = True
         self._reconciled = False
 
@@ -151,19 +164,32 @@ class PromptGenerationService:
         """
         Mark generations that were active when the backend stopped as interrupted.
 
-        The service runs this once on first use. One backend instance owns the records and a new
-        service owns no tasks yet, so any record that still looks active belonged to a stopped process.
+        The service runs this once on first use. Only file-backed SQLite memory is reconciled: one backend
+        owns that database file, so an active record without a task here belonged to a stopped process.
+        Shared and unknown memory backends are left alone because another process may own the runs.
 
         Returns:
             int: The number of reconciled generations.
         """
         self._reconciled = True
+        if not isinstance(self._memory, SQLiteMemory):
+            logger.info(
+                "Skipping interrupted prompt generation reconciliation for shared or unsupported %s memory.",
+                type(self._memory).__name__,
+            )
+            return 0
         reconciled = 0
-        for record in await self._store.list_async():
-            if record.status in ACTIVE_GENERATION_STATUSES and record.id not in self._tasks:
-                await self._update_async(
-                    generation_id=record.id, status=PromptGenerationStatus.INTERRUPTED, error=_INTERRUPTED_MESSAGE
-                )
+        for record in await self._memory.get_prompt_generations_async():
+            if record.status not in ACTIVE_GENERATION_STATUSES or record.id in self._tasks:
+                continue
+            interrupted = await self._try_update_async(
+                record=record,
+                expected_statuses={record.status},
+                status=PromptGenerationStatus.INTERRUPTED,
+                error=_INTERRUPTED_MESSAGE,
+                execution_id=None,
+            )
+            if interrupted is not None:
                 reconciled += 1
         return reconciled
 
@@ -180,7 +206,7 @@ class PromptGenerationService:
         errors: list[str] = []
         estimate: PromptGenerationEstimate | None = None
         adapter = self._adapters.get(request.generator)
-        taken = await self._get_taken_dataset_names_async()
+        taken = await self._memory.get_unavailable_dataset_names_async(dataset_names=[request.dataset_name])
         available = request.dataset_name not in taken
         if not available:
             errors.append(_name_taken_message(request.dataset_name))
@@ -238,7 +264,7 @@ class PromptGenerationService:
         Returns:
             list[PromptGenerationRecord]: The queued generations, sharing a ``group_id``.
         """
-        return await self._create_records_async(request=request, created_by=created_by, group_id=str(uuid.uuid4()))
+        return await self._create_records_async(request=request, created_by=created_by, group_id=uuid.uuid4())
 
     async def list_async(self) -> list[PromptGenerationRecord]:
         """
@@ -248,7 +274,7 @@ class PromptGenerationService:
             list[PromptGenerationRecord]: The generations.
         """
         await self._reconcile_once_async()
-        return await self._store.list_async()
+        return await self._memory.get_prompt_generations_async()
 
     async def get_async(self, generation_id: str) -> PromptGenerationRecord:
         """
@@ -261,13 +287,10 @@ class PromptGenerationService:
             PromptGenerationRecord: The generation.
 
         Raises:
-            PromptGenerationNotFoundError: If it doesn't exist.
+            PromptGenerationNotFoundError: If it doesn't exist or the ID isn't a UUID.
         """
         await self._reconcile_once_async()
-        record = await self._store.get_async(generation_id)
-        if record is None:
-            raise PromptGenerationNotFoundError(f"Prompt generation '{generation_id}' not found.")
-        return record
+        return await self._read_async(_parse_generation_id(generation_id))
 
     async def continue_async(self, generation_id: str) -> PromptGenerationRecord:
         """
@@ -287,8 +310,6 @@ class PromptGenerationService:
         """
         Queue a failed, cancelled, or interrupted generation to resume from its last checkpoint.
 
-        A generation whose dataset was already saved before an interruption finishes without saving again.
-
         Args:
             generation_id (str): The generation ID.
 
@@ -303,6 +324,8 @@ class PromptGenerationService:
         """
         Cancel a queued, running, or paused generation. Its checkpoint is kept for a retry.
 
+        A generation running in another backend stops at its next checkpoint.
+
         Args:
             generation_id (str): The generation ID.
 
@@ -313,24 +336,28 @@ class PromptGenerationService:
             PromptGenerationConflictError: If the generation is saving its dataset or already finished.
         """
         record = await self.get_async(generation_id)
-        cancellable = {
-            PromptGenerationStatus.QUEUED,
-            PromptGenerationStatus.RUNNING,
-            PromptGenerationStatus.AWAITING_REVIEW,
-        }
-        if record.status not in cancellable or generation_id in self._saving:
+        if record.status not in _CANCELLABLE_STATUSES or record.id in self._saving:
             raise PromptGenerationConflictError(f"A {record.status.value} generation can't be cancelled.")
-        task = self._tasks.get(generation_id)
+        task = self._tasks.get(record.id)
         if task is not None:
-            self._cancel_requested.add(generation_id)
+            self._cancel_requested.add(record.id)
             task.cancel()
             await asyncio.wait({task})
-            self._cancel_requested.discard(generation_id)
-            record = await self.get_async(generation_id)
+            self._cancel_requested.discard(record.id)
+            record = await self._read_async(record.id)
             # A task cancelled before it started never ran its handler, so its record is still queued.
-            if record.status != PromptGenerationStatus.QUEUED:
+            if record.status not in _CANCELLABLE_STATUSES:
                 return record
-        return await self._update_async(generation_id=generation_id, status=PromptGenerationStatus.CANCELLED)
+        cancelled = await self._try_update_async(
+            record=record,
+            expected_statuses=_CANCELLABLE_STATUSES,
+            status=PromptGenerationStatus.CANCELLED,
+            execution_id=None,
+        )
+        if cancelled is None:
+            current = await self._read_async(record.id)
+            raise PromptGenerationConflictError(f"A {current.status.value} generation can't be cancelled.")
+        return cancelled
 
     async def delete_async(self, generation_id: str) -> None:
         """
@@ -345,7 +372,11 @@ class PromptGenerationService:
         record = await self.get_async(generation_id)
         if record.status in ACTIVE_GENERATION_STATUSES:
             raise PromptGenerationConflictError("Cancel the generation before deleting it.")
-        await self._store.delete_async(generation_id)
+        inactive = set(PromptGenerationStatus) - ACTIVE_GENERATION_STATUSES
+        if not await self._memory.delete_prompt_generation_async(generation_id=record.id, expected_statuses=inactive):
+            # Raises not found when another request deleted it first; otherwise it became active again.
+            await self._read_async(record.id)
+            raise PromptGenerationConflictError("Cancel the generation before deleting it.")
 
     async def get_review_async(self, generation_id: str) -> PromptGenerationReview:
         """
@@ -364,7 +395,7 @@ class PromptGenerationService:
         if record.status != PromptGenerationStatus.AWAITING_REVIEW or record.checkpoint is None:
             raise PromptGenerationConflictError("The generation isn't awaiting review.")
         stage, payload = self._get_adapter(record.generator).get_review(checkpoint=record.checkpoint)
-        return PromptGenerationReview(generation_id=record.id, stage=stage, payload=payload)
+        return PromptGenerationReview(generation_id=str(record.id), stage=stage, payload=payload)
 
     async def save_review_async(
         self, *, generation_id: str, update: PromptGenerationReviewUpdate
@@ -387,12 +418,14 @@ class PromptGenerationService:
             raise PromptGenerationConflictError("The generation isn't awaiting review.")
         adapter = self._get_adapter(record.generator)
         checkpoint = adapter.apply_review(checkpoint=record.checkpoint, payload=update.payload)
-        async with self._lock:
-            await self._update_locked_async(
-                generation_id=generation_id,
-                checkpoint=checkpoint,
-                progress=adapter.get_progress(request=record.request, checkpoint=checkpoint),
-            )
+        saved = await self._try_update_async(
+            record=record,
+            expected_statuses={PromptGenerationStatus.AWAITING_REVIEW},
+            checkpoint=checkpoint,
+            progress=adapter.get_progress(request=record.request, checkpoint=checkpoint),
+        )
+        if saved is None:
+            raise PromptGenerationConflictError("The generation isn't awaiting review.")
         return await self.get_review_async(generation_id)
 
     async def get_estimate_async(self, generation_id: str) -> PromptGenerationEstimate:
@@ -439,7 +472,7 @@ class PromptGenerationService:
             await self.reconcile_interrupted_async()
 
     async def _create_records_async(
-        self, *, request: PromptGenerationBatchCreateRequest, created_by: str | None, group_id: str | None
+        self, *, request: PromptGenerationBatchCreateRequest, created_by: str | None, group_id: uuid.UUID | None
     ) -> list[PromptGenerationRecord]:
         self._require_admission()
         await self._reconcile_once_async()
@@ -455,7 +488,7 @@ class PromptGenerationService:
         # A millisecond apart, so batch members keep their request order after a restart and in browsers.
         records = [
             PromptGenerationRecord(
-                id=str(uuid.uuid4()),
+                id=uuid.uuid4(),
                 generator=request.generator,
                 dataset_name=item.dataset_name,
                 status=PromptGenerationStatus.QUEUED,
@@ -471,16 +504,17 @@ class PromptGenerationService:
             )
             for index, (item, item_request) in enumerate(zip(request.items, normalized, strict=True))
         ]
-        async with self._lock:
-            _require_names_available(names=names, taken=await self._get_taken_dataset_names_async())
-            for record in records:
-                await self._store.save_async(record)
+        try:
+            async with self._lock:
+                await self._memory.add_prompt_generations_async(generations=records)
+        except DatasetNameConflictError as error:
+            raise PromptGenerationConflictError(str(error)) from error
         for record in records:
             self._schedule(record.id)
         return records
 
     async def _queue_async(
-        self, *, generation_id: str, allowed: set[PromptGenerationStatus], **changes: Any
+        self, *, generation_id: str, allowed: Collection[PromptGenerationStatus], **changes: Any
     ) -> PromptGenerationRecord:
         self._require_admission()
         record = await self.get_async(generation_id)
@@ -488,17 +522,24 @@ class PromptGenerationService:
             raise PromptGenerationConflictError(f"A {record.status.value} generation can't be queued.")
         adapter = self._get_adapter(record.generator)
         self._validate_targets(adapter=adapter, request=record.request, targets=record.targets)
-        async with self._lock:
-            taken = await self._get_taken_dataset_names_async(exclude_id=generation_id)
-            if record.dataset_name in taken and not await self._dataset_came_from_async(record=record):
-                raise PromptGenerationConflictError(_name_taken_message(record.dataset_name))
-            queued = await self._update_locked_async(
-                generation_id=generation_id, status=PromptGenerationStatus.QUEUED, **changes
+        try:
+            queued = await self._try_update_async(
+                record=record,
+                expected_statuses=allowed,
+                reserve_dataset_name=True,
+                status=PromptGenerationStatus.QUEUED,
+                execution_id=None,
+                **changes,
             )
-        self._schedule(generation_id)
+        except DatasetNameConflictError as error:
+            raise PromptGenerationConflictError(str(error)) from error
+        if queued is None:
+            current = await self._read_async(record.id)
+            raise PromptGenerationConflictError(f"A {current.status.value} generation can't be queued.")
+        self._schedule(record.id)
         return queued
 
-    def _schedule(self, generation_id: str) -> None:
+    def _schedule(self, generation_id: uuid.UUID) -> None:
         task = asyncio.create_task(self._run_async(generation_id), name=f"prompt-generation-{generation_id}")
         self._tasks[generation_id] = task
 
@@ -508,41 +549,57 @@ class PromptGenerationService:
 
         task.add_done_callback(_forget)
 
-    async def _run_async(self, generation_id: str) -> None:
+    async def _run_async(self, generation_id: uuid.UUID) -> None:
         try:
             async with self._semaphore:
                 await self._execute_async(generation_id)
         except asyncio.CancelledError:
             cancelled = generation_id in self._cancel_requested
-            status = PromptGenerationStatus.CANCELLED if cancelled else PromptGenerationStatus.INTERRUPTED
             await asyncio.shield(
-                self._update_async(
-                    generation_id=generation_id, status=status, error=None if cancelled else _INTERRUPTED_MESSAGE
+                self._finish_async(
+                    generation_id=generation_id,
+                    execution_id=self._executions.get(generation_id),
+                    status=PromptGenerationStatus.CANCELLED if cancelled else PromptGenerationStatus.INTERRUPTED,
+                    error=None if cancelled else _INTERRUPTED_MESSAGE,
                 )
             )
             raise
+        except _OwnershipLostError:
+            logger.info("Prompt generation %s was cancelled or requeued elsewhere; this run stopped.", generation_id)
         except Exception as error:
             logger.exception("Prompt generation %s failed.", generation_id)
-            await self._update_async(
-                generation_id=generation_id, status=PromptGenerationStatus.FAILED, error=_describe_error(error)
+            await self._finish_async(
+                generation_id=generation_id,
+                execution_id=self._executions.get(generation_id),
+                status=PromptGenerationStatus.FAILED,
+                error=_describe_error(error),
             )
         finally:
             self._cancel_requested.discard(generation_id)
+            self._executions.pop(generation_id, None)
 
-    async def _execute_async(self, generation_id: str) -> None:
-        record = await self.get_async(generation_id)
+    async def _execute_async(self, generation_id: uuid.UUID) -> None:
+        record = await self._read_async(generation_id)
         if record.status != PromptGenerationStatus.QUEUED:
             return
         adapter = self._get_adapter(record.generator)
         targets = self._resolve_targets(adapter=adapter, targets=record.targets)
-        await self._update_async(
-            generation_id=generation_id,
+        execution_id = uuid.uuid4()
+        running = await self._try_update_async(
+            record=record,
+            expected_statuses={PromptGenerationStatus.QUEUED},
             status=PromptGenerationStatus.RUNNING,
+            execution_id=execution_id,
             started_at=record.started_at or datetime.now(UTC),
         )
+        if running is None:
+            raise _OwnershipLostError
+        self._executions[generation_id] = execution_id
+        current = running
 
         async def save_checkpoint_async(checkpoint: dict[str, Any], *, progress: PromptGenerationProgress) -> None:
-            await self._update_async(generation_id=generation_id, checkpoint=checkpoint, progress=progress)
+            nonlocal current
+            current = await self._write_owned_async(record=current, checkpoint=checkpoint, progress=progress)
 
         outcome = await adapter.run_async(
             request=record.request,
@@ -552,19 +609,20 @@ class PromptGenerationService:
             on_checkpoint=save_checkpoint_async,
         )
         if outcome.awaiting_review:
-            await self._update_async(
-                generation_id=generation_id,
+            await self._write_owned_async(
+                record=current,
                 status=PromptGenerationStatus.AWAITING_REVIEW,
                 checkpoint=outcome.checkpoint,
                 progress=outcome.progress,
+                execution_id=None,
             )
             return
         # Shutdown waits for saving generations instead of cancelling them, so a saved dataset always
         # reaches a completed record.
         self._saving.add(generation_id)
         try:
-            saving = await self._update_async(
-                generation_id=generation_id,
+            saving = await self._write_owned_async(
+                record=current,
                 status=PromptGenerationStatus.SAVING,
                 checkpoint=outcome.checkpoint,
                 progress=outcome.progress,
@@ -572,61 +630,110 @@ class PromptGenerationService:
             dataset, summary = await adapter.build_dataset_async(
                 request=record.request, targets=targets, checkpoint=outcome.checkpoint, dataset_name=record.dataset_name
             )
-            await self._save_dataset_async(record=saving, dataset=dataset)
-            await self._update_async(
-                generation_id=generation_id,
+            completed = _apply(
+                saving,
                 status=PromptGenerationStatus.COMPLETED,
                 summary=summary,
                 completed_at=datetime.now(UTC),
+                execution_id=None,
             )
+            try:
+                saved = await self._memory.commit_prompt_generation_dataset_async(
+                    generation=completed,
+                    expected_execution_id=execution_id,
+                    dataset=dataset,
+                    added_by=record.created_by or self.DEFAULT_ADDED_BY,
+                )
+            except DatasetNameConflictError:
+                raise PromptGenerationConflictError(
+                    f"A dataset named '{record.dataset_name}' was created while generating. "
+                    "Use Edit & regenerate to save this request under a new name."
+                ) from None
+            if not saved:
+                raise _OwnershipLostError
         finally:
             self._saving.discard(generation_id)
 
-    async def _save_dataset_async(self, *, record: PromptGenerationRecord, dataset: SeedDataset) -> None:
-        if record.dataset_name in await self._memory.get_seed_dataset_names_async():
-            if await self._dataset_came_from_async(record=record):
-                return
-            raise PromptGenerationConflictError(
-                f"A dataset named '{record.dataset_name}' was created while generating. "
-                "Use Edit & regenerate to save this request under a new name."
-            )
-        await self._memory.add_seed_datasets_to_memory_async(
-            datasets=[dataset], added_by=record.created_by or self.DEFAULT_ADDED_BY
-        )
+    async def _write_owned_async(self, *, record: PromptGenerationRecord, **changes: Any) -> PromptGenerationRecord:
+        """
+        Write a running generation's change only while this run attempt still owns it.
 
-    async def _dataset_came_from_async(self, *, record: PromptGenerationRecord) -> bool:
-        if record.checkpoint is None:
-            return False
-        seeds = await self._read_sample_seeds_async(record.dataset_name)
-        adapter = self._get_adapter(record.generator)
-        return bool(seeds) and adapter.dataset_matches_checkpoint(seeds=seeds, checkpoint=record.checkpoint)
+        Returns:
+            PromptGenerationRecord: The written generation.
+
+        Raises:
+            _OwnershipLostError: If another task or backend cancelled or requeued the generation.
+        """
+        updated = await self._try_update_async(
+            record=record,
+            expected_statuses={PromptGenerationStatus.RUNNING},
+            expected_execution_id=record.execution_id,
+            **changes,
+        )
+        if updated is None:
+            raise _OwnershipLostError
+        return updated
+
+    async def _finish_async(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        execution_id: uuid.UUID | None,
+        status: PromptGenerationStatus,
+        error: str | None,
+    ) -> None:
+        """Record how a run ended, unless another task or backend moved the generation on first."""
+        records = await self._memory.get_prompt_generations_async(generation_ids=[generation_id])
+        # A run that never started only owns a queued generation; one that started owns it by execution ID.
+        expected = (
+            {PromptGenerationStatus.QUEUED}
+            if execution_id is None
+            else {PromptGenerationStatus.RUNNING, PromptGenerationStatus.SAVING}
+        )
+        finished = bool(records) and (
+            await self._try_update_async(
+                record=records[0],
+                expected_statuses=expected,
+                expected_execution_id=execution_id,
+                status=status,
+                error=error,
+                execution_id=None,
+            )
+            is not None
+        )
+        if not finished:
+            logger.info("Prompt generation %s moved on before this run recorded %s.", generation_id, status.value)
+
+    async def _try_update_async(
+        self,
+        *,
+        record: PromptGenerationRecord,
+        expected_statuses: Collection[PromptGenerationStatus],
+        expected_execution_id: uuid.UUID | None = None,
+        reserve_dataset_name: bool = False,
+        **changes: Any,
+    ) -> PromptGenerationRecord | None:
+        updated = _apply(record, **changes)
+        async with self._lock:
+            written = await self._memory.try_update_prompt_generation_async(
+                generation=updated,
+                expected_statuses=expected_statuses,
+                expected_execution_id=expected_execution_id,
+                reserve_dataset_name=reserve_dataset_name,
+            )
+        return updated if written else None
+
+    async def _read_async(self, generation_id: uuid.UUID) -> PromptGenerationRecord:
+        records = await self._memory.get_prompt_generations_async(generation_ids=[generation_id])
+        if not records:
+            raise PromptGenerationNotFoundError(f"Prompt generation '{generation_id}' not found.")
+        return records[0]
 
     async def _read_sample_seeds_async(self, dataset_name: str) -> list[SeedRecord]:
         examples, _, _ = await self._memory.get_seed_examples_async(
             dataset_name=dataset_name, limit=1, seed_types=["objective"]
         )
         return next(iter(examples.values()), [])
-
-    async def _update_async(self, *, generation_id: str, **changes: Any) -> PromptGenerationRecord:
-        async with self._lock:
-            return await self._update_locked_async(generation_id=generation_id, **changes)
-
-    async def _update_locked_async(self, *, generation_id: str, **changes: Any) -> PromptGenerationRecord:
-        record = await self.get_async(generation_id)
-        updated = PromptGenerationRecord.model_validate(
-            {**record.model_dump(), **changes, "updated_at": datetime.now(UTC)}
-        )
-        await self._store.save_async(updated)
-        return updated
-
-    async def _get_taken_dataset_names_async(self, *, exclude_id: str | None = None) -> set[str]:
-        taken = set(await self._memory.get_seed_dataset_names_async())
-        taken.update(
-            record.dataset_name
-            for record in await self._store.list_async()
-            if record.id != exclude_id and record.status not in _NAME_RELEASING_STATUSES
-        )
-        return taken
 
     def _validate_targets(
         self, *, adapter: PromptGenerationAdapter, request: Mapping[str, Any], targets: Mapping[str, str]
@@ -676,7 +783,20 @@ def to_summary(record: PromptGenerationRecord) -> PromptGenerationSummary:
     Returns:
         PromptGenerationSummary: The listing view.
     """
-    return PromptGenerationSummary.model_validate(record.model_dump(include=set(PromptGenerationSummary.model_fields)))
+    return PromptGenerationSummary.model_validate(
+        record.model_dump(mode="json", include=set(PromptGenerationSummary.model_fields))
+    )
+
+
+def _apply(record: PromptGenerationRecord, **changes: Any) -> PromptGenerationRecord:
+    return PromptGenerationRecord.model_validate({**record.model_dump(), **changes, "updated_at": datetime.now(UTC)})
+
+
+def _parse_generation_id(generation_id: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(generation_id)
+    except ValueError as error:
+        raise PromptGenerationNotFoundError(f"Prompt generation '{generation_id}' not found.") from error
 
 
 def _require_review_support(*, adapter: PromptGenerationAdapter, pause_for_review: bool) -> None:
@@ -684,12 +804,6 @@ def _require_review_support(*, adapter: PromptGenerationAdapter, pause_for_revie
         raise ValueError(
             f"The {adapter.descriptor.display_name} generator has no review step, so it can't pause for review."
         )
-
-
-def _require_names_available(*, names: list[str], taken: set[str]) -> None:
-    conflicts = [name for name in names if name in taken]
-    if conflicts:
-        raise PromptGenerationConflictError("; ".join(_name_taken_message(name) for name in conflicts))
 
 
 def _name_taken_message(dataset_name: str) -> str:

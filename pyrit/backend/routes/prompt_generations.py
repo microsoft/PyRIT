@@ -24,7 +24,6 @@ from pyrit.backend.models.prompt_generations import (
     PromptGenerationDetail,
     PromptGenerationListResponse,
     PromptGenerationPreflightResponse,
-    PromptGenerationRecord,
     PromptGenerationRequestFromDataset,
     PromptGenerationReview,
     PromptGenerationReviewUpdate,
@@ -37,7 +36,7 @@ from pyrit.backend.services.prompt_generation_service import (
     to_summary,
 )
 from pyrit.datasets import list_assert_behavior_presets, list_assert_suite_presets
-from pyrit.models import AssertBehaviorPreset, AssertSuitePreset, PromptGenerationEstimate
+from pyrit.models import AssertBehaviorPreset, AssertSuitePreset, PromptGenerationEstimate, PromptGenerationRecord
 
 T = TypeVar("T")
 
@@ -286,4 +285,6 @@ async def _handle_async(pending: Awaitable[T]) -> T:
 
 
 def _detail(record: PromptGenerationRecord) -> PromptGenerationDetail:
-    return PromptGenerationDetail.model_validate(record.model_dump(include=set(PromptGenerationDetail.model_fields)))
+    return PromptGenerationDetail.model_validate(
+        record.model_dump(mode="json", include=set(PromptGenerationDetail.model_fields))
+    )

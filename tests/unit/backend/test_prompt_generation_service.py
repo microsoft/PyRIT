@@ -1,36 +1,39 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the prompt generation job service, with real generators and a mock target."""
+"""Tests for the prompt generation job service, with real generators, real memory, and a mock target."""
 
 import asyncio
 import json
-import threading
+import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.backend.models.prompt_generations import (
     PromptGenerationBatchCreateRequest,
     PromptGenerationCreateRequest,
-    PromptGenerationProgress,
-    PromptGenerationRecord,
     PromptGenerationReviewUpdate,
-    PromptGenerationStatus,
 )
-from pyrit.backend.services import prompt_generation_store
 from pyrit.backend.services.prompt_generation_service import (
     PromptGenerationConflictError,
     PromptGenerationNotFoundError,
     PromptGenerationService,
 )
-from pyrit.backend.services.prompt_generation_store import PromptGenerationStore
-from pyrit.memory import DiskStorageIO, MemoryInterface, SQLiteMemory
-from pyrit.models import AssertGenerationStage, AssertGroupMetadata, Message, MessagePiece, SeedObjective
+from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.models import (
+    AssertGenerationStage,
+    AssertGroupMetadata,
+    Message,
+    MessagePiece,
+    PromptGenerationProgress,
+    PromptGenerationRecord,
+    PromptGenerationStatus,
+    SeedObjective,
+)
 from pyrit.prompt_target import PromptTarget
 from unit.assert_mocks import assert_generation_response_async, make_assert_config, make_assert_generation_target
 from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
@@ -47,30 +50,20 @@ def no_retry_wait() -> Iterator[None]:
         yield
 
 
-def _local_store(directory: Path) -> PromptGenerationStore:
-    memory = MagicMock(spec=MemoryInterface)
-    memory.results_path = str(directory)
-    memory.results_storage_io = DiskStorageIO()
-    return PromptGenerationStore(memory=memory)
-
-
-@pytest.fixture
-def store(tmp_path: Path) -> PromptGenerationStore:
-    return _local_store(tmp_path)
-
-
 @pytest.fixture
 def target(patch_central_database: MagicMock) -> PromptTarget:
     return make_assert_generation_target()
 
 
+def _new_service(memory: MemoryInterface, target: PromptTarget) -> PromptGenerationService:
+    return PromptGenerationService(memory=memory, target_lookup=lambda name: target if name == TARGET_NAME else None)
+
+
 @pytest.fixture
 async def service(
-    sqlite_instance: SQLiteMemory, store: PromptGenerationStore, target: PromptTarget, no_retry_wait: None
+    sqlite_instance: SQLiteMemory, target: PromptTarget, no_retry_wait: None
 ) -> AsyncIterator[PromptGenerationService]:
-    generation_service = PromptGenerationService(
-        memory=sqlite_instance, store=store, target_lookup=lambda name: target if name == TARGET_NAME else None
-    )
+    generation_service = _new_service(sqlite_instance, target)
     yield generation_service
     await generation_service.shutdown_async()
 
@@ -89,7 +82,7 @@ def _assert_request(**overrides: Any) -> PromptGenerationCreateRequest:
 def _record(*, status: PromptGenerationStatus, dataset_name: str = "support_policy") -> PromptGenerationRecord:
     now = datetime.now(UTC)
     return PromptGenerationRecord(
-        id="00000000-0000-4000-8000-000000000001",
+        id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
         generator="assert",
         dataset_name=dataset_name,
         status=status,
@@ -97,6 +90,10 @@ def _record(*, status: PromptGenerationStatus, dataset_name: str = "support_poli
         created_at=now,
         updated_at=now,
     )
+
+
+async def _read_async(memory: MemoryInterface, record: PromptGenerationRecord) -> PromptGenerationRecord:
+    return (await memory.get_prompt_generations_async(generation_ids=[record.id]))[0]
 
 
 async def _settle_async(service: PromptGenerationService) -> None:
@@ -119,8 +116,9 @@ async def test_assert_generation_runs_and_saves_dataset_async(
         assert created.status == PromptGenerationStatus.QUEUED
         await _settle_async(service)
 
-    record = await service.get_async(created.id)
+    record = await service.get_async(str(created.id))
     assert record.status == PromptGenerationStatus.COMPLETED
+    assert record.execution_id is None
     assert record.progress.items_completed == record.progress.items_total == 6
     assert record.summary is not None
     assert record.summary["group_count"] == 6
@@ -139,32 +137,35 @@ async def test_review_pause_edit_and_continue_async(
 ) -> None:
     with _respond_with(target) as send:
         created = await service.create_async(request=_assert_request(pause_for_review=True))
+        generation_id = str(created.id)
         await _settle_async(service)
-        paused = await service.get_async(created.id)
+        paused = await service.get_async(generation_id)
         assert paused.status == PromptGenerationStatus.AWAITING_REVIEW
+        assert paused.execution_id is None
         assert paused.progress.current_stage == AssertGenerationStage.SEED_GROUPS.value
         assert {_stage_of(call.kwargs["normalized_conversation"]) for call in send.call_args_list} == {
             "systematization",
             "taxonomy",
         }
 
-        review = await service.get_review_async(created.id)
+        review = await service.get_review_async(generation_id)
+        assert review.generation_id == generation_id
         taxonomy = review.payload["taxonomy"]
         assert isinstance(taxonomy, dict)
         categories = taxonomy["behavior_categories"]
         assert isinstance(categories, list) and isinstance(categories[0], dict)
         categories[0]["definition"] = "Explains the published 30-day return window."
         saved = await service.save_review_async(
-            generation_id=created.id,
+            generation_id=generation_id,
             update=PromptGenerationReviewUpdate(
                 payload={"taxonomy": taxonomy, "dimensions": review.payload["dimensions"]}
             ),
         )
         assert saved.payload["taxonomy"] == taxonomy
-        await service.continue_async(created.id)
+        await service.continue_async(generation_id)
         await _settle_async(service)
 
-    assert (await service.get_async(created.id)).status == PromptGenerationStatus.COMPLETED
+    assert (await service.get_async(generation_id)).status == PromptGenerationStatus.COMPLETED
     objective = next(
         seed
         for seed in await sqlite_instance.get_seeds_async(dataset_name="support_policy")
@@ -176,12 +177,19 @@ async def test_review_pause_edit_and_continue_async(
 
 
 async def test_review_requires_awaiting_review_async(
-    service: PromptGenerationService, store: PromptGenerationStore
+    service: PromptGenerationService, sqlite_instance: SQLiteMemory
 ) -> None:
     failed = _record(status=PromptGenerationStatus.FAILED)
-    await store.save_async(failed)
+    await sqlite_instance.add_prompt_generations_async(generations=[failed])
     with pytest.raises(PromptGenerationConflictError, match="isn't awaiting review"):
-        await service.get_review_async(failed.id)
+        await service.get_review_async(str(failed.id))
+
+
+async def test_malformed_and_unknown_ids_are_not_found_async(service: PromptGenerationService) -> None:
+    with pytest.raises(PromptGenerationNotFoundError):
+        await service.get_async("../escape")
+    with pytest.raises(PromptGenerationNotFoundError):
+        await service.cancel_async(str(uuid.uuid4()))
 
 
 async def test_existing_dataset_name_is_rejected_async(
@@ -198,16 +206,20 @@ async def test_existing_dataset_name_is_rejected_async(
 
 
 async def test_unfinished_generation_reserves_dataset_name_async(
-    service: PromptGenerationService, store: PromptGenerationStore
+    service: PromptGenerationService, sqlite_instance: SQLiteMemory
 ) -> None:
-    await store.save_async(_record(status=PromptGenerationStatus.FAILED))
+    failed = _record(status=PromptGenerationStatus.FAILED)
+    await sqlite_instance.add_prompt_generations_async(generations=[failed])
     preflight = await service.preflight_async(_assert_request())
     assert not preflight.valid
     assert not preflight.dataset_name_available
     with pytest.raises(PromptGenerationConflictError, match="already exists"):
         await service.create_async(request=_assert_request())
 
-    await store.save_async(_record(status=PromptGenerationStatus.CANCELLED))
+    cancelled = failed.model_copy(update={"status": PromptGenerationStatus.CANCELLED})
+    assert await sqlite_instance.try_update_prompt_generation_async(
+        generation=cancelled, expected_statuses=[PromptGenerationStatus.FAILED]
+    )
     assert (await service.preflight_async(_assert_request())).dataset_name_available
 
 
@@ -248,16 +260,18 @@ async def test_cancel_keeps_checkpoint_and_retry_resumes_async(
 
     with _respond_with(target, gated_async) as send:
         created = await service.create_async(request=_assert_request())
+        generation_id = str(created.id)
         await wait_for_event_async(event=reached_groups, tasks=list(service._tasks.values()))
-        cancelled = await service.cancel_async(created.id)
+        cancelled = await service.cancel_async(generation_id)
         assert cancelled.status == PromptGenerationStatus.CANCELLED
+        assert cancelled.execution_id is None
         assert cancelled.progress.current_stage == AssertGenerationStage.SEED_GROUPS.value
 
         release.set()
-        await service.retry_async(created.id)
+        await service.retry_async(generation_id)
         await _settle_async(service)
 
-    assert (await service.get_async(created.id)).status == PromptGenerationStatus.COMPLETED
+    assert (await service.get_async(generation_id)).status == PromptGenerationStatus.COMPLETED
     stages = [_stage_of(call.kwargs["normalized_conversation"]) for call in send.call_args_list]
     assert stages.count("systematization") == 1
     assert stages.count("taxonomy") == 1
@@ -277,21 +291,23 @@ async def test_failure_is_recorded_and_retry_completes_async(
 
     with _respond_with(target, flaky_async):
         created = await service.create_async(request=_assert_request())
+        generation_id = str(created.id)
         await _settle_async(service)
-        failed = await service.get_async(created.id)
+        failed = await service.get_async(generation_id)
         assert failed.status == PromptGenerationStatus.FAILED
+        assert failed.execution_id is None
         assert failed.error and "provider unavailable" in failed.error
 
-        await service.retry_async(created.id)
+        await service.retry_async(generation_id)
         await _settle_async(service)
 
-    retried = await service.get_async(created.id)
+    retried = await service.get_async(generation_id)
     assert retried.status == PromptGenerationStatus.COMPLETED
     assert retried.error is None
 
 
 async def test_shutdown_interrupts_and_reconcile_marks_stale_records_async(
-    sqlite_instance: SQLiteMemory, store: PromptGenerationStore, target: PromptTarget, no_retry_wait: None
+    sqlite_instance: SQLiteMemory, target: PromptTarget, no_retry_wait: None
 ) -> None:
     gate = asyncio.Event()
 
@@ -300,20 +316,94 @@ async def test_shutdown_interrupts_and_reconcile_marks_stale_records_async(
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
-    first = PromptGenerationService(memory=sqlite_instance, store=store, target_lookup=lambda _: target)
+    first = _new_service(sqlite_instance, target)
     with _respond_with(target, blocked_async):
         created = await first.create_async(request=_assert_request())
         await wait_for_event_async(event=gate, tasks=list(first._tasks.values()))
         await first.shutdown_async()
-    assert (await store.get_async(created.id)).status == PromptGenerationStatus.INTERRUPTED  # type: ignore[union-attr]
+    interrupted = await _read_async(sqlite_instance, created)
+    assert interrupted.status == PromptGenerationStatus.INTERRUPTED
+    assert interrupted.execution_id is None
 
     stale = _record(status=PromptGenerationStatus.RUNNING, dataset_name="stale")
-    await store.save_async(stale)
-    second = PromptGenerationService(memory=sqlite_instance, store=store, target_lookup=lambda _: target)
-    assert (await second.get_async(stale.id)).status == PromptGenerationStatus.INTERRUPTED
+    await sqlite_instance.add_prompt_generations_async(generations=[stale])
+    second = _new_service(sqlite_instance, target)
+    assert (await second.get_async(str(stale.id))).status == PromptGenerationStatus.INTERRUPTED
     assert await second.reconcile_interrupted_async() == 0
     with pytest.raises(PromptGenerationConflictError, match="shutting down"):
-        await first.retry_async(created.id)
+        await first.retry_async(str(created.id))
+    await second.shutdown_async()
+
+
+async def test_reconcile_leaves_shared_memory_alone_async() -> None:
+    running = _record(status=PromptGenerationStatus.RUNNING)
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_prompt_generations_async = AsyncMock(return_value=[running])
+    memory.try_update_prompt_generation_async = AsyncMock(return_value=True)
+    shared = PromptGenerationService(memory=memory, adapters={}, target_lookup=lambda _: None)
+
+    assert await shared.list_async() == [running]
+    assert await shared.reconcile_interrupted_async() == 0
+    memory.try_update_prompt_generation_async.assert_not_awaited()
+    memory.get_prompt_generations_async.assert_awaited_once_with()
+
+
+async def test_another_service_on_the_same_memory_sees_new_generations_async(
+    sqlite_instance: SQLiteMemory, target: PromptTarget, no_retry_wait: None
+) -> None:
+    first = _new_service(sqlite_instance, target)
+    second = _new_service(sqlite_instance, target)
+    try:
+        assert await second.list_async() == []
+        with _respond_with(target):
+            created = await first.create_async(request=_assert_request(pause_for_review=True))
+            await _settle_async(first)
+        listed = await second.list_async()
+        assert [record.id for record in listed] == [created.id]
+        assert listed[0].status == PromptGenerationStatus.AWAITING_REVIEW
+        assert (await second.get_review_async(str(created.id))).stage == AssertGenerationStage.DIMENSIONS.value
+    finally:
+        await first.shutdown_async()
+        await second.shutdown_async()
+
+
+async def test_cancel_from_another_service_stops_the_owner_without_overwriting_async(
+    sqlite_instance: SQLiteMemory, target: PromptTarget, no_retry_wait: None
+) -> None:
+    reached_groups = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if _stage_of(normalized_conversation) == "seed_groups":
+            reached_groups.set()
+            await release.wait()
+        return await assert_generation_response_async(normalized_conversation=normalized_conversation)
+
+    owner = _new_service(sqlite_instance, target)
+    other = _new_service(sqlite_instance, target)
+    try:
+        await other.list_async()
+        with _respond_with(target, gated_async) as send:
+            created = await owner.create_async(request=_assert_request())
+            await wait_for_event_async(event=reached_groups, tasks=list(owner._tasks.values()))
+            running = await _read_async(sqlite_instance, created)
+            assert running.status == PromptGenerationStatus.RUNNING
+            assert running.execution_id is not None
+
+            cancelled = await other.cancel_async(str(created.id))
+            assert cancelled.status == PromptGenerationStatus.CANCELLED
+            calls_at_cancel = send.call_count
+            release.set()
+            await _settle_async(owner)
+
+        assert await _read_async(sqlite_instance, created) == cancelled
+        assert send.call_count == calls_at_cancel
+        assert await sqlite_instance.get_seeds_async(dataset_name="support_policy") == []
+        assert not owner.has_active_work()
+    finally:
+        release.set()
+        await owner.shutdown_async()
+        await other.shutdown_async()
 
 
 async def test_target_objective_generation_async(
@@ -338,7 +428,7 @@ async def test_target_objective_generation_async(
         created = await service.create_async(request=request)
         await _settle_async(service)
 
-    record = await service.get_async(created.id)
+    record = await service.get_async(str(created.id))
     assert record.status == PromptGenerationStatus.COMPLETED
     assert record.summary == {"objective_count": 3}
     assert record.progress == PromptGenerationProgress(
@@ -374,7 +464,7 @@ async def test_batch_creates_generations_with_shared_settings_async(
     with _respond_with(target):
         created = await service.create_batch_async(request=request)
         assert {record.status for record in created} == {PromptGenerationStatus.QUEUED}
-        await service.cancel_async(created[1].id)
+        await service.cancel_async(str(created[1].id))
         await _settle_async(service)
 
     records = {record.dataset_name: record for record in await service.list_async()}
@@ -398,17 +488,37 @@ async def test_batch_rejects_duplicate_dataset_names_async(service: PromptGenera
         )
 
 
+async def test_batch_with_a_taken_name_creates_nothing_async(
+    service: PromptGenerationService, sqlite_instance: SQLiteMemory
+) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="existing", dataset_name="suite_1")], added_by="test"
+    )
+    config = make_assert_config().model_dump(mode="json")
+    request = PromptGenerationBatchCreateRequest(
+        generator="assert",
+        label="Suite",
+        items=[{"dataset_name": f"suite_{index}", "request": config} for index in range(3)],
+        targets={"generation": TARGET_NAME},
+    )
+    with pytest.raises(PromptGenerationConflictError, match="named 'suite_1' already exists"):
+        await service.create_batch_async(request=request)
+    assert await service.list_async() == []
+    assert not service.has_active_work()
+
+
 async def test_delete_refuses_active_generations_and_keeps_the_dataset_async(
     service: PromptGenerationService, target: PromptTarget, sqlite_instance: SQLiteMemory
 ) -> None:
     with _respond_with(target):
         created = await service.create_async(request=_assert_request())
+        generation_id = str(created.id)
         with pytest.raises(PromptGenerationConflictError, match="Cancel the generation"):
-            await service.delete_async(created.id)
+            await service.delete_async(generation_id)
         await _settle_async(service)
-    await service.delete_async(created.id)
+    await service.delete_async(generation_id)
     with pytest.raises(PromptGenerationNotFoundError):
-        await service.get_async(created.id)
+        await service.get_async(generation_id)
     assert len(await sqlite_instance.get_seeds_async(dataset_name="support_policy")) > 0
 
 
@@ -442,77 +552,110 @@ async def test_estimate_is_exact_after_review_pause_async(
     with _respond_with(target):
         created = await service.create_async(request=_assert_request(pause_for_review=True))
         await _settle_async(service)
-    estimate = await service.get_estimate_async(created.id)
+    estimate = await service.get_estimate_async(str(created.id))
     assert estimate.exact_calls
     assert [stage.stage for stage in estimate.stages] == ["seed_groups"]
 
 
-async def test_store_skips_unreadable_records_async(store: PromptGenerationStore, tmp_path: Path) -> None:
-    directory = tmp_path / PromptGenerationStore.DIRECTORY_NAME
-    directory.mkdir()
-    (directory / "broken.json").write_text("{not json", encoding="utf-8")
-    assert await store.list_async() == []
-    with pytest.raises(ValueError, match="Invalid prompt generation ID"):
-        await store.delete_async("../escape")
-
-
 async def test_shutdown_lets_a_dataset_save_finish_async(
-    sqlite_instance: SQLiteMemory, store: PromptGenerationStore, target: PromptTarget, no_retry_wait: None
+    sqlite_instance: SQLiteMemory, target: PromptTarget, no_retry_wait: None
 ) -> None:
     saving = asyncio.Event()
     release = asyncio.Event()
-    save_dataset = sqlite_instance.add_seed_datasets_to_memory_async
+    commit_dataset = sqlite_instance.commit_prompt_generation_dataset_async
 
-    async def held_save_async(**kwargs: Any) -> None:
+    async def held_commit_async(**kwargs: Any) -> bool:
         saving.set()
         await release.wait()
-        await save_dataset(**kwargs)
+        return await commit_dataset(**kwargs)
 
-    generation_service = PromptGenerationService(memory=sqlite_instance, store=store, target_lookup=lambda _: target)
+    generation_service = _new_service(sqlite_instance, target)
     with (
         _respond_with(target),
-        patch.object(sqlite_instance, "add_seed_datasets_to_memory_async", side_effect=held_save_async),
+        patch.object(sqlite_instance, "commit_prompt_generation_dataset_async", side_effect=held_commit_async),
     ):
         created = await generation_service.create_async(request=_assert_request())
         await wait_for_event_async(event=saving, tasks=list(generation_service._tasks.values()))
         with pytest.raises(PromptGenerationConflictError, match="can't be cancelled"):
-            await generation_service.cancel_async(created.id)
+            await generation_service.cancel_async(str(created.id))
         shutdown = asyncio.create_task(generation_service.shutdown_async())
         await asyncio.sleep(0)
         release.set()
         await wait_for_completion_async(future=shutdown)
 
-    record = await store.get_async(created.id)
-    assert record is not None
+    record = await _read_async(sqlite_instance, created)
     assert record.status == PromptGenerationStatus.COMPLETED
     assert len(await sqlite_instance.get_seeds_async(dataset_name="support_policy")) > 0
 
 
-async def test_retry_finishes_a_dataset_saved_before_an_interruption_async(
-    service: PromptGenerationService, target: PromptTarget, store: PromptGenerationStore, sqlite_instance: SQLiteMemory
+async def test_a_saving_generation_cant_be_cancelled_from_another_service_async(
+    sqlite_instance: SQLiteMemory, service: PromptGenerationService
 ) -> None:
-    with _respond_with(target):
+    await service.list_async()
+    saving = _record(status=PromptGenerationStatus.SAVING).model_copy(update={"execution_id": uuid.uuid4()})
+    await sqlite_instance.add_prompt_generations_async(generations=[saving])
+    with pytest.raises(PromptGenerationConflictError, match="saving generation can't be cancelled"):
+        await service.cancel_async(str(saving.id))
+    assert await _read_async(sqlite_instance, saving) == saving
+
+
+async def test_retry_after_a_failed_save_saves_the_dataset_once_async(
+    service: PromptGenerationService, target: PromptTarget, sqlite_instance: SQLiteMemory
+) -> None:
+    with (
+        _respond_with(target),
+        patch.object(
+            sqlite_instance, "commit_prompt_generation_dataset_async", side_effect=RuntimeError("database unavailable")
+        ),
+    ):
         created = await service.create_async(request=_assert_request())
         await _settle_async(service)
-    completed = await store.get_async(created.id)
-    assert completed is not None
-    await store.save_async(
-        completed.model_copy(
-            update={"status": PromptGenerationStatus.INTERRUPTED, "summary": None, "completed_at": None}
-        )
-    )
+    failed = await _read_async(sqlite_instance, created)
+    assert failed.status == PromptGenerationStatus.FAILED
+    assert failed.error and "database unavailable" in failed.error
+    assert await sqlite_instance.get_seeds_async(dataset_name="support_policy") == []
 
-    with (
-        _respond_with(target) as send,
-        patch.object(sqlite_instance, "add_seed_datasets_to_memory_async") as save_dataset,
-    ):
-        await service.retry_async(created.id)
+    with _respond_with(target) as send:
+        await service.retry_async(str(created.id))
         await _settle_async(service)
     send.assert_not_called()
-    save_dataset.assert_not_called()
-    retried = await service.get_async(created.id)
+    retried = await _read_async(sqlite_instance, created)
     assert retried.status == PromptGenerationStatus.COMPLETED
     assert retried.summary is not None
+    objectives = [
+        seed
+        for seed in await sqlite_instance.get_seeds_async(dataset_name="support_policy")
+        if isinstance(seed, SeedObjective)
+    ]
+    assert len(objectives) == 6
+
+
+async def test_a_dataset_created_while_generating_fails_the_save_without_mixing_seeds_async(
+    service: PromptGenerationService, target: PromptTarget, sqlite_instance: SQLiteMemory
+) -> None:
+    reached_groups = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if _stage_of(normalized_conversation) == "seed_groups" and not release.is_set():
+            reached_groups.set()
+            await release.wait()
+        return await assert_generation_response_async(normalized_conversation=normalized_conversation)
+
+    with _respond_with(target, gated_async):
+        created = await service.create_async(request=_assert_request())
+        await wait_for_event_async(event=reached_groups, tasks=list(service._tasks.values()))
+        await sqlite_instance.add_seeds_to_memory_async(
+            seeds=[SeedObjective(value="someone else's", dataset_name="support_policy")], added_by="test"
+        )
+        release.set()
+        await _settle_async(service)
+
+    failed = await service.get_async(str(created.id))
+    assert failed.status == PromptGenerationStatus.FAILED
+    assert failed.error is not None and "was created while generating" in failed.error
+    seeds = await sqlite_instance.get_seeds_async(dataset_name="support_policy")
+    assert [seed.value for seed in seeds] == ["someone else's"]
 
 
 async def test_retry_rejects_a_dataset_saved_by_another_source_async(
@@ -530,43 +673,9 @@ async def test_retry_rejects_a_dataset_saved_by_another_source_async(
         seeds=[SeedObjective(value="someone else's", dataset_name="support_policy")], added_by="test"
     )
     with pytest.raises(PromptGenerationConflictError, match="already exists"):
-        await service.retry_async(created.id)
-
-
-async def test_batch_checks_dataset_names_against_one_snapshot_async(
-    service: PromptGenerationService, target: PromptTarget, sqlite_instance: SQLiteMemory
-) -> None:
-    config = make_assert_config().model_dump(mode="json")
-    request = PromptGenerationBatchCreateRequest(
-        generator="assert",
-        label="Suite",
-        items=[{"dataset_name": f"suite_{index}", "request": config} for index in range(3)],
-        targets={"generation": TARGET_NAME},
-    )
-    with _respond_with(target):
-        with patch.object(
-            sqlite_instance, "get_seed_dataset_names_async", wraps=sqlite_instance.get_seed_dataset_names_async
-        ) as names:
-            await service.create_batch_async(request=request)
-        assert names.await_count == 1
-        await _settle_async(service)
-
-
-async def test_store_replaces_records_atomically_and_caches_reads_async(tmp_path: Path) -> None:
-    store = _local_store(tmp_path)
-    record = _record(status=PromptGenerationStatus.QUEUED, dataset_name="atomic")
-    await store.save_async(record)
-    with (
-        patch("pyrit.backend.services.prompt_generation_store.os.replace", side_effect=OSError("disk full")),
-        pytest.raises(OSError, match="disk full"),
-    ):
-        await store.save_async(record.model_copy(update={"dataset_name": "changed"}))
-
-    reopened = _local_store(tmp_path)
-    assert [item.dataset_name for item in await reopened.list_async()] == ["atomic"]
-    with patch.object(DiskStorageIO, "read_file_async", side_effect=AssertionError("cached reads only")):
-        assert (await reopened.get_async(record.id)) is not None
-        assert len(await reopened.list_async()) == 1
+        await service.retry_async(str(created.id))
+    assert (await _read_async(sqlite_instance, created)).status == PromptGenerationStatus.FAILED
+    assert not service.has_active_work()
 
 
 async def test_pause_for_review_needs_a_reviewable_stage_async(service: PromptGenerationService) -> None:
@@ -586,7 +695,7 @@ async def test_pause_for_review_needs_a_reviewable_stage_async(service: PromptGe
 
 
 async def test_batch_members_keep_request_order_after_a_restart_async(
-    service: PromptGenerationService, target: PromptTarget, tmp_path: Path
+    service: PromptGenerationService, target: PromptTarget, sqlite_instance: SQLiteMemory
 ) -> None:
     config = make_assert_config().model_dump(mode="json")
     names = ["suite_zeta", "suite_alpha", "suite_mid"]
@@ -601,60 +710,6 @@ async def test_batch_members_keep_request_order_after_a_restart_async(
         )
         await _settle_async(service)
     assert [record.dataset_name for record in created] == names
-    reopened = sorted(await _local_store(tmp_path).list_async(), key=lambda record: record.created_at)
-    assert [record.dataset_name for record in reopened] == names
-
-
-async def test_cancelled_save_finishes_its_write_before_the_next_save_async(tmp_path: Path) -> None:
-    store = _local_store(tmp_path)
-    await store.list_async()
-    record = _record(status=PromptGenerationStatus.RUNNING)
-    started = threading.Event()
-    release = threading.Event()
-    replace = prompt_generation_store._replace_file
-
-    def held_replace(path: Path, *, data: bytes) -> None:
-        started.set()
-        release.wait(timeout=10)
-        replace(path, data=data)
-
-    with patch.object(prompt_generation_store, "_replace_file", side_effect=held_replace):
-        save = asyncio.create_task(store.save_async(record))
-        await asyncio.to_thread(started.wait, 10)
-        save.cancel()
-        await asyncio.sleep(0)
-        assert not save.done()
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await save
-    assert await store.get_async(record.id) == record
-
-    await store.save_async(record.model_copy(update={"status": PromptGenerationStatus.CANCELLED}))
-    stored = await _local_store(tmp_path).get_async(record.id)
-    assert stored is not None and stored.status == PromptGenerationStatus.CANCELLED
-    assert not list((tmp_path / PromptGenerationStore.DIRECTORY_NAME).glob("*.tmp"))
-
-
-async def test_saves_during_the_first_load_are_kept_async(tmp_path: Path) -> None:
-    store = _local_store(tmp_path)
-    reading = asyncio.Event()
-    release = asyncio.Event()
-    read_all = store._read_all_async
-
-    async def held_read_all_async() -> list[PromptGenerationRecord]:
-        records = await read_all()
-        reading.set()
-        await release.wait()
-        return records
-
-    record = _record(status=PromptGenerationStatus.QUEUED)
-    with patch.object(store, "_read_all_async", side_effect=held_read_all_async) as read:
-        first_read = asyncio.create_task(store.list_async())
-        await wait_for_event_async(event=reading, tasks=[first_read])
-        second_read = asyncio.create_task(store.list_async())
-        save = asyncio.create_task(store.save_async(record))
-        await asyncio.sleep(0)
-        release.set()
-        await asyncio.gather(first_read, second_read, save)
-    read.assert_called_once()
-    assert await store.get_async(record.id) == record
+    restarted = _new_service(sqlite_instance, target)
+    assert [record.dataset_name for record in await restarted.list_async()] == list(reversed(names))
+    await restarted.shutdown_async()

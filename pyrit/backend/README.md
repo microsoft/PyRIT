@@ -693,22 +693,32 @@ registers `assert` (`AssertGenerator`, with a reviewable dimensions stage) and
 
 Generators own model calls, stages, validation, and resumable checkpoints; dataset
 providers package results. `PromptGenerationService` owns admission, one running
-generation at a time by default, persistence of every checkpoint, review pauses,
-cancellation, and dataset-name reservation. Each record is a JSON document at
-`<memory results_path>/prompt_generations/<id>.json`, next to media output.
+generation at a time per backend by default, persistence of every checkpoint, review
+pauses, cancellation, and retry. Records are stored in memory
+(`PromptGenerationEntries`), so backends that share a database list the same
+generations. `pause_for_review` is rejected for generators without a reviewable stage.
 
-A single backend instance owns generation records. It reads them once into an
-in-process cache and every write updates both; local files are replaced atomically.
-Several backends sharing one results storage, such as one blob container, aren't
-supported for generations: record writes, cancellation, and dataset-name reservations
-aren't coordinated across processes, so two backends could accept the same dataset
-name or cancel each other's work. `pause_for_review` is rejected for generators
-without a reviewable stage. On first use after a
-restart, records that were active become `interrupted`, and retry resumes from the
-last stored checkpoint. Shutdown interrupts running generations but lets a dataset
-save finish. A dataset is saved once, under a name that didn't exist when the
-generation started; retrying a generation whose dataset was already saved completes
-without saving it again.
+Dataset names are create-only, under one rule shared with dataset uploads: a name is
+taken while stored seeds use it, an upload is staging it, or a generation holds it. A
+generation holds its name until it completes or is cancelled. Creating, retrying, and
+saving check the name under the dataset lifecycle lock. Saving creates the dataset and
+completes the record in one transaction, so a generation never has a saved dataset with
+an unfinished record. If the name was taken while generating, the save fails without
+adding seeds to the other dataset.
+
+Each record change is a compare-and-set on the statuses it expects. A run claims its
+generation with a new execution ID, and its checkpoint, review, save, and failure
+writes require that ID. A cancel or retry from another backend therefore stops the
+previous owner at its next checkpoint instead of being overwritten; a model call already
+in flight still finishes. Each backend runs only the generations queued or resumed
+through it, and the concurrency limit applies per backend.
+
+Shutdown interrupts running generations but lets a dataset save finish. On first use
+after a restart with SQLite memory, which one backend owns, active records without a
+task here become `interrupted`, and retry resumes from the last stored checkpoint.
+Shared memory, such as Azure SQL, is left unchanged because another backend may own
+those runs: a generation whose backend stopped stays active until it is cancelled, and
+can then be retried.
 
 ### Manual Messages
 
