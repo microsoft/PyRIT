@@ -38,8 +38,9 @@ class JsonScenarioSuiteResultPrinter(ScenarioSuiteResultPrinterBase):
         rows = await self._build_entries_async(execution=execution, results=results)
         return json.dumps(self._build_payload(execution=execution, rows=rows), indent=2, ensure_ascii=True) + "\n"
 
-    @staticmethod
-    def _build_payload(*, execution: ScenarioSuiteExecutionSummary, rows: list[SuiteReportEntry]) -> dict[str, Any]:
+    def _build_payload(
+        self, *, execution: ScenarioSuiteExecutionSummary, rows: list[SuiteReportEntry]
+    ) -> dict[str, Any]:
         """
         Build the structured report without serializing child conversations or internal error types.
 
@@ -49,6 +50,7 @@ class JsonScenarioSuiteResultPrinter(ScenarioSuiteResultPrinterBase):
         return {
             "view": "suite_overview",
             "suite": execution.model_dump(mode="json", exclude={"entries"}),
+            "target": self._get_target_info(rows)._asdict(),
             "entries": [
                 {
                     **row.entry.model_dump(mode="json", exclude={"run", "error", "error_type"}),

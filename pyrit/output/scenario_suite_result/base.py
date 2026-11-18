@@ -16,7 +16,7 @@ from pyrit.models import (
     ScenarioSuiteExecutionMetadata,
     ScenarioSuiteExecutionSummary,
 )
-from pyrit.output._derivation import SuiteEntryStatistics, suite_entry_statistics
+from pyrit.output._derivation import SuiteEntryStatistics, TargetInfo, resolve_target_info, suite_entry_statistics
 from pyrit.output.base import PrinterBase
 
 
@@ -117,6 +117,21 @@ class ScenarioSuiteResultPrinterBase(PrinterBase):
                 )
             )
         return report
+
+    @staticmethod
+    def _get_target_info(rows: Sequence[SuiteReportEntry]) -> TargetInfo:
+        """
+        Resolve the shared suite target from the first available child target identifier.
+
+        Args:
+            rows (Sequence[SuiteReportEntry]): Validated entries in suite order.
+
+        Returns:
+            TargetInfo: The target's display fields, or None fields when unavailable.
+        """
+        return resolve_target_info(
+            next((row.objective_target_identifier for row in rows if row.objective_target_identifier is not None), None)
+        )
 
     @staticmethod
     def _validate_result(

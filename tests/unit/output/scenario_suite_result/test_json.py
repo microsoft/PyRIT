@@ -4,9 +4,14 @@
 import json
 
 import pytest
-from unit.mocks import make_suite_execution, make_suite_execution_entry, make_suite_scenario_result
+from unit.mocks import (
+    make_scenario_identifier,
+    make_suite_execution,
+    make_suite_execution_entry,
+    make_suite_scenario_result,
+)
 
-from pyrit.models import AttackOutcome, ScenarioRunState, ScenarioSuiteSubmissionState
+from pyrit.models import AttackOutcome, ComponentIdentifier, ScenarioRunState, ScenarioSuiteSubmissionState
 from pyrit.output.scenario_suite_result.json import JsonScenarioSuiteResultMemoryPrinter, JsonScenarioSuiteResultPrinter
 
 
@@ -34,6 +39,7 @@ async def test_render_async_reports_suite_and_entry_statistics(printer):
     assert payload["suite"]["suite_name"] == "test_suite"
     assert payload["suite"]["status"] == "IN_PROGRESS"
     assert "entries" not in payload["suite"]
+    assert payload["target"] == {"type": "MockTarget", "model": None, "endpoint": None}
     [row] = payload["entries"]
     assert row["entry_id"] == str(entry.entry_id)
     assert row["state"] == "COMPLETED"
@@ -51,6 +57,36 @@ async def test_render_async_reports_suite_and_entry_statistics(printer):
     }
 
 
+@pytest.mark.parametrize("with_target", [True, False])
+async def test_render_async_reports_target_from_available_result(printer, with_target):
+    first, second = make_suite_execution_entry(), make_suite_execution_entry(position=2)
+    execution = make_suite_execution(entries=[first, second])
+    result = make_suite_scenario_result(execution=execution, entry=second)
+    result.scenario_identifier = make_scenario_identifier(
+        objective_target=(
+            ComponentIdentifier(
+                class_name="OpenAIChatTarget",
+                class_module="pyrit.prompt_target",
+                params={
+                    "model_name": "deployment",
+                    "underlying_model_name": "test-model",
+                    "endpoint": "https://example.com/",
+                },
+            )
+            if with_target
+            else None
+        )
+    )
+
+    payload = json.loads(await printer.render_async(execution, results={str(result.id): result}))
+
+    assert payload["target"] == {
+        "type": "OpenAIChatTarget" if with_target else None,
+        "model": "test-model" if with_target else None,
+        "endpoint": "https://example.com/" if with_target else None,
+    }
+
+
 async def test_render_async_reports_unavailable_entries_without_internal_error_types(printer):
     entry = make_suite_execution_entry(state=ScenarioRunState.FAILED)
     assert entry.run is not None
@@ -63,6 +99,7 @@ async def test_render_async_reports_unavailable_entries_without_internal_error_t
     assert row["error"] == "Run failed"
     assert row["results_available"] is False
     assert row["statistics"] is None
+    assert payload["target"] == {"type": None, "model": None, "endpoint": None}
     assert "InternalException" not in json.dumps(payload)
 
 

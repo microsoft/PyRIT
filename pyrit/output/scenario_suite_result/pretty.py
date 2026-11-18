@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from colorama import Fore, Style
 
 from pyrit.models import ScenarioResult, ScenarioSuiteExecutionSummary
-from pyrit.output._derivation import resolve_target_info
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scenario_suite_result.base import ScenarioSuiteResultPrinterBase, SuiteReportEntry
 from pyrit.output.sink import Sink
@@ -86,9 +85,7 @@ class PrettyScenarioSuiteResultPrinter(_PrettyPrinterMixin, ScenarioSuiteResultP
         )
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
-        target = resolve_target_info(
-            next((row.objective_target_identifier for row in rows if row.objective_target_identifier is not None), None)
-        )
+        target = self._get_target_info(rows)
         lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target.type or 'Unknown'}", Fore.CYAN))
         lines.append(self._format_colored(f"{self._indent * 2}• Target Model: {target.model or 'Unknown'}", Fore.CYAN))
         lines.append(
@@ -122,39 +119,7 @@ class PrettyScenarioSuiteResultPrinter(_PrettyPrinterMixin, ScenarioSuiteResultP
         Returns:
             str: The rendered header.
         """
-        title = f"📦 SCENARIO SUITE RESULTS: {execution.suite_name}"
-        return "".join(
-            [
-                "\n",
-                self._format_colored("=" * self._width, Fore.CYAN),
-                self._format_colored(title.center(self._width), Style.BRIGHT, Fore.CYAN),
-                self._format_colored("=" * self._width, Fore.CYAN),
-            ]
-        )
-
-    def _render_section_header(self, title: str) -> str:
-        """
-        Render a section header with visual separation.
-
-        Returns:
-            str: The rendered section header.
-        """
-        return "".join(
-            [
-                "\n",
-                self._format_colored(f"▼ {title}", Style.BRIGHT, Fore.CYAN),
-                self._format_colored("─" * self._width, Fore.CYAN),
-            ]
-        )
-
-    def _render_footer(self) -> str:
-        """
-        Render the closing separator.
-
-        Returns:
-            str: The rendered footer.
-        """
-        return "".join(["\n", self._format_colored("=" * self._width, Fore.CYAN), "\n"])
+        return self._render_boxed_header(f"📦 SCENARIO SUITE RESULTS: {execution.suite_name}")
 
     def _render_entry(self, row: SuiteReportEntry) -> str:
         """

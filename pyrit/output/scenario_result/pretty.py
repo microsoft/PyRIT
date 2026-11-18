@@ -66,22 +66,6 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         self._scorer_printer = scorer_printer
         self._sort_groups_by_success_rate = sort_groups_by_success_rate
 
-    def _render_section_header(self, title: str) -> str:
-        """
-        Render a section header with visual separation.
-
-        Args:
-            title (str): The section title to display.
-
-        Returns:
-            str: The rendered section header.
-        """
-        lines: list[str] = []
-        lines.append("\n")
-        lines.append(self._format_colored(f"▼ {title}", Style.BRIGHT, Fore.CYAN))
-        lines.append(self._format_colored("─" * self._width, Fore.CYAN))
-        return "".join(lines)
-
     def _render_header(self, result: ScenarioResult) -> str:
         """
         Render the header with scenario name.
@@ -92,26 +76,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         Returns:
             str: The rendered header.
         """
-        lines: list[str] = []
-        lines.append("\n")
-        lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        header_text = f"📊 SCENARIO RESULTS: {result.scenario_name}"
-        lines.append(self._format_colored(header_text.center(self._width), Style.BRIGHT, Fore.CYAN))
-        lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        return "".join(lines)
-
-    def _render_footer(self) -> str:
-        """
-        Render a footer separator.
-
-        Returns:
-            str: The rendered footer.
-        """
-        lines: list[str] = []
-        lines.append("\n")
-        lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        lines.append("\n")
-        return "".join(lines)
+        return self._render_boxed_header(f"📊 SCENARIO RESULTS: {result.scenario_name}")
 
     async def render_async(
         self,
