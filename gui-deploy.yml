@@ -47,18 +47,14 @@ stages:
           - checkout: none
           - bash: |
               set -euo pipefail
-              deploy_to_test='${{ parameters.deployToTest }}'
-              deploy_to_prod='${{ parameters.deployToProd }}'
               # Azure renders boolean template parameters as True/False.
-              deploy_to_test=${deploy_to_test,,}
-              deploy_to_prod=${deploy_to_prod,,}
-              if [[ "$deploy_to_prod" == true \
+              if [[ '${{ parameters.deployToProd }}' == [Tt]rue \
                 && "$BUILD_SOURCEBRANCH" != refs/heads/main \
                 && "$BUILD_SOURCEBRANCH" != refs/heads/releases/v* ]]; then
                 echo "##vso[task.logissue type=error]Production deployment requires refs/heads/main or a refs/heads/releases/v* branch"
                 exit 1
               fi
-              if [[ "$deploy_to_test" != true && "$deploy_to_prod" != true ]]; then
+              if [[ '${{ parameters.deployToTest }}' != [Tt]rue && '${{ parameters.deployToProd }}' != [Tt]rue ]]; then
                 echo "##vso[task.logissue type=error]Skipping the test deployment requires a production deployment"
                 exit 1
               fi

@@ -68,6 +68,20 @@ def test_main_check_upgradable_never_upgrades(*, mocks: dict[str, MagicMock], un
     mocks["memory"].dispose_engine_async.assert_awaited_once()
 
 
+def test_configure_progress_logging_shows_only_alembic_revision_progress() -> None:
+    import logging
+
+    alembic_logger = logging.getLogger("alembic.runtime.migration")
+    original_level = alembic_logger.level
+    try:
+        with patch.object(logging, "basicConfig") as basic_config:
+            pyrit_migrate._configure_progress_logging()
+        assert basic_config.call_args.kwargs["level"] == logging.WARNING
+        assert alembic_logger.level == logging.INFO
+    finally:
+        alembic_logger.setLevel(original_level)
+
+
 def test_main_rejects_combined_check_modes(mocks: dict[str, MagicMock]) -> None:
     with pytest.raises(SystemExit):
         pyrit_migrate.main(args=[*ARGS, "--check-only", "--check-upgradable"])
