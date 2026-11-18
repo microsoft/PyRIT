@@ -262,12 +262,6 @@ class TestPyRITShell:
         captured = capsys.readouterr()
         assert "Usage: scenario-history" in captured.out
 
-    def test_do_print_scenario_no_args(self, shell, capsys):
-        s, _ = shell
-        s.do_print_scenario("")
-        captured = capsys.readouterr()
-        assert "Usage" in captured.out
-
     def test_do_exit(self, shell):
         s, client = shell
         result = s.do_exit("")
@@ -965,8 +959,8 @@ class TestListErrors:
         assert "Error" in capsys.readouterr().out
 
 
-class TestPrintScenarioAndHelp:
-    def test_print_scenario_success(self, shell):
+class TestScenarioResultsAndHelp:
+    def test_scenario_results_empty_completed_run(self, shell):
         from pyrit.models import ScenarioRunState
 
         s, client = shell
@@ -979,13 +973,13 @@ class TestPrintScenarioAndHelp:
         )
         client.get_scenario_run_results_async = AsyncMock(return_value=empty_result)
         with patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print:
-            s.do_print_scenario("rid-1")
+            s.do_scenario_results("rid-1")
         mock_print.assert_awaited_once()
 
-    def test_print_scenario_error(self, shell, capsys):
+    def test_scenario_results_error(self, shell, capsys):
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("oops"))
-        s.do_print_scenario("rid-1")
+        s.do_scenario_results("rid-1")
         assert "Error (RuntimeError): oops" in capsys.readouterr().out
 
     def test_scenario_history_read_timeout_is_not_blank(self, shell, capsys):
@@ -1187,7 +1181,7 @@ def _attacks_scenario_result():
 
 
 class TestDoScenarioResults:
-    """Tests for the ``scenario-results`` command and its ``print-scenario`` alias."""
+    """Tests for the ``scenario-results`` command."""
 
     def test_no_args_prints_usage(self, shell, capsys):
         s, _ = shell
@@ -1281,17 +1275,6 @@ class TestDoScenarioResults:
         s, _ = shell
         s.do_scenario_results("rid-1 --format html")
         assert "Error" in capsys.readouterr().out
-
-    def test_print_scenario_alias_warns_and_delegates(self, shell, capsys):
-        s, client = shell
-        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
-        with (
-            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print,
-            pytest.warns(DeprecationWarning, match="print-scenario is deprecated.*Use scenario-results"),
-        ):
-            s.do_print_scenario("rid-1")
-        assert "deprecated" in capsys.readouterr().out.lower()
-        mock_print.assert_awaited_once()
 
     def test_stop_server_close_client_swallows_errors(self, shell):
         s, client = shell
