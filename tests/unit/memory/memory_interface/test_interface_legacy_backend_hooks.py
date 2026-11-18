@@ -23,7 +23,9 @@ def _make_backend(*, overrides: dict[str, Any] | None = None) -> SQLiteMemory:
         SQLiteMemory: An instance of a subclass that applies ``overrides`` as class attributes.
     """
     backend_class = type("_LegacyBackend", (SQLiteMemory,), overrides or {})
-    return backend_class.__new__(backend_class)
+    backend = backend_class.__new__(backend_class)
+    assert isinstance(backend, SQLiteMemory)
+    return backend
 
 
 _LEGACY_QUERY_HOOKS = [
