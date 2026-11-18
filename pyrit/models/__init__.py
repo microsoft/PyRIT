@@ -80,7 +80,7 @@ if TYPE_CHECKING:
         validate_own_decomposition,
     )
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
-    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
+    from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity, is_finding_path_complete
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
         REGISTRY_NAME_PATTERN,
@@ -151,6 +151,7 @@ if TYPE_CHECKING:
         display_choices,
     )
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
+    from pyrit.models.results.assert_policy_metrics import AssertBinaryRate, AssertPolicyMetrics
     from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultRole, AttackResultT
     from pyrit.models.results.attack_result_metadata import AttackResultMetadata
     from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
@@ -476,6 +477,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AttackIdentifier": "pyrit.models.identifiers",
     "AttackTechniqueIdentifier": "pyrit.models.identifiers",
     "AttackResult": "pyrit.models.results.attack_result",
+    "AssertPolicyMetrics": "pyrit.models.results.assert_policy_metrics",
+    "AssertBinaryRate": "pyrit.models.results.assert_policy_metrics",
     "AttackResultMetadata": "pyrit.models.results.attack_result_metadata",
     "AttackResultRole": "pyrit.models.results.attack_result",
     "AttackResultT": "pyrit.models.results.attack_result",
@@ -506,6 +509,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
     "FindingSeverity": "pyrit.models.finding",
+    "is_finding_path_complete": "pyrit.models.finding",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentEntryScorable": "pyrit.models.score",
     "ContentScorable": "pyrit.models.score",

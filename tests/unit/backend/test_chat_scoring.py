@@ -1986,9 +1986,9 @@ async def test_write_only_send_scores_inherited_side_effects_without_a_response_
             pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
             scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id for piece in pieces])
             assert len(scores) == 2
-            # A coarse clock can give both evaluations one timestamp; either is then the latest.
-            latest = max(score.timestamp for score in scores)
-            assert published.automated_score.id in {score.id for score in scores if score.timestamp == latest}
+            # The two evaluations run concurrently, so score creation order need not follow delivery order;
+            # the ordering tests below pin which delivery's verdict wins.
+            assert published.automated_score.id in {score.id for score in scores}
         else:
             await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
 

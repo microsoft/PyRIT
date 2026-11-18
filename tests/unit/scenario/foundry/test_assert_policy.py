@@ -14,7 +14,7 @@ import pytest
 from unit.assert_mocks import make_assert_config, make_assert_result, make_assert_taxonomy
 from unit.mocks import MockPromptTarget
 
-from pyrit.analytics import compute_scenario_statistics
+from pyrit.analytics import compute_assert_policy_metrics_async, compute_scenario_statistics
 from pyrit.backend.services import ScenarioService
 from pyrit.backend.services.dataset_example_fingerprint import dataset_example_fingerprint
 from pyrit.backend.services.dataset_example_selection import (
@@ -157,6 +157,7 @@ class _Harness:
         self.target_reply = _SAFE_REPLY
         self.target_error: PromptResponseError = "none"
         self.policy_violation = False
+        self.policy_node_judgments: dict[str, bool] | None = None
         self.overrefusal = False
 
     def scenario(self, **kwargs: Any) -> AssertPolicy:
@@ -187,8 +188,13 @@ class _Harness:
             "metadata": "Judge evidence.",
         }
         if "node_judgments" in system:
-            node = {"node_name": "public_policy", "confidence": "high", "reasoning": "Relevant."}
-            payload["node_judgments"] = [{**node, "violated": verdict and not overrefusal}]
+            judgments = self.policy_node_judgments
+            if judgments is None:
+                judgments = {"public_policy": verdict and not overrefusal}
+            payload["node_judgments"] = [
+                {"node_name": name, "confidence": "high", "reasoning": "Relevant.", "violated": violated}
+                for name, violated in judgments.items()
+            ]
         return _reply(normalized_conversation[-1], value=json.dumps(payload))
 
     @contextmanager
@@ -419,6 +425,28 @@ async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(ha
     category = AssertCategoryJudgment.from_metadata(metadata=policy.score_metadata)
     assert category is not None and category.correction_reason is None
     assert {_dimension(score) for score in scores.values()} == set(scores)
+
+
+async def test_assert_metrics_read_judgments_from_a_saved_run_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.policy_violation = True
+    harness.policy_node_judgments = {"public_policy": False, "private_disclosure": True}
+    result = await harness.run_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
+
+    memory = CentralMemory.get_memory_instance()
+    (stored,) = await memory.get_scenario_results_async(scenario_result_ids=[str(result.id)])
+    metrics = await compute_assert_policy_metrics_async(stored, memory=memory)
+    (technique,) = metrics.techniques.values()
+
+    impermissible = technique.policy_violation_on_not_permissible
+    permissible = technique.policy_violation_on_permissible
+    overrefusal = technique.dimensions["overrefusal"]
+    assert technique.unresolved_policy == 0
+    assert impermissible is not None
+    assert permissible is not None
+    assert (impermissible.flagged_count, impermissible.applicable_count) == (1, 1)
+    assert (permissible.flagged_count, permissible.applicable_count) == (0, 1)
+    assert (overrefusal.flagged_count, overrefusal.applicable_count) == (0, 1)
 
 
 async def test_baseline_skips_groups_without_a_user_prompt_async(harness: _Harness) -> None:

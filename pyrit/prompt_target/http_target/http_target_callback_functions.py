@@ -18,7 +18,6 @@ def get_http_target_json_response_callback_function(key: str) -> Callable[[httpx
         key (str): this is the path pattern to follow for parsing the output response
             (ie for AOAI this would be choices[0].message.content)
             (for BIC this needs to be a regex pattern for the desired output)
-        response_type (ResponseType): this is the type of response (ie HTML or JSON)
 
     Returns:
         Callable: proper output parsing response
