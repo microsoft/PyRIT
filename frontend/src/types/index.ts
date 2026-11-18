@@ -1506,16 +1506,31 @@ export interface ChangeMainConversationResponse {
  * Wire shape of `DatasetInfo` from `GET /api/datasets`.
  * Null counts mean the total is unknown, not zero.
  */
+export interface DatasetProviderInfo {
+  description: string | null
+  source_url: string | null
+  license_url: string | null
+  access_url: string | null
+  required_environment_variables: string[]
+  modalities: string[]
+  harm_categories: string[]
+  size: string[]
+  load_time: string[]
+  unavailable_reason: string | null
+}
+
 export interface DatasetInfo {
   name: string
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  provider?: DatasetProviderInfo | null
   origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
   objectives: number | null
   modalities: string[]
+  modality_aliases?: Readonly<Record<string, string>>
   harm_categories: string[]
   has_unlabeled_harm_categories: boolean
 }
@@ -2650,6 +2665,10 @@ export interface FindingCreate {
   severity_other?: string | null
   harm_type?: string | null
   harm_type_other?: string | null
+  /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
+  parent_finding_id?: string | null
+  /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
+  demonstrated?: boolean
 }
 
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
@@ -2663,10 +2682,37 @@ export interface FindingOptionsResponse {
   harm_types: string[]
 }
 
+/** One ordered chain of a finding's direct sub-findings that together demonstrate it. */
+export interface FindingPath {
+  id: string
+  name?: string | null
+  description?: string
+  /** Direct sub-finding IDs, in order. */
+  steps: string[]
+}
+
+/** A saved path, with whether every step is a demonstrated sub-finding. Completeness is derived, never stored. */
+export interface FindingPathItem extends FindingPath {
+  complete: boolean
+}
+
+/** A path to save. Omit `id` to add a new path. */
+export interface FindingPathRequest extends Omit<FindingPath, 'id'> {
+  id?: string
+}
+
+/** Every path of a finding, in order, replacing the saved ones. */
+export interface FindingPathsUpdateRequest {
+  paths: FindingPathRequest[]
+}
+
 export interface Finding extends FindingCreate {
   id: string
   operation_id: string
   created_at: string
+  parent_finding_id: string | null
+  demonstrated: boolean
+  paths: FindingPath[]
 }
 
 export interface FindingListResponse {
@@ -2677,6 +2723,22 @@ export interface FindingListResponse {
 
 export interface FindingListItem extends Finding {
   evidence_count: number
+  /** The number of direct sub-findings. */
+  child_count: number
+  paths: FindingPathItem[]
+}
+
+/** Optional filters for listing findings. Without one, findings at every depth are listed. */
+export interface FindingListParams {
+  limit: number
+  offset: number
+  title?: string
+  /** Full LIKE pattern instead of literal title search (% and _, / escaping). */
+  title_pattern?: string
+  /** Only the direct sub-findings of this finding, oldest first. */
+  parent_finding_id?: string
+  /** Only findings without a parent. */
+  top_level?: boolean
 }
 
 /** A finding that links an attack as evidence. */
@@ -2732,10 +2794,74 @@ export interface FindingEvidenceListResponse {
 
 export type FindingExportFormat = 'docx' | 'markdown'
 
-/** Selected findings of one Operation to download as a single document. */
+/** Selected findings of one Operation to download as a single document. Each includes all of its sub-findings. */
 export interface FindingExportRequest {
   finding_ids: string[]
   format: FindingExportFormat
   /** The dashboard origin that evidence links open. */
   dashboard_origin: string
+}
+
+/** A flagged share of applicable conversations with a 90% Wilson interval; `rate` is null when none apply. */
+export interface AssertBinaryRate {
+  rate: number | null
+  flagged_count: number
+  applicable_count: number
+  not_applicable_count: number
+  ci_lower: number | null
+  ci_upper: number | null
+  /** False below 5 applicable conversations, ASSERT's minimum support. */
+  sufficient_support: boolean
+}
+
+export interface AssertCategoryMetrics {
+  behavior_name: string
+  /** Identifies the judged policy (taxonomy, context, instructions), so same-named policies stay separate. */
+  policy_id: string
+  name: string
+  permissible: boolean
+  /** Violated share of conversations that judged this category relevant. */
+  node_violation: AssertBinaryRate
+}
+
+/** Grade counts in declared scale order and the median grade for a graded judge dimension. */
+export interface AssertGradeDistribution {
+  scale: Array<number | string>
+  counts: Record<string, number>
+  median: number | string | null
+}
+
+export interface AssertNotJudgedCounts {
+  target_input_refused: number
+  target_error: number
+  judge_no_verdict: number
+  attack_error: number
+  not_scored: number
+}
+
+export interface AssertTechniqueMetrics {
+  technique: string
+  total: number
+  scored_total: number
+  not_judged: AssertNotJudgedCounts
+  unresolved_policy: number
+  rows_without_node_judgments: number
+  policy_violation_on_not_permissible: AssertBinaryRate | null
+  policy_violation_on_permissible: AssertBinaryRate | null
+  /** One violation rate per judge dimension; not-applicable answers stay out of the denominator. */
+  dimensions: Record<string, AssertBinaryRate>
+  /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
+  dimension_no_verdict: Record<string, number>
+  dimension_grades: Record<string, AssertGradeDistribution[]>
+  categories: AssertCategoryMetrics[]
+}
+
+/** ASSERT's headline metrics for one completed foundry.assert_policy run. */
+export interface AssertPolicyMetrics {
+  scenario_result_id: string
+  judgment_mode: string | null
+  split_unavailable_reason: string | null
+  total: number
+  scored_total: number
+  techniques: Record<string, AssertTechniqueMetrics>
 }

@@ -5,13 +5,18 @@
 Tests for backend dataset service.
 """
 
+import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.backend.services import DatasetService, get_dataset_service
-from pyrit.memory import MemoryInterface
-from pyrit.models import SeedDatasetSummary
+from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetMetadata, SeedDatasetProvider
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote import _HarmBenchDataset
+from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.models import DatasetProviderInfo, Modality, SeedDatasetSummary
 
 
 @pytest.fixture
@@ -35,11 +40,126 @@ def dataset_service(mock_memory):
 class TestListDatasets:
     """Tests for DatasetService.list_datasets_async."""
 
+    async def test_harmbench_declarations_survive_loading_standardized_categories_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = DatasetService()
+        with patch.object(SeedDatasetProvider, "get_all_providers", return_value={"harmbench": _HarmBenchDataset}):
+            before = (await service.list_datasets_async()).items[0]
+            loader = _HarmBenchDataset()
+            with patch.object(
+                loader,
+                "_fetch_from_url",
+                return_value=[
+                    {"Behavior": "Offline category fixture.", "SemanticCategory": "harassment"},
+                    {"Behavior": "Another offline fixture.", "SemanticCategory": "cybercrime"},
+                ],
+            ):
+                dataset = await loader.fetch_dataset_async()
+            await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="test")
+            after = (await service.list_datasets_async()).items[0]
+
+        assert not before.loaded and after.loaded
+        assert before.provider is not None
+        assert {"harassment", "cybercrime"} <= set(before.provider.harm_categories)
+        assert before.provider == after.provider
+        assert set(after.harm_categories) == {"HARASSMENT", "COORDINATION_HARM", "MALWARE"}
+        assert after.logical_examples == 2
+
+    @pytest.mark.parametrize("loaded_only", [False, True])
+    async def test_malformed_provider_metadata_preserves_stored_browsing_async(
+        self, dataset_service: DatasetService, mock_memory: MagicMock, tmp_path: Path, loaded_only: bool
+    ) -> None:
+        path = tmp_path / "fixture.yaml"
+        await asyncio.to_thread(path.write_text, "dataset_name: fixture\nmodalities: [null]\n", encoding="utf-8")
+
+        class FixtureProvider(_LocalDatasetLoader):
+            should_register = False
+
+            def __init__(self) -> None:
+                super().__init__(file_path=path)
+
+        mock_memory.get_seed_dataset_summaries_async.return_value = [
+            SeedDatasetSummary(
+                dataset_name="fixture",
+                logical_examples=2,
+                seed_pieces=3,
+                objectives=1,
+                modalities=("text",),
+                harm_categories=("violence",),
+                has_unlabeled_harm_categories=False,
+                origins=("local",),
+            )
+        ]
+        with patch.object(
+            SeedDatasetProvider,
+            "get_all_providers",
+            return_value={"fixture": FixtureProvider, "harmbench": _HarmBenchDataset},
+        ):
+            result = await dataset_service.list_datasets_async(loaded_only=loaded_only)
+
+        assert {item.name for item in result.items} == ({"fixture"} if loaded_only else {"fixture", "harmbench"})
+        stored = next(item for item in result.items if item.name == "fixture")
+        assert stored.loaded and stored.provider_available
+        assert stored.logical_examples == 2
+        assert stored.seed_pieces == 3
+        assert stored.objectives == 1
+        assert stored.modalities == ["text"]
+        assert stored.harm_categories == ["violence"]
+        assert stored.origins == ["local"]
+        assert stored.provider is not None
+        assert stored.provider.modalities == []
+        assert stored.provider.unavailable_reason == "Provider metadata is unavailable."
+        assert result.model_dump(mode="json")["items"]
+
+    async def test_provider_estimates_are_separate_from_stored_counts(self, dataset_service, mock_memory):
+        descriptor = SeedDatasetDescriptor(
+            name="fixture",
+            description="Default dataset description",
+            metadata=SeedDatasetMetadata(size={"huge"}, modalities={"image"}, harm_categories={"violence"}),
+        )
+        with patch(
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
+            new_callable=AsyncMock,
+            return_value={"fixture": descriptor},
+        ):
+            unloaded = (await dataset_service.list_datasets_async()).items[0]
+            assert unloaded.logical_examples is None
+            assert unloaded.modalities == []
+            assert unloaded.provider.description == "Default dataset description"
+            assert unloaded.provider.size == ["huge"]
+            assert isinstance(unloaded.provider, DatasetProviderInfo)
+            assert unloaded.provider is descriptor
+            wire_provider = (await dataset_service.list_datasets_async()).model_dump(mode="json")["items"][0][
+                "provider"
+            ]
+            assert wire_provider["modalities"] == ["image"]
+            assert "name" not in wire_provider
+            assert "metadata" not in wire_provider
+            assert unloaded.modality_aliases == Modality.data_type_aliases()
+            mock_memory.get_seed_dataset_summaries_async.return_value = [
+                SeedDatasetSummary(
+                    dataset_name="fixture",
+                    logical_examples=2,
+                    seed_pieces=3,
+                    objectives=1,
+                    modalities=("text",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=True,
+                )
+            ]
+            loaded = (await dataset_service.list_datasets_async()).items[0]
+        assert loaded.logical_examples == 2
+        assert loaded.modalities == ["text"]
+        assert loaded.harm_categories == []
+        assert loaded.has_unlabeled_harm_categories
+        assert loaded.provider == unloaded.provider
+
     async def test_list_datasets(self, dataset_service):
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=["airt_hate", "harmbench"],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in ["airt_hate", "harmbench"]},
         ):
             result = await dataset_service.list_datasets_async()
 
@@ -72,9 +192,9 @@ class TestListDatasets:
             ]
         )
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=["harmbench", "provider_only"],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in ["harmbench", "provider_only"]},
         ):
             result = await dataset_service.list_datasets_async()
 
@@ -127,9 +247,9 @@ class TestListDatasets:
             ]
         )
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in []},
         ):
             result = await dataset_service.list_datasets_async()
 
@@ -170,9 +290,9 @@ class TestListDatasets:
             ]
         )
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=["harmbench"],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in ["harmbench"]},
         ):
             result = await dataset_service.list_datasets_async()
 
@@ -206,9 +326,9 @@ class TestListDatasets:
             ]
         )
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in []},
         ):
             result = await dataset_service.list_datasets_async()
 
@@ -222,9 +342,9 @@ class TestListDatasets:
     async def test_list_datasets_loaded_only_matches_the_empty_memory_contract(self, dataset_service):
         """#2746: an empty memory is a valid empty response, even with providers registered."""
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=["harmbench"],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in ["harmbench"]},
         ):
             combined = await dataset_service.list_datasets_async()
             loaded_only = await dataset_service.list_datasets_async(loaded_only=True)
@@ -258,9 +378,9 @@ class TestListDatasets:
             ]
         )
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=["harmbench", "provider_only"],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in ["harmbench", "provider_only"]},
         ):
             result = await dataset_service.list_datasets_async(loaded_only=True)
 
@@ -270,9 +390,9 @@ class TestListDatasets:
 
     async def test_list_datasets_empty(self, dataset_service):
         with patch(
-            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
+            "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value={name: SeedDatasetDescriptor(name=name) for name in []},
         ):
             result = await dataset_service.list_datasets_async()
 

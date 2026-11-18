@@ -59,4 +59,26 @@ describe("AttackNotFound", () => {
     expect(screen.getByText(/temporary network or server error/)).toBeInTheDocument();
     expect(screen.queryByText(/may have been/)).not.toBeInTheDocument();
   });
+
+  it("distinguishes an unavailable evidence conversation from a missing parent attack", () => {
+    const onViewAttack = jest.fn();
+    renderNotFound({
+      findingEvidenceId: "123e4567-e89b-12d3-a456-426614174000",
+      conversationId: "conv-unknown",
+      attackId: "attack-parent",
+      variant: "evidence-missing",
+      onViewAttack,
+    });
+    expect(screen.getByTestId("evidence-conversation-missing")).toBeInTheDocument();
+    expect(screen.getByText("Evidence unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/The requested evidence conversation/)).toBeInTheDocument();
+    expect(screen.getByText("conv-unknown")).toBeInTheDocument();
+    expect(screen.getByText("attack-parent")).toBeInTheDocument();
+    expect(screen.queryByText(/No attack matches the id/)).not.toBeInTheDocument();
+
+    const viewButton = screen.getByRole("button", { name: "View parent attack" });
+    expect(viewButton).toBeInTheDocument();
+    fireEvent.click(viewButton);
+    expect(onViewAttack).toHaveBeenCalledTimes(1);
+  });
 });
