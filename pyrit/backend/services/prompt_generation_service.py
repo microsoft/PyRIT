@@ -541,7 +541,7 @@ class PromptGenerationService:
             started_at=record.started_at or datetime.now(UTC),
         )
 
-        async def save_checkpoint_async(checkpoint: dict[str, Any], progress: PromptGenerationProgress) -> None:
+        async def save_checkpoint_async(checkpoint: dict[str, Any], *, progress: PromptGenerationProgress) -> None:
             await self._update_async(generation_id=generation_id, checkpoint=checkpoint, progress=progress)
 
         outcome = await adapter.run_async(

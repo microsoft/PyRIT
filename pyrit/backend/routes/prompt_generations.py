@@ -117,6 +117,7 @@ async def list_prompt_generations_async() -> PromptGenerationListResponse:
 )
 async def create_prompt_generation_async(
     request: PromptGenerationCreateRequest,
+    *,
     user: Annotated[str | None, Depends(current_user_name)],
 ) -> PromptGenerationDetail:
     """
@@ -137,6 +138,7 @@ async def create_prompt_generation_async(
 )
 async def create_prompt_generation_batch_async(
     request: PromptGenerationBatchCreateRequest,
+    *,
     user: Annotated[str | None, Depends(current_user_name)],
 ) -> PromptGenerationListResponse:
     """

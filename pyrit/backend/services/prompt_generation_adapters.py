@@ -36,14 +36,26 @@ from pyrit.models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
+    from typing import Protocol
 
     from pydantic import JsonValue
 
     from pyrit.models import SeedDataset, SeedRecord
     from pyrit.prompt_target import PromptTarget
 
-    CheckpointCallback = Callable[[dict[str, Any], PromptGenerationProgress], Awaitable[None]]
+    class CheckpointCallback(Protocol):
+        """Persist a generation checkpoint and its progress."""
+
+        async def __call__(self, checkpoint: dict[str, Any], *, progress: PromptGenerationProgress) -> None:
+            """
+            Persist the checkpoint.
+
+            Args:
+                checkpoint (dict[str, Any]): The generator's JSON checkpoint.
+                progress (PromptGenerationProgress): Progress derived from the checkpoint.
+            """
+            ...
 
 
 @dataclass(frozen=True)
@@ -236,7 +248,7 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
         if not (pause_for_review and self._is_ready_for_review(current)):
 
             async def save_async(progress: AssertGenerationCheckpoint) -> None:
-                await on_checkpoint(progress.model_dump(mode="json"), self._progress(progress))
+                await on_checkpoint(progress.model_dump(mode="json"), progress=self._progress(progress))
 
             current = await self._create_generator(targets).advance_async(
                 checkpoint=current,
@@ -464,7 +476,7 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
                 instructions=parsed.instructions, count=parsed.count, harm_categories=list(parsed.harm_categories)
             )
             checkpoint = result.model_dump(mode="json")
-            await on_checkpoint(dict(checkpoint), self.get_progress(request=request, checkpoint=checkpoint))
+            await on_checkpoint(dict(checkpoint), progress=self.get_progress(request=request, checkpoint=checkpoint))
         return GenerationRunOutcome(
             checkpoint=dict(checkpoint),
             progress=self.get_progress(request=request, checkpoint=checkpoint),

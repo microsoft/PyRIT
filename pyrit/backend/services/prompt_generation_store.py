@@ -69,7 +69,7 @@ class PromptGenerationStore:
         data = record.model_dump_json(indent=2).encode("utf-8")
         await self._storage.create_directory_if_not_exists_async(self._directory)
         if self.is_local:
-            write = asyncio.ensure_future(asyncio.to_thread(_replace_file, Path(path), data))
+            write = asyncio.ensure_future(asyncio.to_thread(_replace_file, Path(path), data=data))
             try:
                 await asyncio.shield(write)
             except asyncio.CancelledError:
@@ -143,7 +143,7 @@ class PromptGenerationStore:
         return f"{self._directory}/{record_id}.json"
 
 
-def _replace_file(path: Path, data: bytes) -> None:
+def _replace_file(path: Path, *, data: bytes) -> None:
     temporary = path.with_name(f"{path.name}.tmp")
     with temporary.open("wb") as file:
         file.write(data)

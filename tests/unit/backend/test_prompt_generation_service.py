@@ -613,10 +613,10 @@ async def test_cancelled_save_finishes_its_write_before_the_next_save_async(tmp_
     release = threading.Event()
     replace = prompt_generation_store._replace_file
 
-    def held_replace(path: Path, data: bytes) -> None:
+    def held_replace(path: Path, *, data: bytes) -> None:
         started.set()
         release.wait(timeout=10)
-        replace(path, data)
+        replace(path, data=data)
 
     with patch.object(prompt_generation_store, "_replace_file", side_effect=held_replace):
         save = asyncio.create_task(store.save_async(record))
