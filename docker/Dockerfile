@@ -21,6 +21,7 @@ ARG PYRIT_SOURCE=pypi
 ARG PYRIT_VERSION=""
 ARG GIT_COMMIT=""
 ARG GIT_MODIFIED=""
+ARG PYRIT_USE_LOCKFILE=false
 
 # Production environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -52,10 +53,25 @@ COPY --chown=vscode:vscode doc/ /app/doc/
 # `python -m pyrit.*` would import the local source — which is how the
 # missing-alembic crash on Test GUI (PyPI) happens (local source uses alembic
 # but PyPI <=0.13.0 doesn't depend on it). The rm mirrors the COPY block above
-# (lines 43-47) one-to-one, except /app/doc which is intentionally retained
+# one-to-one, except /app/doc which is intentionally retained
 # because the later RUN block copies it into /app/notebooks/ for Jupyter mode.
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
-RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
+# Export all groups and extras as constraints, not requirements: only the selected
+# PyRIT dependencies and the two notebook packages below are installed.
+RUN --mount=type=bind,source=uv.lock,target=/app/uv.lock \
+    set -eu; \
+    if [ "$PYRIT_USE_LOCKFILE" = "true" ]; then \
+        if [ "$PYRIT_SOURCE" != "local" ]; then \
+            echo "PYRIT_USE_LOCKFILE=true requires PYRIT_SOURCE=local" >&2; exit 1; \
+        fi; \
+        constraints=$(mktemp); \
+        trap 'rm -f "$constraints"' EXIT; \
+        uv export --locked --offline --all-groups --all-extras --no-emit-project --no-hashes > "$constraints"; \
+        export UV_CONSTRAINT="$constraints" UV_BUILD_CONSTRAINT="$constraints"; \
+    elif [ "$PYRIT_USE_LOCKFILE" != "false" ]; then \
+        echo "PYRIT_USE_LOCKFILE must be true or false" >&2; exit 1; \
+    fi; \
+    if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
         uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]==$PYRIT_VERSION; \
         echo "Removing local source so the installed PyPI package isn't shadowed"; \
@@ -72,7 +88,7 @@ RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         fi; \
     else \
         echo "Invalid PYRIT_SOURCE"; exit 1; \
-    fi && \
+    fi; \
     cd /tmp && \
     if ! /opt/venv/bin/python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())"; then \
         if [ "$PYRIT_SOURCE" = "pypi" ]; then \
@@ -91,7 +107,9 @@ info = { \
     'display': '$PYRIT_VERSION' if '$PYRIT_SOURCE' == 'pypi' else ('$GIT_COMMIT' + (' + local changes' if '$GIT_MODIFIED' == 'true' else '') if '$GIT_COMMIT' else pyrit.__version__) \
 }; \
 f = open('/app/build_info.json', 'w'); json.dump(info, f); f.close(); \
-print(f'PyRIT version: {pyrit.__version__}')"
+print(f'PyRIT version: {pyrit.__version__}')" && \
+    cd /app && \
+    uv pip install --python /opt/venv/bin/python ipykernel jupyter
 
 # Create directories for notebooks and data
 RUN mkdir -p /app/notebooks /app/data /app/assets && \
@@ -100,9 +118,6 @@ RUN mkdir -p /app/notebooks /app/data /app/assets && \
 # Create PyRIT config directory for env files (will be mounted at runtime)
 RUN mkdir -p /home/vscode/.pyrit && \
     chown -R vscode:vscode /home/vscode/.pyrit
-
-# ipykernel and jupyter are in the dev dependency-group (not pip extras), so install them explicitly
-RUN uv pip install --python /opt/venv/bin/python ipykernel jupyter
 
 # Register the Jupyter kernel for the venv
 RUN /opt/venv/bin/python -m ipykernel install --user --name pyrit --display-name "PyRIT"

@@ -151,6 +151,75 @@ class TestLocalDockerBuild(unittest.TestCase):
                         assert result.returncode == 0, result.stdout + result.stderr
                         assert result.stdout.splitlines() == [commit, expected]
 
+    def test_lockfile_build_constrains_only_requested_installs(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        assert "ARG PYRIT_USE_LOCKFILE=false" in dockerfile.splitlines()
+        run = dockerfile.split("RUN --mount=type=bind,source=uv.lock,target=/app/uv.lock \\\n", 1)[1].split("\n\n", 1)[
+            0
+        ]
+        run = run.replace("/opt/venv/bin/python", "python").replace("/app/", "./app/")
+        # Use the real offline export; record what each pip invocation would install and which pins it sees.
+        stubs = """
+python() { :; }
+cd() { :; }
+uv() {
+    if [ "$1" = export ]; then command uv "$@"; return; fi
+    printf 'install:%s\\n' "$*"
+    for file in "${UV_CONSTRAINT:-}" "${UV_BUILD_CONSTRAINT:-}"; do
+        if [ -n "$file" ]; then
+            for name in setuptools wheel ipykernel jupyter; do grep -q "^${name}==" "$file" || return 1; done
+            echo constrained
+        fi
+    done
+}
+"""
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("UV_")}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("pyproject.toml", "uv.lock"):
+                shutil.copyfile(REPO_ROOT / name, root / name)
+            for source, flag, expected in (
+                ("local", "false", "unpinned"),
+                ("pypi", "false", "unpinned"),
+                ("local", "true", "pinned"),
+                ("pypi", "true", "requires PYRIT_SOURCE=local"),
+                ("local", "invalid", "must be true or false"),
+            ):
+                with self.subTest(source=source, flag=flag):
+                    result = subprocess.run(
+                        [BASH, "--noprofile", "--norc", "-s"],
+                        input=stubs + run + "\n",
+                        cwd=root,
+                        env=environment
+                        | {
+                            "UV_OFFLINE": "1",
+                            "UV_PYTHON": sys.executable,
+                            "PYRIT_USE_LOCKFILE": flag,
+                            "PYRIT_SOURCE": source,
+                            "PYRIT_VERSION": "1.0",
+                            "PYRIT_EXTRAS": "speech",
+                            "GIT_COMMIT": "a" * 40,
+                            "GIT_MODIFIED": "false",
+                        },
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=TEST_WATCHDOG_SECONDS,
+                    )
+                    installs = [line for line in result.stdout.splitlines() if line.startswith("install:")]
+                    if expected not in ("pinned", "unpinned"):
+                        assert result.returncode != 0 and expected in result.stderr
+                        assert not installs
+                        continue
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    requirement = "-e .[" if source == "local" else "pyrit["
+                    assert len(installs) == 2 and installs[0].startswith(
+                        f"install:pip install --python python {requirement}"
+                    )
+                    assert installs[1] == "install:pip install --python python ipykernel jupyter"
+                    assert result.stdout.splitlines().count("constrained") == (4 if expected == "pinned" else 0)
+
     def test_only_dirty_local_builds_use_development_preparation(self) -> None:
         assert BASH is not None
         dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
