@@ -16,6 +16,12 @@ PYRIT_AUTH_MODE=local python -m uvicorn pyrit.backend.main:app --reload --host 1
 
 The API will be available at `http://localhost:8000`
 
+Uvicorn's default WebSocket implementation is `websockets-sansio`. PyRIT requires
+Uvicorn 0.53 or newer to retain keepalive, subprotocol negotiation, header values,
+and closing-handshake behavior without importing the deprecated `websockets`
+legacy server. Keep the default `--ws auto`; `--ws websockets` explicitly selects
+the deprecated implementation.
+
 For a shared deployment, set `PYRIT_AUTH_MODE=entra`, configure
 `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS`, and then
 bind the server to the intended network interface. Startup fails when neither
@@ -54,6 +60,7 @@ its database collation.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets` - Create a target
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
   Detection uses a private target, has a four-minute operation deadline, and
@@ -81,6 +88,40 @@ Range declarations remain Python-only constructor inputs, not REST `params`
 overrides; reconstruction preserves declarations from the source target.
 Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
+A created target is Temporary: a restart or a configuration apply removes it. With `"persist": true` (and `register`
+left on), the target is saved under `registry_recipes_source` and restored at every start, and the signed-in user is
+recorded as the one who saved it. A saved target can't hold or use a key: it signs in with Microsoft Entra ID
+(`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI target's empty `headers`
+is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. The save
+itself is the registry library's `prepare_saved_params_async` and `save_then_register_async`, so Python code saves a
+target the same way; the API adds the signed-in user, the configured source, and the responses below.
+
+| A request with `persist` that... | Gets |
+|---|---|
+| names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
+| would save a key, or use one of this server's keys or address settings | **400** |
+| gives an address that can carry a credential, or, where this server's setting would apply, one that isn't a full http(s) or ws(s) address | **400** |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** |
+| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** |
+| uses a Temporary target | **400** |
+| takes a name that a target or a saved file already has | **409** |
+| can't be written to storage | **503** |
+
+A request refused with **400** can be sent again without `persist`. When storage can't be written, the server log names
+the target and its folder, since the target comes back at the next start if the write reached storage anyway.
+
+Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
+(gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
+launch scripts). A saved target can only use targets that come back after a restart; targets from configuration keep
+their own sign-in.
+
+A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
+API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
+constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
+changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
+restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
+the file is fixed or deleted, so nothing runs without the saved target.
 
 ### Dataset creation, batch mutation, and deletion
 
@@ -368,6 +409,26 @@ external filesystem/blob modifications outside PyRIT's memory APIs do not
 participate in this protocol. Deploy the new Alembic migration before starting
 backends configured to require an already-current Azure SQL schema.
 
+### Component registration
+
+`POST /api/targets`, `POST /api/converters`, and `POST /api/scorers` accept
+`register`, which defaults to `true`. Setting it to `false` returns a descriptor
+without registering the component. Converter and scorer registration requires
+`name`; targets still accept an omitted name for legacy UI compatibility.
+
+The Python request models store this flag as `register_instance` with the
+`register` alias. Existing `register=` construction and read/write `.register`
+access remain supported, as do `model_copy(update={"register": ...})` and
+serialization include/exclude filters using `register`. Default model
+serialization and OpenAPI schemas keep the public key `register`.
+
+Field introspection differs from PyRIT 1.2: `model_fields` and
+`model_fields_set` now use `register_instance`, whose field alias is `register`.
+Code inspecting these collections must use the internal name or the field's
+alias metadata. `model_dump(by_alias=False)` likewise deliberately exposes
+`register_instance`; use the default or `by_alias=True` for the existing JSON
+shape. Copy updates and field filters accept either name.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -442,6 +503,42 @@ Both paged and unpaged reads expose only main and pruned conversations.
 Adversarial and preparation contexts are excluded from lists, reference totals,
 and transcript reads, including hierarchy node expansion.
 
+### Running scan attacks
+
+A scan saves each `AttackResult` only when its attack finishes. While an active scan
+is still running an attack, `GET /api/attacks/{attack_result_id}`, `/metadata`,
+`/conversations`, and `/messages` (paged or not) resolve it from the live run instead
+of returning 404. The attack summary and metadata responses set `in_progress: true`,
+report outcome `undetermined`, and set `execution_read_only: true`. Read these
+endpoints for running state; conversation and message responses do not include
+the running-state flags. Write routes still require a saved result. The
+conversation the attack is working on is the main conversation,
+and every other objective conversation started so far is listed as a pruned
+reference. Messages are read from memory as they are saved. A saved result always
+wins, so once the attack finishes the same IDs resolve to its saved result; restart
+reference paging if a cursor becomes stale at that transition. An attack that has
+not started an objective conversation yet still returns 404.
+
+Attack summaries and metadata also include `scenario_result_id`, the scan run that
+produced the attack (`null` for attacks outside a scan). Scan progress
+`active_conversations` entries list every objective conversation so far in
+`conversation_ids`, alongside the current `conversation_id`. Each scan progress
+result and hierarchy node `score` summarizes the objective score: `scorer_name`,
+`score_type`, `status`, `score_value`, `score_rationale`, and `score_category`.
+
+The attack service reads running attacks through a read-only lookup
+(`LiveAttackLookup`) that the scenario run service provides; it does not import
+scenario scheduling.
+
+### Findings linked to an attack
+
+`GET /api/attacks/{attack_result_id}/findings` lists every finding, across all
+Operations, that links the attack as evidence: highest severity first, then
+newest. Each item is the finding plus `operation_name` and the `evidence_id` that
+unlinks it through the Operation evidence route. An attack with no linked
+findings, including one that is not saved yet, returns an empty list; a non-UUID
+ID returns 422.
+
 The saved Scenario Chat viewer consumes these bounded reads with independent
 reference/message continuation controls. It merges stable piece IDs into their
 ordered turns and reconciles page-local partial-sequence markers against the
@@ -464,10 +561,10 @@ not additional results.
 Available flat execution rows remain usable while relationships load or if the
 hierarchy request fails, with an explicit loading/error notice.
 
-Clicking a result with a main conversation opens the existing chat view and
-preserves scenario-run provenance for its return breadcrumb. Conversationless
-compound results expand their children instead. A separate Details action reuses
-the existing metadata dialog. Hierarchy requests do not load transcript bodies;
+Clicking a result row or pressing Enter on it opens the attack details dialog.
+An explicit expansion button shows a compound result's saved children. The separate
+Conversation link opens Chat and preserves scenario-run provenance for its return
+breadcrumb. Hierarchy requests do not load transcript bodies;
 the Chat viewer loads saved evidence through the bounded conversation reads above.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
@@ -501,7 +598,9 @@ count, and a clipping flag. These use the same metadata model as the generic att
 Use the saved-conversation APIs above for reference continuation and all transcript
 bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
 
-`GET /api/scenarios/runs/{scenario_result_id}/assert-metrics` returns the SDK's
+### ASSERT analytics
+
+`GET /api/analytics/assert?scenario_result_id=<run-id>` returns the SDK's
 `AssertPolicyMetrics` for a completed `foundry.assert_policy` run. Other scenarios
 return 400 with problem type `/errors/not-assert-policy-run`, runs that haven't
 completed return 409, and saved results that can't be read as ASSERT metrics return
@@ -704,8 +803,9 @@ The chat preserves failed drafts across replacement, but requires converter choi
 to be reviewed again rather than restoring outputs tied to the previous registry.
 
 The offline browser fixture `frontend.e2e.fixtures.manual_send_backend:app` uses the real
-backend lifecycle with isolated in-memory SQLite, no environment files, and no default
-providers. The recovery tests register deterministic loopback targets. For example, start
+backend lifecycle with isolated in-memory SQLite, no environment files, no saved registry
+entries, and no default providers. The recovery tests register deterministic loopback
+targets. For example, start
 it with `uv run python -m uvicorn frontend.e2e.fixtures.manual_send_backend:app --host 127.0.0.1 --port 18213`
 (set `PYTHONUTF8=1` on Windows). In another shell, set `PYRIT_BACKEND_URL=http://127.0.0.1:18213`
 and `E2E_FRONTEND_PORT=31213`, then run `npx playwright test chat-recovery --project seeded --workers 1`
@@ -764,6 +864,13 @@ uses them:
 - `HTTPXAPITarget`, which uploads local files, can be created through the API only when
   `target_upload_directory` is set in `.pyrit_conf`; it then uploads files only from that
   folder, and callers cannot supply their own.
+- A copy of a registered target or converter, made from its `source`, keeps the source's
+  connection: it can't change the parameters its type reports as `copy_locked` (for OpenAI
+  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for the Azure
+  Speech converters the region, key, and resource ID), and trying returns **400**. So a copy
+  can't take its source's credentials, or a token for an identity its source was set up with,
+  to another endpoint or resource. This rule covers copies only: creating a new target can
+  still send this server's key to an endpoint the caller chooses, as described below.
 
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.

@@ -40,7 +40,7 @@ function expectOnlyLoadedDatasetGets(): void {
   expect(catalogCalls.length).toBeGreaterThan(0)
   for (const call of catalogCalls) {
     expect(call[1]).toEqual(expect.objectContaining({
-      params: { loaded_only: true },
+      params: { loaded_only: false },
     }))
   }
   for (const call of mockGet.mock.calls) {
@@ -156,6 +156,33 @@ describe('DatasetSelection', () => {
     expect(within(summary).queryByRole('heading')).not.toBeInTheDocument()
   })
 
+  it('shows an unloaded provider on its detail route without requesting seeds', async () => {
+    const available = makeDataset({
+      name: 'public-provider', selection_key: 'dataset:named:public-provider', loaded: false,
+      logical_examples: null, seed_pieces: null, objectives: null,
+      provider: {
+        description: 'Default public dataset description', source_url: 'https://example.com/dataset',
+        license_url: 'https://example.com/license', access_url: 'https://example.com/access',
+        required_environment_variables: ['HUGGINGFACE_TOKEN'],
+        modalities: ['text'], harm_categories: [], size: ['medium'], load_time: [], unavailable_reason: null,
+      },
+    })
+    mockGet.mockResolvedValue({ data: { items: [available] } })
+    renderSelection(datasetDetailPath(available.selection_key))
+    expect(await screen.findByText('Default public dataset description')).toBeInTheDocument()
+    for (const [label, url] of [
+      ['Source', 'https://example.com/dataset'],
+      ['License', 'https://example.com/license'],
+      ['Access', 'https://example.com/access'],
+    ]) {
+      const link = screen.getByRole('link', { name: `${label}: ${url}` })
+      expect(link).toHaveTextContent(url)
+      expect(link).toHaveAttribute('href', url)
+    }
+    expect(screen.getByText(/Access may require HUGGINGFACE_TOKEN/)).toBeInTheDocument()
+    expect(seedCalls()).toEqual([])
+  })
+
   it('shows not-found for an unknown key and renders that key as text', async () => {
     const key = '<img src=x onerror=alert(1)>'
     renderSelection(datasetDetailPath(key))
@@ -227,6 +254,29 @@ describe('DatasetSelection', () => {
     })
 
     expect(await screen.findByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets')
+  })
+
+  it('offers a return to the originating chat and carries its route state', async () => {
+    const chatState = { fromScenarioHistory: true, scenarioHistorySearch: '?target=local' }
+    renderSelection(datasetDetailPath(LOADED.selection_key), {
+      chatOrigin: {
+        path: '/attack/chat/attack-1/conversations/conversation-1',
+        state: chatState,
+        attackId: 'attack-1',
+        conversationId: 'conversation-1',
+      },
+    })
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    const returnLink = screen.getByRole('link', { name: 'Return to Chat' })
+    expect(returnLink).toHaveAttribute('href', '/attack/chat/attack-1/conversations/conversation-1')
+  })
+
+  it('does not expose an unrelated chat destination for direct dataset entry', async () => {
+    renderSelection(datasetDetailPath(LOADED.selection_key))
+
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    expect(screen.queryByRole('link', { name: 'Return to Chat' })).not.toBeInTheDocument()
   })
 
   it('does not send catalog name search or sort to the seed API', async () => {

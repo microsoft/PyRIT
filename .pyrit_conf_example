@@ -28,6 +28,7 @@ memory_db_type: sqlite
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
 # - load_default_datasets: Optionally preloads all registered datasets into memory
 # - preload_scenario_metadata: Preloads scenario metadata into the registry
+# - scenario_suite: Registers curated scenario suites and their presets
 #
 # Each initializer can be specified as:
 # - A simple string (name only)
@@ -60,6 +61,8 @@ initializers:
   # If intentional preload exceeds backend startup time, increase
   # server.startup_timeout below.
   # - name: load_default_datasets
+  # Optional one-click suites with fixed presets, listed in the GUI Scanner.
+  # - name: scenario_suite
 
   # Operator and Operation Defaults
 # -------------------------------
@@ -160,6 +163,21 @@ allow_custom_initializers: false
 # a name collision. This supports the same local directory and Azure Blob sources
 # as scenario_presets_source. Defaults to ~/.pyrit/scenario_suites.
 # scenario_suites_source: https://account.blob.core.windows.net/container/scenario_suites
+
+# Optional storage for saved targets, converters, scorers, and techniques, so they
+# come back when the backend restarts. Each kind has its own folder under the source.
+# This supports the same local directory and Azure Blob sources as
+# scenario_presets_source. If any saved entry can't be restored, the backend stays
+# not ready and lists the failures in its runtime status. Fix or delete the listed
+# files, then apply the configuration or restart the backend. Defaults to
+# ~/.pyrit/registry_recipes.
+#
+# ⚠️  WARNING: The backend rebuilds every saved entry in this source as an
+# administrator, at startup and live reinitialization. Anyone who can write to this
+# source can make the backend run a model's repository code or use its identity.
+# Restrict write access to trusted administrators, and use a dedicated folder or
+# blob prefix.
+# registry_recipes_source: https://account.blob.core.windows.net/container/registry_recipes
 
 # Upload Folder for API-Created Targets
 # -------------------------------------

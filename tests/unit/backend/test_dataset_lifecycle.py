@@ -24,6 +24,7 @@ from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app
 from pyrit.backend.models.datasets import DatasetUploadLimits
 from pyrit.backend.services.dataset_upload_service import _DatasetMultipartParser
+from pyrit.datasets import SeedDatasetDescriptor
 from pyrit.memory import AzureBlobStorageIO, PromptMemoryEntry, SeedEntry, SQLiteMemory
 from pyrit.memory.memory_models import (
     DatasetLifecycleEntry,
@@ -133,7 +134,7 @@ async def test_text_upload_browsing_metadata_groups_and_exact_delete(
     assert stored[0].value_sha256 == hashlib.sha256(b"{{ literal }}").hexdigest()
     assert stored[0].added_by == "dataset-api"
     with patch(
-        "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async", return_value=[]
+        "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async", return_value={}
     ):
         listed = await client.get(URL, params={"loaded_only": True})
     assert listed.json()["items"][0]["seed_pieces"] == 2
@@ -489,6 +490,32 @@ async def test_apply_whole_batch_before_validating_surviving_group_and_preserve_
     deleted = await _update_async(client, snapshot=snapshot, deletes=[sibling["id"]])
     assert deleted.status_code == 200 and deleted.json()["deleted"] == 1
     assert len(await _seeds(sqlite_instance)) == 2
+
+
+@pytest.mark.parametrize(
+    ("seed_type", "is_general_technique"),
+    [("prompt", True), ("simulated_conversation", False)],
+)
+async def test_noop_edit_preserves_general_technique_flag_async(
+    *, client: AsyncClient, sqlite_instance: SQLiteMemory, seed_type: str, is_general_technique: bool
+) -> None:
+    seed = (
+        SeedPrompt(value="Technique prompt", is_general_technique=is_general_technique, dataset_name="upload")
+        if seed_type == "prompt"
+        else SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation."),
+            is_general_technique=is_general_technique,
+            dataset_name="upload",
+        )
+    )
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="sdk")
+    snapshot = await _editable_async(client)
+    [row] = _editable_rows(snapshot)
+    response = await _update_async(client, snapshot=snapshot, seeds=[row])
+    assert response.status_code == 200, response.text
+    assert row["is_general_technique"] is is_general_technique
+    [stored] = await _seeds(sqlite_instance)
+    assert stored.is_general_technique is is_general_technique
 
 
 async def test_all_variants_edit_typed_fields_and_attach_new_or_existing_groups(
@@ -1859,8 +1886,8 @@ async def test_provider_remains_reloadable_after_stored_seed_deletion(
     client: AsyncClient, sqlite_instance: SQLiteMemory
 ):
     with patch(
-        "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
-        return_value=["provider"],
+        "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_descriptors_async",
+        return_value={"provider": SeedDatasetDescriptor(name="provider")},
     ):
         assert (await client.delete(URL, params={"selection_key": "dataset:named:provider"})).status_code == 404
         await sqlite_instance.add_seeds_to_memory_async(
@@ -1868,6 +1895,7 @@ async def test_provider_remains_reloadable_after_stored_seed_deletion(
         )
         assert (await client.delete(URL, params={"selection_key": "dataset:named:provider"})).status_code == 200
         listed = (await client.get(URL)).json()
+    assert [item["name"] for item in listed["items"]] == ["provider"]
     assert listed["items"][0]["provider_available"] is True
     assert listed["items"][0]["loaded"] is False
 

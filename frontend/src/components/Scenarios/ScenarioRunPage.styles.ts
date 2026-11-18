@@ -65,6 +65,8 @@ export const useScenarioRunPageStyles = makeStyles({
   },
   titleRow: {
     display: 'flex',
+    minWidth: 0,
+    overflowWrap: 'anywhere',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalS,
@@ -92,33 +94,13 @@ export const useScenarioRunPageStyles = makeStyles({
       flexGrow: 1,
     },
   },
-  metadata: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
-    gap: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXL}`,
-    padding: tokens.spacingVerticalL,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusLarge,
-    backgroundColor: tokens.colorNeutralBackground1,
-    [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    },
-  },
-  metadataItem: {
+  progressTiming: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalXS,
     minWidth: 0,
-    overflowWrap: 'anywhere',
-  },
-  labelBadge: {
-    maxWidth: '100%',
-    height: 'auto',
-    whiteSpace: 'normal',
-    overflowWrap: 'anywhere',
-  },
-  metadataLabel: {
     color: tokens.colorNeutralForeground3,
+    fontVariantNumeric: 'tabular-nums',
   },
   section: {
     display: 'flex',
@@ -155,6 +137,20 @@ export const useScenarioRunPageStyles = makeStyles({
       gap: tokens.spacingVerticalM,
     },
   },
+  progressRegion: {
+    display: 'grid',
+    gridTemplateRows: '1fr',
+    opacity: 1,
+    transitionProperty: 'grid-template-rows, opacity',
+    transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveDecelerateMid,
+    '@media (prefers-reduced-motion: reduce)': { transitionDuration: '0s' },
+  },
+  progressRegionComplete: {
+    gridTemplateRows: '0fr',
+    opacity: 0,
+  },
+  progressClip: { minHeight: 0, overflow: 'hidden' },
   progressPrimary: {
     display: 'flex',
     flexDirection: 'column',
@@ -264,13 +260,13 @@ export const useScenarioRunPageStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
   },
-  conversationSurface: {
+  liveActivity: {
     display: 'flex',
     flexDirection: 'column',
-    minHeight: '28rem',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusLarge,
+    gap: tokens.spacingVerticalM,
+    maxHeight: '60vh',
+    maxWidth: `min(48rem, calc(100vw - ${tokens.spacingHorizontalXXL} * 2))`,
+    overflowY: 'auto',
   },
   displayGroup: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -394,8 +390,17 @@ export const useScenarioRunPageStyles = makeStyles({
     minHeight: 0,
     maxHeight: 'calc(90vh - 48px)',
   },
+  attackDetailDialogTitle: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+  },
   attackDetailDialogContent: {
     minHeight: 0,
+    paddingTop: tokens.spacingVerticalL,
     overflowY: 'auto',
   },
   detailList: {
