@@ -39,7 +39,7 @@ async def test_atbash_converter_with_description():
     assert "svool" in result.output_text
 
 
-async def test_atbash_converter_description_digit_table_matches_encoding():
+async def test_atbash_converter_description_digit_table_matches_encoding_async() -> None:
     converter = AtbashConverter(append_description=True)
     result = await converter.convert_async(prompt="hello", input_type="text")
     lines = result.output_text.splitlines()
