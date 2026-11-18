@@ -61,13 +61,14 @@ async def _send_async(target: _FailingTarget, error: Exception | None) -> None:
 )
 async def test_an_authentication_failure_marks_credentials_rejected_until_a_request_succeeds(error: Exception) -> None:
     target = _FailingTarget()
-    assert not target.credentials_rejected
+    before = target.credentials_rejected
 
     await _send_async(target, error)
-    assert target.credentials_rejected
+    after_rejection = target.credentials_rejected
 
     await _send_async(target, None)
-    assert not target.credentials_rejected
+    after_success = target.credentials_rejected
+    assert (before, after_rejection, after_success) == (None, True, False)
 
 
 @pytest.mark.usefixtures("patch_central_database")

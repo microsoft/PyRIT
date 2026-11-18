@@ -147,7 +147,9 @@ async def _submit_and_settle_async(chat: _Chat) -> MessageSendState:
 
 @pytest.fixture(params=["chat_by_name", "chat_by_binding"])
 def chat(request: pytest.FixtureRequest) -> _Chat:
-    return request.getfixturevalue(request.param)
+    selected_chat = request.getfixturevalue(request.param)
+    assert isinstance(selected_chat, _Chat)
+    return selected_chat
 
 
 async def test_another_user_cannot_add_a_message_through_a_private_target_async(chat: _Chat) -> None:
