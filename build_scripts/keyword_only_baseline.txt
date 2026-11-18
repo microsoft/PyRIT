@@ -7,8 +7,6 @@
 #
 #     uv run python -m build_scripts.check_keyword_only_params --write-baseline
 pyrit.analytics.conversation_analytics:cosine_similarity
-pyrit.analytics.paired_outcome_statistics:_check_pair_evidence
-pyrit.analytics.result_analysis:_compute_stats
 pyrit.auth.azure_auth:AzureAuth.__init__
 pyrit.auth.azure_auth:get_speech_config
 pyrit.auth.azure_auth:get_speech_config_from_default_azure_credential
@@ -252,8 +250,6 @@ pyrit.score.scorer_evaluation.scorer_metrics_io:_append_jsonl_entry
 pyrit.score.scorer_evaluation.scorer_metrics_io:_create_staging_file
 pyrit.score.scorer_evaluation.scorer_metrics_io:_rewrite_jsonl_atomically
 pyrit.score.scorer_prompt_validator:ScorerPromptValidator.validate
-pyrit.score.true_false.regex.markdown_injection:_has_on_one_line
-pyrit.score.true_false.regex.package_hallucination_scorer:PackageHallucinationScorer._resolve_ruby_feature_to_gem
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_mode_then
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_number_option
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_option
@@ -261,7 +257,6 @@ pyrit.score.true_false.regex.shell_command_output_scorer:_download_command
 pyrit.score.true_false.regex.shell_command_output_scorer:_quoted_option
 pyrit.score.true_false.regex.shell_command_output_scorer:_shell_options
 pyrit.score.true_false.true_false_score_aggregator:_and
-pyrit.score.true_false.true_false_score_aggregator:_create_binary_aggregator
 pyrit.score.true_false.true_false_score_aggregator:_or
 pyrit.setup.environment_loading:_print_msg
 pyrit.setup.environment_loading:resolve_environment_async.<locals>.interpolate_async
