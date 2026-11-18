@@ -359,6 +359,7 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
             judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self._score_category,
+            target=self.get_chat_target(),
         )
         return [self._convert_score(unvalidated)]
 
