@@ -52,7 +52,9 @@ export interface ApiError {
  *
  * Handles:
  * - Axios errors with an RFC 7807 JSON body (`response.data.detail`)
- * - Axios errors with a plain-string body (e.g. nginx 502 HTML)
+ * - Axios errors with a plain-text body
+ * - Axios errors with an HTML error page (e.g. a proxy 502/503), which falls
+ *   back to a status message instead of showing markup
  * - Axios errors with no response at all (network / CORS)
  * - Axios timeout errors (`code === 'ECONNABORTED'`)
  * - Plain `Error` instances
@@ -173,6 +175,8 @@ export async function decodeBlobErrorAsync(error: unknown): Promise<void> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+const HTML_DOCUMENT_PATTERN = /^\s*<(?:!doctype\s+html|html|head|body)\b/i
+
 /** Type-guard for Axios errors. */
 function isAxiosError(err: unknown): err is AxiosError {
   return typeof err === 'object' && err !== null && (err as AxiosError).isAxiosError === true
@@ -192,14 +196,16 @@ function readBlobText(blob: Blob): Promise<string> {
  *
  * The body may be:
  * - An RFC 7807 JSON object with `.detail` and optionally `.type`
- * - A plain string (e.g. nginx HTML error page)
+ * - A plain-text string
+ * - An HTML error page from a proxy or host, which yields no detail
  * - Something else entirely (null, number, etc.)
  */
 function extractDetail(data: unknown): {
   detail: string | undefined; type: string | undefined; fieldErrors: FieldError[]
 } {
   if (typeof data === 'string') {
-    return { detail: data, type: undefined, fieldErrors: [] }
+    const detail = HTML_DOCUMENT_PATTERN.test(data) ? undefined : data
+    return { detail, type: undefined, fieldErrors: [] }
   }
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>

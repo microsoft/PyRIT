@@ -73,22 +73,35 @@ describe('toApiError', () => {
     expect(result.raw).toBe(err)
   })
 
-  // 2. Axios error with plain-string body (e.g. proxy HTML)
-  it('uses a plain-string response body as detail', () => {
-    const err = makeAxiosError({
-      status: 502,
-      data: '<html><body>Bad Gateway</body></html>',
-    })
+  // 2. Axios error with plain-text body
+  it('uses a plain-text response body as detail', () => {
+    const err = makeAxiosError({ status: 500, data: 'Internal Server Error' })
 
     const result = toApiError(err)
 
-    expect(result.status).toBe(502)
-    expect(result.detail).toBe('<html><body>Bad Gateway</body></html>')
+    expect(result.status).toBe(500)
+    expect(result.detail).toBe('Internal Server Error')
     expect(result.type).toBeUndefined()
     expect(result.isNetworkError).toBe(false)
   })
 
-  // 3. Axios error with HTML body (nginx 502 — object without detail)
+  it.each([
+    ['an nginx page', 502, '<html><body>Bad Gateway</body></html>'],
+    [
+      'an App Service page',
+      503,
+      "\n<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.0 Transitional//EN'><html><head>"
+        + '<title>Service unavailable</title></head><body></body></html>',
+    ],
+  ])('falls back to the status message instead of showing %s', (_name, status, data) => {
+    const result = toApiError(makeAxiosError({ status, data }))
+
+    expect(result.status).toBe(status)
+    expect(result.detail).toBe(`Server error (${status})`)
+    expect(result.isNetworkError).toBe(false)
+  })
+
+  // 3. Axios error with a JSON body that lacks detail
   it('falls back to status text when JSON body lacks detail', () => {
     const err = makeAxiosError({
       status: 500,
@@ -246,14 +259,14 @@ describe('decodeBlobErrorAsync', () => {
     expect(toApiError(err)).toMatchObject({ status: 404, detail: 'Operation not found' })
   })
 
-  it('keeps a non-JSON Blob body, such as a proxy page, as readable text', async () => {
+  it('keeps a non-JSON Blob body, such as a proxy page, as text without showing its markup', async () => {
     const page = '<html><body>Bad Gateway</body></html>'
     const err = makeAxiosError({ status: 502, data: new Blob([page], { type: 'text/html' }) })
 
     await decodeBlobErrorAsync(err)
 
     expect(err).toMatchObject({ response: { status: 502, data: page } })
-    expect(toApiError(err)).toMatchObject({ status: 502, detail: page })
+    expect(toApiError(err)).toMatchObject({ status: 502, detail: 'Server error (502)' })
   })
 
   it('leaves the error failing with its status when the Blob cannot be read', async () => {
