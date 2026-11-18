@@ -158,7 +158,7 @@ def test_image_crop_converter_empty_box_for_tiny_image() -> None:
         ("WEBP", "PNG", "PNG"),
     ],
 )
-async def test_image_crop_converter_format_preservation_and_conversion(
+async def test_image_crop_converter_format_preservation_and_conversion_async(
     sample_image_bytes,
     input_format,
     output_format,
@@ -191,7 +191,7 @@ async def test_image_crop_converter_format_preservation_and_conversion(
         ("TIFF", "JPEG", "JPEG"),
     ],
 )
-async def test_image_crop_converter_transparency_handling(
+async def test_image_crop_converter_transparency_handling_async(
     sample_transparent_image_bytes,
     input_format,
     output_format,
