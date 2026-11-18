@@ -101,6 +101,18 @@ async def test_restores_each_kind_through_its_create(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_a_target_named_like_the_saveability_route_is_restored(tmp_path: Path) -> None:
+    # POST /api/targets/saveability doesn't clash with GET /api/targets/{name}, so the name stays valid.
+    _save(tmp_path, RegistryRecipeKind.TARGETS, "saveability", _IDENTITY_TARGET)
+
+    report = await _restore(tmp_path)
+
+    assert report.failures == []
+    assert [ref.name for ref in report.restored] == ["saveability"]
+    assert isinstance(TargetRegistry.get_registry_singleton().instances.get("saveability"), OpenAIChatTarget)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_a_target_its_create_refuses_fails_only_that_entry(tmp_path: Path) -> None:
     _save(
         tmp_path,

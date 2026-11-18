@@ -47,6 +47,8 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
     size: str = "large"  # 939 prompts across multiple risk areas
     tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
+    source_url = "https://huggingface.co/datasets/LibrAI/do-not-answer"
+
     def __init__(
         self,
         *,

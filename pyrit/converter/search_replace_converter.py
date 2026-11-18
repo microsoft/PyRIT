@@ -21,13 +21,14 @@ class SearchReplaceConverter(Converter):
 
         Args:
             pattern (str): The regex pattern to replace. Empty patterns match at every character boundary.
-            replace (str | list[str]): The new phrase to replace with. Can be a single string or a list of strings.
-                If a list is provided, a random element will be chosen for replacement.
+            replace (str | list[str]): The regex replacement template(s) to use. Literal backslashes must be escaped.
+                Can be a single string or a list of strings. If a list is provided, a random element will be chosen.
             regex_flags (int): Regex flags to use for the replacement. Defaults to 0 (no flags).
 
         Raises:
             ValueError: If ``pattern`` is not a string or contains invalid regex syntax,
-                ``replace`` is not a string or non-empty list of strings, or ``regex_flags`` is not an integer.
+                ``replace`` is not a string or non-empty list of strings, any element in ``replace``
+                is not a valid regex replacement template for ``pattern``, or ``regex_flags`` is not an integer.
         """
         if not isinstance(pattern, str):
             raise ValueError("pattern must be a string.")
@@ -50,6 +51,12 @@ class SearchReplaceConverter(Converter):
             self._replace_list = list(replace)
         else:
             raise ValueError("replace must be a string or a non-empty list of strings.")
+
+        try:
+            for item in self._replace_list:
+                self._compiled_regex.sub(item, "")
+        except (re.error, IndexError) as e:
+            raise ValueError(f"Invalid regex replacement template in replace: {e}") from e
 
         self._pattern = pattern
         self._regex_flags = regex_flags
