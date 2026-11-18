@@ -329,9 +329,11 @@ async def test_md_image_default_patterns_keep_regex_verdict(text: str, expected:
         # Every image or definition line made the default shortcut regex scan the rest of the reply.
         "![a] " * 60_000,
         "![a]\n" * 60_000,
-        "[a]: x\n" * 100_000,
+        # The regex reads definition lines inside a code block too, while the CommonMark pass skips
+        # the block, so this case times only the shortcut check.
+        "```\n" + "[a]: x\n" * 100_000,
     ],
-    ids=["shortcut-images", "shortcut-image-lines", "definition-lines"],
+    ids=["shortcut-images", "shortcut-image-lines", "fenced-definition-lines"],
 )
 async def test_md_injection_scales_on_shortcut_candidates(text: str, patch_central_database):
     scorer = MarkdownInjectionScorer()
