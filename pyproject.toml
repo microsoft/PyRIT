@@ -302,6 +302,9 @@ invalid-argument-type = "ignore"
 invalid-method-override = "ignore"
 no-matching-overload = "ignore"
 unresolved-attribute = "ignore"
+# Tests read fixtures through `request.getfixturevalue(...)` and other Any-typed helpers into
+# annotated locals (32 findings). #4402 covers pyrit/ only, so the rule stays off for tests.
+unsound-assignment = "ignore"
 
 # SQLAlchemy 2.0 declarative models are written as `col: Mapped[T] = mapped_column(...)`
 # and `rel: Mapped[T] = relationship(...)`. Both calls are typed as returning Any-like
