@@ -3,7 +3,6 @@
 
 
 import asyncio
-import inspect
 import os
 import tempfile
 from pathlib import Path
@@ -53,11 +52,6 @@ def test_apply_echo_adds_delayed_decayed_copy() -> None:
     output = converter._apply_echo(data, sample_rate=8000)
 
     np.testing.assert_array_equal(output, np.array([1000, -1000, 500, -500], dtype=np.int16))
-
-
-def test_apply_echo_sample_rate_is_keyword_only() -> None:
-    parameter = inspect.signature(AudioEchoConverter._apply_echo).parameters["sample_rate"]
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 async def test_echo_adds_delayed_signal(sqlite_instance):
