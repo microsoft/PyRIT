@@ -2,11 +2,14 @@
 # Licensed under the MIT license.
 
 import json
+import re
 from enum import Enum
 from typing import Any
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
+
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def _parse_decision_request(prompt: str) -> dict[str, Any]:
@@ -41,14 +44,16 @@ def _serialize_decision_request(request: dict[str, Any]) -> str:
     Returns:
         str: The request JSON. Non-ASCII text, such as homoglyphs from a converter, stays readable.
     """
-    return json.dumps(request, ensure_ascii=False)
+    serialized = json.dumps(request, ensure_ascii=False)
+    # A lone surrogate is valid as a JSON escape but cannot be encoded as UTF-8 when stored or sent.
+    return _LONE_SURROGATE.sub(lambda match: f"\\u{ord(match.group()):04x}", serialized)
 
 
 class DecisionOptionOrderConverter(Converter):
     """
     Reorder the options of the ``choice`` questions in a decision model request.
 
-    Option order should not change a decision model's answer, so a changed answer is a flip.
+    Option order should not change a decision model's answer, so a changed answer shows order sensitivity.
     ``Order.REVERSE`` reverses each option list. ``Order.SHUFFLE`` draws a different order for each list,
     reproducible with ``seed``. Option names and descriptions are unchanged, and so are the
     state and the other question types: ``score`` levels are ordinal and keep their order.

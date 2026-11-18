@@ -356,7 +356,7 @@ for name, (template, escape_pattern) in markdown_templates.items():
 # Decision models such as those behind `LiteLLMDecisionTarget` take a JSON request with a `state` (the
 # text being judged) and typed `questions`. `DecisionOptionOrderConverter` reverses or shuffles the options
 # of each `choice` question and leaves the state, the option text, and other question types unchanged.
-# Option order should not change a decision, so a changed answer is a flip.
+# Option order should not change a decision, so a changed answer shows order sensitivity.
 
 # %%
 import json

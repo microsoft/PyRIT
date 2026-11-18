@@ -21,6 +21,11 @@ _OPTIONS = {
     "other": "Anything else.",
 }
 
+_LONE_SURROGATE_REQUEST = (
+    r'{"state": {"te\ud800xt": "a\udc00b"}, "questions": {"route": {"type": "choice", '
+    r'"criteria": {"bill\ud83d": "charge\ude00", "refund": "money"}}}}'
+)
+
 
 def _request(questions: dict[str, object], state: object = "I was charged twice.") -> str:
     return json.dumps({"state": state, "questions": questions})
@@ -113,7 +118,7 @@ async def test_reorders_every_choice_question_and_leaves_other_types():
     questions = {
         "route": _choice(),
         "priority": _choice({"low": "Can wait.", "high": "Urgent."}),
-        "is_spam": {"type": "noul", "instructions": "Is this spam?"},
+        "is_spam": {"type": "noul", "criteria": {"true": "It is spam.", "false": "It is not spam."}},
         "severity": {"type": "score", "instructions": "How severe?", "criteria": ["none", "low", "high"]},
         "single": _choice({"only": "The only option."}),
     }
@@ -124,6 +129,7 @@ async def test_reorders_every_choice_question_and_leaves_other_types():
     assert list(converted["route"]["criteria"]) == list(_OPTIONS)[::-1]
     assert list(converted["priority"]["criteria"]) == ["high", "low"]
     assert converted["is_spam"] == questions["is_spam"]
+    assert list(converted["is_spam"]["criteria"]) == ["true", "false"]
     assert converted["severity"] == questions["severity"]
     assert converted["single"] == questions["single"]
 
@@ -132,6 +138,7 @@ async def test_reorders_every_choice_question_and_leaves_other_types():
     "questions",
     [
         {"is_spam": {"type": "noul", "instructions": "Is this spam?"}},
+        {"is_spam": {"type": "noul", "criteria": {"true": "It is spam.", "false": "It is not spam."}}},
         {"single": _choice({"only": "The only option."})},
         {"route": {"type": "choice", "criteria": ["billing", "refund"]}},
         {"route": "not an object"},
@@ -190,6 +197,43 @@ async def test_convert_tokens_async_ignores_keep_tokens():
     result = await DecisionOptionOrderConverter().convert_tokens_async(prompt=prompt, keep_tokens=True)
 
     assert _order(result.output_text) == list(_OPTIONS)[::-1]
+
+
+async def test_lone_surrogates_stay_escaped_everywhere_in_the_request():
+    result = await DecisionOptionOrderConverter().convert_async(prompt=_LONE_SURROGATE_REQUEST)
+
+    assert result.output_text == (
+        r'{"state": {"te\ud800xt": "a\udc00b"}, "questions": {"route": {"type": "choice", '
+        r'"criteria": {"refund": "money", "bill\ud83d": "charge\ude00"}}}}'
+    )
+    result.output_text.encode("utf-8")
+
+
+async def test_valid_text_is_not_escaped_with_the_lone_surrogates():
+    prompt = _request({"route": _choice()}, state="placeholder").replace(
+        '"placeholder"', r'"\\ud800 \ud83d\ude00 é \ud800"'
+    )
+
+    result = await DecisionOptionOrderConverter().convert_async(prompt=prompt)
+
+    assert r'"state": "\\ud800 😀 é \ud800"' in result.output_text
+
+
+async def test_lone_surrogate_request_is_stored_after_conversion(
+    patch_central_database: MemoryInterface, sqlite_instance: MemoryInterface
+):
+    message = Message.from_prompt(prompt=_LONE_SURROGATE_REQUEST, role="user")
+    await PromptNormalizer().convert_values_async(
+        converter_configurations=[ConverterConfiguration(converters=[DecisionOptionOrderConverter()])],
+        message=message,
+    )
+
+    message.message_pieces[0].conversation_id = "lone-surrogate"
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=message.message_pieces)
+
+    stored = await sqlite_instance.get_message_pieces_async(conversation_id="lone-surrogate")
+    assert json.loads(stored[0].converted_value) == json.loads(message.message_pieces[0].converted_value)
+    assert json.loads(stored[0].converted_value)["state"] == {"te\ud800xt": "a\udc00b"}
 
 
 def test_identifier_includes_order_and_seed():
