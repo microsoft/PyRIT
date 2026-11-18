@@ -10,7 +10,13 @@ The canonical target instance type (``TargetInstance``) lives in
 
 from pydantic import BaseModel, Field, model_validator
 
-from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
+from pyrit.backend.models.common import (
+    MAX_ITEMS,
+    REGISTRY_INSTANCE_NAME_PATTERN,
+    IdentifierStr,
+    PaginationInfo,
+    RegistrationRequest,
+)
 from pyrit.common import AuthMode
 from pyrit.models import (
     GenerationRange,
@@ -80,7 +86,7 @@ class TargetListResponse(BaseModel):
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
-class CreateTargetRequest(BaseModel):
+class CreateTargetRequest(RegistrationRequest):
     """Request to create a new target instance."""
 
     name: str | None = Field(
@@ -89,7 +95,6 @@ class CreateTargetRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name, required unless register is false",
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
     persist: bool = Field(
         False,
         description=(
@@ -118,7 +123,7 @@ class CreateTargetRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateTargetRequest":
         # A copy is never registered, so the source check reports a registered copy instead.
-        if self.register and self.name is None and self.source is None:
+        if self.register_instance and self.name is None and self.source is None:
             raise ValueError("name is required when register=true")
         return self
 
@@ -126,7 +131,7 @@ class CreateTargetRequest(BaseModel):
     def _validate_source(self) -> "CreateTargetRequest":
         if self.source is None:
             return self
-        if self.register:
+        if self.register_instance:
             raise ValueError("source requires register=false")
         if self.params:
             raise ValueError("a copy takes its overrides in source.params")
@@ -138,7 +143,7 @@ class CreateTargetRequest(BaseModel):
     def _validate_persist(self) -> "CreateTargetRequest":
         if not self.persist:
             return self
-        if not self.register:
+        if not self.register_instance:
             raise ValueError("persist requires register=true")
         if self.name is not None:
             validate_registry_name(self.name)

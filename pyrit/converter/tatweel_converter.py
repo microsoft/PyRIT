@@ -30,15 +30,76 @@ def _is_arabic_letter(char: str) -> bool:
     return unicodedata.category(char) == "Lo" and _ARABIC_BLOCK_START <= ord(char) <= _ARABIC_BLOCK_END
 
 
+# Arabic-block letters that do not join the letter after them, taken from the Joining_Type
+# column of the Unicode Character Database (ArabicShaping.txt). Right-joining (R) letters such
+# as alef, dal, thal, reh, zain, waw and teh marbuta join only the letter before them.
+# Non-joining (U) letters (hamza and high hamza) join neither side. Every other letter in the
+# block is dual-joining (D).
+_RIGHT_JOINING_LETTERS = frozenset(
+    chr(code_point)
+    for code_point in (
+        *range(0x0622, 0x0626),
+        0x0627,
+        0x0629,
+        *range(0x062F, 0x0633),
+        0x0648,
+        *range(0x0671, 0x0674),
+        *range(0x0675, 0x0678),
+        *range(0x0688, 0x069A),
+        0x06C0,
+        *range(0x06C3, 0x06CC),
+        0x06CD,
+        0x06CF,
+        0x06D2,
+        0x06D3,
+        0x06D5,
+        0x06EE,
+        0x06EF,
+    )
+)
+_NON_JOINING_LETTERS = frozenset({chr(0x0621), chr(0x0674)})
+
+
+def _joins_following_letter(char: str) -> bool:
+    """
+    Determine whether an Arabic letter connects to the letter after it.
+
+    Args:
+        char (str): A single character to test.
+
+    Returns:
+        bool: True if the character is a dual-joining Arabic letter.
+    """
+    return _is_arabic_letter(char) and char not in _RIGHT_JOINING_LETTERS and char not in _NON_JOINING_LETTERS
+
+
+def _joins_preceding_letter(char: str) -> bool:
+    """
+    Determine whether an Arabic letter connects to the letter before it.
+
+    Args:
+        char (str): A single character to test.
+
+    Returns:
+        bool: True if the character is a dual-joining or right-joining Arabic letter.
+    """
+    return _is_arabic_letter(char) and char not in _NON_JOINING_LETTERS
+
+
 class TatweelConverter(Converter):
     """
-    Inserts Arabic tatweel (kashida, U+0640) between adjacent Arabic letters.
+    Inserts Arabic tatweel (kashida, U+0640) between adjacent Arabic letters that join.
 
     The tatweel is a connector that visually elongates a word without changing its meaning. Inserting
     it between letters leaves the text legible to a human reader while changing the underlying code
     point and token sequence. The transformation is deterministic: no language model or randomness is
-    involved. Characters outside the main Arabic block, and Arabic letters not directly followed by
-    another Arabic letter, are left untouched.
+    involved.
+
+    A tatweel only lengthens an existing connection, so it is inserted only after a letter that joins
+    the next letter (not after alef, dal, thal, reh, zain, waw, teh marbuta, hamza or their variants)
+    and only before a letter that joins the previous one (not before hamza). Elsewhere it would show
+    as a detached stroke inside the word. Characters outside the main Arabic block, and Arabic letters
+    not directly followed by another Arabic letter, are left untouched.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -49,7 +110,7 @@ class TatweelConverter(Converter):
         Initialize the converter with the number of tatweel characters to insert.
 
         Args:
-            tatweel_count (int): Number of tatweel characters inserted between adjacent Arabic
+            tatweel_count (int): Number of tatweel characters inserted between adjacent joining Arabic
                 letters. Must be at least 1. Defaults to 1.
 
         Raises:
@@ -73,7 +134,7 @@ class TatweelConverter(Converter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Convert the given prompt by inserting tatweel between adjacent Arabic letters.
+        Convert the given prompt by inserting tatweel between adjacent Arabic letters that join.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -93,7 +154,11 @@ class TatweelConverter(Converter):
         for index, char in enumerate(prompt):
             pieces.append(char)
             next_index = index + 1
-            if next_index < len(prompt) and _is_arabic_letter(char) and _is_arabic_letter(prompt[next_index]):
+            if (
+                next_index < len(prompt)
+                and _joins_following_letter(char)
+                and _joins_preceding_letter(prompt[next_index])
+            ):
                 pieces.append(padding)
 
         return ConverterResult(output_text="".join(pieces), output_type="text")

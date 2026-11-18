@@ -102,6 +102,23 @@ describe("api service", () => {
       expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
       expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
     });
+    it("filters sub-findings and replaces a finding's paths under encoded IDs", async () => {
+      const page = { items: [], has_more: false, next_offset: null };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
+      await operationsApi.listFindings("a/b", { limit: 100, offset: 0, parent_finding_id: "c/d" });
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 100, offset: 0, parent_finding_id: "c/d" },
+      });
+      await operationsApi.listFindings("a/b", { limit: 20, offset: 0, top_level: true });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0, top_level: true },
+      });
+      const request = { paths: [{ name: "Credential theft", steps: ["e", "f"] }] };
+      const saved = { id: "c/d", paths: [{ id: "path", name: "Credential theft", steps: ["e", "f"], complete: false }] };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: saved });
+      expect(await operationsApi.replaceFindingPaths("a/b", "c/d", request)).toEqual(saved);
+      expect(apiClient.put).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/paths", request);
+    });
     it("downloads the explicitly selected findings as a cancellable file", async () => {
       const request: FindingExportRequest = {
         finding_ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],

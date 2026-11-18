@@ -622,7 +622,7 @@ class TargetService:
             )
 
         target_registry_name = request.name
-        if request.register:
+        if request.register_instance:
             assert target_registry_name is not None  # the request requires a name to register a target
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
@@ -650,7 +650,7 @@ class TargetService:
                 allowed_path_params=self._allowed_path_params(target_cls=target_cls),
             )
         )
-        if not request.register:
+        if not request.register_instance:
             try:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),

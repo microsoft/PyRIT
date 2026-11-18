@@ -30,15 +30,20 @@ from pyrit.models import (
 )
 from pyrit.score import (
     DecisionScorer,
+    FileWriteScorer,
     LegacyScorerHookError,
     MessageTrueFalseScorer,
     ObservationSource,
+    OtelToolCallScorer,
     ProgramExecutionScorer,
     Scorer,
     ScorerPromptValidator,
     SelfAskGeneralFloatScaleScorer,
     SelfAskScaleScorer,
     SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
 from pyrit.score.observation import execution
@@ -216,6 +221,24 @@ class TestScorableTypeDeclarations:
             {MessageScorable, ContentScorable, ContentEntryScorable, ProgramExecutionScorable}
         )
         assert scorer.get_condition_types() == frozenset({ProgramBehaves})
+
+    def test_judges_side_effects_requires_every_leaf_to_read_side_effects(self) -> None:
+        file_scorer = FileWriteScorer(source=MagicMock(spec=ObservationSource))
+        trace_scorer = OtelToolCallScorer(source=MagicMock(spec=ObservationSource))
+        text_scorer = SubStringScorer(substring="x")
+        side_effects = TrueFalseCompositeScorer(
+            scorers=[file_scorer, TrueFalseInverterScorer(scorer=trace_scorer)],
+            aggregator=TrueFalseScoreAggregator.AND,
+        )
+        mixed = TrueFalseCompositeScorer(scorers=[file_scorer, text_scorer], aggregator=TrueFalseScoreAggregator.AND)
+
+        # Leaves reading different side effects share only MessageScorable, yet still qualify.
+        assert side_effects.get_supported_scorable_types() == frozenset({MessageScorable})
+        assert file_scorer.judges_side_effects()
+        assert trace_scorer.judges_side_effects()
+        assert side_effects.judges_side_effects()
+        assert not text_scorer.judges_side_effects()
+        assert not mixed.judges_side_effects()
 
 
 class TestNoAmbientExpectation:
