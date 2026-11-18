@@ -66,6 +66,8 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         "Sony AI",
     ]
 
+    source_url = "https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors"
+
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "small"  # 100 harmful behaviors across 10 categories
