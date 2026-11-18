@@ -7,8 +7,6 @@
 #
 #     uv run python -m build_scripts.check_keyword_only_params --write-baseline
 pyrit.analytics.conversation_analytics:cosine_similarity
-pyrit.analytics.paired_outcome_statistics:_check_pair_evidence
-pyrit.analytics.result_analysis:_compute_stats
 pyrit.auth.azure_auth:AzureAuth.__init__
 pyrit.auth.azure_auth:get_speech_config
 pyrit.auth.azure_auth:get_speech_config_from_default_azure_credential
@@ -61,7 +59,6 @@ pyrit.backend.routes.targets:list_targets
 pyrit.backend.routes.techniques:validate_technique_edit_async
 pyrit.backend.services.dataset_upload_service:_DatasetMultipartParser.on_part_data
 pyrit.cli._auth:_print_device_code_prompt
-pyrit.cli._sources:_only_known
 pyrit.common.csv_helper:write_csv
 pyrit.common.download_hf_model:download_specific_files_async
 pyrit.common.json_helper:write_json
@@ -91,12 +88,6 @@ pyrit.converter.insert_punctuation_converter:InsertPunctuationConverter._insert_
 pyrit.converter.insert_punctuation_converter:InsertPunctuationConverter._insert_within_words
 pyrit.converter.pdf_converter:PDFConverter._inject_text_into_page
 pyrit.converter.pdf_converter:PDFConverter._serialize_pdf_async
-pyrit.converter.puzzled.keyword_masker:_rank_candidates
-pyrit.converter.puzzled.puzzle_builders:_try_place
-pyrit.converter.puzzled.puzzle_builders:build_anagram
-pyrit.converter.puzzled.puzzle_builders:build_word_search
-pyrit.converter.puzzled.puzzled_converter:PuzzledConverter._clue_line
-pyrit.converter.puzzled.puzzled_converter:PuzzledConverter._parse_semantic_clues
 pyrit.converter.random_capital_letters_converter:RandomCapitalLettersConverter.generate_random_positions
 pyrit.converter.random_capital_letters_converter:RandomCapitalLettersConverter.string_to_upper_case_by_percentage
 pyrit.converter.token_smuggling.variation_selector_smuggler_converter:VariationSelectorSmugglerConverter.encode_visible_hidden
@@ -258,8 +249,6 @@ pyrit.score.scorer_evaluation.scorer_metrics_io:_append_jsonl_entry
 pyrit.score.scorer_evaluation.scorer_metrics_io:_create_staging_file
 pyrit.score.scorer_evaluation.scorer_metrics_io:_rewrite_jsonl_atomically
 pyrit.score.scorer_prompt_validator:ScorerPromptValidator.validate
-pyrit.score.true_false.regex.markdown_injection:_has_on_one_line
-pyrit.score.true_false.regex.package_hallucination_scorer:PackageHallucinationScorer._resolve_ruby_feature_to_gem
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_mode_then
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_number_option
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_option
@@ -267,7 +256,6 @@ pyrit.score.true_false.regex.shell_command_output_scorer:_download_command
 pyrit.score.true_false.regex.shell_command_output_scorer:_quoted_option
 pyrit.score.true_false.regex.shell_command_output_scorer:_shell_options
 pyrit.score.true_false.true_false_score_aggregator:_and
-pyrit.score.true_false.true_false_score_aggregator:_create_binary_aggregator
 pyrit.score.true_false.true_false_score_aggregator:_or
 pyrit.setup.environment_loading:_print_msg
 pyrit.setup.environment_loading:resolve_environment_async.<locals>.interpolate_async
