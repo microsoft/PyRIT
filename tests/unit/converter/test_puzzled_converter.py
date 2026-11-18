@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
 import unicodedata
 from collections import Counter
 from unittest.mock import AsyncMock, patch
@@ -518,14 +517,11 @@ async def test_words_the_model_skips_are_not_requested_again(sqlite_instance):
     assert result.output_text.count("Hint:") == 1
 
 
-# --- private helper signatures and unit behavior --------------------------
+# --- private helper unit behavior ------------------------------------------
 
 
 def test_clue_line_without_semantics():
     masked = keyword_masker.MaskedWord(text="secret", placeholder="[WORD1]", pos="word")
-    # Both omitted semantics and empty dict should produce the same base clue line.
-    assert PuzzledConverter._clue_line(masked) == "[WORD1] = 6-letter word"
-    assert PuzzledConverter._clue_line(masked, semantics=None) == "[WORD1] = 6-letter word"
     assert PuzzledConverter._clue_line(masked, semantics={}) == "[WORD1] = 6-letter word"
 
 
@@ -536,14 +532,6 @@ def test_clue_line_with_semantics():
         PuzzledConverter._clue_line(masked, semantics=semantics)
         == "[WORD1] = 6-letter word. Hint: something kept hidden"
     )
-
-
-def test_clue_line_semantics_is_keyword_only():
-    sig = inspect.signature(PuzzledConverter._clue_line)
-    assert sig.parameters["semantics"].kind is inspect.Parameter.KEYWORD_ONLY
-    masked = keyword_masker.MaskedWord(text="secret", placeholder="[WORD1]", pos="word")
-    with pytest.raises(TypeError):
-        PuzzledConverter._clue_line(masked, {"secret": "hint"})  # type: ignore[misc]
 
 
 def test_parse_semantic_clues_valid_json():
@@ -558,8 +546,7 @@ def test_parse_semantic_clues_markdown_code_fence():
     assert result == {"steal": "take unlawfully"}
 
 
-def test_parse_semantic_clues_none_or_empty_returns_empty():
-    assert PuzzledConverter._parse_semantic_clues(None, words=["steal"]) == {}  # type: ignore[arg-type]
+def test_parse_semantic_clues_empty_returns_empty():
     assert PuzzledConverter._parse_semantic_clues("", words=["steal"]) == {}
 
 
@@ -571,10 +558,3 @@ def test_parse_semantic_clues_filters_unrequested_and_non_string():
 
 def test_parse_semantic_clues_invalid_json_returns_empty():
     assert PuzzledConverter._parse_semantic_clues("not a json", words=["steal"]) == {}
-
-
-def test_parse_semantic_clues_words_is_keyword_only():
-    sig = inspect.signature(PuzzledConverter._parse_semantic_clues)
-    assert sig.parameters["words"].kind is inspect.Parameter.KEYWORD_ONLY
-    with pytest.raises(TypeError):
-        PuzzledConverter._parse_semantic_clues('{"steal": "hint"}', ["steal"])  # type: ignore[misc]

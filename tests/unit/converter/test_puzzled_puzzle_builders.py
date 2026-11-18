@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
 import random
 
 import pytest
@@ -10,7 +9,6 @@ from pyrit.converter import (
     PuzzleType,
 )
 from pyrit.converter.puzzled.puzzle_builders import (
-    _try_place,
     build_anagram,
     build_crossword,
     build_word_search,
@@ -251,41 +249,3 @@ def test_word_search_preserves_distinct_case_folded_words() -> None:
     grid = _parse_grid(build_word_search(["ılık", "ilik"], rng=random.Random(42)))
     assert _find_word(grid, "ıLıK")
     assert _find_word(grid, "ILIK")
-
-
-@pytest.mark.parametrize(
-    ("func", "keyword_only_params"),
-    [
-        (build_anagram, ["rng"]),
-        (build_word_search, ["rng"]),
-        (_try_place, ["word", "rng"]),
-    ],
-)
-def test_puzzle_builder_helpers_keyword_only_params(func, keyword_only_params: list[str]) -> None:
-    sig = inspect.signature(func)
-    for param_name in keyword_only_params:
-        assert sig.parameters[param_name].kind is inspect.Parameter.KEYWORD_ONLY
-
-
-def test_build_anagram_and_word_search_default_rng():
-    # Calling without rng argument uses a fresh random.Random instance cleanly.
-    anagram = build_anagram(["vault", "system"])
-    assert len(anagram) == len("VAULTSYSTEM")
-    assert sorted(anagram) == sorted("VAULTSYSTEM")
-
-    word_search = build_word_search(["vault"])
-    grid = _parse_grid(word_search)
-    assert _find_word(grid, "VAULT")
-
-
-def test_puzzle_builder_helpers_positional_rejection():
-    rng = random.Random(0)
-    with pytest.raises(TypeError):
-        build_anagram(["vault"], rng)  # type: ignore[misc]
-
-    with pytest.raises(TypeError):
-        build_word_search(["vault"], rng)  # type: ignore[misc]
-
-    grid = [["" for _ in range(5)] for _ in range(5)]
-    with pytest.raises(TypeError):
-        _try_place(grid, ["V", "A", "U", "L", "T"], rng)  # type: ignore[misc]

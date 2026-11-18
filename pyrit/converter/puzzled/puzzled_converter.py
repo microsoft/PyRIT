@@ -216,18 +216,18 @@ class PuzzledConverter(Converter):
         return ConverterResult(output_text=formatted_prompt, output_type="text")
 
     @staticmethod
-    def _clue_line(masked: MaskedWord, *, semantics: dict[str, str] | None = None) -> str:
+    def _clue_line(masked: MaskedWord, *, semantics: dict[str, str]) -> str:
         """
         Format one clue line, appending the semantic description when one is available.
 
         Args:
             masked (MaskedWord): The masked word and its deterministic length/POS clue.
-            semantics (dict[str, str] | None, optional): Lowercased word to semantic description. Defaults to None.
+            semantics (dict[str, str]): Lowercased word to semantic description.
 
         Returns:
             str: A single clue line for the prompt.
         """
-        semantic = semantics.get(masked.text.lower()) if semantics else None
+        semantic = semantics.get(masked.text.lower())
         if semantic:
             return f"{masked.placeholder} = {masked.clue}. Hint: {semantic}"
         return f"{masked.placeholder} = {masked.clue}"

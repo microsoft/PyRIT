@@ -279,7 +279,7 @@ def _rank_candidates(
     prompt: str,
     *,
     pos_lookup: dict[str, str],
-    essential_words: list[str] | None = None,
+    essential_words: list[str] | None,
 ) -> list[str]:
     """
     Order candidate words for masking by priority.
@@ -294,7 +294,7 @@ def _rank_candidates(
     Args:
         prompt (str): The prompt being masked.
         pos_lookup (dict[str, str]): Noun/verb tags from ``_pos_lookup``.
-        essential_words (list[str] | None, optional): Sensitive words to prefer, if any. Defaults to None.
+        essential_words (list[str] | None): Sensitive words to prefer, if any.
 
     Returns:
         list[str]: Distinct candidate words (as they appear in the prompt) in priority order.
