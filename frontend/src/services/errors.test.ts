@@ -10,8 +10,9 @@ function makeAxiosError(opts: {
   code?: string
   message?: string
   hasResponse?: boolean
+  contentType?: string
 }): unknown {
-  const { status, data, code, message = 'Request failed', hasResponse = true } = opts
+  const { status, data, code, message = 'Request failed', hasResponse = true, contentType } = opts
 
   const err: Record<string, unknown> = {
     isAxiosError: true,
@@ -22,7 +23,8 @@ function makeAxiosError(opts: {
   }
 
   if (hasResponse && status !== undefined) {
-    err.response = { status, data, headers: {}, config: {} }
+    const headers = contentType === undefined ? {} : { 'Content-Type': contentType }
+    err.response = { status, data, headers, config: {} }
   }
 
   return err
@@ -86,19 +88,29 @@ describe('toApiError', () => {
   })
 
   it.each([
-    ['an nginx page', 502, '<html><body>Bad Gateway</body></html>'],
+    ['a text/html page that starts with a comment', 503, 'text/html; charset=utf-8',
+      '<!-- App Service -->\n<p>Service unavailable</p>'],
+    ['an untyped nginx page', 502, undefined, '<html><body>Bad Gateway</body></html>'],
     [
-      'an App Service page',
+      'an untyped page with a comment before its doctype',
       503,
-      "\n<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.0 Transitional//EN'><html><head>"
+      'application/octet-stream',
+      "<!-- proxy -->\n<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.0 Transitional//EN'><html><head>"
         + '<title>Service unavailable</title></head><body></body></html>',
     ],
-  ])('falls back to the status message instead of showing %s', (_name, status, data) => {
-    const result = toApiError(makeAxiosError({ status, data }))
+  ])('falls back to the status message instead of showing %s', (_name, status, contentType, data) => {
+    const result = toApiError(makeAxiosError({ status, data, contentType }))
 
     expect(result.status).toBe(status)
     expect(result.detail).toBe(`Server error (${status})`)
     expect(result.isNetworkError).toBe(false)
+  })
+
+  it('keeps explicit text/plain diagnostics that start with a tag', () => {
+    const diagnostic = '<body> element missing from template'
+    const result = toApiError(makeAxiosError({ status: 500, data: diagnostic, contentType: 'text/plain' }))
+
+    expect(result.detail).toBe(diagnostic)
   })
 
   // 3. Axios error with a JSON body that lacks detail
@@ -261,7 +273,9 @@ describe('decodeBlobErrorAsync', () => {
 
   it('keeps a non-JSON Blob body, such as a proxy page, as text without showing its markup', async () => {
     const page = '<html><body>Bad Gateway</body></html>'
-    const err = makeAxiosError({ status: 502, data: new Blob([page], { type: 'text/html' }) })
+    const err = makeAxiosError({
+      status: 502, data: new Blob([page], { type: 'text/html' }), contentType: 'text/html',
+    })
 
     await decodeBlobErrorAsync(err)
 

@@ -53,8 +53,9 @@ export interface ApiError {
  * Handles:
  * - Axios errors with an RFC 7807 JSON body (`response.data.detail`)
  * - Axios errors with a plain-text body
- * - Axios errors with an HTML error page (e.g. a proxy 502/503), which falls
- *   back to a status message instead of showing markup
+ * - Axios errors with an HTML error page (e.g. a proxy 502/503), identified by
+ *   `Content-Type` (or by content when the type is missing or generic), which
+ *   falls back to a status message instead of showing markup
  * - Axios errors with no response at all (network / CORS)
  * - Axios timeout errors (`code === 'ECONNABORTED'`)
  * - Plain `Error` instances
@@ -89,8 +90,8 @@ export function toApiError(err: unknown): ApiError {
     }
 
     // We have an HTTP response — try to extract RFC 7807 detail
-    const { status, data } = err.response
-    const { detail, type, fieldErrors } = extractDetail(data)
+    const { status, data, headers } = err.response
+    const { detail, type, fieldErrors } = extractDetail(data, responseMediaType(headers))
 
     return {
       status,
@@ -175,7 +176,10 @@ export async function decodeBlobErrorAsync(error: unknown): Promise<void> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-const HTML_DOCUMENT_PATTERN = /^\s*<(?:!doctype\s+html|html|head|body)\b/i
+const HTML_MEDIA_TYPES = new Set(['text/html', 'application/xhtml+xml'])
+/** Media types that say nothing about the body, so its content decides. */
+const UNSPECIFIED_MEDIA_TYPES = new Set(['', 'application/octet-stream'])
+const HTML_DOCUMENT_PATTERN = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<(?:!doctype\s+html|html|head|body)\b/i
 
 /** Type-guard for Axios errors. */
 function isAxiosError(err: unknown): err is AxiosError {
@@ -200,11 +204,11 @@ function readBlobText(blob: Blob): Promise<string> {
  * - An HTML error page from a proxy or host, which yields no detail
  * - Something else entirely (null, number, etc.)
  */
-function extractDetail(data: unknown): {
+function extractDetail(data: unknown, mediaType: string): {
   detail: string | undefined; type: string | undefined; fieldErrors: FieldError[]
 } {
   if (typeof data === 'string') {
-    const detail = HTML_DOCUMENT_PATTERN.test(data) ? undefined : data
+    const detail = isHtmlBody(data, mediaType) ? undefined : data
     return { detail, type: undefined, fieldErrors: [] }
   }
   if (typeof data === 'object' && data !== null) {
@@ -214,6 +218,20 @@ function extractDetail(data: unknown): {
     return { detail, type, fieldErrors: extractFieldErrors(obj.errors) }
   }
   return { detail: undefined, type: undefined, fieldErrors: [] }
+}
+
+/** Lowercase media type from the response `Content-Type`, without parameters; empty when absent. */
+function responseMediaType(headers: unknown): string {
+  if (typeof headers !== 'object' || headers === null) return ''
+  const header = Object.entries(headers).find(([name]) => name.toLowerCase() === 'content-type')
+  const value: unknown = header?.[1]
+  return typeof value === 'string' ? (value.split(';')[0] ?? '').trim().toLowerCase() : ''
+}
+
+/** Trust an explicit media type; inspect the body only when the type is missing or generic. */
+function isHtmlBody(body: string, mediaType: string): boolean {
+  if (HTML_MEDIA_TYPES.has(mediaType)) return true
+  return UNSPECIFIED_MEDIA_TYPES.has(mediaType) && HTML_DOCUMENT_PATTERN.test(body)
 }
 
 function extractFieldErrors(errors: unknown): FieldError[] {
