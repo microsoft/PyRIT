@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from pyrit.models import AssertJudgeDimension, AssertJudgePreset
-from pyrit.models.score.assert_judge import AssertJudgeConfig
 
 _RUBRIC = "true = The event occurred.\nfalse = The event did not occur."
 
@@ -183,28 +182,3 @@ def test_preset_rejects_duplicate_dimension_names() -> None:
     dimension = {"name": "harm", "description": "d", "rubric": _RUBRIC}
     with pytest.raises(ValueError, match="unique"):
         AssertJudgePreset(name="dupes", dimensions=[dimension, dimension])
-
-
-def test_config_defaults_match_assert() -> None:
-    config = AssertJudgeConfig()
-    assert config.presets == ()
-    assert config.samples == 1
-    assert config.objective_dimension == "policy_violation"
-
-
-@pytest.mark.parametrize(
-    "values",
-    [
-        {"samples": 0},
-        {"samples": True},
-        {"presets": ("grounding", "grounding")},
-        {"presets": ("../safety-core",)},
-        {"presets": ("safety-core.yaml",)},
-        {"preset_files": ("a.yaml", "a.yaml")},
-        {"disabled_dimensions": ("overrefusal", "overrefusal")},
-        {"dimensions": [{"name": "a", "description": "d", "rubric": "r"}] * 2},
-    ],
-)
-def test_config_rejects_invalid_settings(values: dict[str, object]) -> None:
-    with pytest.raises(ValueError):
-        AssertJudgeConfig.model_validate(values)

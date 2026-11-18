@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.exceptions import ScorerLLMResponseBlockedException
 from pyrit.models import (
@@ -20,6 +20,12 @@ from pyrit.models import (
     Scorable,
     Score,
     ScoringExpectation,
+    TraceScorable,
+)
+from pyrit.score.evidence.conversation_trace_evidence import (
+    ConversationTraceEvidence,
+    TraceEvidenceRequirement,
+    TraceRendering,
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
 from pyrit.score.message_scorer import MessageScorer
@@ -55,6 +61,11 @@ class ConversationScorer(MessageScorer, ABC):
     )
     _source: ObservationSource[ConversationScorable]
     _excluded_data_types: tuple[PromptDataType, ...] = ()
+    _trace_evidence: ConversationTraceEvidence | None = None
+
+    #: Metadata key on an undetermined result whose judge was not called because the configured
+    #: trace requirement was not met. Its value is the reason.
+    EVIDENCE_REQUIREMENT_UNMET_KEY: ClassVar[str] = "evidence_requirement_unmet"
 
     def get_chat_target(self) -> "PromptTarget | None":
         """
@@ -165,7 +176,11 @@ class ConversationScorer(MessageScorer, ABC):
             if available_ids:
                 used_observation_ids[str(score.id)].add(str(min(available_ids, key=str)))
                 matched_scores.append(score)
-        return matched_scores
+        if self._trace_evidence is None or not matched_scores:
+            return matched_scores
+        return await self._trace_evidence.filter_matching_scores_async(
+            scores=matched_scores, conversation_id=conversation_scorable.conversation_id, memory=self._memory
+        )
 
     async def _score_message_scorable_async(
         self,
@@ -302,10 +317,30 @@ class ConversationScorer(MessageScorer, ABC):
         pieces = await _ObservationEvidenceResolver(memory=self._memory).resolve_async(observation=observation)
         if not isinstance(pieces, tuple):
             raise TypeError("Conversation evidence must resolve to an ordered tuple of message pieces.")
-        text = self._render_conversation(pieces)
+        evidence = self._trace_evidence
+        trace = rendering = None
+        if evidence is not None:
+            trace = await evidence.acquire_async(conversation_id=scorable.conversation_id, memory=self._memory)
+            rendering = evidence.render(trace)
+        text = self._render_conversation(pieces, trace_rendering=rendering)
         if not text:
             return []
-        _collect_observation(observation)
+        observations = [observation] + ([trace.observation] if trace and trace.observation else [])
+        for acquired in observations:
+            _collect_observation(acquired)
+        trace_metadata: dict[str, str | int | float] = {}
+        if evidence is not None and trace is not None and rendering is not None:
+            trace_metadata = evidence.get_metadata(trace=trace, rendering=rendering)
+            if unmet := evidence.get_unmet_requirement(trace):
+                score = self._build_undetermined_score(
+                    rationale=evidence.describe_unmet_requirement(trace),
+                    description="Required execution evidence is missing.",
+                    scorable=scorable,
+                    objective=expectation.objective if expectation else None,
+                    score_metadata={**trace_metadata, self.EVIDENCE_REQUIREMENT_UNMET_KEY: unmet},
+                )
+                score.observation_ids = [acquired.id for acquired in observations]
+                return [score]
         child = self._get_wrapped_scorer()
         try:
             scores = await child._score_nested_async(
@@ -323,12 +358,21 @@ class ConversationScorer(MessageScorer, ABC):
             score = self._create_wrapper_score(child_score)
             score.scorable = scorable
             score.message_piece_id = None
-            if observation.id not in score.observation_ids:
-                score.observation_ids.append(observation.id)
+            for acquired in observations:
+                if acquired.id not in score.observation_ids:
+                    score.observation_ids.append(acquired.id)
+            if evidence is not None and rendering is not None:
+                score.score_metadata = {
+                    **(score.score_metadata or {}),
+                    **trace_metadata,
+                    **evidence.get_citation_metadata(rationale=score.score_rationale or "", rendering=rendering),
+                }
             results.append(score)
         return results
 
-    def _render_conversation(self, pieces: tuple[MessagePiece, ...]) -> str:
+    def _render_conversation(
+        self, pieces: tuple[MessagePiece, ...], *, trace_rendering: TraceRendering | None = None
+    ) -> str:
         """
         Render each turn inside a numbered, role-labeled fence with indented content.
 
@@ -346,18 +390,31 @@ class ConversationScorer(MessageScorer, ABC):
         Explicitly excluded data types are omitted before strict validation. They remain
         in the acquired conversation snapshot but are not presented to the wrapped scorer.
 
+        With execution evidence, a coverage header comes first and each request's
+        execution block follows the turns that answered it. Trace content is indented the
+        same way, so it cannot forge fences either.
+
         Args:
             pieces (tuple[MessagePiece, ...]): The conversation pieces to render.
+            trace_rendering (TraceRendering | None): Rendered execution evidence, if any.
 
         Returns:
-            str: The fenced transcript.
+            str: The fenced transcript, or an empty string when no turn is applicable.
 
         Raises:
             ValueError: If strict validation rejects a role-supported conversation piece.
         """
         lines = []
         turn_index = 0
+        blocks = trace_rendering.blocks if trace_rendering else {}
+        request_sequences = trace_rendering.request_sequences if trace_rendering else frozenset()
+        pending: str | None = None
+        pending_sequence: int | None = None
         for piece in pieces:
+            if piece.sequence in request_sequences and piece.sequence != pending_sequence:
+                if pending:
+                    lines.append(pending)
+                pending, pending_sequence = blocks.get(piece.sequence), piece.sequence
             if piece.api_role not in ("user", "assistant", "tool") or not self._validator.is_role_supported(piece):
                 continue
             if piece.converted_value_data_type in self._excluded_data_types:
@@ -380,7 +437,13 @@ class ConversationScorer(MessageScorer, ABC):
             body = "".join("  " + line for line in text.splitlines(keepends=True))
             lines.append(f"[BEGIN {fence}]\n{body}\n[END {fence}]\n")
             turn_index += 1
-        return "".join(lines)
+        if not turn_index:
+            return ""
+        if pending:
+            lines.append(pending)
+        if trace_rendering is None:
+            return "".join(lines)
+        return trace_rendering.header + "".join(lines)
 
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
@@ -419,6 +482,9 @@ def create_conversation_scorer(
     validator: ScorerPromptValidator | None = None,
     source: ObservationSource[ConversationScorable] | None = None,
     excluded_data_types: Sequence[PromptDataType] = (),
+    trace_source: ObservationSource[TraceScorable] | None = None,
+    trace_requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE,
+    max_rendered_trace_chars: int = 60000,
 ) -> Scorer:
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
@@ -436,13 +502,24 @@ def create_conversation_scorer(
         excluded_data_types (Sequence[PromptDataType]): Data types to omit from the judged
             transcript, even under strict validation. The retained snapshot is unchanged.
             Defaults to no exclusions.
+        trace_source (ObservationSource[TraceScorable] | None): Execution evidence source. When
+            set, the traces linked to the conversation's outbound requests are acquired, saved
+            as an observation, and rendered after the turns they produced, with step IDs such as
+            ``[T3]`` that the judge can cite. Defaults to None.
+        trace_requirement (TraceEvidenceRequirement): Evidence required before the judge is
+            called. An unmet requirement returns an undetermined score marked with
+            ``ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY``, without a judge call. Defaults to NONE.
+        max_rendered_trace_chars (int): Character budget for rendered execution steps, used with a
+            trace source. Each content value is previewed up to 4,000 characters; past the budget,
+            content is dropped first, then steps. The saved evidence stays complete. Defaults to 60000.
 
     Returns:
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.
 
     Raises:
         TypeError: If the dynamic scorer does not inherit from ``Scorer``.
-        ValueError: If the scorer is outside the true/false and float-scale families.
+        ValueError: If the scorer is outside the true/false and float-scale families, a trace
+            requirement has no trace source, or a trace source's rendering budget is not positive.
 
     Example:
         >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
@@ -450,6 +527,16 @@ def create_conversation_scorer(
         >>> isinstance(conversation_scorer, FloatScaleScorer)  # True
         >>> isinstance(conversation_scorer, ConversationScorer)  # True
     """
+    requirement = TraceEvidenceRequirement(trace_requirement)
+    if trace_source is None and requirement is not TraceEvidenceRequirement.NONE:
+        raise ValueError("A trace requirement needs a trace_source to acquire execution evidence.")
+    trace_evidence = (
+        ConversationTraceEvidence(
+            source=trace_source, requirement=requirement, max_rendered_chars=max_rendered_trace_chars
+        )
+        if trace_source is not None
+        else None
+    )
     # Determine the base class of the wrapped scorer
     scorer_base_class: type[Scorer] | None = None
 
@@ -475,6 +562,7 @@ def create_conversation_scorer(
             self._wrapped_scorer = scorer
             self._source = source if source is not None else ConversationSource()
             self._excluded_data_types = tuple(sorted(set(excluded_data_types)))
+            self._trace_evidence = trace_evidence
 
         def _get_wrapped_scorer(self) -> Scorer:
             """
@@ -511,9 +599,17 @@ def create_conversation_scorer(
                         if self._validator._enforce_all_pieces_valid
                         else {}
                     ),
+                    **(self._trace_evidence.get_identifier_params() if self._trace_evidence is not None else {}),
                 },
                 sub_scorers=[self._wrapped_scorer.get_identifier()],
-                children={"source": self._source.get_identifier()},
+                children={
+                    "source": self._source.get_identifier(),
+                    **(
+                        {"trace_source": self._trace_evidence.source_identifier}
+                        if self._trace_evidence is not None
+                        else {}
+                    ),
+                },
             )
             if not isinstance(identifier, ComponentIdentifier):
                 raise TypeError("Conversation scorer identifier must be a ComponentIdentifier")

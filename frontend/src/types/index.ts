@@ -122,6 +122,9 @@ export interface PendingComposerDraft {
 
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
+  baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
+  converters?: ChatConverterSnapshot
   objective?: string
   initialObjective?: string
   sourceConversationId?: string | null
@@ -490,6 +493,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
   supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
@@ -1135,6 +1139,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  initialConverters?: ChatConverterSnapshot
   sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
@@ -1144,6 +1149,7 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
+  baselineTargetKey?: string | null
   unsavedImport?: boolean
   pendingPromptId?: string
 }
@@ -1470,16 +1476,31 @@ export interface ChangeMainConversationResponse {
  * Wire shape of `DatasetInfo` from `GET /api/datasets`.
  * Null counts mean the total is unknown, not zero.
  */
+export interface DatasetProviderInfo {
+  description: string | null
+  source_url: string | null
+  license_url: string | null
+  access_url: string | null
+  required_environment_variables: string[]
+  modalities: string[]
+  harm_categories: string[]
+  size: string[]
+  load_time: string[]
+  unavailable_reason: string | null
+}
+
 export interface DatasetInfo {
   name: string
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  provider?: DatasetProviderInfo | null
   origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
   objectives: number | null
   modalities: string[]
+  modality_aliases?: Readonly<Record<string, string>>
   harm_categories: string[]
   has_unlabeled_harm_categories: boolean
 }
@@ -2614,6 +2635,10 @@ export interface FindingCreate {
   severity_other?: string | null
   harm_type?: string | null
   harm_type_other?: string | null
+  /** The finding this one is a sub-finding of, in the same Operation. Null or omitted for a top-level finding. */
+  parent_finding_id?: string | null
+  /** Whether the operator demonstrated it. A path is complete only when every step was. Defaults to true. */
+  demonstrated?: boolean
 }
 
 /** Resending the same id and content returns the finding an earlier, unanswered request saved. */
@@ -2627,10 +2652,37 @@ export interface FindingOptionsResponse {
   harm_types: string[]
 }
 
+/** One ordered chain of a finding's direct sub-findings that together demonstrate it. */
+export interface FindingPath {
+  id: string
+  name?: string | null
+  description?: string
+  /** Direct sub-finding IDs, in order. */
+  steps: string[]
+}
+
+/** A saved path, with whether every step is a demonstrated sub-finding. Completeness is derived, never stored. */
+export interface FindingPathItem extends FindingPath {
+  complete: boolean
+}
+
+/** A path to save. Omit `id` to add a new path. */
+export interface FindingPathRequest extends Omit<FindingPath, 'id'> {
+  id?: string
+}
+
+/** Every path of a finding, in order, replacing the saved ones. */
+export interface FindingPathsUpdateRequest {
+  paths: FindingPathRequest[]
+}
+
 export interface Finding extends FindingCreate {
   id: string
   operation_id: string
   created_at: string
+  parent_finding_id: string | null
+  demonstrated: boolean
+  paths: FindingPath[]
 }
 
 export interface FindingListResponse {
@@ -2641,6 +2693,22 @@ export interface FindingListResponse {
 
 export interface FindingListItem extends Finding {
   evidence_count: number
+  /** The number of direct sub-findings. */
+  child_count: number
+  paths: FindingPathItem[]
+}
+
+/** Optional filters for listing findings. Without one, findings at every depth are listed. */
+export interface FindingListParams {
+  limit: number
+  offset: number
+  title?: string
+  /** Full LIKE pattern instead of literal title search (% and _, / escaping). */
+  title_pattern?: string
+  /** Only the direct sub-findings of this finding, oldest first. */
+  parent_finding_id?: string
+  /** Only findings without a parent. */
+  top_level?: boolean
 }
 
 /** A finding that links an attack as evidence. */
@@ -2696,7 +2764,7 @@ export interface FindingEvidenceListResponse {
 
 export type FindingExportFormat = 'docx' | 'markdown'
 
-/** Selected findings of one Operation to download as a single document. */
+/** Selected findings of one Operation to download as a single document. Each includes all of its sub-findings. */
 export interface FindingExportRequest {
   finding_ids: string[]
   format: FindingExportFormat
