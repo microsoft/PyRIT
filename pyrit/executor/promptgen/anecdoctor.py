@@ -62,7 +62,7 @@ class AnecdoctorResult(PromptGeneratorStrategyResult):
 
     Contains the generated content from the misinformation prompt generation.
 
-    Args:
+    Attributes:
         generated_content (Message): The generated content from the prompt generation.
     """
 
