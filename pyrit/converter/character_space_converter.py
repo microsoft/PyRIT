@@ -3,6 +3,7 @@
 
 import re
 
+from pyrit.common.text_helper import graphemes
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import PromptDataType
 
@@ -12,6 +13,8 @@ _PUNCTUATION_PATTERN = re.compile("[!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~]")
 class CharacterSpaceConverter(Converter):
     """
     Spaces out the input prompt and removes ASCII punctuation except backslashes.
+
+    Characters are grapheme clusters, so combining marks, Indic vowel signs and emoji sequences stay whole.
 
     For more information on the bypass strategy, refer to [@robustintelligence2024bypass].
     """
@@ -36,5 +39,5 @@ class CharacterSpaceConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
         clean_text = _PUNCTUATION_PATTERN.sub("", prompt)
-        converted_text = " ".join(clean_text)
+        converted_text = " ".join(graphemes(clean_text))
         return ConverterResult(output_text=converted_text, output_type="text")

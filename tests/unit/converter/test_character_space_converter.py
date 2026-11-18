@@ -65,6 +65,21 @@ async def test_character_space_preserves_backslashes_async(*, prompt: str, expec
     assert result.output_type == "text"
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("cafe\u0301", "c a f e\u0301"),
+        ("\u0939\u093f\u0902\u0926\u0940", "\u0939\u093f\u0902 \u0926\u0940"),
+        ("\U0001f1ee\U0001f1f3\U0001f44d\U0001f3fd", "\U0001f1ee\U0001f1f3 \U0001f44d\U0001f3fd"),
+        ("\U0001f468\u200d\U0001f469\u200d\U0001f467ok", "\U0001f468\u200d\U0001f469\u200d\U0001f467 o k"),
+    ],
+)
+async def test_character_space_keeps_grapheme_clusters_async(*, prompt: str, expected: str) -> None:
+    result = await CharacterSpaceConverter().convert_async(prompt=prompt)
+
+    assert result.output_text == expected
+
+
 async def test_character_space_with_spaces():
     converter = CharacterSpaceConverter()
     result = await converter.convert_async(prompt="hi there", input_type="text")
