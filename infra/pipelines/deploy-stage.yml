@@ -48,25 +48,7 @@ stages:
               steps:
                 - checkout: self
                   fetchDepth: 1
-                - ${{ if and(eq(parameters.phase, 'app'), parameters.useInternalDeploymentProfile) }}:
-                    - download: none
-                    - download: current
-                      artifact: deployment-profile
-                    - task: AzureCLI@2
-                      name: PublishProfile
-                      displayName: 'Select or initialize the writable ${{ parameters.slot }} profile'
-                      env:
-                        PYRIT_PROFILE_BUNDLE_DIRECTORY: $(Pipeline.Workspace)/deployment-profile
-                        PYRIT_DEPLOYMENT_PROFILES_CONTAINER_URI: $(deploymentProfilesContainerUri)
-                        PYRIT_CONTAINER_IMAGE: $(immutableImage)
-                        PYRIT_SLOT: ${{ parameters.slot }}
-                        PYRIT_BUILD_ID: $(Build.BuildId)
-                      inputs:
-                        azureSubscription: '$(azureServiceConnection)'
-                        scriptType: bash
-                        workingDirectory: $(Build.SourcesDirectory)
-                        scriptLocation: inlineScript
-                        inlineScript: python3 -m build_scripts.publish_deployment_profile
+                - download: none
                 - task: AzureCLI@2
                   displayName: 'Preview, deploy, and verify ${{ parameters.slot }} ${{ parameters.phase }}'
                   env:
@@ -90,7 +72,7 @@ stages:
                       PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
                       PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
                       ${{ if parameters.useInternalDeploymentProfile }}:
-                        PYRIT_CONFIG_FILE_URI: $(PublishProfile.profileConfigFileUri)
+                        PYRIT_CONFIG_FILE_URI: ''
                       ${{ else }}:
                         PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
                       PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)

@@ -583,13 +583,16 @@ skip this section. The details live at
    with the CoPyRIT maintainers on who queues it and when, rather than assuming that falls to the
    release owner; they have taken it themselves in the past. Wait until the public package release
    and the production database migration in step 8 are complete. Neither condition establishes
-   client compatibility with the production image: `gui-deploy.yml` builds source from `main`,
-   not the release-branch wheel on PyPI, and permits production only from `refs/heads/main`.
-   Do not relax that branch policy or claim that installing the PyPI release matches production.
+   client compatibility by itself. Queue `gui-deploy.yml` from protected public `main` with
+   `pyritVersion=X.Y.Z` to deploy the published release. If using the internal profile,
+   also select an explicit successful private `profileRun`. Compare the installed release
+   client's compatibility ID with authenticated test `/api/version` before approving the
+   tested image digest, then verify the production handshake. See the [deployment inputs](https://github.com/microsoft/PyRIT/blob/main/infra/README.md#internal-deployment-profiles).
 
 ### Matching Clients for the Production Commit
 
-Use a commit-specific internal client distribution for this source-built deployment:
+If deploying the default `pyritVersion=main` instead of a release, use a commit-specific
+internal client distribution. A release-branch wheel does not match that source-built image:
 
 1. Agree on the exact full `main` commit to deploy. In a separate clean checkout at that
    commit, follow sections 6 and 7 to build and test its wheel and sdist with the bundled

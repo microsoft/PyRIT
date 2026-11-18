@@ -50,30 +50,26 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert schedule["always"] is True
         assert "resources" not in self.pipeline
 
-    def test_published_images_require_verified_clean_source_provenance(self) -> None:
-        assert "source_commit=$(git rev-parse HEAD)" in self.pipeline_text
-        assert '"$source_commit" != "$PYRIT_SOURCE_VERSION"' in self.pipeline_text
-        assert '-n "$(git status --porcelain)"' in self.pipeline_text
-        assert '--build-arg GIT_COMMIT="$source_commit"' in self.pipeline_text
-        assert "--build-arg PYRIT_EXTRAS=all" in self.pipeline_text
-        assert "--build-arg GIT_MODIFIED=false" in self.pipeline_text
-        assert self.pipeline_text.index("source_commit=$(git rev-parse HEAD)") < self.pipeline_text.index(
-            "docker build"
-        )
-
     @unittest.skipIf(BASH is None, "Native Bash is required")
-    def test_production_source_guards_handle_azure_boolean_capitalization(self) -> None:
+    def test_source_guards_before_build_or_private_access(self) -> None:
         stage = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "ValidateInputs")
         step = next(step for step in stage["jobs"][0]["steps"] if step.get("bash"))
         environment = {key: value for key, value in os.environ.items() if key != "BASH_ENV"}
         main, feature = "refs/heads/main", "refs/heads/feature"
-        for production, public_ref, rejected in (
-            ("True", main, False),
-            ("True", feature, True),
-            ("true", feature, True),
-            ("False", feature, False),
+        for production, profile, version, run, public_ref, repo, rejected in (
+            ("True", "False", "main", "latest", main, "microsoft/PyRIT", False),
+            ("true", "False", "1.2.3", "latest", feature, "microsoft/PyRIT", True),
+            ("False", "False", "main", "latest", feature, "microsoft/PyRIT", False),
+            ("False", "True", "main", "latest", feature, "microsoft/PyRIT", True),
+            ("False", "True", "main", "123", main, "fork/PyRIT", True),
+            ("False", "True", "main", "latest", main, "microsoft/PyRIT", False),
+            ("False", "True", "1.2.3", "latest", main, "microsoft/PyRIT", True),
+            ("True", "true", "1.2.3", "123", main, "microsoft/PyRIT", False),
+            ("False", "False", "1.2.3rc1", "latest", main, "microsoft/PyRIT", True),
+            ("False", "True", "main", "0", main, "microsoft/PyRIT", True),
+            ("False", "True", "main", "1.2", main, "microsoft/PyRIT", True),
         ):
-            with self.subTest(production=production, public_ref=public_ref):
+            with self.subTest(production=production, profile=profile, version=version, run=run, ref=public_ref):
                 result = subprocess.run(
                     [str(BASH), "--noprofile", "--norc", "-s"],
                     input=step["bash"],
@@ -84,7 +80,11 @@ class TestPipelineGuardrails(unittest.TestCase):
                     env={
                         **environment,
                         "DEPLOY_TO_PROD": production,
+                        "USE_PROFILE": profile,
+                        "PYRIT_VERSION": version,
+                        "PROFILE_RUN": run,
                         "BUILD_SOURCEBRANCH": public_ref,
+                        "BUILD_REPOSITORY_NAME": repo,
                     },
                 )
                 assert (result.returncode != 0) is rejected, result.stdout + result.stderr
@@ -99,9 +99,6 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert after["displayName"] == "Reclaim Docker disk space after build"
         assert after["condition"] == "always()"
         assert steps[-1] == after
-        preparation, artifact = steps[build_index + 1]["${{ if parameters.useInternalDeploymentProfile }}"]
-        assert preparation["name"] == "PrepareProfile"
-        assert artifact["task"] == "PublishPipelineArtifact@1"
         for cleanup in (before, after):
             assert not cleanup.get("continueOnError", False)
             commands = cleanup["bash"].splitlines()
@@ -194,76 +191,43 @@ class TestPipelineGuardrails(unittest.TestCase):
             "PYRIT_ENV_SECRET_NAME",
         }
         assert app["PYRIT_CONTAINER_IMAGE"] == "$(immutableImage)"
-        assert app["${{ if parameters.useInternalDeploymentProfile }}"] == {
-            "PYRIT_CONFIG_FILE_URI": "$(PublishProfile.profileConfigFileUri)"
-        }
+        assert app["${{ if parameters.useInternalDeploymentProfile }}"] == {"PYRIT_CONFIG_FILE_URI": ""}
         assert app["${{ else }}"] == {"PYRIT_CONFIG_FILE_URI": "$(pyritConfigFileUri)"}
         image = stage["variables"][2]["${{ if eq(parameters.phase, 'app') }}"][0]
         assert image == {
             "name": "immutableImage",
             "value": "$[ stageDependencies.Build.BuildAndPush.outputs['BuildImage.immutableImage'] ]",
         }
-        assert "variable=immutableImage;isOutput=true" in self.pipeline_text
-        assert 'immutable_image="$PYRIT_ACR_LOGIN_SERVER/$PYRIT_IMAGE_NAME@$digest"' in self.pipeline_text
 
-    def test_internal_profile_uses_a_pinned_checkout_outside_the_public_build_context(self) -> None:
+    def test_private_artifact_read_is_opt_in_and_pinned_once(self) -> None:
         parameters = {parameter["name"]: parameter for parameter in self.pipeline["parameters"]}
         assert parameters["useInternalDeploymentProfile"]["default"] is False
-        assert "internalRef" not in parameters and "deploymentProfile" not in parameters
+        assert parameters["profileRun"]["default"] == "latest"
+        assert parameters["pyritVersion"]["default"] == "main"
         build = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "Build")
-        job = build["jobs"][0]
-        assert job["steps"][0] == {"checkout": "self", "fetchDepth": 1, "path": "s"}
-        internal = job["steps"][1]["${{ if parameters.useInternalDeploymentProfile }}"][0]
-        assert internal == {
-            "checkout": "git://AI Red Team/PyRIT-internal@refs/heads/main",
-            "fetchDepth": 1,
-            "path": "internal-deployment",
-        }
-        source = job["steps"][1]["${{ if parameters.useInternalDeploymentProfile }}"][1]
-        assert source["env"] == {"INTERNAL_SOURCE_DIRECTORY": "$(Pipeline.Workspace)/internal-deployment"}
-        assert 'git -C "$INTERNAL_SOURCE_DIRECTORY" rev-parse HEAD' in source["bash"]
-        assert "variable=internalSourceVersion" in source["bash"]
-        preparation = next(
-            step["${{ if parameters.useInternalDeploymentProfile }}"][0]
-            for step in job["steps"]
-            if "${{ if parameters.useInternalDeploymentProfile }}" in step
-            and step["${{ if parameters.useInternalDeploymentProfile }}"][0].get("name") == "PrepareProfile"
-        )
-        assert preparation["env"]["PYRIT_INTERNAL_SOURCE_VERSION"] == "$(internalSourceVersion)"
-        assert preparation["env"]["PYRIT_CONTAINER_IMAGE"] == "$(BuildImage.immutableImage)"
-        assert "PYRIT_DEPLOYMENT_PROFILES_CONTAINER_URI" not in preparation["env"]
-        app_variables = self.template["stages"][0]["variables"][2]["${{ if eq(parameters.phase, 'app') }}"]
-        assert len(app_variables) == 1
-        assert self.pipeline_text.count("checkout: git://") == 1
-
-    def test_app_stages_publish_the_same_artifact_to_their_own_environment_storage(self) -> None:
-        build = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "Build")
-        artifact = next(
-            step["${{ if parameters.useInternalDeploymentProfile }}"][1]
-            for step in build["jobs"][0]["steps"]
-            if "${{ if parameters.useInternalDeploymentProfile }}" in step
-            and step["${{ if parameters.useInternalDeploymentProfile }}"][0].get("name") == "PrepareProfile"
-        )
+        assert build["dependsOn"] == "ValidateInputs"
+        steps = build["jobs"][0]["steps"]
+        private = "${{ if parameters.useInternalDeploymentProfile }}"
+        resolver, artifact = steps[1][private]
+        assert resolver["env"]["SYSTEM_ACCESSTOKEN"] == "$(System.AccessToken)"
+        assert self.pipeline_text.count("$(System.AccessToken)") == 1
+        assert artifact["task"] == "DownloadPipelineArtifact@2"
         assert artifact["inputs"] == {
-            "targetPath": "$(Build.ArtifactStagingDirectory)/deployment-profile",
-            "artifact": "deployment-profile",
-            "publishLocation": "pipeline",
+            "buildType": "specific",
+            "project": "$(System.TeamProjectId)",
+            "definition": resolver["env"]["PROFILE_DEFINITION"],
+            "buildVersionToDownload": "specific",
+            "pipelineId": "$(ResolveProfile.runId)",
+            "artifactName": "deployment-profile",
+            "targetPath": "$(Agent.TempDirectory)/deployment-profile",
         }
-        stage = self.template["stages"][0]
-        steps = stage["jobs"][0]["strategy"]["runOnce"]["deploy"]["steps"]
-        profile_steps = steps[1]["${{ if and(eq(parameters.phase, 'app'), parameters.useInternalDeploymentProfile) }}"]
-        assert profile_steps[:2] == [{"download": "none"}, {"download": "current", "artifact": "deployment-profile"}]
-        publisher = profile_steps[2]
-        assert publisher["name"] == "PublishProfile"
-        assert publisher["inputs"]["inlineScript"] == "python3 -m build_scripts.publish_deployment_profile"
-        assert publisher["env"] == {
-            "PYRIT_PROFILE_BUNDLE_DIRECTORY": "$(Pipeline.Workspace)/deployment-profile",
-            "PYRIT_DEPLOYMENT_PROFILES_CONTAINER_URI": "$(deploymentProfilesContainerUri)",
-            "PYRIT_CONTAINER_IMAGE": "$(immutableImage)",
-            "PYRIT_SLOT": "${{ parameters.slot }}",
-            "PYRIT_BUILD_ID": "$(Build.BuildId)",
-        }
-        assert all("PyRIT-internal" not in step.get("checkout", "") for step in steps)
+        builder = next(step for step in steps if step.get("name") == "BuildImage")
+        assert builder["env"][private]["PROFILE_DIRECTORY"] == artifact["inputs"]["targetPath"]
+        assert builder["env"][private]["PROFILE_COMMIT"] == "$(ResolveProfile.commit)"
+        assert "checkout: git://" not in self.pipeline_text
+        assert "PublishPipelineArtifact" not in self.pipeline_text
+        deploy_steps = self.template["stages"][0]["jobs"][0]["strategy"]["runOnce"]["deploy"]["steps"]
+        assert deploy_steps[1:-1] == [{"download": "none"}]
         for name in ("DeployTest", "DeployProd"):
             assert "Build" in self.deployments[name]["dependsOn"]
             assert (

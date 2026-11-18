@@ -419,7 +419,7 @@ az deployment group show -g <rg> -n <application-deployment-name> --query proper
 
 > This section documents the repository maintainers' internal pipeline. It depends on Microsoft team-owned ADO service connections, environments, and variable groups. It is not required or expected for community deployments; use direct Bicep or `deploy_instance.py` instead.
 
-`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. Both parameters default to `false`:
+`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. Both deployment switches default to `false`:
 
 | `deployInfra` | `deployToProd` | Workflow |
 | --- | --- | --- |
@@ -428,7 +428,9 @@ az deployment group show -g <rg> -n <application-deployment-name> --query proper
 | `false` | `true` | Build, deploy app to test, production approval, deploy the same image to production |
 | `true` | `true` | Build, test infrastructure, test app, production approval, production infrastructure, production app |
 
-Qualifying merges to `main` automatically deploy **the app to test without infrastructure reconciliation**. Production remains opt-in: manually queue a commit merged to `main` with `deployToProd=true`. Approval rejects on timeout and the requester cannot self-approve. All stages remain in the run graph: infrastructure stages show **Skipped** when `deployInfra=false`, just as production stages do when production is disabled. App deployment accepts that intentional skip, but an infrastructure failure or cancellation blocks it.
+The daily 15:00 UTC run deploys **the app to test without infrastructure reconciliation**; merges do not trigger this pipeline. To test a release instead of the default `pyritVersion=main` source build, queue an exact numeric `pyritVersion=X.Y.Z`. Build verifies it is published and not yanked, installs it with all extras, and checks its packaged Python/frontend compatibility stamps. A release keeps its own source identity, not the public pipeline commit. Both paths use the same test and production stages.
+
+Production remains opt-in: manually queue from protected public `main` with `deployToProd=true`. Approval rejects on timeout and the requester cannot self-approve. All stages remain in the run graph: infrastructure stages show **Skipped** when `deployInfra=false`, just as production stages do when production is disabled. App deployment accepts that intentional skip, but an infrastructure failure or cancellation blocks it.
 
 The Build job logs disk usage and prunes unused local Docker images and build cache before and after building, even on failure, to leave space for Component Governance scanning. Pushed ACR images are unaffected. This cleanup is only for disposable hosted agents, not shared self-hosted agents.
 
@@ -466,7 +468,7 @@ Front Door routes the GUI and its relative `/api` requests on the same origin. I
 
 `infra/pipelines/deploy_infra.sh` retains the existing infrastructure safeguards:
 
-1. Build the source image and push a commit-SHA tag to ACR.
+1. Build the selected image and push a unique `<public-commit-or-vX.Y.Z>-<build-id>-<attempt>` tag to ACR.
 2. Capture the exact pushed digest for the app stages; infrastructure reads the current image only to verify that the running app remains healthy.
 3. Require the existing app, environment, VNet, subnet, NAT, and reserved PIP; validate their IDs, prefixes, tags, SKU, allocation, and attachments.
 4. Run a full ARM `what-if` through a fail-closed validator; reject malformed results, deletions, cross-resource-group writes, protected-network deltas other than the documented read-only NAT/PIP normalization, and core network, app, or Log Analytics workspace creates. The expected PIP protection lock may be created.
@@ -481,6 +483,7 @@ Front Door routes the GUI and its relative `/api` requests on the same origin. I
 | --------------------------- | ---------------------------------------------- |
 | `acrName`, `acrLoginServer` | Existing shared registry name and login server |
 | `imageName`                 | Repository name within the registry            |
+| `deploymentProfilePipelineId` | Trusted private CI definition (`13`, Build And Test); required only for private profiles |
 
 Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 
@@ -495,8 +498,7 @@ Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 | `entraTenantId`, `entraClientId` | SPA authentication configuration |
 | `allowedGroupObjectIds` | Backend-authorized Entra security groups |
 | `adminGroupObjectId` | Entra group authorized to manage backend configuration |
-| `pyritConfigFileUri` | Optional credential-free Azure Blob URI for `.pyrit_conf` |
-| `deploymentProfilesContainerUri` | Credential-free runtime profile container URI for this environment (required only with `useInternalDeploymentProfile=true`) |
+| `pyritConfigFileUri` | Optional credential-free Azure Blob URI for `.pyrit_conf`; ignored when a private profile is packaged |
 | `sqlServerFqdn`, `sqlDatabaseName` | Existing SQL database |
 | `keyVaultResourceId`, `envSecretName` | Existing runtime configuration secret |
 | `acrResourceId`, `enableOtel` | Registry resource ID and observability setting |
@@ -674,13 +676,15 @@ Write access to the configuration blob, and to any `custom_initializers_source` 
 
 ### Internal deployment profiles
 
-Enable `useInternalDeploymentProfile` to read `pyrit_internal/deployment/main/.pyrit_conf` and `internal_initializers/*.py` from the protected `main` branch of PyRIT-internal. The rollout switch defaults to `false`, including on scheduled runs. Build validates initializer discovery in the all-extra image and publishes one `deployment-profile` artifact. Test and production use the same artifact and image, but each publishes to `deploymentProfilesContainerUri` from its own variable group. The migration job and app use the selected configuration URI; SQL and Key Vault bindings still come from `start.sh`.
+`useInternalDeploymentProfile=false` is the default, including scheduled runs: no private CI access or artifact is needed. When enabled, queue from protected `microsoft/PyRIT` `main`. With `pyritVersion=main`, `profileRun=latest` selects the most recently finished successful private-main build; a positive decimal CI run ID pins a specific build. **A release with a profile requires an explicit `profileRun`.** Failed, partially successful, PR, wrong-definition, and wrong-project runs are not eligible. Retain the private run if you need to build another image with that profile later.
 
-**Editing policy:** GUI edits to `.pyrit_conf` and custom initializer scripts survive app-only deployments and unrelated internal-repository commits while the checked-in profile content is unchanged. The baseline digest covers only the source `.pyrit_conf` and flat initializer files, not the internal commit or application image digest. If either configuration or initializer source changes in Git, a new runtime baseline is initialized from that pinned profile; prior live edits do not silently merge into it. Configuration comments are preserved. Returning to a previously published baseline reuses its existing environment-local edits.
+Build downloads just that run's `deployment-profile` Pipeline Artifact. Its root must contain `.pyrit_conf`, `source-commit.txt` (the private run's full lowercase Git SHA), and `internal_initializers/` with one or more flat snake_case `.py` files, not an archive. Enable `allow_custom_initializers` in the YAML block mapping and omit `custom_initializers_source`. Build checks actual initializer registration and configured names in the selected image before pushing it. Dependencies must already be installed in that image.
 
-The host Python publisher seeds a unique `releases/<build-id>/<attempt>/main/` prefix and creates `profiles/main/<profile-digest>.json` last, never overwriting either. It verifies the index and reads the selected configuration's ETag before reporting new/reuse, image, internal commit, baseline hash and URI. Missing or invalid data fails the stage; retry a competing publication instead of overwriting live data.
+Profile images are private: Build pushes them only to `<acrLoginServer>/<imageName>-internal`, and refuses to push unless ACR reports anonymous pull explicitly disabled. Limit pull access to the team and both runtime identities. Protect the variable group, pipeline definition, queue permissions and service connection; grant the project-scoped build identity read access to the designated private pipeline and its artifacts. Never put secrets in the profile: anyone authorized to pull the image can read its files. Use Key Vault instead.
 
-Team setup and operating instructions belong in the [CoPyRIT deployment runbook](https://dev.azure.com/atml/d6628cad-394f-463f-84a4-c3a00a85a6ed/_wiki/wikis/c514cddd-d8ba-4e46-8695-41d55d89b54a?pagePath=%2FAIRTDev%2FInfrastructure%2FCoPyRIT%20GUI%2FDeployment). Keep secrets in Key Vault. Both the publishing principal and app identity need appropriately scoped Blob data write permissions to publish baselines and retain GUI editing; limit those permissions to trusted administrators as described above. Initializers importing private packages need those packages installed in the image; uploading scripts does not install dependencies.
+**Editing policy:** Private Git is the reviewed starting configuration. Every GUI or migration container start copies the baseline to a fresh writable local directory, even for the same image. GUI edits survive live reinitialization in that container only: a restart, scale-out replica, or new deployment starts from Git, and test edits never reach production. Submit durable changes to the private repository. SQL and Key Vault defaults still come from `start.sh`; no profile Blob, index, or runtime ADO access is needed. Build logs the public selection and compatibility ID, private run/commit, and final digest. Approval promotes **that same digest**, without re-resolving the profile or rebuilding.
+
+See the [CoPyRIT deployment runbook](https://dev.azure.com/atml/d6628cad-394f-463f-84a4-c3a00a85a6ed/_wiki/wikis/c514cddd-d8ba-4e46-8695-41d55d89b54a?pagePath=%2FAIRTDev%2FInfrastructure%2FCoPyRIT%20GUI%2FDeployment) for team setup and operating instructions.
 
 ### .pyrit_conf fields → Bicep params
 
