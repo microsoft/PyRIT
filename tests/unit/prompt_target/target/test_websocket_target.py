@@ -825,17 +825,6 @@ async def test_reset_conversation_async_removes_connection(websocket_target: Web
     assert websocket_target._existing_conversation == {}
 
 
-async def test_cleanup_conversation_async_warns_and_delegates(websocket_target: WebsocketTarget) -> None:
-    connection = AsyncMock(spec=ClientConnection)
-    websocket_target._existing_conversation["conversation"] = connection
-
-    with pytest.warns(DeprecationWarning, match="cleanup_conversation_async"):
-        await websocket_target.cleanup_conversation_async("conversation")
-
-    connection.close.assert_awaited_once()
-    assert websocket_target._existing_conversation == {}
-
-
 async def test_reset_conversation_async_does_not_retain_unknown_lock(websocket_target: WebsocketTarget) -> None:
     await websocket_target.reset_conversation_async(conversation_id="missing")
 
