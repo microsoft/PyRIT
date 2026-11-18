@@ -16,6 +16,7 @@ from pyrit.backend.models.common import (
     MAX_ITEMS,
     REGISTRY_INSTANCE_NAME_PATTERN,
     IdentifierStr,
+    RegistrationRequest,
 )
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType, validate_registry_name
 from pyrit.models.catalog import RegistryEntryOrigin
@@ -105,7 +106,7 @@ class ConverterInstanceListResponse(BaseModel):
     items: list[ConverterInstance] = Field(..., description="List of converter instances")
 
 
-class CreateConverterRequest(BaseModel):
+class CreateConverterRequest(RegistrationRequest):
     """Request to create a new converter instance."""
 
     name: str | None = Field(
@@ -114,7 +115,6 @@ class CreateConverterRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name for the converter instance",
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
     persist: bool = Field(
         False,
         description=(
@@ -133,7 +133,7 @@ class CreateConverterRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateConverterRequest":
-        if self.register and not self.name:
+        if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         if self.source is not None and self.params:
             raise ValueError("Use source.params for reconstruction overrides")
@@ -143,7 +143,7 @@ class CreateConverterRequest(BaseModel):
     def _validate_persist(self) -> "CreateConverterRequest":
         if not self.persist:
             return self
-        if not self.register:
+        if not self.register_instance:
             raise ValueError("persist requires register=true")
         if self.name is None:
             raise ValueError("persist requires a name")

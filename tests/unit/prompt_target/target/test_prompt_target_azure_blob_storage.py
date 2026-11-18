@@ -35,6 +35,11 @@ def test_initialization_with_required_parameters(azure_blob_storage_target: Azur
     assert azure_blob_storage_target._sas_token == "valid_sas_token"
 
 
+def test_declares_no_response_support(azure_blob_storage_target: AzureBlobStorageTarget):
+    # The returned blob URL is a delivery receipt, not a reply.
+    assert not azure_blob_storage_target.capabilities.supports_responses
+
+
 def test_supported_auth_modes_includes_identity():
     """Blob advertises identity-based auth (DefaultAzureCredential) alongside api_key."""
     assert AzureBlobStorageTarget.supported_auth_modes == ("api_key", "identity")
