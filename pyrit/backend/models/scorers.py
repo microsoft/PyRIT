@@ -5,7 +5,13 @@
 
 from pydantic import BaseModel, Field, model_validator
 
-from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
+from pyrit.backend.models.common import (
+    MAX_ITEMS,
+    REGISTRY_INSTANCE_NAME_PATTERN,
+    IdentifierStr,
+    PaginationInfo,
+    RegistrationRequest,
+)
 from pyrit.models import JSONValue, Parameter, ScorerIdentifier, validate_registry_name
 from pyrit.models.catalog import ScorerInstance
 
@@ -33,13 +39,12 @@ class ScorerListResponse(BaseModel):
     pagination: PaginationInfo
 
 
-class CreateScorerRequest(BaseModel):
+class CreateScorerRequest(RegistrationRequest):
     """Request to construct and register a named scorer."""
 
     name: str | None = Field(
         None, min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name"
     )
-    register: bool = Field(True, description="Register the object; false returns only its descriptor")
     persist: bool = Field(
         False,
         description=(
@@ -55,7 +60,7 @@ class CreateScorerRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateScorerRequest":
-        if self.register and not self.name:
+        if self.register_instance and not self.name:
             raise ValueError("name is required when register=true")
         return self
 
@@ -63,7 +68,7 @@ class CreateScorerRequest(BaseModel):
     def _validate_persist(self) -> "CreateScorerRequest":
         if not self.persist:
             return self
-        if not self.register:
+        if not self.register_instance:
             raise ValueError("persist requires register=true")
         if self.name is None:
             raise ValueError("persist requires a name")

@@ -324,7 +324,7 @@ class ConverterService:
             return await self._save_converter_async(
                 name=request.name, request=request, owner=owner, recipes_source=recipes_source, replacing=replacing
             )
-        if request.register:
+        if request.register_instance:
             if request.name is None:
                 raise ValueError("name is required when register=true")
             self._registry.instances.validate_name_available(request.name)
@@ -343,7 +343,7 @@ class ConverterService:
         upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
-            if request.register:
+            if request.register_instance:
                 if request.name is None:
                     raise ValueError("name is required when register=true")
                 self._registry.instances.validate_name_available(request.name)
@@ -369,7 +369,7 @@ class ConverterService:
                 and (converter_obj.get_identifier().hash != request.source.effective_hash)
             ):
                 raise ValueError("Temporary converter configuration has changed")
-            if not request.register:
+            if not request.register_instance:
                 return UnregisteredConverter(
                     identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
                 )
@@ -399,11 +399,11 @@ class ConverterService:
                     },
                 )
         except (Exception, asyncio.CancelledError):
-            if request.register:
+            if request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
         finally:
-            if not request.register:
+            if not request.register_instance:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
 
         return converter

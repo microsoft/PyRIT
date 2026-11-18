@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+import concurrent.futures
 import logging
+import threading
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -662,11 +665,94 @@ class XPIAManualProcessingWorkflow(XPIAWorkflow):
                 modified to include the manual processing callback.
         """
 
-        # Create the manual input callback
+        # Create the manual input callback. The console read runs off the event loop so other
+        # async work keeps running while the operator triggers the processing target.
         async def manual_input_async() -> str:
             prompt = "Please trigger the processing target's execution and paste the output here:"
-            return input(prompt)
+            return await _CONSOLE_READER.read_line_async(prompt=prompt)
 
         # Set the processing callback on the context
         context.processing_callback = manual_input_async
         return await super()._setup_async(context=context)
+
+
+class _ConsoleLineReader:
+    """
+    Read operator input from the console off the event loop, one caller at a time.
+
+    ``input()`` cannot be interrupted, so a read keeps waiting for the operator even after its
+    caller is cancelled. Each read runs on a daemon thread so it never delays interpreter
+    shutdown. A pending read passes to the next caller, which shows its own prompt; a line typed
+    while no caller is waiting is discarded. Callers take turns, so concurrent reads never receive
+    the same line.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._turn: concurrent.futures.Future[None] = concurrent.futures.Future()
+        self._turn.set_result(None)
+        self._unclaimed_line: concurrent.futures.Future[str] | None = None
+
+    async def read_line_async(self, *, prompt: str) -> str:
+        """
+        Return the next console line, reusing a read left behind by a cancelled caller.
+
+        Args:
+            prompt (str): The prompt shown to the operator.
+
+        Returns:
+            str: The line the operator entered.
+
+        Raises:
+            asyncio.CancelledError: If the caller is cancelled before the line arrives. The read
+                keeps running; its line goes to a later caller only if one is waiting when it arrives.
+            EOFError: If the console input is closed before a line is entered.
+        """
+        with self._lock:
+            previous_turn = self._turn
+            self._turn = turn = concurrent.futures.Future()
+        try:
+            await asyncio.shield(asyncio.wrap_future(previous_turn))
+            line = self._claim_line(prompt=prompt)
+            try:
+                return await asyncio.shield(asyncio.wrap_future(line))
+            finally:
+                # A read still pending when its caller leaves stays for the next caller.
+                if line.done():
+                    self._release_line(line=line)
+        finally:
+            # Pass the turn on once the caller ahead finishes, even if this caller left early.
+            previous_turn.add_done_callback(lambda _: turn.set_result(None))
+
+    def _claim_line(self, *, prompt: str) -> concurrent.futures.Future[str]:
+        with self._lock:
+            if self._unclaimed_line is not None and self._unclaimed_line.done():
+                # Nobody was waiting when this line arrived, so it answers a cancelled caller's prompt.
+                logger.warning("Discarding console input entered after its manual XPIA read was cancelled.")
+                self._unclaimed_line = None
+            if self._unclaimed_line is None:
+                self._unclaimed_line = self._start_read(prompt=prompt)
+            else:
+                print(prompt, flush=True)
+            return self._unclaimed_line
+
+    def _release_line(self, *, line: concurrent.futures.Future[str]) -> None:
+        with self._lock:
+            if self._unclaimed_line is line:
+                self._unclaimed_line = None
+
+    @staticmethod
+    def _start_read(*, prompt: str) -> concurrent.futures.Future[str]:
+        line: concurrent.futures.Future[str] = concurrent.futures.Future()
+
+        def read() -> None:
+            try:
+                line.set_result(input(prompt))
+            except BaseException as exc:
+                line.set_exception(exc)
+
+        threading.Thread(target=read, name="pyrit-console-reader", daemon=True).start()
+        return line
+
+
+_CONSOLE_READER = _ConsoleLineReader()

@@ -53,6 +53,8 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     size: str = "huge"  # 38641 unique prompts from 73907 prompt-response pairs across 19 harm categories
     tags: frozenset[str] = frozenset({"default", "safety"})
 
+    source_url = "https://huggingface.co/datasets/PKU-Alignment/PKU-SafeRLHF"
+
     def __init__(
         self,
         *,

@@ -92,7 +92,7 @@ def test_dataset_name_override_applies_explicit_total(*, limit: DatasetLimit, ex
 def test_dataset_overrides_preserve_subclass_state_and_default() -> None:
     scenario = PromptInject()
     original = PromptInjectDatasetConfiguration(
-        dataset_names=PromptInject.required_datasets(),
+        sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
         goal_texts=["first goal", "second goal"],
     )
     scenario._default_dataset_config = original
