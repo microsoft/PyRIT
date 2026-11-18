@@ -343,6 +343,27 @@ class TestBatchingScale:
         result_sha256 = {r.converted_value_sha256 for r in results}
         assert result_sha256.issubset(set(filter_sha256)), "Results contain unexpected SHA256 values"
 
+    async def test_get_message_pieces_promoted_prompt_ids_keep_matches(self, sqlite_instance: MemoryInterface):
+        """Prompt IDs moved to the in-Python filter still match the stored UUID ids."""
+        num_pieces = 300
+        pieces = [_create_message_piece(original_value=f"promoted_{i}") for i in range(num_pieces)]
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+        # original_values exceeds the limit on its own and is batched in SQL. prompt_ids and
+        # converted_values fit individually but not together, so the larger one, prompt_ids,
+        # is filtered in Python against the rows the batched query returns.
+        original_values = [piece.original_value for piece in pieces] + [f"missing_{i}" for i in range(_MAX_BIND_VARS)]
+        matching = pieces[:250]
+        converted_values = [piece.converted_value for piece in matching]
+
+        results = await sqlite_instance.get_message_pieces_async(
+            prompt_ids=[piece.id for piece in pieces],
+            original_values=original_values,
+            converted_values=converted_values,
+        )
+
+        assert {str(result.id) for result in results} == {str(piece.id) for piece in matching}
+
 
 class TestExecuteBatchedQuery:
     """Tests for the _execute_batched_query helper method."""
