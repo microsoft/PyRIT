@@ -56,6 +56,7 @@ def _make_harm_metrics(**overrides) -> HarmScorerMetrics:
         "p_value": 0.13,
         "krippendorff_alpha_combined": 0.85,
         "krippendorff_alpha_model": 0.82,
+        "krippendorff_alpha_gold_model": 0.75,
         "average_score_time_seconds": 0.8,
     }
     defaults.update(overrides)
@@ -109,6 +110,50 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
     assert "Precision" in output
     assert "Recall" in output
     mock_find.assert_called_once_with(eval_hash="abc123")
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_shows_trial_consistency(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_objective_metrics(
+        num_scorer_trials=3, single_trial_accuracy=0.84, num_inconsistent_responses=7, krippendorff_alpha_model=0.71
+    )
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    output = capsys.readouterr().out
+    assert "Single-Trial Accuracy: 84.00% (mean of 3 trials)" in output
+    assert "Responses With Inconsistent Trials: 7/100" in output
+    assert "Krippendorff Alpha (Model): 0.7100" in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_omits_trial_consistency_for_a_single_trial(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_objective_metrics()
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    output = capsys.readouterr().out
+    assert "Single-Trial" not in output
+    assert "Inconsistent Trials" not in output
+    assert "Krippendorff" not in output
+
+
+def test_render_harm_metrics_shows_single_trial_error():
+    metrics = _make_harm_metrics(num_scorer_trials=3, single_trial_mean_absolute_error=0.21)
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_harm_metrics(metrics)
+
+    assert "Single-Trial MAE: 0.2100 (mean of 3 trials)" in output
+
+
+def test_render_harm_metrics_omits_single_trial_error_for_a_single_trial():
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_harm_metrics(_make_harm_metrics())
+
+    assert "Single-Trial MAE" not in output
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
@@ -215,6 +260,7 @@ async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys
     assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
+    assert "Krippendorff Alpha (Gold vs Model): 0.7500" in output
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
 
 

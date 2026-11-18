@@ -36,7 +36,10 @@ from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
+from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
+    ScenarioRunNotFoundError,
+)
 from pyrit.models import (
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
@@ -248,7 +251,10 @@ async def load_scenario_datasets_async(
     responses={
         400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/technique)"},
         404: {"model": ProblemDetail, "description": "Saved run not found"},
-        409: {"model": ProblemDetail, "description": "Saved run cannot be resumed"},
+        409: {
+            "model": ProblemDetail,
+            "description": "Saved run cannot be resumed, or a launch script would replace a saved entry",
+        },
     },
 )
 async def start_scenario_run(  # pyrit-async-suffix-exempt

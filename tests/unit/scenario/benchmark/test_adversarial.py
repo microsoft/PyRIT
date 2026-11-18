@@ -213,6 +213,7 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.requirements = TechniqueRequirements()
     technique_instance = MagicMock(spec=AttackTechnique)
     technique_instance.attack = MagicMock(spec=AttackStrategy)
+    technique_instance.attack.IS_COMPOUND = False
     technique_instance.seed_technique = seed_technique
     technique_instance.requirements = factory.requirements
     technique_instance.get_identifier.return_value = ComponentIdentifier(
@@ -250,10 +251,13 @@ async def test_compound_estimate_uses_initialization_cap_async(
     def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
         return seeds_by_dataset[dataset_name]
 
-    config = CompoundDatasetAttackConfiguration.per_dataset(
-        dataset_names=list(seeds_by_dataset), max_dataset_size=child_limit
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(sources=[DatasetSource(name=name)], max_per_dataset=child_limit)
+            for name in seeds_by_dataset
+        ]
     )
-    config.max_dataset_size = outer_limit
+    config.max_total = outer_limit
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.get_identifier.return_value = ComponentIdentifier(class_name="MockScorer", class_module="test")
     TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="estimate_adversarial")
@@ -2202,6 +2206,7 @@ def _make_exact_cached_result(
 
 def _make_cache_reuse_candidate(*, seed_groups: list[AttackSeedGroup]) -> MagicMock:
     candidate = MagicMock(spec=AtomicAttack)
+    candidate.attack_technique.attack.IS_COMPOUND = False
     candidate.atomic_attack_name = "attack_a"
     candidate.display_group = "adv_target"
     candidate.technique_name = None
@@ -2499,6 +2504,7 @@ class TestReusableCachedResults:
         bench._memory_labels = {"pipeline_build_id": "42"}
         bench._precomputed_cached_results = {"attack_a": [source_result]}
         candidate = MagicMock(spec=AtomicAttack)
+        candidate.attack_technique.attack.IS_COMPOUND = False
         candidate.atomic_attack_name = "attack_a"
         candidate.technique_eval_hash = "technique-hash"
         candidate.seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]

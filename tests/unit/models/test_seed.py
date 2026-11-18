@@ -1691,7 +1691,9 @@ def test_seed_dataset_dict_to_seed_simulated_conversation_all_base_params(tmp_pa
         "simulated_target_system_prompt_path": str(sim_path),
     }
 
-    dataset = SeedDataset(seeds=[sim_dict])
+    with pytest.warns(DeprecationWarning, match=r"system_prompt_path.*removed in 1\.4\.0") as recorded:
+        dataset = SeedDataset(seeds=[sim_dict])
+    assert len(recorded) == 2
 
     assert len(dataset.seeds) == 1
     seed = dataset.seeds[0]
@@ -1803,7 +1805,7 @@ def test_attack_seed_group_round_trip_preserves_subclasses():
 def test_seed_simulated_conversation_round_trip():
     """SeedSimulatedConversation's computed ``value`` round-trips through both python and json modes."""
     sc = SeedSimulatedConversation(
-        adversarial_chat_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
+        adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(SimulatedTargetSystemPromptPaths.COMPLIANT.value),
         num_turns=4,
     )
     rt_py = SeedSimulatedConversation.model_validate(sc.model_dump())
@@ -1827,7 +1829,7 @@ def test_seed_simulated_conversation_rejects_non_text_data_type():
 
     with pytest.raises(ValidationError):
         SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(SimulatedTargetSystemPromptPaths.COMPLIANT.value),
             data_type="image_path",
         )
 

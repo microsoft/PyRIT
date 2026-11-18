@@ -60,6 +60,7 @@ from pyrit.models import (
     DecompositionPath,
     EvaluationIdentifier,
     Finding,
+    FindingCreate,
     FindingEvidence,
     MessagePiece,
     Observation,
@@ -93,6 +94,7 @@ logger = logging.getLogger(__name__)
 
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
+_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY = "__pyrit_legacy_unsupported_identifier__"
 
 
 def _load_identifier(
@@ -121,6 +123,8 @@ def _load_identifier(
         ComponentIdentifier | None: The reconstructed identifier, or None if ``stored`` is falsy.
     """
     if not stored:
+        return None
+    if set(stored) == {_LEGACY_UNSUPPORTED_ATTACK_IDENTIFIER_KEY}:
         return None
     if pyrit_version is not None:
         stored = {**stored, "pyrit_version": pyrit_version}
@@ -327,12 +331,19 @@ class OperationEntry(Base):
 
 
 class FindingEntry(Base):
-    """A saved finding, kept separate from scores and attack results."""
+    """
+    A saved finding, kept separate from scores and attack results.
+
+    Sub-findings reference their parent like decomposed seed objectives do, and a parent stores its ordered paths
+    as JSON. Memory checks that a parent is in the same operation, that parents form no cycle, and that path steps
+    are direct sub-findings.
+    """
 
     __tablename__ = "FindingEntries"
     # Harm types are deliberately unconstrained: HarmCategory changes over time, so reads map unknown values instead.
     __table_args__ = (
         Index("ix_FindingEntries_operation_id", "operation_id"),
+        Index("ix_FindingEntries_parent_finding_id", "parent_finding_id"),
         CheckConstraint(
             "severity IN ('critical', 'important', 'moderate', 'low', 'informational', 'other')",
             name="ck_findings_severity",
@@ -361,19 +372,44 @@ class FindingEntry(Base):
     harm_type: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     harm_type_other: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    parent_finding_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("FindingEntries.id"), nullable=True
+    )
+    demonstrated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    paths: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, finding: Finding) -> None:
         """Store a validated finding."""
         validated = Finding.model_validate(finding.model_dump())
         self.id = validated.id
         self.operation_id = validated.operation_id
-        self.title = validated.title
-        self.description = validated.description
-        self.severity = validated.severity.value
-        self.severity_other = validated.severity_other
-        self.harm_type = validated.harm_type.value if validated.harm_type is not None else None
-        self.harm_type_other = validated.harm_type_other
         self.created_at = validated.created_at.astimezone(UTC)
+        self.set_fields(validated)
+        self.set_paths(validated.paths)
+
+    def set_fields(self, fields: FindingCreate) -> None:
+        """Store a finding's editable fields, leaving its identity, creation time, and paths unchanged."""
+        self.title = fields.title
+        self.description = fields.description
+        self.severity = fields.severity.value
+        self.severity_other = fields.severity_other
+        self.harm_type = fields.harm_type.value if fields.harm_type is not None else None
+        self.harm_type_other = fields.harm_type_other
+        self.parent_finding_id = fields.parent_finding_id
+        self.demonstrated = fields.demonstrated
+
+    def set_paths(self, paths: tuple[DecompositionPath, ...]) -> None:
+        """Store a finding's ordered paths, or none."""
+        self.paths = [path.model_dump(mode="json") for path in paths] or None
+
+    def get_paths(self) -> tuple[DecompositionPath, ...]:
+        """
+        Rebuild the stored paths.
+
+        Returns:
+            tuple[DecompositionPath, ...]: The paths, in stored order.
+        """
+        return tuple(DecompositionPath.model_validate(path) for path in self.paths or ())
 
     def get_finding(self) -> Finding:
         """
@@ -400,6 +436,9 @@ class FindingEntry(Base):
             harm_type=harm_type,
             harm_type_other=harm_type_other,
             created_at=self.created_at,
+            parent_finding_id=self.parent_finding_id,
+            demonstrated=self.demonstrated,
+            paths=self.get_paths(),
         )
 
 
@@ -409,6 +448,7 @@ class FindingEvidenceEntry(Base):
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        Index("ix_FindingEvidenceEntries_attack_result_id", "attack_result_id"),
         UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 
@@ -448,7 +488,7 @@ class PromptMemoryEntry(Base):
 
     Because of the nature of database and sql alchemy, type ignores are abundant :)
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the memory entry.
@@ -457,12 +497,12 @@ class PromptMemoryEntry(Base):
         sequence (int): The order of the conversation within a conversation_id.
             Can be the same number for multi-part requests or multi-part responses.
         timestamp (DateTime): The timestamp of the memory entry.
-        labels (dict[str, str]): The labels associated with the memory entry. Several can be standardized.
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
-        converters (list[Converter]): The converters for the prompt.
-        prompt_target (PromptTarget): The target for the prompt.
+        converter_identifiers (list[dict[str, str]] | None): The serialized identifiers of the applied converters.
+        converter_identifier_links (list[PromptConverterIdentifierEntry]): The ordered associations
+            to applied converters.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
         original_value_sha256 (str): The SHA256 hash of the original prompt data.
@@ -1300,7 +1340,7 @@ class EmbeddingDataEntry(Base):
     Represents the embedding data associated with conversation entries in the database.
     Each embedding is linked to a specific conversation entry via an id.
 
-    Parameters:
+    Attributes:
         id (Uuid): The primary key, which is a foreign key referencing the UUID in the PromptMemoryEntries table.
         embedding (ARRAY(Float)): An array of floats representing the embedding vector.
         embedding_type_name (String): The name or type of the embedding, indicating the model or method used.
@@ -1686,7 +1726,7 @@ class SeedEntry(Base):
     running through models with corresponding attack strategies, and applying converters.
     PromptMemoryEntry captures the processed prompt data before and after the above steps.
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the memory entry.
@@ -2046,7 +2086,7 @@ class AttackResultEntry(Base):
     """
     Represents the attack result data in the database.
 
-    Parameters:
+    Attributes:
         __tablename__ (str): The name of the database table.
         __table_args__ (dict): Additional arguments for the database table.
         id (Uuid): The unique identifier for the attack result entry.
@@ -2633,9 +2673,15 @@ class ScenarioResultEntry(Base):
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        base_identifier = ComponentIdentifier.model_validate(
-            {**self.scenario_identifier, "pyrit_version": stored_version}
-        )
+        # Rows from v0.13 and v0.14 kept scenario_init_data, which was always null for built-in
+        # scenarios, and the v1.0 rename carried that null over into scenario_identifier. The
+        # denormalized scenario_version column survives the upgrade, so carry it into the
+        # reconstructed identifier rather than letting the version default to 1.
+        stored_identifier = self.scenario_identifier or {
+            "class_name": self.scenario_name,
+            "version": self.scenario_version,
+        }
+        base_identifier = ComponentIdentifier.model_validate({**stored_identifier, "pyrit_version": stored_version})
         scenario_identifier = ScenarioIdentifier.from_component_identifier(
             base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)
         )

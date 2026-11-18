@@ -43,6 +43,10 @@ class OpenAIVideoTarget(OpenAITarget):
     Default: resolution="1280x720", duration=4 seconds
 
     Supported image formats for text+image-to-video: JPEG, PNG, WEBP
+
+    To remix an existing video, set ``prompt_metadata={"video_id": "<id>"}`` on the text
+    MessagePiece. The video_id is returned in the response metadata after any successful
+    generation (``response.message_pieces[0].prompt_metadata["video_id"]``).
     """
 
     SUPPORTED_RESOLUTIONS: list[VideoSize] = ["720x1280", "1280x720", "1024x1792", "1792x1024"]
@@ -95,11 +99,6 @@ class OpenAIVideoTarget(OpenAITarget):
             httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options.
                 For example, ``{"timeout": 180}`` sets a three-minute timeout. Custom ``http_client``
                 instances use HTTPX on SDK 2, or HTTPX2 / legacy HTTPX on SDK 3.
-
-            Remix workflow:
-            To remix an existing video, set ``prompt_metadata={"video_id": "<id>"}`` on the text
-            MessagePiece. The video_id is returned in the response metadata after any successful
-            generation (``response.message_pieces[0].prompt_metadata["video_id"]"").
         """
         super().__init__(custom_configuration=custom_configuration, **kwargs)
 
