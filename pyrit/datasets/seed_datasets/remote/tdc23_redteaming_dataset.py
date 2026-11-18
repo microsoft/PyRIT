@@ -54,6 +54,8 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
     size: str = "small"  # 100 narrative-style harmful prompts
     tags: frozenset[str] = frozenset({"safety", "jailbreak"})
 
+    source_url = "https://huggingface.co/datasets/walledai/TDC23-RedTeaming"
+
     def __init__(
         self,
         *,

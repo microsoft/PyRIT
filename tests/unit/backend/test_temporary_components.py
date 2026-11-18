@@ -242,6 +242,7 @@ class TestTemporaryComponents:
 
         assert "cuda" not in torch.first_threads
 
+    @pytest.mark.parametrize("register", [None, True, False])
     @pytest.mark.parametrize(
         ("router", "path", "payload", "registry"),
         [
@@ -250,7 +251,6 @@ class TestTemporaryComponents:
                 "/api/targets",
                 {
                     "type": "OpenAIChatTarget",
-                    "register": False,
                     "params": {"endpoint": "https://example.test/v1", "model_name": "test", "api_key": "test-only-key"},
                 },
                 TargetRegistry,
@@ -260,7 +260,6 @@ class TestTemporaryComponents:
                 "/api/converters",
                 {
                     "type": "CaesarConverter",
-                    "register": False,
                     "params": {"caesar_offset": 3},
                 },
                 ConverterRegistry,
@@ -270,31 +269,46 @@ class TestTemporaryComponents:
                 "/api/scorers",
                 {
                     "type": "SubStringScorer",
-                    "register": False,
                     "params": {"substring": "example"},
                 },
                 ScorerRegistry,
             ),
         ],
     )
-    def test_rest_unregistered_build_has_no_handle(
+    def test_rest_build_registration_contract(
         self,
         *,
         router: APIRouter,
         path: str,
         payload: dict[str, JSONValue],
         registry: type[TargetRegistry] | type[ConverterRegistry] | type[ScorerRegistry],
+        register: bool | None,
     ) -> None:
         app = FastAPI()
         app.state.authentication_policy = AuthenticationPolicy(mode="local")
         app.include_router(router, prefix="/api")
+        payload = dict(payload)
+        if register is not None:
+            payload["register"] = register
+        if register is not False:
+            payload["name"] = "created"
         with TestClient(app) as client:
             response = client.post(path, json=payload)
+            schema = client.get("/openapi.json").json()
         assert response.status_code == 201, response.text
         assert "identifier" in response.json()
-        assert not {"converter_id", "target_registry_name", "scorer_registry_name"} & response.json().keys()
+        handles = {"converter_id", "target_registry_name", "scorer_registry_name"} & response.json().keys()
+        if register is False:
+            assert not handles
+        else:
+            assert len(handles) == 1
+            assert response.json()[handles.pop()] == "created"
         assert "test-only-key" not in response.text
-        assert registry.get_registry_singleton().instances.get_names() == []
+        assert registry.get_registry_singleton().instances.get_names() == ([] if register is False else ["created"])
+        request_schema = schema["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        properties = schema["components"]["schemas"][request_schema.rsplit("/", 1)[-1]]["properties"]
+        assert properties["register"]["default"] is True
+        assert "register_instance" not in properties
 
     async def test_temperature_reconstruction_is_private_and_preserves_auth_async(self) -> None:
         source = source_target()

@@ -1314,7 +1314,7 @@ describe('LabelsBar', () => {
       const chip = screen.getByTestId('edit-label-operation')
       expect(chip).toHaveAttribute('role', 'combobox')
       expect(chip).toHaveValue('op_2026_08_probe')
-      chip.focus()
+      act(() => { chip.focus() })
       expect(chip).toHaveFocus()
       await user.keyboard('{ArrowDown}')
 
@@ -1353,14 +1353,14 @@ describe('LabelsBar', () => {
 
       fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
-      input.focus()
+      act(() => { input.focus() })
       await waitFor(() => expect(input).toHaveFocus())
       const nextButton = screen.getByRole('button', { name: 'after' })
 
       // jsdom cannot complete Fluent's Tabster focus-guard navigation, so
       // dispatch Tab and drive its browser focus destination explicitly.
       fireEvent.keyDown(input, { key: 'Tab' })
-      nextButton.focus()
+      act(() => { nextButton.focus() })
 
       await waitFor(() => expect(input).toHaveAttribute('aria-expanded', 'false'))
       expect(onChange).not.toHaveBeenCalled()

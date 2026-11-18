@@ -52,6 +52,7 @@ class CapabilityName(str, Enum):
     PREFILL = "supports_prefill"
     TEMPERATURE = "supports_temperature"
     WEB_SEARCH = "supports_web_search"
+    RESPONSES = "supports_responses"
 
 
 class TargetCapabilities(BaseModel):
@@ -120,6 +121,11 @@ class TargetCapabilities(BaseModel):
 
     #: Whether web search is configured and available to this target.
     supports_web_search: bool = False
+
+    #: Whether the target replies to the requests it receives. Write-only targets
+    #: (e.g., ``TextTarget``) deliver each request without replying, so a send that
+    #: returns no response is a successful delivery rather than a missing response.
+    supports_responses: bool = True
 
     #: The input modalities supported by the target, as combinations of data types
     #: (e.g., ``{{"text"}, {"image_path", "text"}}``). Serialized as a sorted list of
