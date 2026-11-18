@@ -261,7 +261,9 @@ class OpenAITarget(PromptTarget):
                 via parameter or environment variable.
         """
         self._headers: dict[str, str] = {}
-        self._httpx_client_kwargs = httpx_client_kwargs or {}
+        self._httpx_client_kwargs = dict(httpx_client_kwargs or {})
+        if (default_headers := self._httpx_client_kwargs.get("default_headers")) is not None:
+            self._httpx_client_kwargs["default_headers"] = clean_request_headers(default_headers)
         self._auth_mode = auth_mode
 
         request_headers = (
@@ -314,7 +316,6 @@ class OpenAITarget(PromptTarget):
             auth_mode=auth_mode,
         )
         if auth_mode == "api_key" and isinstance(self._api_key, str):
-            # A key with a line break can't be sent, and the HTTP error would quote it into saved results.
             self._api_key = clean_credential_value(self._api_key, name="api_key")
 
         self._initialize_openai_client()
@@ -528,7 +529,8 @@ class OpenAITarget(PromptTarget):
         running finish with the old values. How the target authenticates never changes: a target that
         gets its tokens from a token provider, such as Microsoft Entra ID (with ``auth_mode="identity"``
         or a provider passed as ``api_key``), can't take an API key or an ``Authorization`` header, and a
-        target that needs no key can't take an API key. Errors never include a value.
+        target that needs no key can't take an API key. A configured ``Authorization`` header takes precedence
+        over an API key and must be updated explicitly. Errors never include a value.
 
         Args:
             api_key (str | None): The new API key or access token, or None to keep the current one.
@@ -567,11 +569,15 @@ class OpenAITarget(PromptTarget):
             )
         key = clean_credential_value(api_key, name="api_key") if api_key is not None else None
         # Keep the configured spelling, so the new value replaces a header instead of being sent beside it.
-        configured = [*self._headers, *dict(self._httpx_client_kwargs.get("default_headers") or {})]
+        configured = [*(self._httpx_client_kwargs.get("default_headers") or {}), *self._headers]
         spelling = {name.lower(): name for name in configured}
+        replaced = {name.lower() for name in updates}
+        if key is not None and "authorization" in spelling and "authorization" not in replaced:
+            raise ValueError(
+                "This target has an explicit Authorization header; update the Authorization header instead."
+            )
         updates = {spelling.get(name.lower(), name): value for name, value in updates.items()}
         self._async_client = self._client.with_options(api_key=key, default_headers=updates or None)
-        replaced = {name.lower() for name in updates}
         self._headers = {
             **{name: value for name, value in self._headers.items() if name.lower() not in replaced},
             **updates,
@@ -802,10 +808,15 @@ class OpenAITarget(PromptTarget):
         - Google Gemini: https://generativelanguage.googleapis.com/v1beta/openai
         - Custom endpoints: Any format (warnings may be shown but URL is not modified)
         """
-        # Merge custom headers with httpx_client_kwargs
+        # Header names are case-insensitive; explicit target headers win over the SDK options.
         httpx_kwargs = self._httpx_client_kwargs.copy()
-        if self._headers:
-            httpx_kwargs.setdefault("default_headers", {}).update(self._headers)
+        configured = {
+            name.lower(): (name, value)
+            for headers in (httpx_kwargs.get("default_headers") or {}, self._headers)
+            for name, value in headers.items()
+        }
+        if configured:
+            httpx_kwargs["default_headers"] = dict(configured.values())
 
         # Determine if this is Azure OpenAI based on the endpoint
         is_azure = "azure" in self._endpoint.lower() if self._endpoint else False

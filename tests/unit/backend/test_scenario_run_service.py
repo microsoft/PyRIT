@@ -292,15 +292,16 @@ def converter_registry() -> Iterator[ConverterRegistry]:
 class _LaunchScript:
     """A launch script that registers one converter, optionally swallowing or wrapping errors."""
 
-    def __init__(self, *, name: str, swallow: bool = False, wrap: bool = False) -> None:
+    def __init__(self, *, name: str, swallow: bool = False, wrap: bool = False, replace: bool = True) -> None:
         self._name = name
         self._swallow = swallow
         self._wrap = wrap
+        self._replace = replace
 
     async def initialize_async(self) -> None:
         registry = ConverterRegistry.get_registry_singleton()
         try:
-            registry.instances.register(Base64Converter(), name=self._name, replace=True)
+            registry.instances.register(Base64Converter(), name=self._name, replace=self._replace)
         except Exception as error:
             if self._wrap:
                 raise ValueError("The launch script failed.") from error
@@ -397,7 +398,13 @@ async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     "script",
-    [_LaunchScript(name="rot13"), _LaunchScript(name="rot13", swallow=True), _LaunchScript(name="rot13", wrap=True)],
+    [
+        _LaunchScript(name="rot13"),
+        _LaunchScript(name="rot13", swallow=True),
+        _LaunchScript(name="rot13", wrap=True),
+        _LaunchScript(name="rot13", replace=False),
+        _LaunchScript(name="rot13", replace=False, swallow=True),
+    ],
 )
 async def test_launch_scripts_report_a_name_a_private_entry_holds_async(
     converter_registry: ConverterRegistry, script: Any
@@ -406,7 +413,7 @@ async def test_launch_scripts_report_a_name_a_private_entry_holds_async(
     converter_registry.instances.register(private, name="rot13", metadata=owner_metadata("alice", private=True))
 
     with pytest.raises(
-        SavedEntryLaunchConflictError, match="'converters' can't replace 'rot13', which a user's private entry uses"
+        SavedEntryLaunchConflictError, match="'converters' can't register 'rot13' .* until the server restarts"
     ) as raised:
         await _run_launch_scripts_async({"converters": script})
 

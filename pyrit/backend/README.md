@@ -160,8 +160,9 @@ PUT /api/targets/my-claude/credentials
   its case and wherever the target was configured with it (`headers`,
   `OPENAI_ADDITIONAL_REQUEST_HEADERS`, or `httpx_client_kwargs`), so a target behind any auth
   scheme can be kept fresh: `Authorization`, `x-api-key`, a team's own header, or `Cookie` (the
-  whole cookie string). Send `"private"` with the visibility you expect; when the target isn't
-  private or shared as expected, nothing changes and the request returns 409.
+  whole cookie string). If the target has an explicit `Authorization` header, update that
+  header instead of sending just `api_key` (400). Send `"private"` with the visibility you expect;
+  when the target isn't private or shared as expected, nothing changes and the request returns 409.
 - The update changes the registered target in place: its identity, configuration, detected
   capabilities, and authentication mode stay the same, and everything using it, such as a round
   robin, a scorer, or a running scenario, sends the new values with its next request. A target
@@ -170,12 +171,12 @@ PUT /api/targets/my-claude/credentials
   header, and one that needs no key can't take an `api_key` (400). Headers that frame or route a request, such as
   `Host` or `Content-Length`, can't be set (400). OpenAI-family targets other than `RealtimeTarget`
   can update in place; other target types can't allow updates. Values are never returned.
-- Keys, sensitive parameters, and header values lose surrounding whitespace when a target is
-  created or updated; one containing a line break or another control character is refused (400),
-  and the error names only the parameter or header.
+- Keys, sensitive parameters, and header values must be ASCII. When a target is created or updated,
+  surrounding whitespace is trimmed and remaining control characters are refused (400), except for
+  tabs inside header values. The error names only the parameter or header.
 - Target responses report `private` and `credentials_rejected`: whether the provider answered the
   last request through the target, or a chat copy of it, with 401 or 403. It is `null` until a
-  request completes or fails authentication, and again after the credentials change.
+  request using the current credentials completes or fails authentication.
 - `pyrit_scan set-target-credential` updates a target's `api_key`, or a request header with
   `--header`, from a prompt, an environment variable, or the `ant` CLI.
 - Like other targets created through the API, private targets are gone after the backend

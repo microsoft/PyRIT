@@ -420,6 +420,35 @@ async def test_a_copy_built_after_an_update_uses_the_new_credentials_async() -> 
     assert (copy._api_key, copy._headers) == ("new-key", {"X-Team-Token": "fresh"})
 
 
+@pytest.mark.parametrize(
+    "header_params",
+    [
+        {"headers": '{"Authorization": "Bearer old-token"}'},
+        {"httpx_client_kwargs": {"default_headers": {"aUtHoRiZaTiOn": "Bearer old-token"}}},
+        {
+            "headers": '{"Authorization": "Bearer old-token"}',
+            "httpx_client_kwargs": {"default_headers": {"aUtHoRiZaTiOn": "Bearer default-token"}},
+        },
+    ],
+)
+async def test_an_explicit_authorization_header_cannot_be_rotated_with_only_an_api_key_async(
+    header_params: dict[str, Any],
+) -> None:
+    target = OpenAIChatTarget(endpoint=_ENDPOINT, model_name="gpt-4o", api_key="old-key", **header_params)
+    TargetRegistry.get_registry_singleton().instances.register(
+        target, name="mine", metadata=owner_metadata("alice", private=True) | credential_update_metadata(allowed=True)
+    )
+
+    with pytest.raises(ValueError, match="update the Authorization header"):
+        await _update_async("alice", api_key="new-key")
+    assert target._client.api_key == "old-key"
+
+    await _update_async("alice", headers={"authorization": "Bearer new-token"})
+    assert [value for name, value in target._client.default_headers.items() if name.lower() == "authorization"] == [
+        "Bearer new-token"
+    ]
+
+
 async def test_a_no_key_target_takes_headers_but_not_a_key_async() -> None:
     request = _request(private=True).model_copy(update={"auth_mode": "none"})
     await _create_async("alice", request)
@@ -669,6 +698,7 @@ async def test_a_component_holding_the_target_uses_updated_credentials_async() -
 
     assert _entry("alice", "mine").instance is held
     assert held._api_key == "new-key"
+    assert held._client.api_key == "new-key"
 
 
 async def test_an_identity_target_cannot_switch_to_a_key_async() -> None:

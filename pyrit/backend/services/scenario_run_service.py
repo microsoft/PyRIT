@@ -1779,8 +1779,8 @@ class ScenarioRunService:
         if private:
             names = ", ".join(f"'{name}'" for name in private)
             reasons.append(
-                f"The launch script '{initializer_name}' can't replace {names}, which a user's private entry uses "
-                "until the server restarts or its owner deletes it."
+                f"The launch script '{initializer_name}' can't register {names} because the names are in use "
+                "by private entries until the server restarts."
             )
         return SavedEntryLaunchConflictError(f"{' '.join(reasons)} Leave that script out of the launch.")
 

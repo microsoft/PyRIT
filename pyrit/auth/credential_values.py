@@ -4,10 +4,9 @@
 """
 Check credential values before a target sends them.
 
-A value pasted with a trailing newline or another control character can't be sent in an HTTP header,
-and the HTTP library's error quotes it, so such errors would carry the secret into logs and saved
-results. These checks strip surrounding whitespace and refuse what is left over. Errors name the
-parameter or header, never its value.
+The HTTP client expects ASCII and rejects control characters in header values. Validate before
+sending so that transport errors cannot quote malformed credentials. Errors name the parameter
+or header, never its value.
 """
 
 import re
@@ -41,8 +40,10 @@ def clean_credential_value(value: str, *, name: str) -> str:
         str: The credential without surrounding whitespace.
 
     Raises:
-        ValueError: If the credential is blank or contains a control character, such as a line break.
+        ValueError: If the credential is blank, contains non-ASCII text, or contains a control character.
     """
+    if not value.isascii():
+        raise ValueError(f"'{name}' must contain only ASCII characters.")
     cleaned = value.strip()
     if not cleaned:
         raise ValueError(f"'{name}' needs a nonblank value.")
@@ -53,7 +54,7 @@ def clean_credential_value(value: str, *, name: str) -> str:
 
 def clean_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
     """
-    Check header names, and strip surrounding whitespace from values and refuse control characters in them.
+    Check header names and values, trimming surrounding whitespace.
 
     An empty value and a tab inside a value are allowed, since HTTP allows them.
 
@@ -64,13 +65,15 @@ def clean_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
         dict[str, str]: The headers with surrounding whitespace removed from names and values.
 
     Raises:
-        ValueError: If a name isn't a valid header name, or a value contains a control character.
+        ValueError: If a name isn't a valid header name, or a value contains non-ASCII text or a control character.
     """
     cleaned: dict[str, str] = {}
     for name, value in headers.items():
         stripped = name.strip()
         if not _HEADER_NAME.fullmatch(stripped):
             raise ValueError("A request header name may contain only letters, digits, and !#$%&'*+-.^_`|~.")
+        if not value.isascii():
+            raise ValueError(f"Header '{stripped}' must contain only ASCII characters.")
         value = value.strip()
         if _has_control_character(value, allow_tab=True):
             raise ValueError(f"Header '{stripped}' contains a line break or another control character.")

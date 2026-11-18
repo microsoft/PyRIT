@@ -3,9 +3,12 @@
 
 """Whether the provider rejected a target's credentials on the last request through it."""
 
+import asyncio
+
 import httpx
 import openai
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions import PyritException
@@ -120,3 +123,41 @@ async def test_the_credential_status_is_unknown_until_a_request_completes() -> N
 
     await _send_async(target, None)
     assert target.credentials_rejected is False
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("reject", [False, True])
+async def test_a_request_in_flight_at_rotation_does_not_report_status_for_the_new_key_async(reject: bool) -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    class _PausedTarget(_FailingTarget):
+        async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+            started.set()
+            await finish.wait()
+            return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+    target = _PausedTarget()
+    async with asyncio.TaskGroup() as group:
+        group.create_task(_send_async(target, _http_status_error(401) if reject else None))
+        await asyncio.wait_for(started.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        target._reset_credential_status()
+        finish.set()
+
+    assert target.credentials_rejected is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_copy_made_before_rotation_does_not_report_status_for_the_new_key_async() -> None:
+    source = _FailingTarget()
+    old_copy = _FailingTarget()
+    old_copy.attach_reconstruction_source(source)
+    source._reset_credential_status()
+
+    await _send_async(old_copy, _http_status_error(401))
+    after_old_copy = source.credentials_rejected
+    new_copy = _FailingTarget()
+    new_copy.attach_reconstruction_source(source)
+    await _send_async(new_copy, None)
+
+    assert (after_old_copy, source.credentials_rejected) == (None, False)

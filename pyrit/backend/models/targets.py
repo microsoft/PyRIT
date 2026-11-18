@@ -186,7 +186,10 @@ class UpdateTargetCredentialsRequest(BaseModel):
     api_key: str | None = Field(
         None,
         max_length=16_384,
-        description="The new API key or access token. Never returned.",
+        description=(
+            "The new API key or access token. If the target has an explicit Authorization header, update that "
+            "header instead of sending just api_key. Never returned."
+        ),
     )
     headers: dict[str, str] | None = Field(
         None,

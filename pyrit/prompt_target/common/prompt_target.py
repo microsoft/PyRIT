@@ -100,6 +100,7 @@ class PromptTarget(Identifiable):
     _credentials_rejected: bool | None = None
     # The target a copy reports credential rejections into, so its registered source reflects the copy's requests.
     _credential_status_source: "PromptTarget | None" = None
+    _credential_generation: int = 0
 
     # Class-level default configuration for this target type.
     #
@@ -615,7 +616,7 @@ class PromptTarget(Identifiable):
         Send, and record whether the provider accepted the target's credentials.
 
         A provider authentication failure (401 or 403) marks them rejected; a completed request marks
-        them accepted. Other failures leave the state unchanged.
+        them accepted. Other failures and requests for older credentials leave the state unchanged.
 
         Args:
             normalized_conversation (list[Message]): The normalized conversation to send.
@@ -623,13 +624,16 @@ class PromptTarget(Identifiable):
         Returns:
             list[Message]: Response messages from the target.
         """
+        owner = self._credential_status_owner()
+        generation = self._credential_generation
         try:
             response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
         except Exception as error:
-            if _is_credential_rejection(error):
-                self._credential_status_owner()._credentials_rejected = True
+            if generation == owner._credential_generation and _is_credential_rejection(error):
+                owner._credentials_rejected = True
             raise
-        self._credential_status_owner()._credentials_rejected = False
+        if generation == owner._credential_generation:
+            owner._credentials_rejected = False
         return response
 
     def _credential_status_owner(self) -> "PromptTarget":
@@ -638,10 +642,10 @@ class PromptTarget(Identifiable):
     @property
     def credentials_rejected(self) -> bool | None:
         """
-        Whether the provider rejected this target's credentials on the last request through it.
+        Whether the provider rejected the current credentials on the last request that used them.
 
         Requests through copies built from this target, such as a chat's temperature override, count too.
-        None until a request completes or fails authentication, and again after the credentials change.
+        None until a request using the current credentials completes or fails authentication.
         """
         return self._credential_status_owner()._credentials_rejected
 
@@ -668,7 +672,10 @@ class PromptTarget(Identifiable):
 
     def _reset_credential_status(self) -> None:
         """Forget whether the provider accepted the credentials, because they just changed."""
-        self._credential_status_owner()._credentials_rejected = None
+        # A copy whose credentials were changed no longer speaks for the source.
+        self._credential_status_source = None
+        self._credential_generation += 1
+        self._credentials_rejected = None
 
     def attach_reconstruction_source(self, source: object) -> None:
         """
@@ -679,6 +686,7 @@ class PromptTarget(Identifiable):
         """
         if isinstance(source, PromptTarget):
             self._credential_status_source = source._credential_status_owner()
+            self._credential_generation = source._credential_generation
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """

@@ -293,8 +293,7 @@ class PrivateEntryReplacementError(RuntimeError):
             name (str): The entry's name.
         """
         super().__init__(
-            f"'{name}' can't be replaced: a user's private entry uses that name until the server restarts or "
-            "its owner deletes it."
+            f"'{name}' can't be replaced: a user's private entry uses that name until the server restarts."
         )
         self.name = name
 
@@ -331,6 +330,12 @@ def _record_saved_entry_refusal(entry: RegistryEntry[Any] | None) -> str | None:
     if refusals is not None:
         refusals.append((kind, entry.name))
     return kind
+
+
+def _record_private_entry_refusal(name: str) -> None:
+    refusals = _saved_entry_refusals.get()
+    if refusals is not None:
+        refusals.append((PRIVATE_ENTRY_REFUSAL_KIND, name))
 
 
 def registry_entry_origin(metadata: Mapping[str, Any]) -> RegistryEntryOrigin:
@@ -702,9 +707,7 @@ class DefaultInstanceRegistry(Generic[T]):
                 raise ValueError(f"Instance name '{name}' is reserved")
             previous = self._registry_items.get(name)
             if replace and previous is not None and not is_visible_to_caller(previous):
-                refusals = _saved_entry_refusals.get()
-                if refusals is not None:
-                    refusals.append((PRIVATE_ENTRY_REFUSAL_KIND, name))
+                _record_private_entry_refusal(name)
                 raise PrivateEntryReplacementError(name=name)
             if not replace:
                 self.validate_name_available(name)
@@ -759,9 +762,12 @@ class DefaultInstanceRegistry(Generic[T]):
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
-            if name in self._registry_items:
-                # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
-                _record_saved_entry_refusal(self._registry_items[name])
+            if (previous := self._registry_items.get(name)) is not None:
+                # Record the clash even if a launch script catches the generic name-taken error.
+                if not is_visible_to_caller(previous):
+                    _record_private_entry_refusal(name)
+                else:
+                    _record_saved_entry_refusal(previous)
                 raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
