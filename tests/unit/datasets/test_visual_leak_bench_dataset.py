@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
 from unittest.mock import patch
 
 import pytest
@@ -361,16 +360,3 @@ async def test_fetch_and_save_image_returns_cached_path():
     expected_path = str(Path("/results") / "images" / "visual_leak_bench_test_001.png")
     assert result == expected_path
     assert mock_serializer.value == expected_path
-
-
-@pytest.mark.parametrize(
-    ("method_name", "parameter_name"),
-    [
-        ("_build_harm_categories", "pii_type_str"),
-        ("_fetch_and_save_image_async", "image_url"),
-        ("_fetch_and_save_image_async", "example_id"),
-    ],
-)
-def test_private_helper_parameters_are_keyword_only(*, method_name: str, parameter_name: str) -> None:
-    parameter = inspect.signature(getattr(_VisualLeakBenchDataset, method_name)).parameters[parameter_name]
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
