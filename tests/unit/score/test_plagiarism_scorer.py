@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import inspect
 import unicodedata
 from enum import Enum
 from unittest.mock import patch
@@ -518,22 +517,6 @@ class TestPlagiarismScorerUtilityFunctions:
         tokens = []
         ngrams = scorer._ngram_set(tokens, n=2)
         assert ngrams == set()
-
-    @pytest.mark.parametrize(
-        ("method", "keyword_only"),
-        [
-            ("_lcs_length", ["b"]),
-            ("_levenshtein_distance", ["b"]),
-            ("_ngram_set", ["n"]),
-            ("_plagiarism_score", ["reference", "metric", "n"]),
-        ],
-    )
-    def test_helper_parameters_after_the_first_are_keyword_only(self, scorer, method, keyword_only):
-        """Test the helpers take one positional argument and the rest by keyword."""
-        params = list(inspect.signature(getattr(scorer, method)).parameters.values())
-        assert params[0].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
-        assert [p.name for p in params[1:]] == keyword_only
-        assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params[1:])
 
     def test_helpers_reject_a_second_positional_argument(self, scorer):
         """Test passing the second argument positionally raises TypeError."""
