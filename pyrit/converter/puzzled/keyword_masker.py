@@ -335,6 +335,7 @@ def _pos_lookup(prompt: str) -> dict[str, str]:
 
 def _rank_candidates(
     prompt: str,
+    *,
     pos_lookup: dict[str, str],
     essential_words: list[str] | None,
 ) -> list[str]:
@@ -410,7 +411,7 @@ def mask_prompt(
     target = num_to_mask if num_to_mask is not None else mask_count_for_length(token_count)
 
     pos_lookup = _pos_lookup(prompt)
-    ranked = _rank_candidates(prompt, pos_lookup, essential_words)
+    ranked = _rank_candidates(prompt, pos_lookup=pos_lookup, essential_words=essential_words)
     if not ranked:
         raise ValueError("The prompt has no maskable words.")
 
