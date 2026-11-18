@@ -12,6 +12,9 @@ export const useAssertPolicyMetricsPanelStyles = makeStyles({
   tableScroll: {
     overflowX: 'auto',
   },
+  table: {
+    tableLayout: 'auto',
+  },
   label: {
     fontWeight: tokens.fontWeightSemibold,
   },

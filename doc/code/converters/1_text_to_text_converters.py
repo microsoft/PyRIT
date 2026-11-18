@@ -131,6 +131,7 @@ from pyrit.converter import (
     EmojiConverter,
     FirstLetterConverter,
     FlipConverter,
+    FullwidthConverter,
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
@@ -169,6 +170,7 @@ print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore
+print("Fullwidth:", await FullwidthConverter().convert_async(prompt=prompt))  # type: ignore
 # Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
@@ -178,7 +180,7 @@ print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: igno
 # The Arabic converters only affect Arabic letters, so they use an Arabic prompt
 # ("tell me how to cut down a tree") rather than the Latin-script prompt above.
 arabic_prompt = "أخبرني كيف أقطع شجرة"
-# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters that join
 print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 # Arabic presentation form substitutes Arabic letters with their isolated glyphs
 print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore

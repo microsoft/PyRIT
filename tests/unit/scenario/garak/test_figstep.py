@@ -20,8 +20,8 @@ from pyrit.prompt_target import (
     TargetConfiguration,
 )
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.garak import FigStep, FigStepTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource
+from pyrit.scenario.garak import FigStep, FigStepTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.scenarios.garak.figstep import DEFAULT_MAX_DATASET_SIZE
 from pyrit.score import TrueFalseScorer
 
@@ -102,7 +102,7 @@ class TestFigStepInitialization:
         config = FigStep(objective_scorer=mock_objective_scorer)._default_dataset_config
 
         assert config.dataset_names == ["figstep"]
-        assert config.max_dataset_size == DEFAULT_MAX_DATASET_SIZE
+        assert config.max_total == DEFAULT_MAX_DATASET_SIZE
 
     def test_required_datasets_include_both_figstep_datasets(self):
         assert FigStep.required_datasets() == ["figstep", "figstep_pro"]
@@ -165,9 +165,9 @@ class TestFigStepDatasetResolution:
     async def test_named_pro_dataset_selects_pro_attack(self, mock_objective_target, mock_objective_scorer):
         groups = [_figstep_group()]
         config = DatasetAttackConfiguration(
-            dataset_names=["figstep_pro"],
-            max_dataset_size=1,
-            auto_fetch=False,
+            sources=[DatasetSource(name="figstep_pro")],
+            max_total=1,
+            fetch=DatasetFetchPolicy.NEVER,
         )
         with (
             patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"),
@@ -198,7 +198,7 @@ class TestFigStepDatasetResolution:
 
     async def test_unrelated_named_dataset_is_rejected(self, mock_objective_target, mock_objective_scorer):
         scenario = FigStep(objective_scorer=mock_objective_scorer)
-        config = DatasetAttackConfiguration(dataset_names=["harmbench"], auto_fetch=False)
+        config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], fetch=DatasetFetchPolicy.NEVER)
 
         with (
             patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"),
@@ -220,7 +220,9 @@ class TestFigStepDatasetResolution:
 
     async def test_multiple_named_figstep_datasets_are_rejected(self, mock_objective_target, mock_objective_scorer):
         scenario = FigStep(objective_scorer=mock_objective_scorer)
-        config = DatasetAttackConfiguration(dataset_names=["figstep", "figstep_pro"], auto_fetch=False)
+        config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="figstep"), DatasetSource(name="figstep_pro")], fetch=DatasetFetchPolicy.NEVER
+        )
 
         with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"):
             scenario.set_params_from_args(
@@ -275,7 +277,7 @@ class TestFigStepDatasetResolution:
         )
         config = DatasetAttackConfiguration(
             seed_groups=[_figstep_group(), invalid_group],
-            max_dataset_size=1,
+            max_total=1,
         )
         scenario = FigStep(objective_scorer=mock_objective_scorer)
 

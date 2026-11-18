@@ -105,6 +105,25 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorPaletteRedForeground1,
     fontSize: tokens.fontSizeBase500,
   },
+  accountColumn: {
+    width: '110px',
+  },
+  accountCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
+  credentialsAcceptedIcon: {
+    color: tokens.colorStatusSuccessForeground1,
+    fontSize: tokens.fontSizeBase400,
+  },
+  credentialsRejectedIcon: {
+    color: tokens.colorStatusDangerForeground1,
+  },
+  credentialsHelp: {
+    maxWidth: '20rem',
+    overflowWrap: 'anywhere',
+  },
   helpHeader: {
     cursor: 'help',
   },

@@ -135,6 +135,7 @@ class OpenAIResponseTarget(OpenAITarget):
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
@@ -373,7 +374,7 @@ class OpenAIResponseTarget(OpenAITarget):
         Convert a single inline piece into a Responses API content item.
 
         Args:
-            piece: The inline piece (text, image_path, or structured refusal).
+            piece: The inline piece (text, image_path, blocked error, or structured refusal).
 
         Returns:
             A dict in the Responses API content item shape.
@@ -389,7 +390,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 "type": "output_text",
                 "text": structured_refusal,
             }
-        if piece.converted_value_data_type == "text":
+        if piece.converted_value_data_type == "text" or piece.is_blocked_error():
             return {
                 "type": "input_text" if piece.api_role in ["developer", "user"] else "output_text",
                 "text": piece.converted_value,
@@ -439,11 +440,32 @@ class OpenAIResponseTarget(OpenAITarget):
             "output": output,
         }
 
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the Responses adapter's text refusals and omitted reasoning history.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted reasoning.
+        """
+        if message_piece.converted_value_data_type == "reasoning":
+            return None
+        if message_piece.is_blocked_error() or (
+            message_piece.api_role == "assistant" and message_piece.structured_refusal is not None
+        ):
+            return "text"
+        return message_piece.converted_value_data_type
+
     async def _serialize_piece_async(self, *, piece: MessagePiece, message_index: int) -> _SerializedPiece | None:
         data_type = piece.converted_value_data_type
         if data_type == "reasoning":
             return None
-        if data_type in {"text", "image_path"} or piece.structured_refusal is not None:
+        if data_type in {"text", "image_path"} or piece.is_blocked_error() or piece.structured_refusal is not None:
             item = await self._construct_input_item_from_piece_async(piece)
             return _SerializedPiece(item=item, placement="inline")
         if data_type == "function_call":
@@ -1152,7 +1174,7 @@ class OpenAIResponseTarget(OpenAITarget):
             if piece.api_role == "assistant" and piece.original_value_data_type == "function_call":
                 try:
                     section = json.loads(piece.original_value)
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     continue
                 if isinstance(section, dict) and section.get("type") == "function_call":
                     # Do NOT skip function_call even if status == "completed" — we still need to emit the output.

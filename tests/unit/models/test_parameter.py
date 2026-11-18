@@ -325,6 +325,7 @@ class TestParameterSerialization:
             "sensitive": False,
             "multiline": False,
             "identity_conflicting": False,
+            "copy_locked": False,
         }
 
     def test_excludes_live_only_fields(self) -> None:

@@ -220,7 +220,7 @@ describe('Shared new run labels', () => {
         run: {
           scenario_result_id: 'saved_run', scenario_name: 'SavedScenario',
           scenario_version: 1, status: 'COMPLETED', created_at: '2026-01-01T00:00:00Z',
-          labels: SAVED_LABELS,
+          labels: SAVED_LABELS, operation_id: 'saved_operation', operation_name: 'original_op',
         },
         summary: {
           overall: { completed: 0, planned: 0, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 },
@@ -416,14 +416,12 @@ describe('Shared new run labels', () => {
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
     renderApp('/scanner/history/saved_run')
-    const saved = screen.getByRole('region', { name: 'Scan summary' })
+    const saved = screen.getByRole('link', { name: 'Operation: original_op' })
     await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
-    expect(saved).toHaveTextContent('original_user')
     expect(saved).toHaveTextContent('original_op')
-    expect(saved).toHaveTextContent('original_team')
-    expect(saved).not.toHaveTextContent('future_op')
-    expect(within(saved).queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
+    expect(saved).toHaveAttribute('href', '/operations/saved_operation')
+    expect(screen.queryByRole('link', { name: 'Operation: future_op' })).not.toBeInTheDocument()
     expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(1)
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
     expect(scenariosApi.cancelRun).not.toHaveBeenCalled()
@@ -599,7 +597,7 @@ describe('Shared new run labels', () => {
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
         labels: DEFAULT_LABELS, operation_id: operationId('config_op_v2'),
       }))
-      const saved = await screen.findByRole('region', { name: 'Scan summary' })
+      const saved = await screen.findByRole('link', { name: /^Operation: / })
       expect(saved).toHaveTextContent('original_op')
       expect(saved).not.toHaveTextContent('config_op_v2')
     })

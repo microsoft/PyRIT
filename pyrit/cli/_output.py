@@ -66,7 +66,7 @@ def print_operation_list(*, items: list[Operation]) -> None:
         print(f"  {item.name}  {item.id}")
 
 
-def _truncate_text(text: str, max_length: int) -> str:
+def _truncate_text(text: str, *, max_length: int) -> str:
     """
     Truncate *text* to *max_length* characters, appending an ellipsis when cut.
 
@@ -234,6 +234,19 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Model: {model}")
         if identifier.endpoint:
             print(f"    Endpoint: {identifier.endpoint}")
+        print(f"    Account: {'Yours' if tgt.private else 'Shared'}")
+        if tgt.allow_credential_updates:
+            print("    Credential updates: allowed")
+        if tgt.credentials_rejected and tgt.allow_credential_updates:
+            print(
+                "    Credentials rejected by the provider on the last request; update them with "
+                f"'pyrit_scan set-target-credential {tgt.target_registry_name}'"
+            )
+        elif tgt.credentials_rejected:
+            print(
+                "    Credentials rejected by the provider on the last request; this target doesn't allow "
+                "credential updates, so ask whoever set it up"
+            )
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 
@@ -348,7 +361,7 @@ def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: s
             exc = retry.exception_type or "error"
             message = (retry.exception_message or "").strip().splitlines()
             if message:
-                exc = f"{exc}: {_truncate_text(message[0], 160)}"
+                exc = f"{exc}: {_truncate_text(message[0], max_length=160)}"
             location = _format_retry_location(retry)
             _cprint(
                 f"  ! retry #{retry.attempt_number} [{attack.atomic_attack_name}]{location}: {exc}",
@@ -415,7 +428,7 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
         for failed in run.failed_attacks:
             error_type = failed.error_type or "Error"
             message = (failed.error_message or "").strip().splitlines()
-            detail = _truncate_text(message[0], 200) if message else "no detail"
+            detail = _truncate_text(message[0], max_length=200) if message else "no detail"
             retry_note = f" [{failed.total_retries} retries]" if failed.total_retries else ""
             print(f"    - {failed.atomic_attack_name}{retry_note}: {error_type}: {detail}")
 

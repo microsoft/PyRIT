@@ -67,6 +67,7 @@ class AssertGradeDistribution(_AssertMetricsModel):
     as in ASSERT. Not-applicable answers aren't counted here; the dimension's rate counts them.
     """
 
+    scale: list[int | str]
     counts: dict[str, _Count]
     median: float | int | str | None = None
 
@@ -97,12 +98,13 @@ class AssertTechniqueMetrics(_AssertMetricsModel):
     denominator, and ``dimension_no_verdict`` counts judged conversations where that dimension's judge
     gave no verdict, such as a blocked judge reply. For every dimension, ``applicable_count`` +
     ``not_applicable_count`` + ``dimension_no_verdict`` equals ``scored_total``.
-    ``dimension_grades`` adds grade counts and the median for graded dimensions.
+    ``dimension_grades`` adds grade counts and a median per recorded scale, so rejudging
+    with an edited scale never mixes incompatible grades.
 
     The permissibility split uses the ``policy_violation`` judge. It counts each conversation with a
     policy verdict once per stance, as flagged when any relevant category with that permissibility was
     violated and as not applicable when none was relevant. It leaves out ``unresolved_policy``
-    conversations, whose stored seed group couldn't be read, ``rows_without_node_judgments``
+    conversations, whose score has no recorded ``ViolatesAssertPolicy``, ``rows_without_node_judgments``
     conversations, whose policy verdict has no per-category judgments, and conversations without a
     policy verdict.
     """
@@ -117,7 +119,7 @@ class AssertTechniqueMetrics(_AssertMetricsModel):
     policy_violation_on_permissible: AssertBinaryRate | None = None
     dimensions: dict[str, AssertBinaryRate] = Field(default_factory=dict)
     dimension_no_verdict: dict[str, _Count] = Field(default_factory=dict)
-    dimension_grades: dict[str, AssertGradeDistribution] = Field(default_factory=dict)
+    dimension_grades: dict[str, list[AssertGradeDistribution]] = Field(default_factory=dict)
     categories: list[AssertCategoryMetrics] = Field(default_factory=list)
 
 
