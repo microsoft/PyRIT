@@ -5,10 +5,15 @@
 Tests for backend common models.
 """
 
+import json
+import subprocess
+import sys
 import uuid
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic.json_schema import JsonSchemaMode
+from pydantic.main import IncEx
 
 from pyrit.backend.main import app
 from pyrit.backend.models import (
@@ -16,6 +21,7 @@ from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateAttackRequest,
     CreateConverterRequest,
+    CreateScorerRequest,
     CreateTargetRequest,
     FieldError,
     MessagePieceRequest,
@@ -44,6 +50,151 @@ from pyrit.backend.models.message_sends import MessageSendRequest
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.models.component_spec import TargetBinding
+from unit.async_utils import TEST_WATCHDOG_SECONDS
+
+
+def test_create_component_models_import_without_field_shadow_warnings() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error:Field name:UserWarning",
+            "-c",
+            "from pyrit.backend.models import CreateConverterRequest, CreateScorerRequest, CreateTargetRequest",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("request_model", [CreateConverterRequest, CreateScorerRequest, CreateTargetRequest])
+@pytest.mark.parametrize("register", [None, True, False])
+def test_create_component_registration_alias(
+    *,
+    request_model: type[CreateConverterRequest | CreateScorerRequest | CreateTargetRequest],
+    register: bool | None,
+) -> None:
+    payload: dict[str, str | bool] = {"name": "created", "type": "Example"}
+    if register is not None:
+        payload["register"] = register
+    expected = register is not False
+    request = request_model.model_validate(payload)
+    python_request = request_model(
+        name="created", type="Example", **({} if register is None else {"register": register})
+    )
+
+    assert request.register_instance is expected
+    assert request.register is expected
+    assert python_request == request
+    assert request_model.model_validate_json(json.dumps(payload)) == request
+    for serialized in (request.model_dump(), request.model_dump(by_alias=True), json.loads(request.model_dump_json())):
+        assert serialized["register"] is expected
+        assert "register_instance" not in serialized
+        assert request_model.model_validate(serialized) == request
+    assert request.model_dump(by_alias=False)["register_instance"] is expected
+    assert ("register_instance" in request.model_fields_set) is (register is not None)
+    assert "register" not in request_model.model_fields
+
+
+@pytest.mark.parametrize("request_model", [CreateConverterRequest, CreateScorerRequest, CreateTargetRequest])
+def test_create_component_registration_python_access(
+    request_model: type[CreateConverterRequest | CreateScorerRequest | CreateTargetRequest],
+) -> None:
+    request = request_model(name="created", type="Example", register_instance=False)
+    assert request.register is False
+    request.register = True
+    assert request.register_instance is True
+    assert request.model_dump()["register"] is True
+    request.register_instance = False
+    assert request.register is False
+    assert request.model_dump()["register"] is False
+    copied = request.model_copy(update={"register_instance": True})
+    assert copied.register is True
+    assert request.register is False
+
+
+@pytest.mark.parametrize("request_model", [CreateConverterRequest, CreateScorerRequest, CreateTargetRequest])
+@pytest.mark.parametrize("register", [True, False])
+@pytest.mark.parametrize("deep", [True, False])
+def test_create_component_registration_copy_public_key(
+    *,
+    request_model: type[CreateConverterRequest | CreateScorerRequest | CreateTargetRequest],
+    register: bool,
+    deep: bool,
+) -> None:
+    request = request_model(name="created", type="Example", register=not register, params={"value": 1})
+    updates = {"register": register}
+    copied = request.model_copy(update=updates, deep=deep)
+    assert copied.register is register
+    assert copied.register_instance is register
+    assert copied.model_dump()["register"] is register
+    assert request.register is not register
+    assert updates == {"register": register}
+    assert "register_instance" in copied.model_fields_set
+    assert "register" not in copied.model_fields_set
+    assert (copied.params is request.params) is not deep
+    with pytest.raises(ValueError, match="updates must match"):
+        request.model_copy(update={"register": register, "register_instance": not register})
+
+
+@pytest.mark.parametrize("request_model", [CreateConverterRequest, CreateScorerRequest, CreateTargetRequest])
+@pytest.mark.parametrize("fields", [{"register"}, {"register": True}])
+def test_create_component_registration_public_field_filters(
+    *,
+    request_model: type[CreateConverterRequest | CreateScorerRequest | CreateTargetRequest],
+    fields: IncEx,
+) -> None:
+    request = request_model(name="created", type="Example", register=False, params={"first": 1, "second": 2})
+    assert request.model_dump(include=fields) == {"register": False}
+    assert json.loads(request.model_dump_json(include=fields)) == {"register": False}
+    assert "register" not in request.model_dump(exclude=fields)
+    assert "register" not in json.loads(request.model_dump_json(exclude=fields))
+    assert request.model_dump(include=fields, by_alias=False) == {"register_instance": False}
+    assert request.model_dump(include={"register_instance"}) == {"register": False}
+    assert request.model_dump(include={"register": True, "params": {"first"}}) == {
+        "register": False,
+        "params": {"first": 1},
+    }
+    assert fields in ({"register"}, {"register": True})
+
+
+@pytest.mark.parametrize("request_model", [CreateConverterRequest, CreateScorerRequest, CreateTargetRequest])
+@pytest.mark.parametrize("mode", ["validation", "serialization"])
+def test_create_component_registration_schema(
+    *,
+    request_model: type[CreateConverterRequest | CreateScorerRequest | CreateTargetRequest],
+    mode: JsonSchemaMode,
+) -> None:
+    schema = request_model.model_json_schema(mode=mode)
+    assert schema["properties"]["register"] == {
+        "default": True,
+        "description": "Register the object; false returns only its descriptor",
+        "title": "Register",
+        "type": "boolean",
+    }
+    assert "register_instance" not in schema["properties"]
+    assert "register" not in schema["required"]
+    assert request_model.model_fields["register_instance"].alias == "register"
+
+
+@pytest.mark.parametrize("request_model", [CreateConverterRequest, CreateScorerRequest])
+@pytest.mark.parametrize("register", [None, True, False])
+def test_create_component_registration_requires_name(
+    *,
+    request_model: type[CreateConverterRequest | CreateScorerRequest],
+    register: bool | None,
+) -> None:
+    payload: dict[str, str | bool] = {"type": "Example"}
+    if register is not None:
+        payload["register"] = register
+    if register is False:
+        assert request_model.model_validate(payload).name is None
+    else:
+        with pytest.raises(ValidationError, match="name is required when register=true"):
+            request_model.model_validate(payload)
 
 
 class TestPaginationInfo:
