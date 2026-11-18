@@ -57,8 +57,12 @@ def validate_profile(baseline: Path) -> None:
     from pyrit.registry import InitializerRegistry
     from pyrit.setup.configuration_loader import ConfigurationLoader
 
-    if "custom_initializers_source" in yaml.safe_load((baseline / ".pyrit_conf").read_bytes()):
-        raise ValueError("Omit custom_initializers_source; the deployment supplies the local working copy.")
+    settings = yaml.safe_load((baseline / ".pyrit_conf").read_bytes())
+    if not isinstance(settings, dict):
+        raise ValueError("Expected a deployment profile configuration mapping.")
+    for key in ("memory_db_type", "env_akv_ref", "custom_initializers_source"):
+        if key in settings:
+            raise ValueError(f"Omit {key}; it is supplied by the deployment.")
     config = working_config(baseline)
     configuration = ConfigurationLoader.from_yaml_file(config)
     if not configuration.allow_custom_initializers or configuration.custom_initializers_source != str(

@@ -30,20 +30,50 @@ def docstring_to_dict(docstring: griffe.Docstring | None) -> dict | None:
     if not docstring:
         return None
 
+    parent = docstring.parent
+    if isinstance(parent, griffe.Function) and parent.overloads:
+        # Validate implementation docs against the public overloads without changing its signature.
+        parameters = {param.name: param for overload in [parent, *parent.overloads] for param in overload.parameters}
+        context = griffe.Function(
+            parent.name,
+            parent=parent.parent,
+            parameters=griffe.Parameters(*parameters.values()),
+            returns=parent.returns,
+        )
+        docstring = griffe.Docstring(
+            docstring.value, lineno=docstring.lineno, endlineno=docstring.endlineno, parent=context
+        )
     parsed = docstring.parse("google")
-    result = {"text": "", "params": [], "returns": [], "raises": [], "examples": []}
+    result: dict = {
+        "text": "",
+        "params": [],
+        "attributes": [],
+        "type_params": [],
+        "returns": [],
+        "raises": [],
+        "examples": [],
+    }
 
     for section in parsed:
         if section.kind == griffe.DocstringSectionKind.text:
-            result["text"] = section.value.strip()
-        elif section.kind == griffe.DocstringSectionKind.parameters:
+            result["text"] = "\n\n".join(filter(None, [result["text"], section.value.strip()]))
+        elif section.kind in (
+            griffe.DocstringSectionKind.parameters,
+            griffe.DocstringSectionKind.attributes,
+            griffe.DocstringSectionKind.type_parameters,
+        ):
+            key = {
+                griffe.DocstringSectionKind.parameters: "params",
+                griffe.DocstringSectionKind.attributes: "attributes",
+                griffe.DocstringSectionKind.type_parameters: "type_params",
+            }[section.kind]
             for param in section.value:
-                result["params"].append(
+                result[key].append(
                     {
                         "name": param.name,
                         "type": str(param.annotation) if param.annotation else "",
                         "desc": param.description or "",
-                        "default": str(param.default) if param.default else "",
+                        "default": str(param.default) if getattr(param, "default", None) else "",
                     }
                 )
         elif section.kind == griffe.DocstringSectionKind.returns:

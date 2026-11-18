@@ -84,7 +84,7 @@ LIGHT_THEME: dict[ColorRole, str] = {
 }
 
 
-def _get_color(role: ColorRole, theme: dict[ColorRole, str]) -> str:
+def _get_color(*, role: ColorRole, theme: dict[ColorRole, str]) -> str:
     """
     Resolve a color role to an ANSI escape sequence.
 
@@ -198,7 +198,7 @@ def _build_static_banner() -> StaticBannerData:
     color_map: dict[int, ColorRole] = {}
     segment_colors: dict[int, list[tuple[int, int, ColorRole]]] = {}
 
-    def add(line: str, role: ColorRole, segments: list[tuple[int, int, ColorRole]] | None = None) -> None:
+    def add(*, line: str, role: ColorRole, segments: list[tuple[int, int, ColorRole]] | None = None) -> None:
         idx = len(lines)
         color_map[idx] = role
         if segments:
@@ -206,8 +206,8 @@ def _build_static_banner() -> StaticBannerData:
         lines.append(line)
 
     # Top border + empty
-    add("╔" + "═" * BOX_W + "╗", ColorRole.BORDER)
-    add(_empty_line(), ColorRole.BORDER)
+    add(line="╔" + "═" * BOX_W + "╗", role=ColorRole.BORDER)
+    add(line=_empty_line(), role=ColorRole.BORDER)
 
     # Header: braille raccoon + PYRIT text side by side
     subtitle_row_1 = PYRIT_START_ROW + len(PYRIT_LETTERS) + 1
@@ -240,14 +240,14 @@ def _build_static_banner() -> StaticBannerData:
         else:
             segs.append((pyrit_start, pyrit_end, ColorRole.BORDER))
         segs.append((len(full_line) - 1, len(full_line), ColorRole.BORDER))  # right ║
-        add(full_line, ColorRole.RACCOON_BODY, segs)
+        add(line=full_line, role=ColorRole.RACCOON_BODY, segments=segs)
 
-    add(_empty_line(), ColorRole.BORDER)
+    add(line=_empty_line(), role=ColorRole.BORDER)
 
     # Mid divider (with tail attachment point)
     tail_col = 77
     tail = RACCOON_TAIL
-    add("╠" + "═" * BOX_W + "╣", ColorRole.BORDER)
+    add(line="╠" + "═" * BOX_W + "╣", role=ColorRole.BORDER)
 
     # Commands section with striped tail hanging from divider
     commands = [
@@ -279,7 +279,7 @@ def _build_static_banner() -> StaticBannerData:
                 (1 + tail_col, 1 + tail_col + len(tail[i]), ColorRole.RACCOON_TAIL),
                 (len(full_line) - 1, len(full_line), ColorRole.BORDER),
             ]
-            add(full_line, cmd_role, segs)
+            add(line=full_line, role=cmd_role, segments=segs)
         else:
             full_line = _box_line(content)
             if content:  # non-empty command line
@@ -288,11 +288,11 @@ def _build_static_banner() -> StaticBannerData:
                     (1, len(full_line) - 1, ColorRole.COMMANDS),
                     (len(full_line) - 1, len(full_line), ColorRole.BORDER),
                 ]
-                add(full_line, cmd_role, segs)
+                add(line=full_line, role=cmd_role, segments=segs)
             else:
-                add(full_line, cmd_role)
+                add(line=full_line, role=cmd_role)
 
-    add(_empty_line(), ColorRole.BORDER)
+    add(line=_empty_line(), role=ColorRole.BORDER)
 
     # Quick start
     quick_start = [
@@ -307,12 +307,12 @@ def _build_static_banner() -> StaticBannerData:
             (1, len(full_line) - 1, ColorRole.COMMANDS),
             (len(full_line) - 1, len(full_line), ColorRole.BORDER),
         ]
-        add(full_line, ColorRole.COMMANDS, segs)
+        add(line=full_line, role=ColorRole.COMMANDS, segments=segs)
 
-    add(_empty_line(), ColorRole.BORDER)
+    add(line=_empty_line(), role=ColorRole.BORDER)
 
     # Bottom border
-    add("╚" + "═" * BOX_W + "╝", ColorRole.BORDER)
+    add(line="╚" + "═" * BOX_W + "╝", role=ColorRole.BORDER)
 
     return StaticBannerData(lines=lines, color_map=color_map, segment_colors=segment_colors)
 
@@ -337,7 +337,7 @@ def _build_animation_frames() -> list[AnimationFrame]:
     mid = "╠" + "═" * BOX_W + "╣"
     empty = _empty_line()
 
-    def _pad_to_height(lines: list[str], color_map: dict[int, ColorRole]) -> None:
+    def _pad_to_height(*, lines: list[str], color_map: dict[int, ColorRole]) -> None:
         """Pad frame lines to match static banner height."""
         while len(lines) < target_height - 1:  # -1 for bottom border
             color_map[len(lines)] = ColorRole.BORDER
@@ -387,7 +387,7 @@ def _build_animation_frames() -> list[AnimationFrame]:
         lines.append(empty)
         color_map[len(lines)] = ColorRole.BORDER
         lines.append(mid)
-        _pad_to_height(lines, color_map)
+        _pad_to_height(lines=lines, color_map=color_map)
         frames.append(AnimationFrame(lines=lines, color_map=color_map, segment_colors=seg_colors, duration=0.18))
 
     # ── Phase 2: PYRIT text reveals left-to-right (4 frames) ──────────────
@@ -438,7 +438,7 @@ def _build_animation_frames() -> list[AnimationFrame]:
         lines.append(empty)
         color_map[len(lines)] = ColorRole.BORDER
         lines.append(mid)
-        _pad_to_height(lines, color_map)
+        _pad_to_height(lines=lines, color_map=color_map)
         frames.append(AnimationFrame(lines=lines, color_map=color_map, segment_colors=seg_colors, duration=0.15))
 
     # ── Phase 3: Sparkle celebration (3 frames) ───────────────────────────
@@ -510,7 +510,7 @@ def _build_animation_frames() -> list[AnimationFrame]:
         lines.append(empty)
         color_map[len(lines)] = ColorRole.BORDER
         lines.append(mid)
-        _pad_to_height(lines, color_map)
+        _pad_to_height(lines=lines, color_map=color_map)
         frames.append(AnimationFrame(lines=lines, color_map=color_map, segment_colors=seg_colors, duration=0.2))
 
     # ── Phase 4: Commands section reveals (2 frames) ──────────────────────
@@ -532,7 +532,7 @@ def _build_animation_frames() -> list[AnimationFrame]:
                 if src_idx in STATIC_SEGMENT_COLORS:
                     seg_colors[len(lines)] = STATIC_SEGMENT_COLORS[src_idx]
                 lines.append(cl)
-            _pad_to_height(lines, color_map)
+            _pad_to_height(lines=lines, color_map=color_map)
         else:
             for j, cl in enumerate(cmd_lines):
                 src_idx = cmd_start + j
@@ -547,6 +547,7 @@ def _build_animation_frames() -> list[AnimationFrame]:
 
 
 def _render_line_with_segments(
+    *,
     line: str,
     segments: list[tuple[int, int, ColorRole]],
     theme: dict[ColorRole, str],
@@ -557,7 +558,7 @@ def _render_line_with_segments(
     Returns:
         The rendered line string with ANSI color codes.
     """
-    reset = _get_color(ColorRole.RESET, theme)
+    reset = _get_color(role=ColorRole.RESET, theme=theme)
     # Build per-character color map (later segments override earlier ones)
     char_roles: list[ColorRole | None] = [None] * len(line)
     for start, end, role in segments:
@@ -570,7 +571,7 @@ def _render_line_with_segments(
     for pos, ch in enumerate(line):
         char_role = char_roles[pos]
         if char_role != current_role:
-            color = _get_color(char_role, theme) if char_role else reset
+            color = _get_color(role=char_role, theme=theme) if char_role else reset
             result.append(color)
             current_role = char_role
         result.append(ch)
@@ -578,21 +579,21 @@ def _render_line_with_segments(
     return "".join(result)
 
 
-def _render_frame(frame: AnimationFrame, theme: dict[ColorRole, str]) -> str:
+def _render_frame(*, frame: AnimationFrame, theme: dict[ColorRole, str]) -> str:
     """
     Render a single frame with colors applied.
 
     Returns:
         The rendered frame string with ANSI color codes.
     """
-    reset = _get_color(ColorRole.RESET, theme)
+    reset = _get_color(role=ColorRole.RESET, theme=theme)
     rendered_lines: list[str] = []
     for i, line in enumerate(frame.lines):
         if i in frame.segment_colors:
-            rendered_lines.append(_render_line_with_segments(line, frame.segment_colors[i], theme))
+            rendered_lines.append(_render_line_with_segments(line=line, segments=frame.segment_colors[i], theme=theme))
         else:
             role = frame.color_map.get(i, ColorRole.BORDER)
-            color = _get_color(role, theme)
+            color = _get_color(role=role, theme=theme)
             rendered_lines.append(f"{color}{line}{reset}")
     return "\n".join(rendered_lines)
 
@@ -604,14 +605,14 @@ def _render_static_banner(theme: dict[ColorRole, str]) -> str:
     Returns:
         The rendered static banner string with ANSI color codes.
     """
-    reset = _get_color(ColorRole.RESET, theme)
+    reset = _get_color(role=ColorRole.RESET, theme=theme)
     rendered_lines: list[str] = []
     for i, line in enumerate(STATIC_BANNER_LINES):
         if i in STATIC_SEGMENT_COLORS:
-            rendered_lines.append(_render_line_with_segments(line, STATIC_SEGMENT_COLORS[i], theme))
+            rendered_lines.append(_render_line_with_segments(line=line, segments=STATIC_SEGMENT_COLORS[i], theme=theme))
         else:
             role = STATIC_COLOR_MAP.get(i, ColorRole.BORDER)
-            color = _get_color(role, theme)
+            color = _get_color(role=role, theme=theme)
             rendered_lines.append(f"{color}{line}{reset}")
     return "\n".join(rendered_lines)
 
@@ -659,7 +660,7 @@ def play_animation(no_animation: bool = False) -> str:
         sys.stdout.flush()
 
         for frame_idx, frame in enumerate(frames):
-            rendered = _render_frame(frame, theme)
+            rendered = _render_frame(frame=frame, theme=theme)
 
             if frame_idx > 0:
                 # Move cursor back to the top of the reserved space

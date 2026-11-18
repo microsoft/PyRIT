@@ -554,6 +554,55 @@ stable: "1.1.0"
 
 and add an entry under `versions:` for `1.1.0` pointing at `releases/v1.1.0`.
 
+### Recovering a failed Pages deployment
+
+The pinned `actions/deploy-pages` action has a hard ten-minute timeout. Raising its
+`timeout` input or the job timeout cannot extend this limit. A timeout while Pages
+reports `syncing_files` occurs after the book build, inside the deployment service;
+it does not by itself identify why the service stalled.
+The action requests cancellation on timeout, but that response alone does not
+confirm that the deployment has stopped.
+
+After `Deploy` completes, `Diagnose Pages deployment` reads its retained action log
+and records the actual Pages deployment ID, source SHA, run/attempt, and status in
+its summary. The ID is the value after `ID:` in the action's
+`Created deployment for ..., ID: ...` log line; it is not necessarily the source
+SHA. Inspect that log and the read-only status endpoint before recovery, replacing
+`DEPLOYMENT_ID` with the logged ID:
+
+```bash
+gh api repos/microsoft/PyRIT/pages/deployments/DEPLOYMENT_ID
+```
+
+Only retry after a confirmed terminal failure or cancellation, and resolve any
+artifact/content error first. An empty, unknown, missing, or active status is **not**
+permission to retry. The status endpoint can return an empty status even for a
+nonexistent deployment ID, so it cannot establish that no deployment exists.
+If the status remains ambiguous after cancellation, retain the
+run URL, SHA, deployment ID and logs for GitHub Support; do not loop deployment
+attempts. A successful status needs no retry.
+
+For the newest production `build-book` run, use **Re-run failed jobs**, not
+**Re-run all jobs** or a new manual build, when only `Deploy` failed. GitHub reuses
+the successful build/composition jobs and their `github-pages` artifact, which is
+retained for seven days. The retry stays in the same whole-pipeline `pages` queue.
+The preflight rejects an older production run even if a newer run used the same
+main SHA, and rejects retries without a confirmed terminal failure/cancellation.
+API failures also stop publication. There are no automatic retries or cross-run
+artifact downloads.
+
+If the artifact expired, a new manual run on `main` can rebuild after the previous
+deployment is confirmed terminal and the service problem is resolved. A new run
+at a SHA with an earlier production run also checks its Pages status, so manual
+dispatch cannot bypass an active or ambiguous same-SHA deployment. Recovery uses
+the latest deployment attempt's logged ID, not a guessed SHA-based ID. Missing,
+expired, ambiguous, or mismatched logs also stop recovery. If the earlier
+run never reached Pages and the API cannot confirm a terminal state, publication
+requires a new main commit or a verified resolution from GitHub Support, not
+repeated dispatches. Do not recover a superseded run. Runs created
+before these guards landed keep their original workflow on rerun: do not rerun
+those old production jobs as a way to acquire the new safety checks.
+
 ## 11. Create GitHub Release
 
 Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select
@@ -591,10 +640,10 @@ skip this section. The details live at
 
 ### Matching Clients for the Production Commit
 
-If deploying the default `pyritVersion=main` instead of a release, use a commit-specific
-internal client distribution. A release-branch wheel does not match that source-built image:
+If building from source (`pyritVersion=main`) rather than using a released wheel, use the
+exact queued commit for the client. A matching version number alone is not sufficient:
 
-1. Agree on the exact full `main` commit to deploy. In a separate clean checkout at that
+1. Agree on the exact full source commit to deploy. In a separate clean checkout at that
    commit, follow sections 6 and 7 to build and test its wheel and sdist with the bundled
    frontend. Do not change the package version or substitute artifacts from the release
    branch. Record the packaged `compatibility_id` and artifact checksums in the release

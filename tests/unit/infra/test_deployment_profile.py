@@ -188,6 +188,13 @@ def test_requires_pipeline_owned_initializer_source(profile: Path, tmp_path: Pat
         deployment_profile.validate_profile(profile)
 
 
+@pytest.mark.parametrize("key", ["memory_db_type", "env_akv_ref"])
+def test_profile_cannot_override_environment_bindings(profile: Path, key: str) -> None:
+    (profile / ".pyrit_conf").write_bytes(CONFIG + f"{key}: null\n".encode())
+    with pytest.raises(ValueError, match=key):
+        deployment_profile.validate_profile(profile)
+
+
 def test_gui_and_migration_starts_never_promote_live_edits(profile: Path, tmp_path: Path) -> None:
     wrapper = tmp_path / "deployment_profile.py"
     shutil.copyfile(deployment_profile.__file__, wrapper)

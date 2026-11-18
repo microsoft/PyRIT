@@ -101,6 +101,7 @@ Surfaces run the core components, and the shared library supports both. The orch
 
 Converters, targets, and scorers are the bricks that attacks use. The registry builds components, and memory holds the shared record of conversations, scores, and results.
 
+(core-components)=
 # Core Components
 
 Core components are pluggable bricks. Each one can be swapped, combined, or replaced with a no-op, such as a converter that doesn't convert or a target that only prints. Most contributions belong in one of them. If yours doesn't fit, open an issue so we can discuss the architecture, and tell us what you want, or don't want, under Framework Plans.
@@ -121,7 +122,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Manage datasets at scale and load them more intelligently. Expect some redesign here.
 - Finish moving components from file paths and providers to seeds passed in or read from memory.
 - Express expected results as objective conditions in every executor, including benchmarks, instead of adding new seed types.
-- Execute objective decomposition paths in attacks (likely compound attacks), and reuse the same parent/child model for findings.
+- Execute objective decomposition paths in attacks (likely compound attacks).
 
 **Contributing (difficulty easy)**: Add seed dataset providers, prompts, and jailbreak templates for what you're testing.
 
@@ -259,6 +260,7 @@ These modules support every component.
 - Build every component that comes from user input (configuration, REST, or the CLI) through the registry, and store reusable instances there.
 - Construction doesn't require registration; the caller owns temporary instances.
 - Accept only explicitly supported external inputs, and leave argument validation to constructors.
+- Show an entry that is private to its owner only to that owner. To everyone else, it doesn't exist.
 
 ## [Normalizers](./targets/11_message_normalizer)
 
@@ -326,6 +328,7 @@ The backend is an adapter, not a second library. It owns HTTP and process concer
 - **Don't add domain models.** `pyrit/backend/models` holds backend-only envelopes, such as pagination and presentation views, built from `pyrit.models` types. If a backend model or a service's dataclass would describe a domain concept, put it in `pyrit.models` instead.
 - Keep each layer thin. Routes and middleware handle HTTP, services call the library for a request, and mappers translate library objects into API views. None of them make domain decisions.
 - Build components through the registry and persist through memory, as everywhere else.
+- The auth middleware scopes each request, and the work it starts, to its caller. Work that starts outside its request, such as a queued run, carries the caller captured when it was admitted.
 
 **Framework Plans**:
 
@@ -361,7 +364,7 @@ These patterns cut across components. Use them instead of inventing a local vari
 - **Resolve defaults in one order.** An explicit argument wins, then an initializer default (`@apply_defaults`), then the environment variable that the class names, read at construction, then a declared default or an error. Components don't read `os.environ` anywhere else; setup, the backend, and the CLI read process settings at startup.
 - **Give data PyRIT queries a typed field.** If memory queries, filters, or sorts by a value, make it a typed field on the narrowest model that owns it (`MessagePiece`, not `Message`). Other structured data travels in metadata through a value object (below). Labels are user tags: PyRIT stores and filters them for users but never derives behavior from them.
 - **Let one value object own each metadata key.** A small model in `pyrit.models` declares a namespaced key and is the only code that reads or writes it, through `to_metadata()` and `from_metadata()`; see `ToolExecutionMetadata`. A missing key, or a legacy value from older rows, reads as unset.
-- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory.
+- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers, so instance state must be safe to share: configuration, caches, clients, and maps keyed by conversation or attempt are fine. Keep per-call data in arguments, the attack context, or memory. The one exception is the caller's identity, which travels in the caller scope (`pyrit.auth.caller_principal_scope`) so the registry can limit private entries to their owner.
 - **Keep helper-model prompts in YAML seeds.** Prompts for judges, converters, and adversarial chat are YAML `SeedPrompt`s that declare their parameters. Render them only through `SeedPrompt`'s sandboxed rendering, never with f-strings or `str.format`; per-call content, such as the text being judged, can be plain message text.
 - **Declare structured output, and parse it once.** When you need JSON from a model, ask for it with `JsonResponseConfig`, and let the target enforce or adapt it. Parse each kind of response in one function that raises `InvalidJsonException`, and retry through `send_json_with_retry_async`, which starts each retry from a clean history.
 - **Store media through serializers.** Write media and other files that results reference only through `data_serializer_factory` into results storage, point to them by the returned path or URL, and read them back the same way. Don't persist base64, temporary files, or paths outside results storage.

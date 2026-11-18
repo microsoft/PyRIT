@@ -80,6 +80,7 @@ class TestPipelineGuardrails(unittest.TestCase):
                     env={
                         **environment,
                         "DEPLOY_TO_PROD": production,
+                        "DEPLOY_TO_TEST": "True",
                         "USE_PROFILE": profile,
                         "PYRIT_VERSION": version,
                         "PROFILE_RUN": run,
@@ -152,7 +153,7 @@ class TestPipelineGuardrails(unittest.TestCase):
         job = stage["jobs"][0]
         assert job["deployment"] == "${{ parameters.deploymentName }}"
         assert job["environment"] == "copyrit-${{ parameters.slot }}"
-        assert job["timeoutInMinutes"] == 120
+        assert job["timeoutInMinutes"] == 180
         steps = job["strategy"]["runOnce"]["deploy"]["steps"]
         assert steps[0] == {"checkout": "self", "fetchDepth": 1}
         assert steps[-1]["task"] == "AzureCLI@2"
@@ -238,17 +239,20 @@ class TestPipelineGuardrails(unittest.TestCase):
     def test_runtime_conditions_preserve_intentional_skip_and_failure_gates(self) -> None:
         parameters = {parameter["name"]: parameter for parameter in self.pipeline["parameters"]}
         assert parameters["deployInfra"]["default"] is False
+        assert parameters["deployToTest"]["default"] is True
         assert parameters["deployToProd"]["default"] is False
-        for name, dependencies in (
-            ("DeployTestInfra", ["Build"]),
-            ("DeployProdInfra", ["ApproveProd"]),
+        test_only = "eq('${{ parameters.deployToTest }}', 'true'),"
+        for name, dependencies, gate in (
+            ("DeployTestInfra", ["Build"], test_only),
+            ("DeployProdInfra", ["ApproveProd"], ""),
         ):
             stage = self.deployments[name]
             assert stage["dependsOn"] == dependencies
-            assert stage["condition"] == "and(succeeded(), eq('${{ parameters.deployInfra }}', 'true'))"
-        for name, dependencies in (
-            ("DeployTest", ["Build", "DeployTestInfra"]),
-            ("DeployProd", ["ApproveProd", "Build", "DeployProdInfra"]),
+            expected = f"and(succeeded(), {gate} eq('${{{{ parameters.deployInfra }}}}', 'true'))"
+            assert "".join(stage["condition"].split()) == "".join(expected.split())
+        for name, dependencies, gate in (
+            ("DeployTest", ["Build", "DeployTestInfra"], test_only),
+            ("DeployProd", ["ApproveProd", "Build", "DeployProdInfra"], ""),
         ):
             stage = self.deployments[name]
             assert stage["dependsOn"] == dependencies
@@ -258,20 +262,25 @@ class TestPipelineGuardrails(unittest.TestCase):
                 else ""
             )
             expected = (
-                "and(not(canceled()), in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),"
+                f"and(not(canceled()), {gate} in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),"
                 f"{approval}or(in(dependencies.{name}Infra.result, 'Succeeded', 'SucceededWithIssues'),"
                 "and(eq('${{ parameters.deployInfra }}', 'false'),"
                 f"eq(dependencies.{name}Infra.result, 'Skipped'))))"
             )
             assert "".join(stage["condition"].split()) == "".join(expected.split())
 
-    def test_production_remains_main_only_opt_in_and_independently_approved(self) -> None:
+    def test_production_is_opt_in_from_allowed_branches_and_independently_approved(self) -> None:
         stage = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "ApproveProd")
-        assert stage["dependsOn"] == "DeployTest"
-        assert stage["condition"] == (
-            "and(succeeded('DeployTest'), eq('${{ parameters.deployToProd }}', 'true'), "
-            "eq(variables['Build.SourceBranch'], 'refs/heads/main'))"
+        assert stage["dependsOn"] == ["Build", "DeployTest"]
+        expected = (
+            "and(not(canceled()), eq('${{ parameters.deployToProd }}', 'true'),"
+            "or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),"
+            "startsWith(variables['Build.SourceBranch'], 'refs/heads/releases/v')),"
+            "in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),"
+            "or(in(dependencies.DeployTest.result, 'Succeeded', 'SucceededWithIssues'),"
+            "and(eq('${{ parameters.deployToTest }}', 'false'), eq(dependencies.DeployTest.result, 'Skipped'))))"
         )
+        assert "".join(stage["condition"].split()) == "".join(expected.split())
         assert stage["variables"] == [{"group": "copyrit-gui-prod"}]
         validation, approval = stage["jobs"]
         assert validation["job"] == "ValidateProdConfiguration"
@@ -284,7 +293,45 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert task["inputs"]["onTimeout"] == "reject"
         assert task["inputs"]["approvers"] == "$(prodApprovers)"
         assert task["inputs"]["allowApproversToApproveTheirOwnRuns"] is False
-        assert '"$BUILD_SOURCEBRANCH" != refs/heads/main' in self.pipeline_text
+        assert "Test deployment requested: ${{ parameters.deployToTest }}" in task["inputs"]["instructions"]
+
+    @unittest.skipIf(BASH is None, "Native Bash is not installed")
+    def test_input_validation_allows_production_only_from_main_or_release_branches(self) -> None:
+        assert BASH is not None
+        stage = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "ValidateInputs")
+        script = stage["jobs"][0]["steps"][1]["bash"]
+        for branch, deploy_to_test, deploy_to_prod, profile, version, allowed in (
+            ("refs/heads/feature/x", "True", "False", "False", "main", True),
+            ("refs/heads/main", "True", "True", "False", "main", True),
+            ("refs/heads/releases/v1.2.0", "False", "True", "False", "main", True),
+            ("refs/heads/releases/v0.10.0rc0", "True", "True", "False", "main", True),
+            ("refs/heads/feature/x", "True", "True", "False", "main", False),
+            ("refs/heads/releases/1.2.0", "True", "True", "False", "main", False),
+            ("refs/heads/main", "False", "False", "False", "main", False),
+            ("refs/heads/main", "False", "True", "True", "main", False),
+            ("refs/heads/main", "False", "True", "False", "1.2.1", False),
+            ("refs/heads/releases/v1.2.0", "True", "True", "True", "main", False),
+        ):
+            with self.subTest(branch=branch, deploy_to_test=deploy_to_test, deploy_to_prod=deploy_to_prod):
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=script,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env={
+                        **os.environ,
+                        "BUILD_SOURCEBRANCH": branch,
+                        "BUILD_REPOSITORY_NAME": "microsoft/PyRIT",
+                        "DEPLOY_TO_TEST": deploy_to_test,
+                        "DEPLOY_TO_PROD": deploy_to_prod,
+                        "USE_PROFILE": profile,
+                        "PROFILE_RUN": "42",
+                        "PYRIT_VERSION": version,
+                    },
+                    timeout=TEST_WATCHDOG_SECONDS,
+                )
+                assert (result.returncode == 0) is allowed, result.stdout + result.stderr
 
     def test_community_parameter_files_are_phase_specific(self) -> None:
         infrastructure = json.loads(
