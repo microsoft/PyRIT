@@ -193,8 +193,30 @@ Starting a new attack clears retained drafts; refreshing the browser does not
 retain them. Switching conversations does not cancel an in-flight send or let
 its completion clear another conversation's input.
 
-The **Datasets** page shows summaries of datasets already loaded into the backend's
-memory. When memory is empty, **Learn how to load datasets into memory** opens the
+The **Datasets** page offers **In memory**, **Available**, and **All datasets** views.
+Available providers describe their default configuration, including known source and
+access links, declared modalities and harm categories, and approximate size and load time.
+These hints appear separately from exact stored counts and provenance. Missing facts
+appear as unknown, and invalid provider metadata does not prevent browsing stored datasets.
+Local provider source links come from the bundled dataset metadata. Provider links use HTTPS
+and omit credential-bearing URLs, including query strings and fragments.
+Source, License, and Access links display their destination URLs.
+Catalog cards show a short description preview and known modality, size and load-time hints;
+stored counts appear before those hints. Open a dataset for its complete description and metadata.
+Detail metadata uses separated rows with bold, colon-suffixed labels and a value column;
+on narrow screens, values wrap below and are indented within the same row.
+Access requirements show environment-variable names only; configuring
+credentials still requires permission from the source. Opening an unloaded provider shows
+its description on the same detail route. The view, search, filters and sort stay in the URL.
+Modality filters match both provider labels (such as `image`) and existing stored-type
+URL values (such as `image_path`), using the library-defined alias contract returned by the API.
+Raw stored data types are unchanged. Clearing filters keeps the selected view.
+**In memory** filters stored seed facts. **Available** and **All datasets** filter
+provider declarations for built-ins, even after loading; All uses stored facts for
+datasets without a provider. The category vocabularies remain separate rather than
+equating source labels with standardized stored categories. **Not labeled** matches
+stored seeds without harm categories, not missing provider metadata.
+When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
 Use the same memory as the backend. The visible catalog checks for changes each minute.
 The catalog does not download providers or prefetch individual examples.

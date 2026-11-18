@@ -90,6 +90,7 @@ from pyrit.models import (
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
+    ScenarioRunExecutionToken,
     ScenarioRunListItem,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -147,6 +148,7 @@ _RESERVED_INITIAL_METADATA_KEYS = frozenset(
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
         _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
+        ScenarioRunExecutionToken.METADATA_KEY,
         SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -236,6 +238,7 @@ class _ActiveTask:
     created_at: datetime | None = None
     enqueued_at: datetime | None = None
     started_at: datetime | None = None
+    execution_token: ScenarioRunExecutionToken | None = None
     cancellation_state: ScenarioRunState = ScenarioRunState.CANCELLED
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
@@ -249,6 +252,7 @@ class _ActiveRunSnapshot:
     """Event-loop-owned state copied before database awaits allow live state to change."""
 
     error: str | None = None
+    error_token: ScenarioRunExecutionToken | None = None
     active_group_ids: tuple[str, ...] = ()
     executions: tuple[ActiveAttackExecution, ...] = ()
     queue_position: int | None = None
@@ -294,7 +298,7 @@ class ScenarioRunService:
 
         self._preparations: set[asyncio.Task[_PreparedRun]] = set()
         self._preparation_errors: list[Exception] = []
-        self._terminal_errors: OrderedDict[str, str] = OrderedDict()
+        self._terminal_errors: OrderedDict[str, tuple[str, ScenarioRunExecutionToken | None]] = OrderedDict()
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
         self._handoff_retry_tasks: set[asyncio.Task[None]] = set()
@@ -867,6 +871,7 @@ class ScenarioRunService:
         response = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1092,6 +1097,7 @@ class ScenarioRunService:
         return await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1101,6 +1107,7 @@ class ScenarioRunService:
         *,
         scenario_result_id: str,
         active_error: str | None,
+        active_error_token: ScenarioRunExecutionToken | None = None,
         queue_position: int | None = None,
         active_scenario_result_id: str | None = None,
     ) -> ScenarioRunSummary | None:
@@ -1110,6 +1117,7 @@ class ScenarioRunService:
         Args:
             scenario_result_id: The scenario result ID.
             active_error: Error copied from the active asyncio task, if any.
+            active_error_token: Execution that produced the error, if available.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
 
@@ -1119,6 +1127,7 @@ class ScenarioRunService:
         return await self._build_response_async(
             scenario_result_id=scenario_result_id,
             active_error=active_error,
+            active_error_token=active_error_token,
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
         )
@@ -1315,6 +1324,7 @@ class ScenarioRunService:
         result = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
+            active_error_token=snapshot.error_token,
             queue_position=snapshot.queue_position,
             active_scenario_result_id=snapshot.active_scenario_result_id,
         )
@@ -1489,12 +1499,15 @@ class ScenarioRunService:
     async def _start_scheduled_run_locked_async(self, *, scheduled: _ActiveTask) -> None:
         """Start one run while the scheduler lock guarantees exclusive ownership."""
         scheduled.started_at = datetime.now(UTC)
+        execution_token = ScenarioRunExecutionToken(token=uuid.uuid4().hex)
+        scheduled.execution_token = execution_token
         await self._memory.update_scenario_run_state_and_metadata_fields_async(
             scenario_result_id=scheduled.scenario_result_id,
             scenario_run_state=ScenarioRunState.IN_PROGRESS,
             metadata_fields={
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
+                **execution_token.to_metadata(),
             },
         )
         self._launch_scheduled_run_locked(scheduled=scheduled)
@@ -1559,7 +1572,7 @@ class ScenarioRunService:
         completed = self._active_tasks.pop(scenario_result_id, None)
         if completed is None or completed.error is None:
             return
-        self._terminal_errors[scenario_result_id] = completed.error
+        self._terminal_errors[scenario_result_id] = (completed.error, completed.execution_token)
         self._terminal_errors.move_to_end(scenario_result_id)
         while len(self._terminal_errors) > _MAX_TERMINAL_ERRORS:
             self._terminal_errors.popitem(last=False)
@@ -1608,6 +1621,9 @@ class ScenarioRunService:
                         scenario_run_state=active.cancellation_state,
                         error_message=active.cancellation_reason,
                         error_type=active.cancellation_error_type,
+                        expected_metadata_fields=(
+                            active.execution_token.to_metadata() if active.execution_token is not None else None
+                        ),
                     )
                     if not active.retain_error_on_terminalization:
                         active.error = None
@@ -1906,14 +1922,29 @@ class ScenarioRunService:
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:
+            expected_metadata_fields = (
+                active.execution_token.to_metadata() if active.execution_token is not None else None
+            )
             try:
-                await self._memory.try_update_scenario_run_state_async(
+                updated = await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=active.cancellation_state,
                     error_message=active.cancellation_reason,
                     error_type=active.cancellation_error_type,
+                    expected_metadata_fields=expected_metadata_fields,
                 )
+                if not updated and active.cancellation_state != ScenarioRunState.CANCELLED:
+                    # Scenario.run_async may already have stored CANCELLED.
+                    # Match it atomically so a concurrent continuation is not overwritten.
+                    await self._memory.try_update_scenario_run_state_async(
+                        scenario_result_id=scenario_result_id,
+                        expected_states={ScenarioRunState.CANCELLED},
+                        scenario_run_state=active.cancellation_state,
+                        error_message=active.cancellation_reason,
+                        error_type=active.cancellation_error_type,
+                        expected_metadata_fields=expected_metadata_fields,
+                    )
             except Exception as exc:
                 handoff_ready = False
                 active.error = str(exc)
@@ -1929,6 +1960,9 @@ class ScenarioRunService:
             active.cancellation_reason = error_message
             active.cancellation_error_type = type(e).__name__
             active.retain_error_on_terminalization = True
+            expected_metadata_fields = (
+                active.execution_token.to_metadata() if active.execution_token is not None else None
+            )
             try:
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
@@ -1936,6 +1970,7 @@ class ScenarioRunService:
                     scenario_run_state=ScenarioRunState.FAILED,
                     error_message=error_message,
                     error_type=type(e).__name__,
+                    expected_metadata_fields=expected_metadata_fields,
                 )
             except Exception:
                 handoff_ready = False
@@ -1955,6 +1990,7 @@ class ScenarioRunService:
         active_error: str | None,
         queue_position: int | None,
         active_scenario_result_id: str | None,
+        active_error_token: ScenarioRunExecutionToken | None = None,
     ) -> ScenarioRunSummary | None:
         """
         Build a ScenarioRunResponse by querying the database and merging active task state.
@@ -1962,6 +1998,7 @@ class ScenarioRunService:
         Args:
             scenario_result_id: The scenario result ID.
             active_error: Error copied from the active asyncio task, if any.
+            active_error_token: Execution that produced the error, if available.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
 
@@ -1971,6 +2008,10 @@ class ScenarioRunService:
         results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
+        if active_error_token is not None and any(
+            results[0].metadata.get(key) != value for key, value in active_error_token.to_metadata().items()
+        ):
+            active_error = None
         return await self._build_response_from_db_async(
             scenario_result=results[0],
             active_error=active_error,
@@ -2712,14 +2753,17 @@ class ScenarioRunService:
         )
         active = self._get_active_task(scenario_result_id=scenario_result_id)
         if active is None:
+            error, error_token = self._terminal_errors.get(scenario_result_id, (None, None))
             return _ActiveRunSnapshot(
-                error=self._terminal_errors.get(scenario_result_id),
+                error=error,
+                error_token=error_token,
                 queue_position=queue_position,
                 active_scenario_result_id=active_scenario_result_id,
             )
         active_group_ids = tuple(sorted(active.scenario.active_atomic_group_ids)) if active.scenario is not None else ()
         return _ActiveRunSnapshot(
             error=active.error,
+            error_token=active.execution_token,
             active_group_ids=active_group_ids,
             executions=active.scenario.active_executions if active.scenario is not None else (),
             queue_position=queue_position,
