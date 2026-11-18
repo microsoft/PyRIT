@@ -179,7 +179,10 @@ export async function decodeBlobErrorAsync(error: unknown): Promise<void> {
 const HTML_MEDIA_TYPES = new Set(['text/html', 'application/xhtml+xml'])
 /** Media types that say nothing about the body, so its content decides. */
 const UNSPECIFIED_MEDIA_TYPES = new Set(['', 'application/octet-stream'])
-const HTML_DOCUMENT_PATTERN = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<(?:!doctype\s+html|html|head|body)\b/i
+const WHITESPACE_PATTERN = /\s/
+const XML_DECLARATION = { start: '<?xml', end: '?>' }
+const HTML_COMMENT = { start: '<!--', end: '-->' }
+const HTML_ROOT_PATTERN = /^<(?:!doctype\s+html|html|head|body)\b/i
 
 /** Type-guard for Axios errors. */
 function isAxiosError(err: unknown): err is AxiosError {
@@ -231,7 +234,34 @@ function responseMediaType(headers: unknown): string {
 /** Trust an explicit media type; inspect the body only when the type is missing or generic. */
 function isHtmlBody(body: string, mediaType: string): boolean {
   if (HTML_MEDIA_TYPES.has(mediaType)) return true
-  return UNSPECIFIED_MEDIA_TYPES.has(mediaType) && HTML_DOCUMENT_PATTERN.test(body)
+  return UNSPECIFIED_MEDIA_TYPES.has(mediaType) && startsWithHtmlDocument(body)
+}
+
+/**
+ * Whether the body opens with an HTML document root, after an optional XML
+ * declaration and any comments. Scans by index so untrusted bodies stay linear.
+ */
+function startsWithHtmlDocument(body: string): boolean {
+  let position = skipWhitespace(body, 0)
+  if (body.startsWith(XML_DECLARATION.start, position)) {
+    position = skipPast(body, position, XML_DECLARATION)
+  }
+  while (position >= 0 && body.startsWith(HTML_COMMENT.start, position)) {
+    position = skipPast(body, position, HTML_COMMENT)
+  }
+  return position >= 0 && HTML_ROOT_PATTERN.test(body.slice(position))
+}
+
+/** Index after the construct opening at `position` and any following whitespace; -1 when unterminated. */
+function skipPast(text: string, position: number, construct: { start: string; end: string }): number {
+  const end = text.indexOf(construct.end, position + construct.start.length)
+  return end < 0 ? -1 : skipWhitespace(text, end + construct.end.length)
+}
+
+function skipWhitespace(text: string, position: number): number {
+  let next = position
+  while (next < text.length && WHITESPACE_PATTERN.test(text.charAt(next))) next++
+  return next
 }
 
 function extractFieldErrors(errors: unknown): FieldError[] {

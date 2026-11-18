@@ -113,6 +113,18 @@ describe('toApiError', () => {
     expect(result.detail).toBe(diagnostic)
   })
 
+  it('recognizes an untyped page after an XML declaration and repeated comments', () => {
+    const page = `<?xml version="1.0"?>\n${'<!-- a --> '.repeat(1_000)}<html></html>`
+
+    expect(toApiError(makeAxiosError({ status: 503, data: page })).detail).toBe('Server error (503)')
+  })
+
+  it('keeps an untyped body of unterminated comment-like text without slow backtracking', () => {
+    const body = `<!--${'--><!--'.repeat(50_000)}`
+
+    expect(toApiError(makeAxiosError({ status: 500, data: body })).detail).toBe(body)
+  })
+
   // 3. Axios error with a JSON body that lacks detail
   it('falls back to status text when JSON body lacks detail', () => {
     const err = makeAxiosError({
