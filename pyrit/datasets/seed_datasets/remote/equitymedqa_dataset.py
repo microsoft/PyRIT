@@ -129,6 +129,8 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         ],
     }
 
+    source_url = "https://huggingface.co/datasets/katielink/EquityMedQA"
+
     def __init__(
         self,
         *,

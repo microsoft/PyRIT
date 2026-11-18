@@ -1,5 +1,6 @@
 import { expect as baseExpect, test } from "./_fixtures";
 import { compatibilityHeaders } from "./_compatibility";
+import type { DatasetInfo } from "../src/types";
 
 const expect = baseExpect.configure({ timeout: 30_000 });
 const SELECTION_KEY = "dataset:named:jailbreak_templates";
@@ -49,6 +50,75 @@ test.describe("dataset examples against the real backend @seeded", () => {
   test.beforeAll(async ({ request }) => {
     await waitForBackend(request);
   });
+
+  for (const provider of [
+    { name: "adv_bench", url: "https://github.com/llm-attacks/llm-attacks" },
+    { name: "jbb_behaviors", url: "https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors" },
+  ]) {
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      test(`describes unloaded ${provider.name} without changing memory at ${viewport.width}px @seeded`, async ({ page, request }, testInfo) => {
+        test.setTimeout(90_000);
+        await page.setViewportSize(viewport);
+        const headers = compatibilityHeaders();
+        const before = await request.get("/api/datasets?loaded_only=true", { headers });
+        expect(before.ok(), await before.text()).toBe(true);
+        const beforeCatalog: { items: DatasetInfo[] } = await before.json();
+        expect(beforeCatalog.items.some((item: DatasetInfo) => item.name === provider.name)).toBe(false);
+
+        const unexpectedRequests: string[] = [];
+        page.on("request", (outgoing) => {
+          const path = new URL(outgoing.url()).pathname;
+          if (path.startsWith("/api/datasets") && (
+            outgoing.method() !== "GET" || path.startsWith("/api/datasets/seeds")
+          )) {
+            unexpectedRequests.push(`${outgoing.method()} ${path}`);
+          }
+        });
+
+        await page.goto(`/datasets?view=available&q=${provider.name}`);
+        await page.getByRole("link", { name: provider.name, exact: true }).click();
+        await expect(page.getByRole("heading", { name: provider.name, exact: true })).toBeVisible();
+        const sourceLink = page.getByRole("link", { name: `Source: ${provider.url}`, exact: true });
+        await expect(sourceLink).toHaveAttribute("href", provider.url);
+        await expect(sourceLink).toHaveText(provider.url);
+        await expect(page.getByText("This provider's dataset has not been loaded into memory.")).toBeVisible();
+        await expect(page.getByRole("table", { name: "Examples" })).toHaveCount(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+        const metadata = await page.getByRole("region", { name: "Provider metadata" }).evaluate((region) => ({
+          scrollWidth: region.scrollWidth,
+          clientWidth: region.clientWidth,
+        }));
+        expect(metadata.scrollWidth).toBeLessThanOrEqual(metadata.clientWidth + 1);
+        const sourceLabel = page.getByText("Source:", { exact: true });
+        const labelBox = await sourceLabel.boundingBox();
+        const valueBox = await sourceLink.boundingBox();
+        const nextLabelBox = await page.getByText("License:", { exact: true }).boundingBox();
+        if (!labelBox || !valueBox || !nextLabelBox) throw new Error("Expected visible metadata labels and values");
+        expect(await sourceLabel.evaluate((label) => Number(getComputedStyle(label).fontWeight)))
+          .toBeGreaterThan(await sourceLink.evaluate((link) => Number(getComputedStyle(link).fontWeight)));
+        if (viewport.width === 390) {
+          expect(valueBox.y).toBeGreaterThanOrEqual(labelBox.y + labelBox.height);
+          expect(valueBox.x).toBeGreaterThan(labelBox.x);
+        } else {
+          expect(valueBox.x).toBeGreaterThanOrEqual(labelBox.x + labelBox.width);
+          expect(valueBox.y).toBeLessThan(labelBox.y + labelBox.height);
+        }
+        expect(nextLabelBox.y).toBeGreaterThan(valueBox.y + valueBox.height);
+        await page.getByRole("region", { name: "Provider metadata" })
+          .screenshot({ path: testInfo.outputPath("provider-metadata.png") });
+        await page.screenshot({ path: testInfo.outputPath("provider-description.png"), fullPage: true });
+
+        await page.getByRole("link", { name: "Back to datasets", exact: true }).click();
+        await expect(page.getByRole("link", { name: provider.name, exact: true })).toBeVisible();
+        await expect(page).toHaveURL((url: URL) => url.searchParams.get("view") === "available"
+          && url.searchParams.get("q") === provider.name);
+        expect(unexpectedRequests).toEqual([]);
+        const after = await request.get("/api/datasets?loaded_only=true", { headers });
+        expect(after.ok(), await after.text()).toBe(true);
+        expect(await after.json()).toEqual(beforeCatalog);
+      });
+    }
+  }
 
   test("empty Chat can browse seed prompts and return to its draft @seeded", async ({ page, request }) => {
     test.setTimeout(90_000);

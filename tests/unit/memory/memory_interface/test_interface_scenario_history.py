@@ -12,11 +12,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy import and_, select, text
 from sqlalchemy.dialects import mssql, sqlite
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Session
 from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultEntry, MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
+from pyrit.memory import AttackResultEntry, AzureSQLMemory, MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
 from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 from pyrit.memory.memory_models import ConversationEntry, ScenarioResultEntry
 from pyrit.models import (
@@ -1057,30 +1058,52 @@ async def test_history_aggregates_fill_zero_for_runs_without_attempts(sqlite_ins
     assert aggregates[scenario_result_id].latest_attempt_timestamp is None
 
 
+@pytest.mark.filterwarnings("error:The params\\(\\) and unique_params\\(\\).*:sqlalchemy.exc.SADeprecationWarning")
 async def test_legacy_label_hook_is_constructible_and_composes_multi_value_semantics(
     sqlite_instance: MemoryInterface,
 ) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    operator = "\u00c1lice'; --"
+    operation = "\u591c\u9593"
     included = _make_scenario(
         result_id=uuid.UUID(int=30),
         timestamp=timestamp,
         name="Included",
         state=ScenarioRunState.COMPLETED,
-        labels={"operator": "alice", "operation": "nightly"},
+        labels={"operator": operator, "operation": operation},
     )
-    excluded = _make_scenario(
+    also_included = _make_scenario(
         result_id=uuid.UUID(int=31),
         timestamp=timestamp,
-        name="Excluded",
+        name="Also included",
         state=ScenarioRunState.COMPLETED,
-        labels={"operator": "carol", "operation": "nightly"},
+        labels={"operator": "bob", "operation": operation},
+    )
+    excluded_operator = _make_scenario(
+        result_id=uuid.UUID(int=32),
+        timestamp=timestamp,
+        name="Wrong operator",
+        state=ScenarioRunState.COMPLETED,
+        labels={"operator": "carol", "operation": operation},
+    )
+    excluded_operation = _make_scenario(
+        result_id=uuid.UUID(int=33),
+        timestamp=timestamp,
+        name="Wrong operation",
+        state=ScenarioRunState.COMPLETED,
+        labels={"operator": operator, "operation": "daily"},
     )
     with sqlite_instance._get_session() as session:
-        session.add_all([ScenarioResultEntry(entry=result) for result in (included, excluded)])
+        session.add_all(
+            [
+                ScenarioResultEntry(entry=result)
+                for result in (included, also_included, excluded_operator, excluded_operation)
+            ]
+        )
         session.commit()
     legacy = object.__new__(_LegacyScenarioLabelMemory)
     condition = legacy._get_scenario_result_labels_condition(
-        labels={"operator": ["alice", "bob"], "operation": "nightly"}
+        labels={"operator": [operator, "bob"], "operation": operation}
     )
 
     ids = await run_memory_session_async(
@@ -1089,7 +1112,47 @@ async def test_legacy_label_hook_is_constructible_and_composes_multi_value_seman
     )
 
     assert "_get_scenario_result_label_condition" not in _LegacyScenarioLabelMemory.__abstractmethods__
-    assert ids == [included.id]
+    assert set(ids) == {included.id, also_included.id}
+
+
+@pytest.mark.filterwarnings("error:The params\\(\\) and unique_params\\(\\).*:sqlalchemy.exc.SADeprecationWarning")
+@pytest.mark.parametrize(
+    ("backend", "dialect"),
+    [
+        (_LegacyScenarioLabelMemory, sqlite.dialect()),
+        (SQLiteMemory, sqlite.dialect()),
+        (AzureSQLMemory, mssql.dialect()),
+    ],
+)
+def test_legacy_label_adapter_preserves_bound_predicates(
+    *,
+    backend: type[MemoryInterface],
+    dialect: Dialect,
+) -> None:
+    memory = object.__new__(backend)
+    first_value = "\u00c1lice'; --"
+    second_value = "\u042e\u043b\u0438\u044f"
+    operation = "\u591c\u9593"
+    condition = MemoryInterface._get_scenario_result_labels_condition(
+        memory, labels={"operator": [first_value, second_value], "operation": operation}
+    )
+    statement = select(ScenarioResultEntry.id).where(condition)
+    compiled = statement.compile(dialect=dialect)
+    sql = str(compiled)
+
+    assert len(compiled.params) == 6
+    assert list(compiled.params.values()) == [
+        '$."operator"',
+        first_value,
+        '$."operator"',
+        second_value,
+        '$."operation"',
+        operation,
+    ]
+    assert " OR " in sql
+    assert " AND " in sql
+    assert sql.count("SELECT ") == 1
+    assert all(value not in sql for value in compiled.params.values())
 
 
 async def test_nonterminal_state_projection_is_bounded_and_never_hydrates_results(
