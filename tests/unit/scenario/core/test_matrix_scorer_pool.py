@@ -419,6 +419,7 @@ class TestSingleScorerBaseline:
         assert type(factory.create.call_args.kwargs["attack_scoring_config"]) is AttackScoringConfig
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestRequirementGuards:
     def test_technique_requirements_reject_an_evaluation(self) -> None:
         with pytest.raises(ValueError, match="algorithm needs, not an evaluation"):
