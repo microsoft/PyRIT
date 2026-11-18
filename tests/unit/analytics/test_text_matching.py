@@ -189,3 +189,48 @@ class TestApproximateTextMatchingNValidation:
     @pytest.mark.parametrize("n", [1, 3, 4, 50])
     def test_init_accepts_positive_integer_n(self, n):
         assert ApproximateTextMatching(n=n).get_overlap_score(target="abc", text="abc") >= 0.0
+
+
+class TestApproximateTextMatchingOccurrenceCoverage:
+    def test_default_mode_keeps_unique_gram_coverage(self):
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.get_overlap_score(target="abc" * 50, text="abcabca") == 1.0
+
+    def test_occurrence_mode_does_not_credit_a_short_response_for_a_repeated_target(self):
+        matcher = ApproximateTextMatching(threshold=0.5, n=3, occurrence_sensitive=True)
+        target = "abc" * 50
+        assert matcher.get_overlap_score(target=target, text="abcabca") == pytest.approx(5 / 148)
+        assert matcher.is_match(target=target, text="abcabca") is False
+
+    def test_occurrence_mode_matches_target_embedded_in_longer_response(self):
+        matcher = ApproximateTextMatching(threshold=0.5, n=3, occurrence_sensitive=True)
+        target = "abc" * 50
+        assert matcher.get_overlap_score(target=target, text="prefix " + target + " suffix") == 1.0
+
+    def test_occurrence_mode_partial_match_without_repeats_equals_unique_mode(self):
+        unique = ApproximateTextMatching(threshold=0.5, n=3)
+        occurrence = ApproximateTextMatching(threshold=0.5, n=3, occurrence_sensitive=True)
+        target, text = "the quick brown fox", "a quick brown dog"
+        assert occurrence.get_overlap_score(target=target, text=text) == unique.get_overlap_score(
+            target=target, text=text
+        )
+
+    def test_occurrence_mode_threshold_boundary_is_inclusive(self):
+        matcher = ApproximateTextMatching(threshold=0.5, n=3, occurrence_sensitive=True)
+        # target windows: abc, bcd, cde, def -> text covers abc and bcd = 2/4
+        assert matcher.get_overlap_score(target="abcdef", text="abcd") == 0.5
+        assert matcher.is_match(target="abcdef", text="abcd") is True
+
+    def test_occurrence_mode_counts_overlapping_windows_in_the_response(self):
+        matcher = ApproximateTextMatching(threshold=1.0, n=2, occurrence_sensitive=True)
+        assert matcher.get_overlap_score(target="aaaa", text="aaaa") == 1.0
+        assert matcher.get_overlap_score(target="aaaa", text="aaa") == pytest.approx(2 / 3)
+
+    def test_identifier_params_unchanged_by_default_and_reflect_the_mode_when_enabled(self):
+        assert ApproximateTextMatching().get_identifier_params() == {
+            "threshold": 0.5,
+            "n": 3,
+            "case_sensitive": False,
+        }
+        params = ApproximateTextMatching(occurrence_sensitive=True).get_identifier_params()
+        assert params["occurrence_sensitive"] is True

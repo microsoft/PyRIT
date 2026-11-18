@@ -35,6 +35,8 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
     size: str = "huge"  # 40750 social-bias prompts (multi-turn expansion of source rows)
     tags: frozenset[str] = frozenset({"safety", "bias", "multiturn"})
 
+    source_url = "https://huggingface.co/datasets/svannie678/red_team_repo_social_bias_prompts"
+
     def __init__(
         self,
         *,
