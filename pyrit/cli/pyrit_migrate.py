@@ -100,7 +100,7 @@ def main(*, args: list[str] | None = None) -> int:
     mode.add_argument(
         "--check-upgradable",
         action="store_true",
-        help="Check that this release recognizes the database revision without applying migrations.",
+        help="Check that migrating can move the database to this release's head, without applying migrations.",
     )
     parsed = parser.parse_args(args)
     try:

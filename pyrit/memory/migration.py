@@ -394,30 +394,37 @@ def check_schema_migrations(*, engine: Engine, silent: bool = False) -> None:
 
 def check_schema_upgradable(*, engine: Engine) -> None:
     """
-    Verify that this release's migrations recognize the database's current revision.
+    Verify that this release's migrations can move the database to a different revision.
 
     A revision missing from this release's scripts means a newer release already migrated the
-    database, so an upgrade would fail. Databases without a version table are accepted because
-    the upgrade validates them before stamping.
+    database, so an upgrade would fail. A database already at this release's head cannot be fixed
+    by upgrading, so a schema mismatch there needs investigation instead of a migration. Databases
+    without a version table are accepted because the upgrade validates them before stamping.
 
     Args:
         engine (Engine): SQLAlchemy engine bound to the target database.
 
     Raises:
-        RuntimeError: If the database is stamped with a revision unknown to this release.
+        RuntimeError: If the database is stamped with a revision unknown to this release or is
+            already at this release's head.
     """
     with engine.connect() as connection:
         script = ScriptDirectory.from_config(_make_config(connection=connection))
         migration_context = MigrationContext.configure(
             connection=connection, opts={"version_table": PYRIT_MEMORY_ALEMBIC_VERSION_TABLE}
         )
-        current_revisions = migration_context.get_current_heads()
+        current_revisions = set(migration_context.get_current_heads())
     known_revisions = {revision.revision for revision in script.walk_revisions()}
-    unknown_revisions = sorted(set(current_revisions) - known_revisions)
+    unknown_revisions = sorted(current_revisions - known_revisions)
     if unknown_revisions:
         raise RuntimeError(
             f"Database revision(s) {', '.join(unknown_revisions)} are not in this release's migrations. "
             "A newer release already migrated this database; deploy that release or a later one."
+        )
+    if current_revisions and current_revisions == set(script.get_heads()):
+        raise RuntimeError(
+            "Database is already at this release's migration head, so upgrading cannot change its schema. "
+            "Investigate the schema mismatch reported by the schema check instead of migrating."
         )
 
 

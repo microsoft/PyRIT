@@ -211,6 +211,17 @@ def test_check_schema_upgradable_rejects_revision_from_newer_release() -> None:
         engine.dispose()
 
 
+def test_check_schema_upgradable_rejects_database_already_at_head() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            command.stamp(_make_config(connection=connection), "head")
+        with pytest.raises(RuntimeError, match="already at this release's migration head"):
+            check_schema_upgradable(engine=engine)
+    finally:
+        engine.dispose()
+
+
 def test_run_schema_migrations_preserves_malformed_legacy_attack_identifier() -> None:
     engine = create_engine("sqlite:///:memory:")
     try:

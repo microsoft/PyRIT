@@ -486,7 +486,7 @@ echo done
     def test_failed_revision_check_does_not_stop_app(self) -> None:
         result = self._run_migration(statuses=["Running", "Failed"], command="ensure_schema_upgradable")
         assert result.returncode == 1
-        assert "this image cannot upgrade the database" in result.stdout
+        assert "migrating with this image cannot fix the schema" in result.stdout
         assert "The app was not stopped or deployed" in result.stdout
         assert "done" not in result.stdout
 

@@ -239,7 +239,7 @@ run_database_job() {
             return 1
             ;;
           upgradable)
-            deployment_error "Database revision check $execution failed; this image cannot upgrade the database (see the job logs). The app was not stopped or deployed"
+            deployment_error "Database revision check $execution failed; migrating with this image cannot fix the schema (see the job logs). The app was not stopped or deployed"
             ;;
         esac
         deployment_error "Database migration $execution ended with status $status; the app is stopped and was not deployed"

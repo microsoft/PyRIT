@@ -222,13 +222,13 @@ class TestPipelineGuardrails(unittest.TestCase):
         stage = next(stage for stage in self.pipeline["stages"] if stage.get("stage") == "ValidateInputs")
         script = stage["jobs"][0]["steps"][1]["bash"]
         for branch, deploy_to_test, deploy_to_prod, allowed in (
-            ("refs/heads/feature/x", "true", "false", True),
-            ("refs/heads/main", "true", "true", True),
-            ("refs/heads/releases/v1.2.0", "false", "true", True),
-            ("refs/heads/releases/v0.10.0rc0", "true", "true", True),
-            ("refs/heads/feature/x", "true", "true", False),
-            ("refs/heads/releases/1.2.0", "true", "true", False),
-            ("refs/heads/main", "false", "false", False),
+            ("refs/heads/feature/x", "True", "False", True),
+            ("refs/heads/main", "True", "True", True),
+            ("refs/heads/releases/v1.2.0", "False", "True", True),
+            ("refs/heads/releases/v0.10.0rc0", "True", "True", True),
+            ("refs/heads/feature/x", "True", "True", False),
+            ("refs/heads/releases/1.2.0", "True", "True", False),
+            ("refs/heads/main", "False", "False", False),
         ):
             with self.subTest(branch=branch, deploy_to_test=deploy_to_test, deploy_to_prod=deploy_to_prod):
                 rendered = script.replace("${{ parameters.deployToTest }}", deploy_to_test).replace(
