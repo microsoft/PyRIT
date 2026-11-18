@@ -34,6 +34,7 @@ from pyrit.analytics.scenario_statistics import (
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
+from pyrit.auth import caller_principal_context, caller_principal_scope, get_caller_principal
 from pyrit.backend.models import (
     ConversationMessagesResponse,
     PaginationInfo,
@@ -111,6 +112,8 @@ from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.instance_registry import (
+    PRIVATE_ENTRY_REFUSAL_KIND,
+    PrivateEntryReplacementError,
     SavedEntryReplacementError,
     record_saved_entry_refusals,
     registration_origin,
@@ -206,7 +209,7 @@ class ScenarioRunConflictError(ValueError):
 
 
 class SavedEntryLaunchConflictError(ScenarioRunConflictError):
-    """A launch script would replace an entry rebuilt from a saved recipe."""
+    """A launch script would replace an entry rebuilt from a saved recipe, or a name a user's private entry uses."""
 
 
 class ScenarioRunNotFoundError(ValueError):
@@ -244,6 +247,8 @@ class _ActiveTask:
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
+    # Captured at admission so a run queued behind another caller's run acts for its own caller.
+    caller_principal: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -862,6 +867,7 @@ class ScenarioRunService:
             scenario_registry_name=request.scenario_name,
             created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
+            caller_principal=get_caller_principal(),
         )
         await self._enqueue_run_async(scheduled=scheduled)
 
@@ -1514,7 +1520,11 @@ class ScenarioRunService:
         """Make a run persisted as IN_PROGRESS the active run and create its execution task."""
         self._active_scenario_result_id = scheduled.scenario_result_id
         self._active_tasks[scheduled.scenario_result_id] = scheduled
-        scheduled.task = asyncio.create_task(self._execute_run_async(scenario_result_id=scheduled.scenario_result_id))
+        # A queued run starts from the previous run's handoff, so give it its own admitted caller.
+        scheduled.task = asyncio.create_task(
+            self._execute_run_async(scenario_result_id=scheduled.scenario_result_id),
+            context=caller_principal_context(scheduled.caller_principal),
+        )
         self._queue_revision += 1
 
     async def _handoff_scheduler_async(self, *, scenario_result_id: str) -> None:
@@ -1698,7 +1708,26 @@ class ScenarioRunService:
             return
 
         initializer_registry = await run_legacy_sync_async(InitializerRegistry.get_registry_singleton)
-        for initializer_name in request.initializers:
+        # Setup code runs as the server, like startup: it sees only shared entries, so it can't build a
+        # shared component on the caller's private target.
+        with caller_principal_scope(None):
+            await self._run_named_initializers_async(request=request, initializer_registry=initializer_registry)
+
+    async def _run_named_initializers_async(
+        self, *, request: RunScenarioRequest, initializer_registry: InitializerRegistry
+    ) -> None:
+        """
+        Execute the request's initializers in order.
+
+        Args:
+            request: The run request containing initializer names and args.
+            initializer_registry: The registry that builds the initializers.
+
+        Raises:
+            ValueError: If an initializer name is not found in the registry.
+            SavedEntryLaunchConflictError: If an initializer would replace a saved entry.
+        """
+        for initializer_name in request.initializers or []:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
                 instance = await run_legacy_sync_async(
@@ -1706,13 +1735,15 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            # The registries refuse to replace a saved entry; the record also catches a refusal
-            # that the script itself caught, which would leave the saved entry in its place.
+            # The registries refuse to replace a saved entry or a user's private entry; the record also
+            # catches a refusal that the script itself caught, which would leave that entry in its place.
             with record_saved_entry_refusals() as refusals, registration_origin(RegistryEntryOrigin.TEMPORARY):
                 try:
                     await instance.initialize_async()
                 except SavedEntryReplacementError as error:
                     refusals.append((error.kind, error.name))
+                except PrivateEntryReplacementError as error:
+                    refusals.append((PRIVATE_ENTRY_REFUSAL_KIND, error.name))
                 except Exception as error:
                     # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
                     if refusals:
@@ -1728,20 +1759,30 @@ class ScenarioRunService:
         *, initializer_name: str, refusals: list[tuple[str, str]]
     ) -> SavedEntryLaunchConflictError:
         """
-        Describe the saved entries a launch script would have replaced.
+        Describe the saved entries, and names private entries use, that a launch script would have replaced.
 
         Args:
             initializer_name (str): The launch script's name.
-            refusals (list[tuple[str, str]]): The kind and name of each saved entry that was refused.
+            refusals (list[tuple[str, str]]): The kind and name of each refused entry; the kind is
+                ``PRIVATE_ENTRY_REFUSAL_KIND`` for a name a user's private entry uses.
 
         Returns:
             SavedEntryLaunchConflictError: The error to raise.
         """
-        entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
-        return SavedEntryLaunchConflictError(
-            f"The launch script '{initializer_name}' would replace the saved {entries}. "
-            "Leave that script out of the launch."
-        )
+        unique = list(dict.fromkeys(refusals))
+        saved = [(kind, name) for kind, name in unique if kind != PRIVATE_ENTRY_REFUSAL_KIND]
+        private = [name for kind, name in unique if kind == PRIVATE_ENTRY_REFUSAL_KIND]
+        reasons: list[str] = []
+        if saved:
+            entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in saved)
+            reasons.append(f"The launch script '{initializer_name}' would replace the saved {entries}.")
+        if private:
+            names = ", ".join(f"'{name}'" for name in private)
+            reasons.append(
+                f"The launch script '{initializer_name}' can't register {names} because the names are in use "
+                "by private entries until the server restarts."
+            )
+        return SavedEntryLaunchConflictError(f"{' '.join(reasons)} Leave that script out of the launch.")
 
     async def _initialize_scenario_async(
         self,
