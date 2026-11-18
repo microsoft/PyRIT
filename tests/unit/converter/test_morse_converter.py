@@ -51,3 +51,9 @@ async def test_morse_converter_input_not_supported():
     converter = MorseConverter()
     with pytest.raises(ValueError):
         await converter.convert_async(prompt="hello", input_type="image_path")
+
+
+async def test_morse_converter_percent_uses_separated_0_slash_0_codes():
+    converter = MorseConverter()
+    result = await converter.convert_async(prompt="50%")
+    assert result.output_text == "..... ----- ----- -..-. -----"
