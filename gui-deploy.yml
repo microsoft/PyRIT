@@ -3,20 +3,17 @@
 # App-only test deployment is the default. Infrastructure reconciliation is
 # explicit and leaves the running app unchanged before deploying new code.
 
-trigger:
-  branches:
-    include:
-      - main
-  paths:
-    include:
-      - pyrit/backend/**
-      - pyrit/memory/**
-      - pyrit/cli/pyrit_migrate.py
-      - frontend/**
-      - docker/**
-      - infra/**
-
+trigger: none
 pr: none
+
+schedules:
+  - cron: '0 15 * * *'
+    displayName: 'Morning test deployment (7 AM PST / 8 AM PDT)'
+    branches:
+      include:
+        - main
+    # Internal configuration can change without a public PyRIT commit.
+    always: true
 
 parameters:
   - name: deployInfra
@@ -25,6 +22,10 @@ parameters:
     default: false
   - name: deployToProd
     displayName: 'Deploy to production'
+    type: boolean
+    default: false
+  - name: useInternalDeploymentProfile
+    displayName: 'Use an internal deployment profile'
     type: boolean
     default: false
 
@@ -43,12 +44,14 @@ stages:
           - checkout: none
           - bash: |
               set -euo pipefail
-              if [[ '${{ parameters.deployToProd }}' == 'true' \
+              if [[ "${DEPLOY_TO_PROD,,}" == true \
                 && "$BUILD_SOURCEBRANCH" != refs/heads/main ]]; then
                 echo "##vso[task.logissue type=error]Production deployment requires a commit merged to refs/heads/main"
                 exit 1
               fi
             displayName: 'Validate production source'
+            env:
+              DEPLOY_TO_PROD: ${{ parameters.deployToProd }}
 
   - stage: Build
     displayName: 'Build and Push Image'
@@ -63,6 +66,18 @@ stages:
         steps:
           - checkout: self
             fetchDepth: 1
+            path: s
+          - ${{ if parameters.useInternalDeploymentProfile }}:
+              - checkout: git://AI Red Team/PyRIT-internal@refs/heads/main
+                fetchDepth: 1
+                path: internal-deployment
+              - bash: |
+                  set -euo pipefail
+                  commit=$(git -C "$INTERNAL_SOURCE_DIRECTORY" rev-parse HEAD)
+                  echo "##vso[task.setvariable variable=internalSourceVersion]$commit"
+                displayName: 'Record the resolved internal source commit'
+                env:
+                  INTERNAL_SOURCE_DIRECTORY: $(Pipeline.Workspace)/internal-deployment
 
           - bash: |
               set -euo pipefail
@@ -126,6 +141,7 @@ stages:
                   -t "$image" \
                   --build-arg BASE_IMAGE=pyrit-devcontainer \
                   --build-arg PYRIT_SOURCE=local \
+                  --build-arg PYRIT_EXTRAS=all \
                   --build-arg GIT_COMMIT="$source_commit" \
                   --build-arg GIT_MODIFIED=false \
                   .
@@ -140,6 +156,25 @@ stages:
                 fi
                 immutable_image="$PYRIT_ACR_LOGIN_SERVER/$PYRIT_IMAGE_NAME@$digest"
                 echo "##vso[task.setvariable variable=immutableImage;isOutput=true]$immutable_image"
+
+          - ${{ if parameters.useInternalDeploymentProfile }}:
+              - task: Bash@3
+                name: PrepareProfile
+                displayName: 'Validate and bundle the pinned internal deployment profile'
+                env:
+                  PYRIT_INTERNAL_SOURCE_DIRECTORY: $(Pipeline.Workspace)/internal-deployment
+                  PYRIT_INTERNAL_SOURCE_VERSION: $(internalSourceVersion)
+                  PYRIT_PROFILE_BUNDLE_DIRECTORY: $(Build.ArtifactStagingDirectory)/deployment-profile
+                  PYRIT_CONTAINER_IMAGE: $(BuildImage.immutableImage)
+                inputs:
+                  targetType: filePath
+                  filePath: '$(Build.SourcesDirectory)/infra/pipelines/prepare_deployment_profile.sh'
+              - task: PublishPipelineArtifact@1
+                displayName: 'Publish the validated baseline for test and production'
+                inputs:
+                  targetPath: $(Build.ArtifactStagingDirectory)/deployment-profile
+                  artifact: deployment-profile
+                  publishLocation: pipeline
 
           # The hosted agent is disposable; deployment pulls the pushed digest from ACR.
           # Release local images and build cache before injected post-job scanners run.
@@ -173,6 +208,7 @@ stages:
         - DeployTestInfra
       slot: test
       phase: app
+      useInternalDeploymentProfile: ${{ parameters.useInternalDeploymentProfile }}
       condition: >-
         and(not(canceled()),
             in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),
@@ -218,7 +254,9 @@ stages:
               instructions: |
                 Confirm test is healthy, Entra and backend group authorization work,
                 and the static test egress IP is allow-listed.
-                Approval stops the production app, runs the production database migration, and then deploys the production app.
+                Approval deploys the tested image to production.
+                If the schema check fails, the existing migration flow can stop
+                the production app and run a database migration before deploying.
                 Infrastructure deployment requested: ${{ parameters.deployInfra }}.
                 App deployment reconciles application configuration and preserves
                 the existing public/private access mode.
@@ -248,6 +286,7 @@ stages:
         - DeployProdInfra
       slot: prod
       phase: app
+      useInternalDeploymentProfile: ${{ parameters.useInternalDeploymentProfile }}
       condition: >-
         and(not(canceled()),
             in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),

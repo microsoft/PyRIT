@@ -98,6 +98,8 @@ Local dev → Build and push image → Preview Bicep changes → Deploy → Comp
 
 Community users can deploy `infrastructure.bicep` followed by `application.bicep` using the instructions below. For a fully provisioned isolated instance, use `deploy_instance.py` and [DEPLOY_NEW_INSTANCE.md](DEPLOY_NEW_INSTANCE.md). `gui-deploy.yml` is the Microsoft team's internal Azure DevOps workflow; it depends on team-owned ADO configuration and is not the community deployment interface.
 
+The team pipeline runs daily at 15:00 UTC (07:00 Pacific standard time / 08:00 Pacific daylight time) and on manual runs, not on each merge. Scheduled runs deploy the app to test; infrastructure changes and production remain opt-in, with production approval required. The schedule runs even when public source is unchanged so it can pick up internal configuration changes. Pipeline UI schedules override YAML schedules and must be removed when switching to this cadence.
+
 `deploy_instance.py` uses the default `enableFrontDoor=false` path. Use direct Bicep when a community deployment needs Front Door. The script still automates resource creation, Entra setup, inline secrets, and selected RBAC, but its documented SQL and provider post-deployment steps remain required.
 
 ## Security
@@ -494,6 +496,7 @@ Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 | `allowedGroupObjectIds` | Backend-authorized Entra security groups |
 | `adminGroupObjectId` | Entra group authorized to manage backend configuration |
 | `pyritConfigFileUri` | Optional credential-free Azure Blob URI for `.pyrit_conf` |
+| `deploymentProfilesContainerUri` | Credential-free runtime profile container URI for this environment (required only with `useInternalDeploymentProfile=true`) |
 | `sqlServerFqdn`, `sqlDatabaseName` | Existing SQL database |
 | `keyVaultResourceId`, `envSecretName` | Existing runtime configuration secret |
 | `acrResourceId`, `enableOtel` | Registry resource ID and observability setting |
@@ -668,6 +671,16 @@ Open the public URL and verify unauthenticated users are redirected to Entra and
 The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set `pyritConfigFileUri` to a credential-free blob HTTPS URI; the backend uses the Container App UAMI to read and update it. Leave it empty to generate configuration from `sqlServerFqdn` and `pyritInitializer`. Grant `Storage Blob Data Contributor` on the storage account or blob container. When using `deploy_instance.py`, pass that resource ID through `--pyrit-config-rbac-scope` so the helper grants access before starting the app.
 
 Write access to the configuration blob, and to any `custom_initializers_source` it names while `allow_custom_initializers` is enabled, lets a principal change code that the backend runs as its UAMI. Limit data-plane write roles on those scopes to the backend identity and principals trusted as configuration administrators.
+
+### Internal deployment profiles
+
+Enable `useInternalDeploymentProfile` to read `pyrit_internal/deployment/main/.pyrit_conf` and `internal_initializers/*.py` from the protected `main` branch of PyRIT-internal. The rollout switch defaults to `false`, including on scheduled runs. Build validates initializer discovery in the all-extra image and publishes one `deployment-profile` artifact. Test and production use the same artifact and image, but each publishes to `deploymentProfilesContainerUri` from its own variable group. The migration job and app use the selected configuration URI; SQL and Key Vault bindings still come from `start.sh`.
+
+**Editing policy:** GUI edits to `.pyrit_conf` and custom initializer scripts survive app-only deployments and unrelated internal-repository commits while the checked-in profile content is unchanged. The baseline digest covers only the source `.pyrit_conf` and flat initializer files, not the internal commit or application image digest. If either configuration or initializer source changes in Git, a new runtime baseline is initialized from that pinned profile; prior live edits do not silently merge into it. Configuration comments are preserved. Returning to a previously published baseline reuses its existing environment-local edits.
+
+The host Python publisher seeds a unique `releases/<build-id>/<attempt>/main/` prefix and creates `profiles/main/<profile-digest>.json` last, never overwriting either. It verifies the index and reads the selected configuration's ETag before reporting new/reuse, image, internal commit, baseline hash and URI. Missing or invalid data fails the stage; retry a competing publication instead of overwriting live data.
+
+Team setup and operating instructions belong in the [CoPyRIT deployment runbook](https://dev.azure.com/atml/d6628cad-394f-463f-84a4-c3a00a85a6ed/_wiki/wikis/c514cddd-d8ba-4e46-8695-41d55d89b54a?pagePath=%2FAIRTDev%2FInfrastructure%2FCoPyRIT%20GUI%2FDeployment). Keep secrets in Key Vault. Both the publishing principal and app identity need appropriately scoped Blob data write permissions to publish baselines and retain GUI editing; limit those permissions to trusted administrators as described above. Initializers importing private packages need those packages installed in the image; uploading scripts does not install dependencies.
 
 ### .pyrit_conf fields → Bicep params
 

@@ -16,9 +16,10 @@ FROM ${BASE_IMAGE} AS production
 
 LABEL description="Docker container for PyRIT with Jupyter Notebook and GUI support"
 
-# Build arguments for version tracking
+# Build arguments
 ARG PYRIT_SOURCE=pypi
 ARG PYRIT_VERSION=""
+ARG PYRIT_EXTRAS=speech,opencv,fairness_bias,fastapi,playwright,github-copilot
 ARG GIT_COMMIT=""
 ARG GIT_MODIFIED=""
 
@@ -57,13 +58,13 @@ COPY --chown=vscode:vscode doc/ /app/doc/
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
 RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
-        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]==$PYRIT_VERSION; \
+        uv pip install --python /opt/venv/bin/python "pyrit[${PYRIT_EXTRAS}]==$PYRIT_VERSION"; \
         echo "Removing local source so the installed PyPI package isn't shadowed"; \
         rm -rf /app/pyrit /app/frontend /app/build_scripts /app/pyproject.toml /app/MANIFEST.in /app/README.md /app/LICENSE; \
     elif [ "$PYRIT_SOURCE" = "local" ]; then \
         echo "Installing PyRIT from local source"; \
         export PYRIT_SOURCE_COMMIT="$GIT_COMMIT" PYRIT_SOURCE_DIRTY="$GIT_MODIFIED"; \
-        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]; \
+        uv pip install --python /opt/venv/bin/python -e ".[${PYRIT_EXTRAS}]"; \
         echo "Building frontend..."; \
         if [ "$GIT_MODIFIED" = "true" ]; then \
             /opt/venv/bin/python -m build_scripts.prepare_package --development; \

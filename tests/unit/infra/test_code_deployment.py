@@ -170,7 +170,7 @@ class TestLocalDockerBuild(unittest.TestCase):
                     capture_output=True,
                     check=False,
                     timeout=30,
-                    env={**os.environ, "GIT_COMMIT": "a" * 40, "GIT_MODIFIED": dirty},
+                    env={**os.environ, "GIT_COMMIT": "a" * 40, "GIT_MODIFIED": dirty, "PYRIT_EXTRAS": "all"},
                 )
                 assert result.returncode == 0, result.stdout + result.stderr
                 preparation = [line for line in result.stdout.splitlines() if line.startswith("prepare:")]
