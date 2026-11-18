@@ -7,6 +7,7 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AssertPolicyMetrics,
   AttackFindingListResponse,
   TargetInstance,
   UnregisteredTarget,
@@ -305,6 +306,13 @@ apiClient.interceptors.response.use(
 export { apiClient }
 
 export const analyticsApi = {
+  getAssertPolicyMetrics: async (scenarioResultId: string, signal?: AbortSignal): Promise<AssertPolicyMetrics> => {
+    const response = await apiClient.get<AssertPolicyMetrics>(
+      '/analytics/assert',
+      { params: { scenario_result_id: scenarioResultId }, signal },
+    )
+    return response.data
+  },
   query: async (
     query: AttackAnalyticsQuery,
     signal?: AbortSignal,
