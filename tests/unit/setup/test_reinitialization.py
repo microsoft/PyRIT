@@ -51,8 +51,11 @@ def _isolated_reinitialization_state() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
-def isolate_reinitialization_state() -> Iterator[None]:
-    with _isolated_reinitialization_state():
+def isolate_reinitialization_state(tmp_path: Path) -> Iterator[None]:
+    with (
+        _isolated_reinitialization_state(),
+        patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path / "defaults"),
+    ):
         yield
 
 

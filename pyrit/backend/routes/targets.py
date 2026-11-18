@@ -10,7 +10,7 @@ Target types are set at app startup via initializers - you cannot add new types 
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from pyrit.backend.middleware.auth import has_admin_access
+from pyrit.backend.middleware.auth import AuthenticatedUser, has_admin_access
 from pyrit.backend.models import (
     CreateTargetRequest,
     ProblemDetail,
@@ -23,8 +23,9 @@ from pyrit.backend.models.targets import (
     UnregisteredTarget,
 )
 from pyrit.backend.services import get_target_service
-from pyrit.models.catalog import TargetInstance
+from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
+from pyrit.registry import SavedEntryConflictError, SavedEntryStorageError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -79,6 +80,22 @@ def _target_upload_directory(request: Request) -> str | None:
     """
     directory: str | None = getattr(request.app.state, "target_upload_directory", None)
     return directory
+
+
+def _saved_entry_owner(request: Request) -> SavedEntryOwner | None:
+    """
+    Return the signed-in user to record on a saved target.
+
+    Args:
+        request: The incoming FastAPI request.
+
+    Returns:
+        SavedEntryOwner | None: The user's object ID and name, or None when sign-in is off.
+    """
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, AuthenticatedUser):
+        return None
+    return SavedEntryOwner(oid=user.oid, name=user.name or user.email)
 
 
 @router.get(
@@ -136,6 +153,11 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
             "description": "Administrator access is required to run model repository code or to use the "
             "server's stored credentials",
         },
+        409: {
+            "model": ProblemDetail,
+            "description": "A target to save has the name of a registered or saved target",
+        },
+        503: {"model": ProblemDetail, "description": "Saved targets can't be written right now"},
     },
 )
 async def create_target(
@@ -161,7 +183,13 @@ async def create_target(
             request=body,
             upload_directory=_target_upload_directory(request),
             is_admin=has_admin_access(request),
+            owner=_saved_entry_owner(request) if body.persist else None,
+            recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
+    except SavedEntryConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except SavedEntryStorageError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

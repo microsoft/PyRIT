@@ -77,9 +77,19 @@ async def score_attack_response_async(
     objective_scorer: Scorer | None,
     auxiliary_scorers: Sequence[Scorer] | None,
     expectation: ScoringExpectation | None,
+    side_effect_evidence_only: bool = False,
 ) -> dict[str, list[Score]]:
     """
     Score an attack response with the objective scorer and the auxiliary scorers that apply.
+
+    Args:
+        response (Message): The message that anchors scoring for the turn.
+        objective_scorer (Scorer | None): The scorer that decides the attack outcome.
+        auxiliary_scorers (Sequence[Scorer] | None): Additional scorers whose results are stored.
+        expectation (ScoringExpectation | None): The scoring question.
+        side_effect_evidence_only (bool): Run only scorers that judge side effects (see
+            ``Scorer.judges_side_effects``). Use this for a target that never replies, so the
+            message it handed back is never judged as a response.
 
     Returns:
         dict[str, list[Score]]: The ``objective_scores`` and ``auxiliary_scores``.
@@ -87,10 +97,17 @@ async def score_attack_response_async(
     prepared = prepare_attack_scoring(
         objective_scorer=objective_scorer, auxiliary_scorers=auxiliary_scorers, expectation=expectation
     )
+    auxiliary = list(zip(prepared.auxiliary_scorers, prepared.auxiliary_expectations, strict=True))
+    if side_effect_evidence_only:
+        if objective_scorer is not None and not objective_scorer.judges_side_effects():
+            objective_scorer = None
+        auxiliary = [(scorer, selected) for scorer, selected in auxiliary if scorer.judges_side_effects()]
+        if objective_scorer is None and not auxiliary:
+            return {"objective_scores": [], "auxiliary_scores": []}
     return await MessageScorer.score_response_async(
         response=response,
         objective_scorer=objective_scorer,
-        auxiliary_scorers=prepared.auxiliary_scorers,
+        auxiliary_scorers=[scorer for scorer, _ in auxiliary],
         expectation=prepared.objective_expectation,
-        auxiliary_expectations=prepared.auxiliary_expectations,
+        auxiliary_expectations=[selected for _, selected in auxiliary],
     )
