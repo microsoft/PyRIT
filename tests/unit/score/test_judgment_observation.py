@@ -14,10 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import text, update
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.memory.memory_models import ObservationEntry, ScoreEntry
+from pyrit.message_normalizer import JsonSchemaNormalizer
 from pyrit.models import (
     Acquisition,
     AnswerMatches,
@@ -35,7 +36,14 @@ from pyrit.models import (
     ScoringExpectation,
     UnvalidatedScore,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import (
+    CapabilityHandlingPolicy,
+    CapabilityName,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    UnsupportedCapabilityBehavior,
+)
 from pyrit.score import (
     AudioTrueFalseScorer,
     CallableResponseHandler,
@@ -65,6 +73,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
+from pyrit.score.llm_scoring import _contract_fingerprint
 from pyrit.score.response_handler import NumericRangeResponseHandler, TrueFalseResponseHandler
 
 _INVALID_RESPONSE = "not valid json"
@@ -1647,3 +1656,110 @@ async def test_legacy_contract_keeps_a_changed_wrapper_version_async(
     with pytest.raises(NonReplayableObservationError, match="handler or category"):
         await scorer.score_observation_async(observation=observation, expectation=expectation)
     assert target.send_prompt_async.call_count == 1
+
+
+_TEMPLATE_A = "[WRAPPER_A]\n{schema_json}"
+_TEMPLATE_B = "[WRAPPER_B]\n{schema_json}"
+
+
+class _SchemaTemplatedTarget(MockPromptTarget):
+    """Local judge target whose only variable trait is its schema-instruction template."""
+
+    def __init__(self, *, schema_instructions_template: str) -> None:
+        configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                supports_system_prompt=True,
+                supports_editable_history=True,
+                supports_json_schema=False,
+            ),
+            policy=CapabilityHandlingPolicy(
+                behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT}
+            ),
+            normalizer_overrides={
+                CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(
+                    schema_instructions_template=schema_instructions_template
+                )
+            },
+        )
+        super().__init__(custom_configuration=configuration)
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        message = normalized_conversation[-1]
+        self.prompt_sent.append(message.get_value())
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=_VALID_RESPONSE,
+                conversation_id=message.message_pieces[0].conversation_id,
+            ).to_message()
+        ]
+
+
+def _templated_scorer(*, template: str) -> tuple[SelfAskTrueFalseScorer, _SchemaTemplatedTarget]:
+    target = _SchemaTemplatedTarget(schema_instructions_template=template)
+    return SelfAskTrueFalseScorer(chat_target=target), target
+
+
+async def test_judgment_replay_rejects_changed_schema_normalizer_template_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scorer, target = _templated_scorer(template=_TEMPLATE_A)
+    expectation = ScoringExpectation(objective="Judge this response")
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+    assert observation.payload.replay_contract_fingerprint is not None
+    assert len(target.prompt_sent) == 1
+
+    changed_scorer, changed_target = _templated_scorer(template=_TEMPLATE_B)
+    with pytest.raises(NonReplayableObservationError, match="handler or category"):
+        await changed_scorer.score_observation_async(observation=observation, expectation=expectation)
+    assert changed_target.prompt_sent == []
+
+
+async def test_judgment_replay_accepts_matching_schema_normalizer_template_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scorer, _ = _templated_scorer(template=_TEMPLATE_A)
+    expectation = ScoringExpectation(objective="Judge this response")
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+
+    matching_scorer, matching_target = _templated_scorer(template=_TEMPLATE_A)
+    replay = (await matching_scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+
+    assert replay.score_value == live.score_value == "true"
+    assert matching_target.prompt_sent == []
+
+
+async def test_judgment_replay_keeps_pre_adaptation_contract_replayable_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scorer, _ = _templated_scorer(template=_TEMPLATE_A)
+    expectation = ScoringExpectation(objective="Judge this response")
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+    # Rewriting the stored fingerprint to its pre-adaptation form simulates an observation
+    # acquired before target adaptation was fingerprinted; it must remain replayable.
+    legacy_fingerprint = _contract_fingerprint(
+        handler_identifier=scorer._response_handler._get_replay_identifier(),
+        category=scorer._score_category,
+        judgment_replay_identifier=scorer._get_judgment_replay_identifier(),
+    )
+    assert legacy_fingerprint is not None
+    assert legacy_fingerprint != observation.payload.replay_contract_fingerprint
+    payload = observation.payload.model_dump(mode="json")
+    payload["replay_contract_fingerprint"] = legacy_fingerprint
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
+            update(ObservationEntry).where(ObservationEntry.id == observation.id).values(payload=payload)
+        )
+        await session.commit()
+    legacy_observation = (await sqlite_instance.get_observations_async(observation_ids=[observation.id]))[0]
+
+    replay_scorer, replay_target = _templated_scorer(template=_TEMPLATE_A)
+    replay = (await replay_scorer.score_observation_async(observation=legacy_observation, expectation=expectation))[0]
+
+    assert replay.score_value == live.score_value == "true"
+    assert replay_target.prompt_sent == []
