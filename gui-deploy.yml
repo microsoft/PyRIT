@@ -23,6 +23,10 @@ parameters:
     displayName: 'Deploy Infrastructure'
     type: boolean
     default: false
+  - name: deployToTest
+    displayName: 'Deploy to test (clear only to deploy straight to production)'
+    type: boolean
+    default: true
   - name: deployToProd
     displayName: 'Deploy to production'
     type: boolean
@@ -43,9 +47,15 @@ stages:
           - checkout: none
           - bash: |
               set -euo pipefail
-              if [[ '${{ parameters.deployToProd }}' == 'true' \
-                && "$BUILD_SOURCEBRANCH" != refs/heads/main ]]; then
-                echo "##vso[task.logissue type=error]Production deployment requires a commit merged to refs/heads/main"
+              # Azure renders boolean template parameters as True/False.
+              if [[ '${{ parameters.deployToProd }}' == [Tt]rue \
+                && "$BUILD_SOURCEBRANCH" != refs/heads/main \
+                && "$BUILD_SOURCEBRANCH" != refs/heads/releases/v* ]]; then
+                echo "##vso[task.logissue type=error]Production deployment requires refs/heads/main or a refs/heads/releases/v* branch"
+                exit 1
+              fi
+              if [[ '${{ parameters.deployToTest }}' != [Tt]rue && '${{ parameters.deployToProd }}' != [Tt]rue ]]; then
+                echo "##vso[task.logissue type=error]Skipping the test deployment requires a production deployment"
                 exit 1
               fi
             displayName: 'Validate production source'
@@ -161,7 +171,10 @@ stages:
         - Build
       slot: test
       phase: infra
-      condition: and(succeeded(), eq('${{ parameters.deployInfra }}', 'true'))
+      condition: >-
+        and(succeeded(),
+            eq('${{ parameters.deployToTest }}', 'true'),
+            eq('${{ parameters.deployInfra }}', 'true'))
 
   - template: infra/pipelines/deploy-stage.yml
     parameters:
@@ -175,6 +188,7 @@ stages:
       phase: app
       condition: >-
         and(not(canceled()),
+            eq('${{ parameters.deployToTest }}', 'true'),
             in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),
             or(in(dependencies.DeployTestInfra.result, 'Succeeded', 'SucceededWithIssues'),
                and(eq('${{ parameters.deployInfra }}', 'false'),
@@ -182,8 +196,18 @@ stages:
 
   - stage: ApproveProd
     displayName: 'Approve Production Deployment'
-    dependsOn: DeployTest
-    condition: and(succeeded('DeployTest'), eq('${{ parameters.deployToProd }}', 'true'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    dependsOn:
+      - Build
+      - DeployTest
+    condition: >-
+      and(not(canceled()),
+          eq('${{ parameters.deployToProd }}', 'true'),
+          or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+             startsWith(variables['Build.SourceBranch'], 'refs/heads/releases/v')),
+          in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),
+          or(in(dependencies.DeployTest.result, 'Succeeded', 'SucceededWithIssues'),
+             and(eq('${{ parameters.deployToTest }}', 'false'),
+                 eq(dependencies.DeployTest.result, 'Skipped'))))
     variables:
       - group: copyrit-gui-prod
     jobs:
@@ -216,9 +240,10 @@ stages:
               approvers: '$(prodApprovers)'
               allowApproversToApproveTheirOwnRuns: false
               instructions: |
-                Confirm test is healthy, Entra and backend group authorization work,
-                and the static test egress IP is allow-listed.
-                Approval stops the production app, runs the production database migration, and then deploys the production app.
+                Test deployment requested: ${{ parameters.deployToTest }}. If it ran, confirm test is healthy.
+                Confirm Entra and backend group authorization work, and the static test egress IP is allow-listed.
+                Approval checks the production database schema. If it is not current and this image can upgrade it,
+                deployment stops the production app, runs the migration, and then deploys the production app.
                 Infrastructure deployment requested: ${{ parameters.deployInfra }}.
                 App deployment reconciles application configuration and preserves
                 the existing public/private access mode.
