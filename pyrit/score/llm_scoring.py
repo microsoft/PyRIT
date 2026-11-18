@@ -9,7 +9,7 @@ import json
 import logging
 import uuid
 from string import Formatter
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -142,6 +142,7 @@ async def _run_llm_scoring_async(
         response_handler=response_handler,
         category=request.category,
         judgment_replay_identifier=request.judgment_replay_identifier,
+        target_adaptation=_target_judgment_adaptation(chat_target),
     )
     active_scorable = request.scorable
     if active_scorable is not None and not isinstance(active_scorable, SCORABLE_TYPES):
@@ -426,6 +427,7 @@ def _parse_judgment_observation(
     expectation: ScoringExpectation | None,
     category: Sequence[str] | str | None = None,
     judgment_replay_identifier: Mapping[str, object] | None = None,
+    target: PromptTarget | None = None,
 ) -> UnvalidatedScore:
     """
     Parse one retained judgment response without calling a target.
@@ -438,10 +440,12 @@ def _parse_judgment_observation(
     """
     if not isinstance(observation.payload, ScorerTargetResponsePayload):
         raise NonReplayableObservationError("A judgment scorer requires a judgment observation.")
+    target_adaptation = _target_judgment_adaptation(target)
     replay_contract_fingerprint = _replay_contract_fingerprint(
         response_handler=response_handler,
         category=category,
         judgment_replay_identifier=judgment_replay_identifier,
+        target_adaptation=target_adaptation,
     )
     if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
         # A current handler that opts out of replay is never overridden by a legacy contract.
@@ -465,6 +469,7 @@ def _parse_judgment_observation(
             response_text=text_piece.converted_value,
             category=category,
             judgment_replay_identifier=judgment_replay_identifier,
+            target_adaptation=target_adaptation,
         )
     ):
         raise NonReplayableObservationError(
@@ -487,11 +492,38 @@ def _parse_judgment_observation(
     return score
 
 
+def _target_judgment_adaptation(target: PromptTarget | None) -> list[dict[str, Any]] | None:
+    """
+    Project the target-side adaptation that shapes a judgment before it is parsed.
+
+    Reuses the ``TargetConfiguration.as_identifier_params`` serialization and keeps only the
+    resolved normalization pipeline: capabilities and policies describe the target, but the
+    pipeline is what actually rewrites the judge's prompts, so it is the part that must match
+    for a stored judgment to replay.
+
+    Returns:
+        list[dict[str, Any]] | None: The serialized pipeline, or None when the target does
+            not expose a serializable configuration.
+    """
+    from pyrit.prompt_target import TargetConfiguration
+
+    configuration = getattr(target, "configuration", None)
+    if not isinstance(configuration, TargetConfiguration):
+        return None
+    try:
+        pipeline = configuration.as_identifier_params()["normalization_pipeline"]
+        json.dumps(pipeline)
+    except (KeyError, TypeError, ValueError):
+        return None
+    return cast("list[dict[str, Any]]", pipeline)
+
+
 def _replay_contract_fingerprint(
     *,
     response_handler: ResponseHandler,
     category: Sequence[str] | str | None,
     judgment_replay_identifier: Mapping[str, object] | None,
+    target_adaptation: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """
     Calculate a stable identity for pure judgment logic, response parsing, and categories.
@@ -503,6 +535,7 @@ def _replay_contract_fingerprint(
         handler_identifier=response_handler._get_replay_identifier(),
         category=category,
         judgment_replay_identifier=judgment_replay_identifier,
+        target_adaptation=target_adaptation,
     )
 
 
@@ -512,21 +545,42 @@ def _legacy_replay_contract_fingerprints(
     response_text: str,
     category: Sequence[str] | str | None,
     judgment_replay_identifier: Mapping[str, object] | None,
+    target_adaptation: list[dict[str, Any]] | None = None,
 ) -> set[str]:
     """
     Fingerprints of older handler contracts that parse this stored response the same way.
 
+    Contracts stored before target adaptation was fingerprinted carry no adaptation entry,
+    so each older contract is also digested in that pre-adaptation form, as is the current
+    handler contract: those observations remain replayable when nothing else changed.
+
     Returns:
         set[str]: The digests an observation acquired under an older contract may carry.
     """
-    fingerprints = {
+    fingerprints: set[str | None] = set()
+    for legacy in response_handler._legacy_replay_identifiers(response_text=response_text, category=category):
+        fingerprints.add(
+            _contract_fingerprint(
+                handler_identifier=legacy,
+                category=category,
+                judgment_replay_identifier=judgment_replay_identifier,
+                target_adaptation=target_adaptation,
+            )
+        )
+        fingerprints.add(
+            _contract_fingerprint(
+                handler_identifier=legacy,
+                category=category,
+                judgment_replay_identifier=judgment_replay_identifier,
+            )
+        )
+    fingerprints.add(
         _contract_fingerprint(
-            handler_identifier=legacy,
+            handler_identifier=response_handler._get_replay_identifier(),
             category=category,
             judgment_replay_identifier=judgment_replay_identifier,
         )
-        for legacy in response_handler._legacy_replay_identifiers(response_text=response_text, category=category)
-    }
+    )
     return {fingerprint for fingerprint in fingerprints if fingerprint is not None}
 
 
@@ -535,9 +589,14 @@ def _contract_fingerprint(
     handler_identifier: Mapping[str, object] | None,
     category: Sequence[str] | str | None,
     judgment_replay_identifier: Mapping[str, object] | None,
+    target_adaptation: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """
     Digest one handler contract together with the category and judgment identity.
+
+    When ``target_adaptation`` is None the serialization is byte-identical to the contract
+    stored before target adaptation was fingerprinted, which is what keeps observations
+    acquired before then replayable.
 
     Returns:
         str | None: The digest, or None when the contract is not stable.
@@ -545,13 +604,16 @@ def _contract_fingerprint(
     if handler_identifier is None or judgment_replay_identifier is None:
         return None
     normalized_category = [category] if isinstance(category, str) else list(category) if category else None
+    contract: dict[str, object] = {
+        "handler": handler_identifier,
+        "category": normalized_category,
+        "judgment": dict(judgment_replay_identifier),
+    }
+    if target_adaptation is not None:
+        contract["target_adaptation"] = target_adaptation
     try:
         serialized = json.dumps(
-            {
-                "handler": handler_identifier,
-                "category": normalized_category,
-                "judgment": dict(judgment_replay_identifier),
-            },
+            contract,
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,
