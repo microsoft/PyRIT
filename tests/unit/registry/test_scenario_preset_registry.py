@@ -6,12 +6,20 @@
 import json
 import logging
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import DatasetSourceInput, Parameter, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.models import (
+    DatasetSourceInput,
+    Parameter,
+    ScenarioDatasetRequest,
+    ScenarioPreset,
+    ScenarioPresetLaunchDefaults,
+)
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.registry import (
     ConverterRegistry,
     ScenarioMetadata,
@@ -595,6 +603,33 @@ class TestAdvisoryValidation:
             "scenario_params",
             "include_baseline",
         ]
+
+    def test_a_pinned_scorer_the_scenario_cannot_use_is_reported(
+        self, registry: ScenarioPresetRegistry, scenario_registry: MagicMock
+    ) -> None:
+        preset = _preset(
+            launch_defaults=ScenarioPresetLaunchDefaults(
+                objective_scorer=RegisteredComponentReference(registry_name="refusal", identifier_hash="a" * 64)
+            )
+        )
+
+        issues = registry.check_preset(preset=preset)
+
+        assert [issue.field for issue in issues] == ["launch_defaults.objective_scorer"]
+
+    def test_a_pinned_scorer_is_not_resolved_by_the_structural_check(
+        self, registry: ScenarioPresetRegistry, scenario_registry: MagicMock
+    ) -> None:
+        scenario_registry.get_registered_class_metadata.return_value = replace(
+            _metadata(), supports_objective_scorer=True
+        )
+        preset = _preset(
+            launch_defaults=ScenarioPresetLaunchDefaults(
+                objective_scorer=RegisteredComponentReference(registry_name="unregistered", identifier_hash="a" * 64)
+            )
+        )
+
+        assert registry.check_preset(preset=preset) == []
 
 
 class TestStartupScan:

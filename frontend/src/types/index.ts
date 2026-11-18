@@ -1733,6 +1733,17 @@ export interface ScenarioPreset {
   datasets?: ScenarioDatasetRequest | null
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
+  /** Launch values this preset supplies when the launch leaves them unset. Omit to use the scenario defaults. */
+  launch_defaults?: ScenarioPresetLaunchDefaults | null
+}
+
+/**
+ * Launch-owned values a preset may pin. A value chosen at launch replaces the
+ * preset's value, and an absent value falls back to the scenario default.
+ */
+export interface ScenarioPresetLaunchDefaults {
+  /** Registry name and hash of a scorer. The hash includes the scorer's judge target, so it is deployment-specific. */
+  objective_scorer?: RegisteredComponentReference | null
 }
 
 /** One advisory problem found checking a preset against this deployment's registry. */
@@ -1793,6 +1804,8 @@ export interface ScenarioSuiteEntryStatus {
   preset_version: string | null
   /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
   issues: PresetIssue[]
+  /** The preset's pinned launch values, or null when it pins none or is unavailable. */
+  launch_defaults?: ScenarioPresetLaunchDefaults | null
 }
 
 export interface ScenarioSuiteResponse {
@@ -2130,6 +2143,13 @@ export interface ScenarioTargetSummary {
   identifier_hash?: string | null
 }
 
+/** Display metadata for the objective scorer a run recorded. */
+export interface ScenarioScorerSummary {
+  scorer_type: string
+  display_type: string
+  identifier_hash: string
+}
+
 export interface ScenarioRunListItem {
   scenario_result_id: string
   scenario_name: string
@@ -2153,6 +2173,8 @@ export interface ScenarioRunListItem {
   completed_at?: string | null
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
+  /** Objective scorer the run recorded, or null when unavailable. */
+  scorer?: ScenarioScorerSummary | null
   datasets_used: string[]
   scenario_parameters: Record<string, unknown>
   planned_total_available: boolean

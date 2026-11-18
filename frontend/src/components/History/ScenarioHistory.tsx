@@ -516,6 +516,7 @@ function ScenarioHistoryTable({
           <TableHeaderCell>Operator</TableHeaderCell>
           <TableHeaderCell>Operation</TableHeaderCell>
           <TableHeaderCell>Target</TableHeaderCell>
+          <TableHeaderCell>Scorer</TableHeaderCell>
           <TableHeaderCell>Timing</TableHeaderCell>
           <TableHeaderCell>Attack Success</TableHeaderCell>
           <TableHeaderCell>Errors / retries</TableHeaderCell>
@@ -578,6 +579,11 @@ function ScenarioHistoryTable({
                     </Text>
                   </div>
                 </Tooltip>
+              ) : 'Unavailable'}
+            </TableCell>
+            <TableCell data-testid={`scenario-history-scorer-${run.scenario_result_id}`}>
+              {run.scorer ? (
+                <Text className={styles.truncate} title={run.scorer.display_type}>{run.scorer.display_type}</Text>
               ) : 'Unavailable'}
             </TableCell>
             <TableCell>

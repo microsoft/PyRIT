@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
@@ -14,6 +15,8 @@ from pyrit.scenario.core.scenario_target_defaults import validate_default_advers
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.converter import Converter
     from pyrit.models import ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
     from pyrit.models.catalog import RunScenarioRequest
@@ -21,6 +24,19 @@ if TYPE_CHECKING:
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
+
+_TARGET_FIELD_ROLES: Mapping[str, str] = MappingProxyType(
+    {
+        "target_name": "objective_target",
+        "scoring_target_name": "scoring_target",
+        "adversarial_target_name": "adversarial_target",
+    }
+)
+
+REQUEST_FIELD_ROLES: Mapping[str, str] = MappingProxyType(
+    {**_TARGET_FIELD_ROLES, "objective_scorer": "objective_scorer"}
+)
+"""Run-request fields that explicitly select a readiness role, keyed by field name."""
 
 
 class ScenarioConfigurationResolver:
@@ -102,11 +118,7 @@ class ScenarioConfigurationResolver:
         issues: list[ScenarioConfigurationIssue] = []
         updates: dict[str, Any] = {}
         target = None
-        for field, role in (
-            ("target_name", "objective_target"),
-            ("scoring_target_name", "scoring_target"),
-            ("adversarial_target_name", "adversarial_target"),
-        ):
+        for field, role in _TARGET_FIELD_ROLES.items():
             name = getattr(request, field)
             if name is None:
                 continue
@@ -134,7 +146,7 @@ class ScenarioConfigurationResolver:
             except ValueError as exc:
                 issues.append(
                     ScenarioConfigurationIssue(
-                        role="objective_scorer",
+                        role=REQUEST_FIELD_ROLES["objective_scorer"],
                         component=request.objective_scorer.registry_name,
                         reason=str(exc),
                         remediation="Select the current registered scorer and review its identity.",

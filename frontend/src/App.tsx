@@ -1097,8 +1097,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   loading={scorerRegistry.loading} error={scorerRegistry.error} onRefresh={scorerRegistry.refresh} />} />
                 <Route path="techniques" element={<TechniqueRegistry />} />
                 <Route path="scenario-presets" element={<ScenarioPresetRegistry />} />
-                <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create" />} />
-                <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit" />} />
+                <Route path="scenario-presets/new" element={<ScenarioPresetEditor mode="create"
+                  scorers={scorerRegistry.scorers} scorersLoading={scorerRegistry.loading} scorersError={scorerRegistry.error} />} />
+                <Route path="scenario-presets/:presetName/edit" element={<ScenarioPresetEditor mode="edit"
+                  scorers={scorerRegistry.scorers} scorersLoading={scorerRegistry.loading} scorersError={scorerRegistry.error} />} />
                 <Route path="scenario-suites" element={<Navigate to="/registry/scenario-presets" replace />} />
                 <Route path="scenario-suites/new" element={<ScenarioSuiteEditor mode="create" />} />
                 <Route path="scenario-suites/:suiteName/edit" element={<ScenarioSuiteEditor mode="edit" />} />
@@ -1114,6 +1116,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     labels={globalLabels}
                     operationId={operationId}
                     defaultsReady={newActivityReady}
+                    scorers={scorerRegistry.scorers}
+                    scorersLoading={scorerRegistry.loading}
+                    scorersError={scorerRegistry.error}
                   />
                 }
               />

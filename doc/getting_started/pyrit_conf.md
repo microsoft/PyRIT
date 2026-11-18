@@ -204,6 +204,8 @@ In a local directory, PyRIT writes a small hidden `.<name>.json.lock` file besid
 
 A preset document may set `"show_in_scanner": false` to keep the preset out of the GUI Scanner's list of individual scanners while suites can still use it. Omitting the field shows the preset; the *Add to scanner* switch on the Scenario presets registry page edits it. PyRIT versions that predate this field cannot read a hidden preset, so upgrade every deployment that shares the source before hiding presets.
 
+A preset document may also set `"launch_defaults": {"objective_scorer": {"registry_name": ..., "identifier_hash": ...}}` to pin the objective scorer its suite entries use. Omitting the section uses the scenario default. Older PyRIT versions cannot read presets that set it, and the hash identifies a scorer registered in a specific deployment, including any judge target.
+
 ### `scenario_suites_source`
 
 Stores ScenarioSuite definitions in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix:

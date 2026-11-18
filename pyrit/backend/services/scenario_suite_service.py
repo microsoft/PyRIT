@@ -18,6 +18,7 @@ from pyrit.backend.models import (
 from pyrit.common.azure_storage import redact_urls
 from pyrit.models import (
     PresetIssue,
+    ScenarioPresetLaunchDefaults,
     ScenarioSuite,
     ScenarioSuiteEntry,
 )
@@ -37,6 +38,7 @@ class _PresetProjection:
     origin: Literal["stored", "registered"] | None
     version: str | None
     issues: tuple[PresetIssue, ...]
+    launch_defaults: ScenarioPresetLaunchDefaults | None = None
 
 
 class ScenarioSuiteService:
@@ -192,6 +194,7 @@ class ScenarioSuiteService:
                 origin=projections[entry.preset_name].origin,
                 preset_version=projections[entry.preset_name].version,
                 issues=list(projections[entry.preset_name].issues),
+                launch_defaults=projections[entry.preset_name].launch_defaults,
             )
             for entry in entries
         ]
@@ -215,6 +218,7 @@ class ScenarioSuiteService:
                     origin=entry.origin,
                     version=entry.version,
                     issues=tuple(registry.check_preset(preset=entry.preset)),
+                    launch_defaults=entry.preset.launch_defaults,
                 )
 
             stored_version = registry.get_preset_version(name=preset_name)

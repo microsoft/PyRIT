@@ -3174,6 +3174,40 @@ class TestScenarioRunServiceListRuns:
         assert "/v1" not in serialized
         assert "password" not in serialized
 
+    async def test_history_reports_recorded_scorer_without_judge_endpoint(self, mock_memory) -> None:
+        judge = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="tests",
+            endpoint="https://judge.example.test/v1?api-key=judge-secret",
+        )
+        refusal = ComponentIdentifier(
+            class_name="SelfAskRefusalScorer", class_module="tests", children={"prompt_target": judge}
+        )
+        scorer = ComponentIdentifier(
+            class_name="TrueFalseInverterScorer", class_module="tests", children={"sub_scorers": [refusal]}
+        )
+        record = replace(
+            _make_history_record(result_id="sr-scorer", run_state=ScenarioRunState.COMPLETED),
+            objective_scorer_identifier=scorer.model_dump(mode="json"),
+        )
+        mock_memory.get_scenario_run_history_page_async = AsyncMock(return_value=([record], {}, False))
+
+        summary = (await ScenarioRunService().list_runs_async()).items[0]
+
+        assert summary.scorer is not None
+        assert summary.scorer.scorer_type == "TrueFalseInverterScorer"
+        assert summary.scorer.display_type == "TrueFalseInverterScorer(SelfAskRefusalScorer)"
+        assert summary.scorer.identifier_hash == scorer.hash
+        assert "judge" not in summary.model_dump_json()
+
+    async def test_history_scorer_is_none_when_run_recorded_none(self, mock_memory) -> None:
+        record = _make_history_record(result_id="sr-no-scorer", run_state=ScenarioRunState.COMPLETED)
+        mock_memory.get_scenario_run_history_page_async = AsyncMock(return_value=([record], {}, False))
+
+        summary = (await ScenarioRunService().list_runs_async()).items[0]
+
+        assert summary.scorer is None
+
     async def test_history_falls_back_honestly_for_incomplete_persisted_plan(self, mock_memory) -> None:
         record = _make_history_record(result_id="sr-legacy", run_state=ScenarioRunState.COMPLETED)
         record = replace(

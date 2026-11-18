@@ -16,6 +16,7 @@ import {
 } from '@fluentui/react-components'
 import { useNavigate, useParams } from 'react-router'
 
+import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import ParameterField from '@/components/Parameters/ParameterField'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
 import ScenarioDatasetTable from '@/components/Scenarios/ScenarioDatasetTable'
@@ -31,10 +32,12 @@ import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
+  RegisteredComponentReference,
   RegisteredScenario,
   ScenarioPresetResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
+  ScorerInstance,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
@@ -62,19 +65,40 @@ interface DatasetProjectionResult {
   error: string | null
 }
 
-export default function ScenarioPresetEditor({ mode }: { mode: 'create' | 'edit' }) {
+interface ScorerOptions {
+  scorers: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
+}
+
+interface ScenarioPresetEditorProps extends Partial<ScorerOptions> {
+  mode: 'create' | 'edit'
+}
+
+export default function ScenarioPresetEditor({ mode, scorers = [], scorersLoading, scorersError }: ScenarioPresetEditorProps) {
   const { presetName } = useParams<{ presetName: string }>()
   // Remount on navigation between two presets so every field resets to the
   // newly loaded document rather than retaining the previous one's edits.
-  return <ScenarioPresetEditorContent key={presetName ?? 'new'} mode={mode} presetName={presetName} />
+  return (
+    <ScenarioPresetEditorContent
+      key={presetName ?? 'new'}
+      mode={mode}
+      presetName={presetName}
+      scorers={scorers}
+      scorersLoading={scorersLoading}
+      scorersError={scorersError}
+    />
+  )
 }
 
-interface ScenarioPresetEditorContentProps {
+interface ScenarioPresetEditorContentProps extends ScorerOptions {
   mode: 'create' | 'edit'
   presetName: string | undefined
 }
 
-function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorContentProps) {
+function ScenarioPresetEditorContent({
+  mode, presetName, scorers, scorersLoading, scorersError,
+}: ScenarioPresetEditorContentProps) {
   const styles = useScenarioPresetEditorStyles()
   const navigate = useNavigate()
   const decodedName = presetName === undefined ? '' : routerPathParamValue(presetName)
@@ -87,6 +111,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   const [name, setName] = useState(mode === 'edit' ? decodedName : '')
   const [description, setDescription] = useState('')
   const [showInScanner, setShowInScanner] = useState(true)
+  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
   const [selectedScenarioName, setSelectedScenarioName] = useState('')
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioLoading, setScenarioLoading] = useState(false)
@@ -126,6 +151,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
         setName(response.preset.name)
         setDescription(response.preset.description ?? '')
         setShowInScanner(response.preset.show_in_scanner !== false)
+        setObjectiveScorer(response.preset.launch_defaults?.objective_scorer ?? null)
         setSelectedScenarioName(response.preset.scenario_name)
         setScenarioLoading(true)
         setStatus('ready')
@@ -306,7 +332,13 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
     setValidationError(null)
 
     const preset = configToPreset(
-      { name: trimmedName, scenarioName: scenario.scenario_name, description, showInScanner },
+      {
+        name: trimmedName,
+        scenarioName: scenario.scenario_name,
+        description,
+        showInScanner,
+        objectiveScorer: scenario.supports_objective_scorer ? objectiveScorer : null,
+      },
       builtConfig.config,
       { scenario, previous: loaded?.preset ?? null },
     )
@@ -489,6 +521,21 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
                 Parameters
               </Text>
               <div className={styles.dynamicParameters}>
+                {scenario.supports_objective_scorer && (
+                  <ChatScorerPicker
+                    label="Objective scorer"
+                    usage="scenario"
+                    value={objectiveScorer}
+                    scorers={scorers}
+                    loading={scorersLoading}
+                    error={scorersError}
+                    disabled={saving}
+                    onChange={(value) => {
+                      setObjectiveScorer(value)
+                      setValidationError(null)
+                    }}
+                  />
+                )}
                 {dynamicParameters.map((parameter) => (
                   <ParameterField
                     key={parameter.name}

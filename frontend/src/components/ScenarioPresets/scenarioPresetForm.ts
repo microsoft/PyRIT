@@ -9,7 +9,12 @@ import {
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
 import { untouchedPresetScenarioParams } from '@/components/Scenarios/scenarioPresetSeed'
-import type { RegisteredScenario, ScenarioPreset } from '@/types'
+import type {
+  RegisteredComponentReference,
+  RegisteredScenario,
+  ScenarioPreset,
+  ScenarioPresetLaunchDefaults,
+} from '@/types'
 import { validateRegistryName } from '@/utils/registryName'
 
 /**
@@ -112,6 +117,8 @@ interface PresetIdentity {
   description: string
   /** Whether the Scanner lists the preset as an entry of its own. */
   showInScanner: boolean
+  /** The pinned objective scorer, or `null` to use the scenario default. */
+  objectiveScorer: RegisteredComponentReference | null
 }
 
 interface PresetWriteContext {
@@ -177,12 +184,27 @@ function presetScenarioParams(
   return Object.keys(merged).length > 0 ? merged : null
 }
 
+/** Keeps launch defaults this editor has no control for and drops the section when it is empty. */
+function presetLaunchDefaults(
+  objectiveScorer: RegisteredComponentReference | null,
+  previous: ScenarioPreset | null,
+): ScenarioPresetLaunchDefaults | null {
+  const merged: ScenarioPresetLaunchDefaults = { ...(previous?.launch_defaults ?? {}) }
+  if (objectiveScorer) {
+    merged.objective_scorer = objectiveScorer
+  } else {
+    delete merged.objective_scorer
+  }
+  const pinned = Object.entries(merged).filter(([, value]) => value != null)
+  return pinned.length > 0 ? Object.fromEntries(pinned) as ScenarioPresetLaunchDefaults : null
+}
+
 /**
  * Combines the preset's identity with the resolved scenario config, keeping fields the
  * operator left at the scenario's default unset so the preset keeps tracking them.
  */
 export function configToPreset(
-  { name, scenarioName, description, showInScanner }: PresetIdentity,
+  { name, scenarioName, description, showInScanner, objectiveScorer }: PresetIdentity,
   config: ScenarioConfigFields,
   context: PresetWriteContext,
 ): ScenarioPreset {
@@ -223,6 +245,10 @@ export function configToPreset(
   const scenarioParams = presetScenarioParams(config, context, defaults.scenarioParams)
   if (scenarioParams) {
     preset.scenario_params = scenarioParams
+  }
+  const launchDefaults = presetLaunchDefaults(objectiveScorer, previous)
+  if (launchDefaults) {
+    preset.launch_defaults = launchDefaults
   }
   return preset
 }

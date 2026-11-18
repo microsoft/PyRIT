@@ -96,6 +96,7 @@ from pyrit.models import (
     ScenarioRunProgress,
     ScenarioRunState,
     ScenarioTechniqueSummary,
+    ScorerIdentifier,
     TargetIdentifier,
     project_behavioral_identity,
 )
@@ -106,8 +107,9 @@ from pyrit.models.catalog import (
     RunScenarioRequest,
     ScenarioRunSummary,
 )
-from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
+from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioScorerSummary, ScenarioTargetSummary
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
+from pyrit.output.scorer.json import format_scorer_type
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.instance_registry import (
@@ -2451,6 +2453,21 @@ class ScenarioRunService:
                     "Scenario run %s has invalid persisted target metadata; omitting the target summary.",
                     record.scenario_result_id,
                 )
+        scorer = self._safe_scorer_metadata(
+            scorer_identifier=scenario_identifier.objective_scorer if scenario_identifier is not None else None
+        )
+        if scorer is None and record.objective_scorer_identifier:
+            try:
+                scorer = self._safe_scorer_metadata(
+                    scorer_identifier=ScorerIdentifier.from_component_identifier(
+                        ComponentIdentifier.model_validate(record.objective_scorer_identifier)
+                    )
+                )
+            except ValidationError:
+                logger.warning(
+                    "Scenario run %s has invalid persisted scorer metadata; omitting the scorer summary.",
+                    record.scenario_result_id,
+                )
 
         planned_total = (
             len({(group.id, seed_group_id) for group in atomic_groups for seed_group_id in group.seed_group_ids})
@@ -2516,6 +2533,7 @@ class ScenarioRunService:
             completed_at=record.completed_at if terminal else None,
             pyrit_version=record.pyrit_version,
             target=target,
+            scorer=scorer,
             datasets_used=datasets_used,
             scenario_parameters=scenario_parameters,
             planned_total_available=atomic_groups is not None,
@@ -2638,6 +2656,22 @@ class ScenarioRunService:
             endpoint=ScenarioRunService._safe_endpoint(target_identifier.endpoint),
             model_name=target_identifier.model_name or target_identifier.underlying_model_name,
             identifier_hash=target_identifier.hash,
+        )
+
+    @staticmethod
+    def _safe_scorer_metadata(*, scorer_identifier: ScorerIdentifier | None) -> ScenarioScorerSummary | None:
+        """
+        Project a scorer identifier to the secret-free public shape.
+
+        Returns:
+            ScenarioScorerSummary | None: Safe scorer metadata when available.
+        """
+        if scorer_identifier is None:
+            return None
+        return ScenarioScorerSummary(
+            scorer_type=scorer_identifier.class_name,
+            display_type=format_scorer_type(scorer_identifier),
+            identifier_hash=scorer_identifier.hash,
         )
 
     @staticmethod

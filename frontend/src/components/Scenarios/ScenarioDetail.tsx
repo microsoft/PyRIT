@@ -364,7 +364,9 @@ function ScenarioLaunchForm({
   const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
-  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
+  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(
+    initialRun?.objective_scorer ?? preset?.preset.launch_defaults?.objective_scorer ?? null,
+  )
   const scoringTargetName = initialRun?.scoring_target_name ?? ''
   const scorerError = objectiveScorer && (
     scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)

@@ -679,6 +679,9 @@ class ScenarioRunListItem(BaseModel):
     completed_at: datetime | None = Field(None, description="When the scenario finished")
     pyrit_version: str | None = Field(None, description="PyRIT version that created the run")
     target: "ScenarioTargetSummary | None" = Field(None, description="Safe objective-target identity")
+    scorer: "ScenarioScorerSummary | None" = Field(
+        None, description="Objective scorer the run recorded, or None for runs that recorded none"
+    )
     datasets_used: list[str] = Field(default_factory=list, description="Resolved datasets selected for the run")
     scenario_parameters: dict[str, Any] = Field(
         default_factory=dict,
@@ -704,6 +707,14 @@ class ScenarioTargetSummary(BaseModel):
     endpoint: str | None = Field(None, description="Configured endpoint, when present")
     model_name: str | None = Field(None, description="Configured model or deployment name")
     identifier_hash: str | None = Field(None, description="Canonical target identifier hash")
+
+
+class ScenarioScorerSummary(BaseModel):
+    """Secret-free objective-scorer identity suitable for scenario history."""
+
+    scorer_type: str = Field(..., description="Scorer implementation type")
+    display_type: str = Field(..., description="Scorer type including any wrapped sub-scorer types")
+    identifier_hash: str = Field(..., description="Canonical scorer identifier hash, matching registered scorers")
 
 
 ScenarioRunSummary.model_rebuild()

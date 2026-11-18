@@ -59,6 +59,7 @@ if TYPE_CHECKING:
         PresetIssue,
         ResolveScenarioPresetRequest,
         ScenarioPreset,
+        ScenarioPresetLaunchDefaults,
         StoredPreset,
     )
     from pyrit.models.catalog.scenario_suite import (
@@ -93,6 +94,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSummary": "pyrit.models.catalog.scenario",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog.scenario",
     "ScenarioPreset": "pyrit.models.catalog.scenario_preset",
+    "ScenarioPresetLaunchDefaults": "pyrit.models.catalog.scenario_preset",
     "ResolveScenarioPresetRequest": "pyrit.models.catalog.scenario_preset",
     "ScenarioSuite": "pyrit.models.catalog.scenario_suite",
     "ScenarioSuiteEntry": "pyrit.models.catalog.scenario_suite",

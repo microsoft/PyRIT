@@ -50,12 +50,14 @@ if TYPE_CHECKING:
     )
     from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
     from pyrit.registry.scenario_suite_resolver import (
+        ResolvedLaunchDefaults,
         ResolvedScenarioSuiteEntry,
         ResolvedScenarioSuiteLaunch,
         ScenarioSuiteExecutionNotFoundError,
         ScenarioSuiteLaunchConflictError,
         ScenarioSuiteLaunchResolver,
         ScenarioSuiteNotRunnableError,
+        resolve_launch_defaults,
         resolve_scenario_preset_run_request,
     )
     from pyrit.registry.scenario_suite_storage import ScenarioSuiteConflictError, ScenarioSuiteStorage
@@ -90,12 +92,14 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioPresetRegistry": "pyrit.registry.components",
     "ScenarioPresetStorage": "pyrit.registry.scenario_preset_storage",
     "ScenarioSuiteConflictError": "pyrit.registry.scenario_suite_storage",
+    "ResolvedLaunchDefaults": "pyrit.registry.scenario_suite_resolver",
     "ResolvedScenarioSuiteEntry": "pyrit.registry.scenario_suite_resolver",
     "ResolvedScenarioSuiteLaunch": "pyrit.registry.scenario_suite_resolver",
     "ScenarioSuiteExecutionNotFoundError": "pyrit.registry.scenario_suite_resolver",
     "ScenarioSuiteLaunchConflictError": "pyrit.registry.scenario_suite_resolver",
     "ScenarioSuiteLaunchResolver": "pyrit.registry.scenario_suite_resolver",
     "ScenarioSuiteNotRunnableError": "pyrit.registry.scenario_suite_resolver",
+    "resolve_launch_defaults": "pyrit.registry.scenario_suite_resolver",
     "resolve_scenario_preset_run_request": "pyrit.registry.scenario_suite_resolver",
     "ScenarioSuiteMetadata": "pyrit.registry.components",
     "ScenarioSuiteNameRegisteredError": "pyrit.registry.components",

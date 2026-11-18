@@ -16,11 +16,14 @@ from pyrit.models import (
     ResolveScenarioPresetRequest,
     ScenarioDatasetRequest,
     ScenarioPreset,
+    ScenarioPresetLaunchDefaults,
     ScenarioSuite,
     ScenarioSuiteEntry,
     ScenarioSuiteLaunchEntrySnapshot,
 )
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.registry import (
+    ResolvedScenarioSuiteEntry,
     ScenarioPresetRegistry,
     ScenarioPresetStorage,
     ScenarioSuiteExecutionNotFoundError,
@@ -29,6 +32,7 @@ from pyrit.registry import (
     ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
+    resolve_launch_defaults,
     resolve_scenario_preset_run_request,
 )
 
@@ -248,3 +252,99 @@ def test_suite_resolver_rejects_an_unavailable_preset(
 
     with pytest.raises(ScenarioSuiteNotRunnableError, match="Entry 1"):
         resolver.resolve(name="weekly", request=request)
+
+
+SECOND_ENTRY_ID = UUID("22222222-2222-4222-8222-222222222222")
+REFUSE_SCORER = RegisteredComponentReference(registry_name="inverted_refusal", identifier_hash="a" * 64)
+ALLOW_SCORER = RegisteredComponentReference(registry_name="refusal", identifier_hash="b" * 64)
+OVERRIDE_SCORER = RegisteredComponentReference(registry_name="override", identifier_hash="c" * 64)
+
+
+def _resolve_two_scored_entries(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+    *,
+    objective_scorer: RegisteredComponentReference | None,
+    second_scorer: RegisteredComponentReference | None,
+) -> tuple[ResolvedScenarioSuiteEntry, ...]:
+    suite_registry, preset_registry = registries
+    refuse = preset_registry.save_preset(
+        preset=_preset(name="refuse", launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=REFUSE_SCORER)),
+        expected_version=None,
+    )
+    allow = preset_registry.save_preset(
+        preset=_preset(name="allow", launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=second_scorer)),
+        expected_version=None,
+    )
+    suite = suite_registry.save_suite(
+        suite=ScenarioSuite(
+            name="weekly",
+            entries=[
+                ScenarioSuiteEntry(entry_id=ENTRY_ID, preset_name="refuse"),
+                ScenarioSuiteEntry(entry_id=SECOND_ENTRY_ID, preset_name="allow"),
+            ],
+        ),
+        expected_version=None,
+    )
+    request = LaunchScenarioSuiteRequest(
+        expected_version=suite.version,
+        entries=[
+            ScenarioSuiteLaunchEntrySnapshot(
+                entry_id=ENTRY_ID, preset_name="refuse", origin="stored", preset_version=refuse.version
+            ),
+            ScenarioSuiteLaunchEntrySnapshot(
+                entry_id=SECOND_ENTRY_ID, preset_name="allow", origin="stored", preset_version=allow.version
+            ),
+        ],
+        target_name="gpt4",
+        objective_scorer=objective_scorer,
+    )
+    resolver = ScenarioSuiteLaunchResolver(suite_registry=suite_registry, preset_registry=preset_registry)
+    with patch.object(preset_registry, "check_preset", return_value=[]):
+        return resolver.resolve(name="weekly", request=request).entries
+
+
+def test_suite_children_each_receive_their_preset_scorer(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+) -> None:
+    """Test that presets pinning different scorers launch children with different scorers."""
+    refuse, allow = _resolve_two_scored_entries(registries, objective_scorer=None, second_scorer=ALLOW_SCORER)
+
+    assert refuse.request.objective_scorer == REFUSE_SCORER
+    assert allow.request.objective_scorer == ALLOW_SCORER
+    assert refuse.launch_value_sources["objective_scorer"] == "preset"
+    assert allow.launch_value_sources["objective_scorer"] == "preset"
+
+
+def test_suite_entry_without_a_preset_scorer_keeps_the_scenario_default(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+) -> None:
+    """Test that an unpinned preset still defers to the scenario's own scorer."""
+    refuse, allow = _resolve_two_scored_entries(registries, objective_scorer=None, second_scorer=None)
+
+    assert refuse.request.objective_scorer == REFUSE_SCORER
+    assert allow.request.objective_scorer is None
+    assert allow.launch_value_sources["objective_scorer"] == "scenario_default"
+
+
+def test_launch_scorer_overrides_every_entry(
+    registries: tuple[ScenarioSuiteRegistry, ScenarioPresetRegistry],
+) -> None:
+    """Test that an explicit launch scorer replaces pinned and unpinned scorers alike."""
+    entries = _resolve_two_scored_entries(registries, objective_scorer=OVERRIDE_SCORER, second_scorer=None)
+
+    assert [entry.request.objective_scorer for entry in entries] == [OVERRIDE_SCORER, OVERRIDE_SCORER]
+    assert [entry.launch_value_sources["objective_scorer"] for entry in entries] == ["launch", "launch"]
+
+
+def test_single_preset_resolution_uses_the_pinned_scorer_unless_overridden() -> None:
+    """Test that resolving one preset applies the same precedence as a suite entry."""
+    preset = _preset(launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=REFUSE_SCORER))
+
+    pinned = resolve_launch_defaults(preset=preset, launch=ResolveScenarioPresetRequest(target_name="gpt4"))
+    overridden = resolve_scenario_preset_run_request(
+        preset=preset, launch=ResolveScenarioPresetRequest(target_name="gpt4", objective_scorer=OVERRIDE_SCORER)
+    )
+
+    assert pinned.values["objective_scorer"] == REFUSE_SCORER
+    assert pinned.sources["objective_scorer"] == "preset"
+    assert overridden.objective_scorer == OVERRIDE_SCORER

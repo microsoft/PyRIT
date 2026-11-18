@@ -28,6 +28,7 @@ from pyrit.models import (
     PresetEntry,
     PresetIssue,
     ScenarioPreset,
+    ScenarioPresetLaunchDefaults,
     ScenarioRunState,
     ScenarioSuite,
     ScenarioSuiteEntry,
@@ -39,6 +40,7 @@ from pyrit.models.catalog import (
     RunScenarioRequest,
     ScenarioRunSummary,
 )
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.registry import (
     ScenarioPresetRegistry,
@@ -694,3 +696,124 @@ async def test_retention_rejects_active_capacity_and_evicts_terminal_execution(
 
     assert await service.get_execution_async(execution_id=accepted[0].suite_execution_id) is None
     assert await service.get_execution_async(execution_id=replacement.suite_execution_id) is not None
+
+
+REFUSE_SCORER = RegisteredComponentReference(registry_name="inverted_refusal", identifier_hash="a" * 64)
+OVERRIDE_SCORER = RegisteredComponentReference(registry_name="override", identifier_hash="c" * 64)
+
+
+def _pin_first_preset_scorer(preset_registry: MagicMock) -> None:
+    """Make the first preset pin a scorer while the second keeps the scenario default."""
+    presets = {
+        "first": PresetEntry(
+            preset=ScenarioPreset(
+                name="first",
+                scenario_name="scenario.first",
+                launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=REFUSE_SCORER),
+            ),
+            origin="stored",
+            version="first-v1",
+        ),
+        "second": _preset_entry(name="second", scenario_name="scenario.second", version="second-v1"),
+    }
+    preset_registry.get_preset.side_effect = lambda *, name: presets.get(name)
+
+
+def _scorer_issue(*, component: str) -> ScenarioConfigurationIssue:
+    return ScenarioConfigurationIssue(
+        role="objective_scorer",
+        component=component,
+        reason="Objective scorer 'inverted_refusal' has changed.",
+        remediation="Select the objective scorer again.",
+    )
+
+
+async def test_children_launch_with_their_own_preset_scorer_async(execution_context) -> None:
+    service, suite_registry, preset_registry, _, calls, _ = execution_context
+    _pin_first_preset_scorer(preset_registry)
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+
+    await service.launch_async(name="weekly", request=_launch_request(suite_version=stored.version))
+    await _wait_for_submissions(service)
+
+    assert [request.objective_scorer for request, _ in calls] == [REFUSE_SCORER, None]
+    readiness_requests = [
+        call.kwargs["request"] for call in _execution_mod.ScenarioConfigurationResolver.resolve_readiness.call_args_list
+    ]
+    assert [request.objective_scorer for request in readiness_requests] == [REFUSE_SCORER, None]
+
+
+async def test_unresolved_preset_scorer_is_attributed_to_its_entry_and_preset_async(execution_context) -> None:
+    service, suite_registry, preset_registry, run_service, _, _ = execution_context
+    _pin_first_preset_scorer(preset_registry)
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(issues=[_scorer_issue(component="scenario.first")]),
+        ScenarioReadiness(),
+    ]
+
+    readiness = await service.get_readiness_async(name="weekly", request=_launch_request(suite_version=stored.version))
+
+    [issue] = readiness.issues
+    assert issue.entry_id == ENTRY_ONE
+    assert issue.source == "preset"
+    assert "launch_defaults.objective_scorer" in issue.remediation
+    assert "'first'" in issue.remediation
+    run_service.start_run_async.assert_not_awaited()
+
+
+async def test_unresolved_preset_scorer_blocks_the_whole_launch_async(execution_context) -> None:
+    service, suite_registry, preset_registry, run_service, _, _ = execution_context
+    _pin_first_preset_scorer(preset_registry)
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(issues=[_scorer_issue(component="scenario.first")]),
+        ScenarioReadiness(),
+    ]
+
+    with pytest.raises(ScenarioSuiteNotRunnableError, match="Entry 1 \\(first\\).*objective_scorer"):
+        await service.launch_async(name="weekly", request=_launch_request(suite_version=stored.version))
+    run_service.start_run_async.assert_not_awaited()
+
+
+async def test_launch_scorer_override_replaces_preset_scorers_async(execution_context) -> None:
+    service, suite_registry, preset_registry, _, calls, _ = execution_context
+    _pin_first_preset_scorer(preset_registry)
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(
+            bindings=[
+                ScenarioRoleBinding(
+                    role="objective_scorer",
+                    component=f"child-{index}",
+                    identifier=ComponentIdentifier(class_name="OverrideScorer"),
+                )
+            ]
+        )
+        for index in (1, 2, 1, 2)
+    ]
+    request = _launch_request(suite_version=stored.version).model_copy(update={"objective_scorer": OVERRIDE_SCORER})
+
+    readiness = await service.get_readiness_async(name="weekly", request=request)
+    await service.launch_async(name="weekly", request=request)
+    await _wait_for_submissions(service)
+
+    assert [binding.source for binding in readiness.bindings] == ["launch", "launch"]
+    assert [binding.entry_id for binding in readiness.bindings] == [ENTRY_ONE, ENTRY_TWO]
+    assert [request.objective_scorer for request, _ in calls] == [OVERRIDE_SCORER, OVERRIDE_SCORER]
+
+
+async def test_scenario_default_scorer_issue_keeps_the_generic_remediation_async(execution_context) -> None:
+    service, suite_registry, _, _, _, _ = execution_context
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(issues=[_scorer_issue(component="scenario.first")]),
+        ScenarioReadiness(),
+    ]
+
+    readiness = await service.get_readiness_async(name="weekly", request=_launch_request(suite_version=stored.version))
+
+    [issue] = readiness.issues
+    assert issue.entry_id == ENTRY_ONE
+    assert issue.source == "scenario_default"
+    assert issue.remediation == "Select the objective scorer again."

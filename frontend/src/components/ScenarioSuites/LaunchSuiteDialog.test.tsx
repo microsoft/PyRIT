@@ -8,7 +8,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { readUserPreferences } from '@/utils/userPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { ScenarioSuiteResponse, TargetInstance } from '@/types'
+import type { ScenarioSuiteResponse, ScorerInstance, TargetInstance } from '@/types'
 
 import LaunchSuiteDialog from './LaunchSuiteDialog'
 
@@ -43,6 +43,16 @@ const ADVERSARIAL_TARGET: TargetInstance = makeTarget({
     supported_output_modalities: ['text'],
   },
 })
+
+function makeScorer(name: string, hash: string): ScorerInstance {
+  return {
+    scorer_registry_name: name,
+    identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash, scorer_type: 'true_false' },
+  }
+}
+
+const REFUSAL_SCORER = makeScorer('inverted_refusal', 'refusal-hash')
+const OVERRIDE_SCORER = makeScorer('override_scorer', 'override-hash')
 
 function makeSuite({
   origin = 'stored',
@@ -93,6 +103,7 @@ interface RenderOptions {
   labels?: Record<string, string>
   operationId?: string | null
   defaultsReady?: boolean
+  scorers?: ScorerInstance[]
 }
 
 const onDismiss = jest.fn()
@@ -106,6 +117,7 @@ function renderDialog({
   operationId = null,
   defaultsReady = true,
   targets = [OBJECTIVE_TARGET, ADVERSARIAL_TARGET],
+  scorers,
 }: RenderOptions = {}) {
   return render(
     <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
@@ -118,6 +130,7 @@ function renderDialog({
           labels={labels}
           operationId={operationId}
           defaultsReady={defaultsReady}
+          scorers={scorers}
           onDismiss={onDismiss}
           onSuiteChanged={onSuiteChanged}
         />
@@ -136,9 +149,10 @@ beforeEach(() => {
 describe('LaunchSuiteDialog', () => {
   it('keeps the original suite controls without inline component creation or readiness fields', () => {
     renderDialog()
-    expect(screen.getAllByRole('combobox')).toHaveLength(2)
+    expect(screen.getAllByRole('combobox')).toHaveLength(3)
     expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
     expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Objective scorer override' })).toHaveValue('')
     expect(screen.getByRole('option', { name: 'Use server default' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Create/i })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Suite configuration issues')).not.toBeInTheDocument()
@@ -238,6 +252,55 @@ describe('LaunchSuiteDialog', () => {
     expect(entries).toHaveLength(2)
     expect(entries[0]).toHaveTextContent('first_preset')
     expect(entries[1]).toHaveTextContent('second_preset')
+  })
+
+  function suiteWithPresetScorer(): ScenarioSuiteResponse {
+    const suite = makeSuite()
+    suite.entry_statuses[0].launch_defaults = {
+      objective_scorer: { registry_name: 'inverted_refusal', identifier_hash: 'refusal-hash' },
+    }
+    suite.entry_statuses[1].launch_defaults = {
+      objective_scorer: { registry_name: 'deleted_scorer', identifier_hash: 'gone-hash' },
+    }
+    return suite
+  }
+
+  it('shows each entry effective scorer and flags a missing preset scorer', () => {
+    const rendered = renderDialog({ suite: makeSuite() })
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${FIRST_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: Scenario default scorer')
+    rendered.unmount()
+
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER] })
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${FIRST_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: inverted_refusal (from preset)')
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${SECOND_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: deleted_scorer (unavailable) (from preset)')
+  })
+
+  it('does not flag preset scorers as unavailable before the scorer registry loads', () => {
+    renderDialog({ suite: suiteWithPresetScorer() })
+    expect(screen.getByTestId(`launch-suite-entry-scorer-${SECOND_ENTRY_ID}`))
+      .toHaveTextContent('Scorer: deleted_scorer (from preset)')
+  })
+
+  it('sends a launch scorer override that replaces every entry scorer', async () => {
+    const user = userEvent.setup()
+    renderDialog({ suite: suiteWithPresetScorer(), scorers: [REFUSAL_SCORER, OVERRIDE_SCORER] })
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Objective scorer override' }),
+      'registered:override_scorer',
+    )
+    for (const entryId of [FIRST_ENTRY_ID, SECOND_ENTRY_ID]) {
+      expect(screen.getByTestId(`launch-suite-entry-scorer-${entryId}`))
+        .toHaveTextContent('Scorer: override_scorer (launch override)')
+    }
+    await user.click(screen.getByTestId('confirm-launch-suite'))
+
+    await waitFor(() => expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
+      objective_scorer: { registry_name: 'override_scorer', identifier_hash: 'override-hash' },
+    })))
   })
 
   it('launches the reviewed suite and navigates to grouped progress', async () => {

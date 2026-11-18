@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from pyrit.models import (
     LaunchScenarioSuiteRequest,
     ScenarioLaunchConfiguration,
+    ScenarioPresetLaunchDefaults,
     ScenarioSuiteExecutionMetadata,
     ScenarioSuiteReadinessRequest,
 )
@@ -19,10 +21,12 @@ from pyrit.registry.components.scenario_preset_registry import ScenarioPresetReg
 from pyrit.registry.components.scenario_suite_registry import ScenarioSuiteRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from uuid import UUID
 
     from pyrit.models import ScenarioPreset
     from pyrit.models.catalog import ScenarioSuiteRegistryEntry
+    from pyrit.models.scenario_readiness import LaunchValueSource
 
 
 class _RunDefaults(TypedDict, total=False):
@@ -44,17 +48,52 @@ class ScenarioSuiteNotRunnableError(ValueError):
     """A suite cannot launch because one or more entries are unresolved."""
 
 
-def resolve_scenario_preset_run_request(
-    *,
-    preset: ScenarioPreset,
-    launch: ScenarioLaunchConfiguration | LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest,
-) -> RunScenarioRequest:
+_LaunchSource = ScenarioLaunchConfiguration | LaunchScenarioSuiteRequest | ScenarioSuiteReadinessRequest
+
+
+@dataclass(frozen=True)
+class ResolvedLaunchDefaults:
+    """Effective values for a preset's launch-default fields and where each came from."""
+
+    values: Mapping[str, Any]
+    sources: Mapping[str, LaunchValueSource]
+
+
+def resolve_launch_defaults(*, preset: ScenarioPreset, launch: _LaunchSource) -> ResolvedLaunchDefaults:
+    """
+    Apply launch, then preset, then scenario-default precedence to each launch-default field.
+
+    A ``None`` value means neither the launch nor the preset set the field, so the
+    scenario applies its own default.
+
+    Returns:
+        ResolvedLaunchDefaults: The effective value and source of every launch-default field.
+    """
+    preset_defaults = preset.launch_defaults
+    values: dict[str, Any] = {}
+    sources: dict[str, LaunchValueSource] = {}
+    for field_name in ScenarioPresetLaunchDefaults.model_fields:
+        launch_value = getattr(launch, field_name)
+        preset_value = None if preset_defaults is None else getattr(preset_defaults, field_name)
+        if launch_value is not None:
+            values[field_name], sources[field_name] = launch_value, "launch"
+        elif preset_value is not None:
+            values[field_name], sources[field_name] = preset_value, "preset"
+        else:
+            values[field_name], sources[field_name] = None, "scenario_default"
+    return ResolvedLaunchDefaults(values=MappingProxyType(values), sources=MappingProxyType(sources))
+
+
+def resolve_scenario_preset_run_request(*, preset: ScenarioPreset, launch: _LaunchSource) -> RunScenarioRequest:
     """
     Combine a preset with the target and execution fields it deliberately omits.
+
+    Launch-default fields take the launch value, then the preset's, then the scenario default.
 
     Returns:
         RunScenarioRequest: An ordinary scenario run request.
     """
+    launch_defaults = resolve_launch_defaults(preset=preset, launch=launch)
     run_defaults = _RunDefaults()
     if launch.max_concurrency is not None:
         run_defaults["max_concurrency"] = launch.max_concurrency
@@ -69,12 +108,11 @@ def resolve_scenario_preset_run_request(
         target_name=launch.target_name,
         adversarial_target_name=launch.adversarial_target_name,
         scoring_target_name=launch.scoring_target_name,
-        objective_scorer=launch.objective_scorer,
         initializers=launch.initializers,
         initializer_args=launch.initializer_args,
         operation_id=launch.operation_id,
         labels=launch.labels,
-        **run_defaults,
+        **{**launch_defaults.values, **run_defaults},
     )
 
 
@@ -88,6 +126,7 @@ class ResolvedScenarioSuiteEntry:
     preset_origin: Literal["stored", "registered"]
     preset_version: str | None
     request: RunScenarioRequest
+    launch_value_sources: Mapping[str, LaunchValueSource] = field(default_factory=lambda: MappingProxyType({}))
 
     def metadata(self, *, suite_execution_id: UUID, suite: ScenarioSuiteRegistryEntry) -> dict[str, Any]:
         """
@@ -200,10 +239,8 @@ class ScenarioSuiteLaunchResolver:
                     preset_name=suite_entry.preset_name,
                     preset_origin=preset.origin,
                     preset_version=preset.version,
-                    request=resolve_scenario_preset_run_request(
-                        preset=preset.preset,
-                        launch=request,
-                    ),
+                    request=resolve_scenario_preset_run_request(preset=preset.preset, launch=request),
+                    launch_value_sources=resolve_launch_defaults(preset=preset.preset, launch=request).sources,
                 )
             )
 
