@@ -45,7 +45,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
     if not isinstance(cfg["versions"], list) or not cfg["versions"]:
         raise ValueError(f"{config_path}: 'versions' must be a non-empty list")
     for entry in cfg["versions"]:
-        for key in ("slug", "name", "ref"):
+        for key in ("slug", "name", "ref", "template"):
             if key not in entry:
                 raise ValueError(f"{config_path}: version entry {entry!r} missing required key '{key}'")
     slugs = {v["slug"] for v in cfg["versions"]}
@@ -63,6 +63,7 @@ def _requires_composition(changed_files: list[str]) -> bool:
         ".github/docs-versions.yml",
         ".github/workflows/docs.yml",
         "build_scripts/resolve_docs_matrix.py",
+        "build_scripts/pin_docs_theme.py",
         "build_scripts/compose_docs_dist.py",
         "build_scripts/generate_pages_manifest.py",
         "build_scripts/inject_version_picker.py",
@@ -97,7 +98,7 @@ def build_outputs(
     if event_name and not ref:
         raise ValueError("workflow builds require the triggering GITHUB_REF")
     versions = cfg["versions"]
-    entries = [{"slug": v["slug"], "ref": v["ref"]} for v in versions]
+    entries = [{"slug": v["slug"], "ref": v["ref"], "template": v["template"]} for v in versions]
     compose = True
     if event_name == "pull_request":
         if changed_files is None:
@@ -106,7 +107,7 @@ def build_outputs(
             raise ValueError("PR validation requires exactly one 'latest' version")
         compose = _requires_composition(changed_files)
         entries = [
-            {"slug": entry["slug"], "ref": sha if entry["slug"] == "latest" else entry["ref"]}
+            {**entry, "ref": sha if entry["slug"] == "latest" else entry["ref"]}
             for entry in entries
             if compose or entry["slug"] == "latest"
         ]

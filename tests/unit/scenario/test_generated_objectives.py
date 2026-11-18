@@ -13,7 +13,7 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, ScenarioRunState, SeedObjective, SeedOrigin
 from pyrit.registry import AttackTechniqueRegistry
-from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, DatasetSource
+from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource
 from pyrit.scenario.scenarios.airt import RapidResponse
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 from pyrit.score import SubStringScorer
@@ -56,7 +56,10 @@ async def test_generated_dataset_runs_existing_scenario_async(sqlite_instance: M
     assert len(stored) == 10
 
     config = DatasetAttackConfiguration(
-        dataset_names=[provider.dataset_name], max_per_dataset="all", max_total="all", auto_fetch=False
+        sources=[DatasetSource(name=provider.dataset_name)],
+        max_per_dataset="all",
+        max_total="all",
+        fetch=DatasetFetchPolicy.NEVER,
     )
     target = MockPromptTarget()
     scenario = RapidResponse(objective_scorer=SubStringScorer(substring="default"))

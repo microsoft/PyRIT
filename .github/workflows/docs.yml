@@ -43,6 +43,10 @@ on:
 permissions:
   contents: read
 
+# Builds may restore caches but cannot save them after executing checked-out
+# source. A separate push-only job seeds successful build artifacts below.
+cache-mode: read
+
 # Serialize the entire production pipeline, not just deployment, so a slow older
 # build cannot overwrite a newer site. PRs and release validation never join it.
 concurrency:
@@ -95,8 +99,10 @@ jobs:
       - name: Compute matrix
         id: matrix
         env:
-          # Hash the tested workflow before any release-branch checkout.
-          WORKFLOW_HASH: ${{ hashFiles('.github/workflows/docs.yml') }}
+          # Hash every current-branch input that can change a historical build.
+          WORKFLOW_HASH: >-
+            ${{ hashFiles('.github/workflows/docs.yml', '.github/docs-versions.yml',
+                'build_scripts/pin_docs_theme.py') }}
         run: |
           uv run --no-project --with "pyyaml==6.0.3" python -m build_scripts.resolve_docs_matrix \
             --config .github/docs-versions.yml \
@@ -146,6 +152,22 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
+
+      - name: Checkout docs build helper
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .docs-workflow
+          sparse-checkout: build_scripts/pin_docs_theme.py
+          sparse-checkout-cone-mode: false
+
+      - name: Pin MyST theme
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          python .docs-workflow/build_scripts/pin_docs_theme.py \
+            --config doc/myst.yml \
+            --template "${{ matrix.template }}"
 
       - name: Install uv
         if: steps.cache.outputs.cache-hit != 'true'
@@ -199,13 +221,13 @@ jobs:
 
       - name: Build the static HTML site
         if: steps.cache.outputs.cache-hit != 'true'
-        # --all builds frontmatter exports (PDF, per doc/myst.yml).
-        # --html is required to produce the static HTML site we deploy.
+        # Pages publishes HTML only. Avoid --all so historical release
+        # configurations cannot select PDF exports or require LaTeX.
         # NOT using --strict because older release branches have known
         # warnings (e.g. unresolved cross-refs) that aren't worth fixing
         # retroactively just to satisfy strict mode.
         working-directory: doc
-        run: uv run --frozen --no-sync jupyter-book build --all --html
+        run: uv run --frozen --no-sync jupyter-book build --html
 
       - name: Upload built site
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -216,7 +238,45 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------
-  # 3. Exercise composition on full matrices without deployment permissions.
+  # 3. Seed rendered-site caches only from repository-controlled pushes.
+  # ------------------------------------------------------------------
+  seed-cache:
+    name: Seed cache ${{ matrix.slug }}
+    needs: [versions, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    cache-mode: write-only
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.versions.outputs.matrix) }}
+    steps:
+      - name: Resolve source commit
+        id: sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ matrix.ref }}
+        run: |
+          sha=$(gh api --method GET "repos/$GITHUB_REPOSITORY/commits" \
+            -f sha="$SOURCE_REF" \
+            -f per_page=1 \
+            --jq '.[0].sha')
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download built site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-${{ matrix.slug }}
+          path: doc/_build/html
+
+      - name: Save built site to cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: doc/_build/html
+          key: docs-${{ needs.versions.outputs.workflow_hash }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}
+
+  # ------------------------------------------------------------------
+  # 4. Exercise composition on full matrices without deployment permissions.
   # ------------------------------------------------------------------
   compose:
     name: Compose site
@@ -275,9 +335,10 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
+          retention-days: 7
 
   # ------------------------------------------------------------------
-  # 4. Only main push/manual runs can publish the complete composed site.
+  # 5. Only main push/manual runs can publish the complete composed site.
   # ------------------------------------------------------------------
   deploy:
     name: Deploy
@@ -287,12 +348,55 @@ jobs:
       ${{ github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     permissions:
+      actions: read
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: build_scripts
+
+      - name: Check deployment recovery safety
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const check = require('./build_scripts/docs_deployment.cjs');
+            await check({ github, context, core, mode: 'preflight',
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) });
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # Job logs are downloadable only after Deploy completes.
+  diagnose:
+    name: Diagnose Pages deployment
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: failure() && needs.deploy.result == 'failure'
+    permissions:
+      actions: read
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: build_scripts
+
+      - name: Diagnose failed Pages deployment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const check = require('./build_scripts/docs_deployment.cjs');
+            await check({ github, context, core, mode: 'diagnose',
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) });

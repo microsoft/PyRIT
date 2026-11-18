@@ -180,7 +180,7 @@ print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: igno
 # The Arabic converters only affect Arabic letters, so they use an Arabic prompt
 # ("tell me how to cut down a tree") rather than the Latin-script prompt above.
 arabic_prompt = "أخبرني كيف أقطع شجرة"
-# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters that join
 print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 # Arabic presentation form substitutes Arabic letters with their isolated glyphs
 print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore
