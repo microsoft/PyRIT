@@ -23,6 +23,7 @@ from pydantic import AnyHttpUrl
 
 from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
+    MAX_EXPORT_FINDINGS,
     EvidenceAvailability,
     FindingEvidenceItem,
     FindingExportFormat,
@@ -38,11 +39,13 @@ from pyrit.output.finding_report.report import (
     UNAVAILABLE_EVIDENCE,
     FindingReport,
     FindingReportColumn,
+    FindingReportEntry,
     FindingReportEvidence,
     FindingReportField,
-    finding_report_entry,
+    build_finding_report,
     plain_text,
 )
+from pyrit.output.finding_report.word import add_word_paths
 from pyrit.setup.finding_fields import get_active_finding_fields
 
 _MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
@@ -70,11 +73,17 @@ class FindingExportFile:
     filename: str
 
 
+class FindingExportTooLargeError(ValueError):
+    """Raised when the selected findings, with all of their sub-findings, are more than one export allows."""
+
+
 async def export_findings_async(*, operation_id: UUID, request: FindingExportRequest) -> FindingExportFile:
     """
     Build one document of an Operation's selected findings, in the dashboard's listing order, with evidence references.
 
-    Evidence appears as saved metadata and dashboard links, without transcripts or media.
+    Each selected finding includes all of its sub-findings, nested under it oldest first. A sub-finding selected
+    without its parent is listed at the top level and names the finding it is part of. Evidence appears as saved
+    metadata and dashboard links, without transcripts or media.
 
     Returns:
         FindingExportFile: The complete document.
@@ -82,6 +91,7 @@ async def export_findings_async(*, operation_id: UUID, request: FindingExportReq
     Raises:
         OperationNotFoundError: If the Operation does not exist.
         FindingNotFoundError: If a selected finding is not in the Operation.
+        FindingExportTooLargeError: If the findings to include, with sub-findings, exceed ``MAX_EXPORT_FINDINGS``.
     """
     report = await _build_report_async(operation_id=operation_id, request=request)
     now = datetime.now(UTC)
@@ -110,22 +120,34 @@ def _export_filename(*, operation_id: UUID, extension: str, now: datetime) -> st
 async def _build_report_async(*, operation_id: UUID, request: FindingExportRequest) -> FindingReport:
     service = OperationService()
     operation = await service.get_async(operation_id)
-    selected = await service.get_findings_with_evidence_async(
-        operation_id=operation_id, finding_ids=request.finding_ids
-    )
-    fields = get_active_finding_fields()
-    report_findings = tuple(
-        finding_report_entry(
-            finding=finding,
-            fields=fields,
-            evidence=[
-                _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
-                for item in evidence
-            ],
+    # One snapshot of the selected trees: every path step is among these findings, so they are not read again.
+    included = await service.get_finding_subtrees_async(operation_id=operation_id, finding_ids=request.finding_ids)
+    if len(included) > MAX_EXPORT_FINDINGS:
+        raise FindingExportTooLargeError(
+            f"Select at most {MAX_EXPORT_FINDINGS:,} findings to download at once, counting sub-findings."
         )
-        for finding, evidence in selected
+    selected = await service.get_evidence_for_findings_async(findings=included)
+    finding_ids = {finding.id for finding in included}
+    evidence = {
+        finding.id: tuple(
+            _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
+            for item in items
+        )
+        for finding, items in selected
+    }
+    part_of = await service.get_finding_titles_async(
+        operation_id=operation_id,
+        finding_ids=list(
+            {finding.parent_finding_id for finding in included if finding.parent_finding_id} - finding_ids
+        ),
     )
-    return FindingReport(operation_name=operation.name, findings=report_findings)
+    return build_finding_report(
+        operation_name=operation.name,
+        findings=included,
+        fields=get_active_finding_fields(),
+        evidence=evidence,
+        part_of=part_of,
+    )
 
 
 def _project_evidence(
@@ -199,21 +221,34 @@ def _render_docx(*, report: FindingReport, now: datetime) -> bytes:
     header = table.rows[0]
     for cell, column in zip(header.cells, _WORD_COLUMNS, strict=True):
         cell.paragraphs[0].add_run(column).bold = True
-    for finding in report.findings:
-        finding_cell, assessment_cell = table.add_row().cells
-        finding_cell.paragraphs[0].add_run(plain_text(finding.title)).bold = True
-        for field in finding.fields:
-            if field.column == FindingReportColumn.FINDING:
-                _write_word_field(paragraph=finding_cell.add_paragraph(), field=field)
-        _add_word_evidence(cell=finding_cell, evidence=finding.evidence)
-        _write_word_field(paragraph=assessment_cell.paragraphs[0], field=finding.severity)
-        for field in finding.fields:
-            if field.column == FindingReportColumn.ASSESSMENT:
-                _write_word_field(paragraph=assessment_cell.add_paragraph(), field=field)
+    # Depth-first without recursion, so a deep decomposition cannot exhaust the stack.
+    pending = list(reversed(report.findings))
+    while pending:
+        finding = pending.pop()
+        _add_word_finding(table=table, finding=finding)
+        pending.extend(reversed(finding.children))
     _set_column_widths(document=document, table=table)
     buffer = BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def _add_word_finding(*, table: Table, finding: FindingReportEntry) -> None:
+    """Write one finding's row: its account, paths, and evidence, then its severity, status, and classifications."""
+    finding_cell, assessment_cell = table.add_row().cells
+    finding_cell.paragraphs[0].add_run(plain_text(finding.heading)).bold = True
+    for field in finding.fields:
+        if field.column == FindingReportColumn.FINDING:
+            _write_word_field(paragraph=finding_cell.add_paragraph(), field=field)
+    if finding.paths:
+        add_word_paths(cell=finding_cell, paths=finding.paths)
+    _add_word_evidence(cell=finding_cell, evidence=finding.evidence)
+    _write_word_field(paragraph=assessment_cell.paragraphs[0], field=finding.severity)
+    if finding.status is not None:
+        _write_word_field(paragraph=assessment_cell.add_paragraph(), field=finding.status)
+    for field in finding.fields:
+        if field.column == FindingReportColumn.ASSESSMENT:
+            _write_word_field(paragraph=assessment_cell.add_paragraph(), field=field)
 
 
 def _replace_template_metadata(*, document: DocxDocument, title: str, now: datetime) -> None:

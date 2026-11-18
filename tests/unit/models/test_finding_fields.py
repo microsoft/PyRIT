@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from uuid import UUID
+
 import pytest
 from pydantic import ValidationError
 
@@ -468,6 +470,15 @@ def test_apply_edit_keeps_a_retired_value_the_edit_leaves_out_or_blank(values: d
 def test_apply_edit_removes_a_listed_retired_value() -> None:
     edit = FindingCreate(title="Leak", severity="sev1", field_values=VALID)
     assert CONTOSO.apply_edit(stored=STORED, edit=edit, remove_retired_keys=["description"]).field_values == VALID
+
+
+def test_apply_edit_keeps_the_edited_parent_and_demonstrated_flag() -> None:
+    parent_id = UUID(int=7)
+    edit = FindingCreate(
+        title="Leak", severity="sev1", field_values=VALID, parent_finding_id=parent_id, demonstrated=False
+    )
+    saved = CONTOSO.apply_edit(stored=STORED, edit=edit)
+    assert (saved.parent_finding_id, saved.demonstrated) == (parent_id, False)
 
 
 @pytest.mark.parametrize(

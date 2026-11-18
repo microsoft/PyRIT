@@ -283,6 +283,7 @@ class HackAPromptTarget(PromptTarget):
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType(
         {"session_id": None, "cookie": None}
     )
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"cookie", "session_id"})
 
     # Prefixes of the data-stream parts this target reads, see _parse_stream.
     # ``0:`` carries model text and ``3:`` carries an error the server chose to

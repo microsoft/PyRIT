@@ -61,3 +61,20 @@ def test_from_yaml_file_invalid_yaml(tmp_path: Path):
     p.write_text(":\n  - :\n    invalid: [unterminated", encoding="utf-8")
     with pytest.raises((ValueError, TypeError)):
         _SimpleYaml.from_yaml_file(p)
+
+
+def test_from_yaml_file_duplicate_keys_report_key_and_location(tmp_path: Path):
+    path = tmp_path / "duplicate.yaml"
+    path.write_text("name: first\nname: second\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate key 'name'") as error:
+        _SimpleYaml.from_yaml_file(path)
+    assert str(path) in str(error.value)
+    assert "line 2" in str(error.value)
+
+
+def test_from_yaml_file_preserves_merge_override(tmp_path: Path):
+    path = tmp_path / "merged.yaml"
+    path.write_text("<<: {name: base, value: 42}\nname: explicit\n", encoding="utf-8")
+    loaded = _SimpleYaml.from_yaml_file(path)
+    assert loaded.name == "explicit"
+    assert loaded.value == 42

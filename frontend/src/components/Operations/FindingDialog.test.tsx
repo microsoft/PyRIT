@@ -48,6 +48,7 @@ interface DialogOptions {
   fields?: FindingFields
   initialValues?: EditValues
   editing?: boolean
+  parentTitle?: string
   evidenceField?: boolean
   onSave?: (draft: FindingDraft, attempt: { id: string; attackResultId: string }) => Promise<void>
   onClose?: () => void
@@ -123,7 +124,7 @@ describe('FindingDialog', () => {
     await user.type(description, 'Notes')
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: 'Human assessment', severity: 'moderate', field_values: { description: 'Notes' },
+      title: 'Human assessment', severity: 'moderate', field_values: { description: 'Notes' }, demonstrated: true,
     }, ATTEMPT))
   })
 
@@ -210,6 +211,20 @@ describe('FindingDialog', () => {
     expect(requestPageUnload().defaultPrevented).toBe(false)
   })
 
+  it('protects a demonstrated edit and disarms the guard when the original status is restored', async () => {
+    const user = userEvent.setup()
+    renderDialog({
+      editing: true, initialValues: { ...current('Existing', 'low', { description: 'Details' }), demonstrated: false },
+    })
+    const demonstrated = screen.getByRole('switch', { name: 'Demonstrated' })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.click(demonstrated)
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.click(demonstrated)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
   it('protects evidence changes, disarms the guard when cleared, and removes it on unmount', async () => {
     const user = userEvent.setup()
     const { unmount } = render(<FluentProvider theme={webLightTheme}><FindingDialog fields={DEFAULT_FINDING_FIELDS_FIXTURE} evidenceField
@@ -262,6 +277,7 @@ describe('FindingDialog', () => {
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
       title: 'Custom classifications', severity: 'Team severity', field_values: { harm_type: 'Team harm' },
+      demonstrated: true,
     }, ATTEMPT))
   })
 
@@ -279,7 +295,7 @@ describe('FindingDialog', () => {
 
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
+      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES, demonstrated: true,
       keep_retired_keys: ['description'], remove_retired_keys: [],
     }, ATTEMPT))
   })
@@ -302,7 +318,7 @@ describe('FindingDialog', () => {
 
     await user.click(saveButton())
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
+      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES, demonstrated: true,
       keep_retired_keys: ['description'], remove_retired_keys: [],
     }, ATTEMPT))
   })
@@ -328,7 +344,7 @@ describe('FindingDialog', () => {
     await confirmRemoval(user, 'description')
     await user.click(await screen.findByRole('button', { name: 'Save finding' }))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
-      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES,
+      title: CONTOSO_EDIT.title, severity: 'sev1', field_values: CONTOSO_CURRENT_VALUES, demonstrated: true,
       keep_retired_keys: [], remove_retired_keys: ['description'],
     }, ATTEMPT))
     // The backend rejects a key that is both sent and listed for removal.
@@ -430,6 +446,37 @@ describe('FindingDialog', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'With evidence' }), {
       id: expect.any(String), attackResultId: 'attack-1',
     }))
+  })
+
+  it('shows the parent of a new sub-finding and records whether it was demonstrated', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(undefined)
+    renderDialog({ parentTitle: 'Data theft', onSave })
+    expect(screen.getByRole('heading', { name: 'New sub-finding' })).toBeInTheDocument()
+    expect(screen.getByText('Sub-finding of “Data theft”')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /parent/i })).not.toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Obtain creds')
+    const demonstrated = screen.getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).toBeChecked()
+    expect(demonstrated).toHaveAccessibleDescription(/Paths that use it show as partial/)
+    await user.click(demonstrated)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'Obtain creds', demonstrated: false }), ATTEMPT)
+  })
+
+  it('arms the unsaved changes guard when only the demonstrated status changes', async () => {
+    const user = userEvent.setup()
+    const events: Event[] = []
+    const listener = (event: Event): void => { events.push(event) }
+    window.addEventListener('beforeunload', listener)
+    renderDialog()
+
+    await user.click(screen.getByRole('switch', { name: 'Demonstrated' }))
+    fireEvent(window, new Event('beforeunload', { cancelable: true }))
+    expect(events[0].defaultPrevented).toBe(true)
+
+    window.removeEventListener('beforeunload', listener)
   })
 
   it('shows the API field message on the Evidence attack ID and keeps it invalid until edited', async () => {

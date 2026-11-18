@@ -12,7 +12,14 @@ from unittest.mock import MagicMock
 from pyrit.backend.models.message_sends import MessageSendState, MessageSendStatus
 from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.memory import MemoryInterface
-from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier, Finding
+from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackOutcome,
+    AttackResult,
+    CapabilityName,
+    ComponentIdentifier,
+    Finding,
+)
 from pyrit.prompt_target import PromptTarget
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
@@ -102,6 +109,8 @@ def _make_matching_target_mock() -> MagicMock:
         class_name="TextTarget",
         class_module="pyrit.prompt_target",
     )
+    # Like the TextTarget it stands in for, it declares no response support.
+    mock_target.configuration.includes.side_effect = lambda *, capability: capability is not CapabilityName.RESPONSES
     return mock_target
 
 

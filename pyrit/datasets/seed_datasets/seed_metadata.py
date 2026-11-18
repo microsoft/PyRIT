@@ -4,7 +4,11 @@
 import logging
 from dataclasses import dataclass, fields
 from enum import Enum
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Self
+
+from pydantic import Field, model_validator
+
+from pyrit.models import DatasetProviderInfo
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +170,24 @@ class SeedDatasetMetadata:
                     f"Metadata field '{field_name}' must have at most 1 value "
                     f"for real dataset metadata, got {len(value)}: {value}"
                 )
+
+
+class SeedDatasetDescriptor(DatasetProviderInfo):
+    """Local facts about a provider's default configuration, independent of stored seeds."""
+
+    name: str
+    metadata: SeedDatasetMetadata | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _project_metadata(self) -> Self:
+        if self.metadata is not None:
+            self.modalities = sorted(self.metadata.modalities or [])
+            self.harm_categories = sorted(self.metadata.harm_categories or [])
+            self.size = sorted(self.metadata.size or [])
+            self.load_time = sorted(
+                value.value for value in self.metadata.load_time or [] if value != SeedDatasetLoadTime.UNINITIALIZED
+            )
+        return self
 
 
 class SeedDatasetFilter:

@@ -23,6 +23,7 @@ jest.mock('@/hooks/useRuntime', () => ({ ...jest.requireActual('@/hooks/useRunti
 const FINDING: FindingListItem = {
   id: 'finding', operation_id: 'saved', title: 'Proof', severity: 'low', field_values: {},
   created_at: '2026-10-08T12:00:00Z', evidence_count: 0, rows: [], retired: [],
+  parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const SAVED = { id: 'saved', name: 'Exact', created_at: '2026-10-08T12:00:00Z' }
@@ -275,7 +276,7 @@ it('creates the finding with the viewed attack as evidence in one request and cl
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
     id: expect.any(String), title: '  New assessment', severity: 'important',
-    field_values: { description: 'Optional notes' }, attack_result_id: 'viewed',
+    field_values: { description: 'Optional notes' }, demonstrated: true, attack_result_id: 'viewed',
   })
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
@@ -305,7 +306,7 @@ it('shows a custom severity but not the harm type in the picker, and creates and
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
     id: expect.any(String), title: 'Custom', severity: 'Team severity', field_values: { harm_type: 'Team harm' },
-    attack_result_id: 'viewed',
+    demonstrated: true, attack_result_id: 'viewed',
   })
 })
 

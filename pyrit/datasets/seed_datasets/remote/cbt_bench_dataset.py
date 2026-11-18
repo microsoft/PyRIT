@@ -36,6 +36,8 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
     size: str = "small"  # 20 core_fine_seed therapy seeds (default config)
     tags: frozenset[str] = frozenset({"safety", "medical"})
 
+    source_url = "https://huggingface.co/datasets/Psychotherapy-LLM/CBT-Bench"
+
     def __init__(
         self,
         *,

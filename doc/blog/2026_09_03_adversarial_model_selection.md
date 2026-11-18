@@ -43,6 +43,7 @@ $$
 
 The exporter output directory contains three views of the run, including the ASR grouped by attack technique and adversarial-model registry name, stored attack-result rows, and PyRIT's standard scenario summary.
 
+(what-we-observed)=
 ## What We Observed
 
 After creating the benchmark scenario, we ran it multiple times across several model families. The most useful finding was that the model powering an attack matters, but its advantage depends heavily on benchmark design and attack technique. We'll discuss how we discovered this chronologically.

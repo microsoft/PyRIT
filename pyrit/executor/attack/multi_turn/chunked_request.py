@@ -94,9 +94,9 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
     # remembering prior responses. History-squash adaptation would collapse
     # them into a single prompt and silently break the attack's semantics.
     # Declare MULTI_TURN as ``native_required`` so adaptation is rejected at
-    # construction time.
+    # construction time. It also reassembles the target's responses, so it needs them.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.RESPONSES}),
     )
 
     @apply_defaults

@@ -45,7 +45,7 @@ EMPTY_USAGE = {"findings": 0, "attacks": 0, "scenario_runs": 0}
 
 def _listed(finding: dict, *rows: dict) -> dict:
     """The list item of a saved finding with no evidence or retired values."""
-    return {**finding, "evidence_count": 0, "rows": list(rows), "retired": []}
+    return {**finding, "evidence_count": 0, "child_count": 0, "rows": list(rows), "retired": []}
 
 
 def _row(key: str, label: str, value: str, *, multiline: bool = False) -> dict:

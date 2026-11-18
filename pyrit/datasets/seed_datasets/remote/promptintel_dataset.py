@@ -72,6 +72,8 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     }
 
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"
+    required_environment_variables = ("PROMPTINTEL_API_KEY",)
+    access_url = "https://promptintel.novahunting.ai"
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"
     MAX_PAGE_LIMIT = 100
 

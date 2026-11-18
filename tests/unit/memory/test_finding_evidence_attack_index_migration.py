@@ -103,17 +103,12 @@ def _seed_upgrade_rows(connection: sa.Connection) -> None:
             id=operation_id, name="Preserved", name_key="preserved", created_at=timestamp, description=""
         )
     )
-    # FindingEntry models the head revision, which no longer has the description column.
-    columns = FindingEntry.__table__.c
-    findings = sa.table(
-        "FindingEntries",
-        *(sa.column(name, columns[name].type) for name in ("id", "operation_id", "title", "severity", "created_at")),
-        sa.column("description", sa.Unicode()),
-    )
+    # Insert into this revision's schema, without defaults for columns added by later revisions.
+    findings = sa.Table(FindingEntry.__tablename__, sa.MetaData(), autoload_with=connection)
     connection.execute(
-        sa.insert(findings).values(
-            id=finding_id,
-            operation_id=operation_id,
+        findings.insert().values(
+            id=str(finding_id),
+            operation_id=str(operation_id),
             title="Preserved finding",
             description="",
             severity="important",

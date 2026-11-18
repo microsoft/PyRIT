@@ -41,7 +41,7 @@ from pyrit.models import (
 from pyrit.models.catalog import RegisteredScenario
 from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import Scenario
+from pyrit.scenario import DatasetSource, Scenario
 from pyrit.scenario.core import (
     AttackTechniqueFactory,
     DatasetAttackConfiguration,
@@ -421,7 +421,7 @@ class TestAdversarialEstimateScope:
         def construct() -> MagicMock:
             introspected.append(get_default_adversarial_target())
             scenario = MagicMock(spec=Scenario)
-            scenario._default_dataset_config = DatasetAttackConfiguration(dataset_names=["test_dataset"])
+            scenario._default_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="test_dataset")])
             scenario.supported_parameters.return_value = Scenario.supported_parameters()
             return scenario
 
@@ -1800,7 +1800,7 @@ class TestScenarioServiceGetScenario:
     async def test_estimate_resolves_total_limit_async(
         self, *, limit_args: dict[str, int | str | None], expected: int | str
     ) -> None:
-        original = DatasetAttackConfiguration(dataset_names=["harmbench"], max_total=20)
+        original = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=20)
         scenario_class = MagicMock()
         scenario_class.return_value._default_dataset_config = original
         scenario_class.return_value.supported_parameters.return_value = Scenario.supported_parameters()
@@ -1848,7 +1848,9 @@ class TestScenarioServiceGetScenario:
         )
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
-        introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="harmbench")]
+        )
         introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
         scenario_class.supported_parameters.return_value = [
@@ -1908,7 +1910,9 @@ class TestScenarioServiceGetScenario:
         metadata = _make_scenario_metadata(registry_name="airt.jailbreak")
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
-        introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="harmbench")]
+        )
         introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
 
@@ -1935,7 +1939,9 @@ class TestScenarioServiceGetScenario:
         )
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
-        introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance._default_dataset_config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="harmbench")]
+        )
         introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
 

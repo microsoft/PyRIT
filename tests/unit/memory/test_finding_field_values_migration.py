@@ -20,7 +20,7 @@ from sqlalchemy.schema import CreateTable
 from pyrit.memory.memory_models import FindingEntry
 from pyrit.memory.migration import check_schema_migrations
 
-PREVIOUS_REVISION = "a3f7c9e2b641"
+PREVIOUS_REVISION = "7aa74745cc9b"
 REVISION = "d43b1bcf9c56"
 CHECKS = ("ck_findings_severity", "ck_findings_severity_other", "ck_findings_harm_type_other")
 OPERATION_ID = "00000000-0000-0000-0000-000000000001"
@@ -88,7 +88,14 @@ def test_upgrade_moves_existing_findings_into_field_values() -> None:
                 {"finding_id": B, "attack_id": ATTACK_ID, "stamp": STAMP},
             )
             _insert_finding(connection=connection, id=C, severity="low", harm_type="Jailbreak", description="   ")
-            _insert_finding(connection=connection, id=D, severity="critical", description='Quote " and \\ backslash')
+            _insert_finding(
+                connection=connection,
+                id=D,
+                severity="critical",
+                description='Quote " and \\ backslash',
+                parent_finding_id=A,
+                demonstrated="0",
+            )
 
             command.upgrade(config, REVISION)
 
@@ -105,12 +112,17 @@ def test_upgrade_moves_existing_findings_into_field_values() -> None:
                 D: ("critical", {"description": 'Quote " and \\ backslash'}),
             }
             kept = {
-                finding_id: (operation_id, created_at)
-                for finding_id, operation_id, created_at in connection.execute(
-                    sa.text("SELECT id, operation_id, created_at FROM FindingEntries")
+                finding_id: (operation_id, created_at, parent_finding_id, bool(demonstrated))
+                for finding_id, operation_id, created_at, parent_finding_id, demonstrated in connection.execute(
+                    sa.text("SELECT id, operation_id, created_at, parent_finding_id, demonstrated FROM FindingEntries")
                 )
             }
-            assert kept == dict.fromkeys((A, B, C, D), (OPERATION_ID, STAMP))
+            assert kept == {
+                A: (OPERATION_ID, STAMP, None, True),
+                B: (OPERATION_ID, STAMP, None, True),
+                C: (OPERATION_ID, STAMP, None, True),
+                D: (OPERATION_ID, STAMP, A, False),
+            }
             evidence_rows = [
                 tuple(row)
                 for row in connection.execute(

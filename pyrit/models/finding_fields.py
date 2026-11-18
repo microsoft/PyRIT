@@ -380,7 +380,7 @@ class FindingFields(BaseModel):
 
         Args:
             stored (FindingCreate): The finding as saved.
-            edit (FindingCreate): The edited title, severity and current field values.
+            edit (FindingCreate): The edited finding, with its current field values.
             keep_retired_keys (Collection[str]): Keys of the stored values the editor showed as retired.
                 Defaults to none.
             remove_retired_keys (Collection[str]): Keys of the stored retired values to delete. Defaults to none.
@@ -410,7 +410,9 @@ class FindingFields(BaseModel):
             previous_severity=stored.severity,
             previous_values=stored.field_values,
         )
-        return FindingCreate(title=edit.title, severity=edit.severity, field_values=values)
+        return FindingCreate.model_validate(
+            {**edit.model_dump(include=set(FindingCreate.model_fields)), "field_values": values}
+        )
 
     def _check_known_keys(self, *, field_values: dict[str, str], previous_values: dict[str, str]) -> None:
         """

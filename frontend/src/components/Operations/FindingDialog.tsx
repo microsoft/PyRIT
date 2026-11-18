@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 
 import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Field, Input, MessageBar, MessageBarBody, Text,
+  Field, Input, MessageBar, MessageBarBody, Switch, Text,
 } from '@fluentui/react-components'
 
 import { type FieldError, toApiError } from '@/services/errors'
@@ -35,6 +35,8 @@ interface FindingDialogProps {
   initialValues?: FindingCreate & Pick<FindingListItem, 'retired'>
   editing?: boolean
   context?: React.ReactNode
+  /** The title of the finding this one is a sub-finding of. The parent is shown, not edited. */
+  parentTitle?: string
   /** Shows an optional attack ID to link as evidence. */
   evidenceField?: boolean
   saveDisabled?: boolean
@@ -56,12 +58,18 @@ function openingState(
     for (const field of fields.fields) {
       if (field.default !== null) defaults[field.key] = field.default
     }
-    return { draft: { title: '', severity: fields.severity.default ?? '', field_values: defaults }, retired: [] }
+    return {
+      draft: { title: '', severity: fields.severity.default ?? '', field_values: defaults, demonstrated: true },
+      retired: [],
+    }
   }
   const retiredKeys = new Set(initialValues.retired.map(([key]: [string, string]) => key))
   const current = Object.entries(initialValues.field_values).filter(([key]: [string, string]) => !retiredKeys.has(key))
   return {
-    draft: { title: initialValues.title, severity: initialValues.severity, field_values: Object.fromEntries(current) },
+    draft: {
+      title: initialValues.title, severity: initialValues.severity, field_values: Object.fromEntries(current),
+      demonstrated: initialValues.demonstrated ?? true,
+    },
     retired: initialValues.retired.map(([key, value]: [string, string]) => ({ key, value })),
   }
 }
@@ -69,13 +77,17 @@ function openingState(
 /** The draft as the backend stores it, which drops blank values. */
 function filledFinding(draft: FindingCreate): FindingCreate {
   const filled = Object.entries(draft.field_values).filter(([, value]: [string, string]) => value.trim() !== '')
-  return { title: draft.title, severity: draft.severity, field_values: Object.fromEntries(filled) }
+  return {
+    title: draft.title, severity: draft.severity, field_values: Object.fromEntries(filled),
+    demonstrated: draft.demonstrated ?? true,
+  }
 }
 
 function sameFinding(left: FindingCreate, right: FindingCreate): boolean {
   const leftValues = Object.entries(filledFinding(left).field_values)
   const rightValues = filledFinding(right).field_values
   return left.title === right.title && left.severity === right.severity
+    && (left.demonstrated ?? true) === (right.demonstrated ?? true)
     && leftValues.length === Object.keys(rightValues).length
     && leftValues.every(([key, value]: [string, string]) => rightValues[key] === value)
 }
@@ -87,7 +99,8 @@ function sectionHeading(field: FindingField, slots: FindingField[], index: numbe
 }
 
 export default function FindingDialog({
-  fields, initialValues, editing = false, context, evidenceField = false, saveDisabled = false, onSave, onClose,
+  fields, initialValues, editing = false, context, parentTitle, evidenceField = false, saveDisabled = false, onSave,
+  onClose,
 }: FindingDialogProps) {
   const styles = useFindingDialogStyles()
   const [openFields] = useState(fields)
@@ -165,10 +178,11 @@ export default function FindingDialog({
   return (
     <Dialog open onOpenChange={(_, data) => { if (!data.open && !submitting.current) onClose() }}>
       <DialogSurface><DialogBody>
-        <DialogTitle>{editing ? 'Edit finding' : 'New finding'}</DialogTitle>
+        <DialogTitle>{editing ? 'Edit finding' : parentTitle !== undefined ? 'New sub-finding' : 'New finding'}</DialogTitle>
         <DialogContent>
           <form className={styles.form} onSubmit={event => { event.preventDefault(); void save() }}>
             {context ?? <Text>Record a human assessment. No attack is required.</Text>}
+            {parentTitle !== undefined && <Text>Sub-finding of “{parentTitle}”</Text>}
             <Field label="Title" required>
               <Input className={styles.input} value={draft.title} disabled={saving} name="title" autoComplete="off"
                 onChange={(_, data) => { setDraft(value => ({ ...value, title: data.value })) }} />
@@ -190,6 +204,10 @@ export default function FindingDialog({
             <RetiredFieldValues values={opening.retired} removed={removed} disabled={saving}
               onRemove={(key: string) => { setRemoved(previous => new Set([...previous, key])) }}
               onUndo={() => { setRemoved(new Set()) }} />
+            <Field hint="Turn off for a step that was attempted but not achieved. Paths that use it show as partial.">
+              <Switch label="Demonstrated" checked={draft.demonstrated ?? true} disabled={saving} name="demonstrated"
+                onChange={(_, data) => { setDraft(value => ({ ...value, demonstrated: data.checked })) }} />
+            </Field>
             {evidenceField && <Field label="Evidence attack ID"
               validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
