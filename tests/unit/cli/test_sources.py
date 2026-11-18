@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import inspect
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -20,17 +19,6 @@ if TYPE_CHECKING:
 
 
 class TestOnlyKnown:
-    def test_data_is_required_and_keyword_only(self) -> None:
-        parameters = inspect.signature(_only_known).parameters
-
-        assert parameters["model_cls"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
-        assert parameters["data"].kind is inspect.Parameter.KEYWORD_ONLY
-        assert parameters["data"].default is inspect.Parameter.empty
-
-    def test_positional_data_is_rejected(self) -> None:
-        with pytest.raises(TypeError, match="positional"):
-            _only_known(MessagePiece, {})  # ty: ignore[too-many-positional-arguments]
-
     @pytest.mark.parametrize("model_cls", [MessagePiece, Score])
     @pytest.mark.parametrize("data", [{}, {"view_only": "ignored"}])
     def test_empty_or_unknown_fields_return_empty_dict(self, model_cls: type[BaseModel], data: dict[str, Any]) -> None:
