@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import json
-import math
 from typing import Any
 
 from pyrit.exceptions import InvalidJsonException
@@ -27,7 +26,7 @@ def _read_probability(value: object) -> float | None:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
         return None
-    return float(value) if math.isfinite(value) else None
+    return float(value)
 
 
 class DecisionMatchesScorer(MessageTrueFalseScorer):
@@ -36,8 +35,11 @@ class DecisionMatchesScorer(MessageTrueFalseScorer):
 
     Use this scorer on responses from a decision target such as ``LiteLLMDecisionTarget``.
     Each request supplies its own expected answer through the condition, so one scorer covers
-    a dataset whose items expect different answers. To measure attacks against the decision
-    model, set the condition's answer to the wrong answer: a true score is a flipped decision.
+    a dataset whose items expect different answers. A true score means the answer equals the
+    condition's answer. To measure attacks, name the wrong answer in the condition. A true score
+    is a flip only when the model answered the same request correctly without the attack. This
+    scorer sees neither that baseline nor the offered options, and blocked responses and unoffered
+    options score false, so leave those out of a flip rate's denominator.
 
     ``noul`` (yes/no) answers are compared with ``threshold``: a probability at or above it is a
     yes. ``choice`` answers match when the chosen option equals the condition's answer. In YAML
