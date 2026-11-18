@@ -8928,7 +8928,7 @@ class MemoryInterface(abc.ABC):
         )
 
     @staticmethod
-    def _scenario_attack_result_delta_statement() -> Select:
+    def _scenario_attack_result_delta_statement() -> Select[*tuple[Any, ...]]:
         """Return the shared lightweight result/score projection, without filters or pagination."""
         return select(
             AttackResultEntry.id,
@@ -8968,7 +8968,7 @@ class MemoryInterface(abc.ABC):
         scenario_result_id: str,
         cursor: AttackResultKeysetCursor | None = None,
         limit: int = 100,
-    ) -> Select:
+    ) -> Select[*tuple[Any, ...]]:
         """
         Page saved roots directly instead of hydrating a chronological prefix and searching for its ancestors.
 
@@ -9214,7 +9214,7 @@ class MemoryInterface(abc.ABC):
         *,
         scenario_result_id: str,
         attack_result_ids: Sequence[str],
-    ) -> Select:
+    ) -> Select[*tuple[Any, ...]]:
         """
         Build the batched SELECT statement for scenario result deltas by ID.
 
@@ -9301,7 +9301,7 @@ class MemoryInterface(abc.ABC):
         conversation_id: str,
         cursor: MessagePieceKeysetCursor | None = None,
         limit: int = 100,
-    ) -> Select:
+    ) -> Select[PromptMemoryEntry]:
         """
         Build a canonical message-piece page, including continuation within a multimodal turn.
 

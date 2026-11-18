@@ -50,7 +50,7 @@ _DISALLOWED_TYPE_PREDICATES = (
     stat.S_ISSOCK,
 )
 
-ZipSource = str | os.PathLike | bytes | IO[bytes]
+ZipSource = str | os.PathLike[str] | bytes | IO[bytes]
 
 
 class UnsafeArchiveError(Exception):
@@ -60,7 +60,7 @@ class UnsafeArchiveError(Exception):
 def safe_extract_zip(
     *,
     source: ZipSource,
-    dest_dir: str | os.PathLike,
+    dest_dir: str | os.PathLike[str],
     max_total_size: int = DEFAULT_MAX_TOTAL_SIZE,
     max_file_size: int = DEFAULT_MAX_FILE_SIZE,
     max_file_count: int = DEFAULT_MAX_FILE_COUNT,
