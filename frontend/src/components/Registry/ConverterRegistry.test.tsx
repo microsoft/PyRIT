@@ -378,9 +378,12 @@ describe('ConverterRegistry', () => {
     expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
   })
 
-  it('shows a failed removal inside the open dialog and allows retry', async () => {
+  it('shows an HTTP 404 removal error inside the open dialog and allows retry', async () => {
     mockedConvertersApi.deleteConverter
-      .mockRejectedValueOnce(new Error('Converter not found'))
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 404, data: { detail: 'Converter was already deleted' } },
+      })
       .mockResolvedValueOnce()
     mockedConvertersApi.listConverters
       .mockResolvedValueOnce({ items: [converter] })
@@ -394,10 +397,10 @@ describe('ConverterRegistry', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
 
     const alert = await within(dialog).findByRole('alert')
-    expect(alert).toHaveTextContent('Converter not found')
+    expect(alert).toHaveTextContent('Converter was already deleted')
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled()
     expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeEnabled()
-    expect(screen.getAllByText(/Converter not found/)).toHaveLength(1)
+    expect(screen.getAllByText('Converter was already deleted')).toHaveLength(1)
 
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
 
@@ -412,14 +415,16 @@ describe('ConverterRegistry', () => {
     renderRegistry()
     await screen.findByText('base64-default')
 
-    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    const trigger = screen.getByRole('button', { name: 'Remove base64-default' })
+    await user.click(trigger)
     let dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
     await within(dialog).findByRole('alert')
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
 
-    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    await user.click(trigger)
     dialog = await screen.findByRole('dialog')
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
   })
