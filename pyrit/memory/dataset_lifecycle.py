@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlparse
 
-from sqlalchemy import select
+from sqlalchemy import Unicode, literal, or_, select, union_all
 from sqlalchemy.util.concurrency import await_only
 
 from pyrit.memory.dataset_upload_lease import try_upload_lease_async
@@ -33,6 +33,7 @@ from pyrit.models import DATASET_NAME_RELEASING_STATUSES, MEDIA_PATH_DATA_TYPES
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Sequence
 
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import Session
 
@@ -54,9 +55,10 @@ async def find_unavailable_dataset_names_async(
     Apply the create-only dataset name rule shared by uploads and prompt generations.
 
     A name is unavailable when stored seeds use it, a staging upload reserved it, or a prompt
-    generation whose status doesn't release names holds it. Names are matched the way the database
-    compares them, so a case variant the database matches is also unavailable. Hold
-    ``lock_dataset_lifecycle`` in the same transaction to act on the answer.
+    generation whose status doesn't release names holds it. The database decides each match with
+    its own ``=`` comparison, so under a case- or width-insensitive collation, such as SQL Server's
+    default, every variant it treats as equal is unavailable too. Hold ``lock_dataset_lifecycle`` in
+    the same transaction to act on the answer.
 
     Args:
         session (AsyncSession): The session to read with.
@@ -67,22 +69,39 @@ async def find_unavailable_dataset_names_async(
         set[str]: The requested names that are unavailable.
     """
     requested = sorted(set(dataset_names))
-    held = PromptGenerationEntry.status.not_in([status.value for status in DATASET_NAME_RELEASING_STATUSES])
+    unavailable: set[str] = set()
+    # Each name binds four parameters; chunks stay under SQL Server's parameter and SQLite's compound limits.
+    for start in range(0, len(requested), 100):
+        checks = [
+            _dataset_name_taken_check(name=name, exclude_generation_id=exclude_generation_id)
+            for name in requested[start : start + 100]
+        ]
+        unavailable.update((await session.scalars(union_all(*checks) if len(checks) > 1 else checks[0])).all())
+    return unavailable
+
+
+def _dataset_name_taken_check(*, name: str, exclude_generation_id: uuid.UUID | None) -> Select[str]:
+    """
+    Select ``name`` itself when the database finds it taken, so its own comparison decides the match.
+
+    Returns:
+        Select[str]: A one-row select of the requested name, or no rows when it is free.
+    """
+    held = [
+        PromptGenerationEntry.dataset_name == name,
+        PromptGenerationEntry.status.not_in([status.value for status in DATASET_NAME_RELEASING_STATUSES]),
+    ]
     if exclude_generation_id is not None:
-        held = held & (PromptGenerationEntry.id != exclude_generation_id)
-    matched: set[str] = set()
-    # Chunk for SQL Server's parameter limit.
-    for start in range(0, len(requested), 500):
-        chunk = requested[start : start + 500]
-        for statement in (
-            select(SeedEntry.dataset_name).where(SeedEntry.dataset_name.in_(chunk)),
-            select(DatasetLifecycleEntry.dataset_name).where(
-                DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name.in_(chunk)
-            ),
-            select(PromptGenerationEntry.dataset_name).where(held, PromptGenerationEntry.dataset_name.in_(chunk)),
-        ):
-            matched.update(name.casefold() for name in (await session.scalars(statement.distinct())).all() if name)
-    return {name for name in requested if name.casefold() in matched}
+        held.append(PromptGenerationEntry.id != exclude_generation_id)
+    return select(literal(name, Unicode).label("dataset_name")).where(
+        or_(
+            select(SeedEntry.id).where(SeedEntry.dataset_name == name).exists(),
+            select(DatasetLifecycleEntry.id)
+            .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == name)
+            .exists(),
+            select(PromptGenerationEntry.id).where(*held).exists(),
+        )
+    )
 
 
 def media_key(value: str, *, storage: StorageIO | None = None) -> str:

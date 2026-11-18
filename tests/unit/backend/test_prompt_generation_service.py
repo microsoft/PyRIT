@@ -588,15 +588,78 @@ async def test_shutdown_lets_a_dataset_save_finish_async(
     assert len(await sqlite_instance.get_seeds_async(dataset_name="support_policy")) > 0
 
 
-async def test_a_saving_generation_cant_be_cancelled_from_another_service_async(
-    sqlite_instance: SQLiteMemory, service: PromptGenerationService
+async def test_an_orphaned_saving_generation_can_be_cancelled_then_retried_or_deleted_async(
+    sqlite_instance: SQLiteMemory, service: PromptGenerationService, target: PromptTarget
 ) -> None:
+    # Shared memory skips reconcile, so a backend that stopped while saving leaves the record saving.
     await service.list_async()
-    saving = _record(status=PromptGenerationStatus.SAVING).model_copy(update={"execution_id": uuid.uuid4()})
-    await sqlite_instance.add_prompt_generations_async(generations=[saving])
-    with pytest.raises(PromptGenerationConflictError, match="saving generation can't be cancelled"):
-        await service.cancel_async(str(saving.id))
-    assert await _read_async(sqlite_instance, saving) == saving
+    orphans = [
+        _record(status=PromptGenerationStatus.SAVING, dataset_name=name).model_copy(
+            update={"id": uuid.uuid4(), "execution_id": uuid.uuid4(), "targets": {"generation": TARGET_NAME}}
+        )
+        for name in ("retried", "deleted")
+    ]
+    await sqlite_instance.add_prompt_generations_async(generations=orphans)
+    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=["retried", "deleted"]) == {
+        "retried",
+        "deleted",
+    }
+
+    for orphan in orphans:
+        cancelled = await service.cancel_async(str(orphan.id))
+        assert cancelled.status == PromptGenerationStatus.CANCELLED
+        assert cancelled.execution_id is None
+    assert await sqlite_instance.get_unavailable_dataset_names_async(dataset_names=["retried", "deleted"]) == set()
+
+    await service.delete_async(str(orphans[1].id))
+    with pytest.raises(PromptGenerationNotFoundError):
+        await service.get_async(str(orphans[1].id))
+    with _respond_with(target):
+        await service.retry_async(str(orphans[0].id))
+        await _settle_async(service)
+    assert (await _read_async(sqlite_instance, orphans[0])).status == PromptGenerationStatus.COMPLETED
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="retried")) > 0
+
+
+async def test_cancel_during_another_services_save_makes_its_commit_a_no_op_async(
+    sqlite_instance: SQLiteMemory, target: PromptTarget, no_retry_wait: None
+) -> None:
+    saving = asyncio.Event()
+    release = asyncio.Event()
+    commit_dataset = sqlite_instance.commit_prompt_generation_dataset_async
+    commits: list[bool] = []
+
+    async def held_commit_async(**kwargs: Any) -> bool:
+        saving.set()
+        await release.wait()
+        commits.append(await commit_dataset(**kwargs))
+        return commits[-1]
+
+    owner = _new_service(sqlite_instance, target)
+    other = _new_service(sqlite_instance, target)
+    try:
+        await other.list_async()
+        with (
+            _respond_with(target),
+            patch.object(sqlite_instance, "commit_prompt_generation_dataset_async", side_effect=held_commit_async),
+        ):
+            created = await owner.create_async(request=_assert_request())
+            await wait_for_event_async(event=saving, tasks=list(owner._tasks.values()))
+            assert (await _read_async(sqlite_instance, created)).status == PromptGenerationStatus.SAVING
+            with pytest.raises(PromptGenerationConflictError, match="can't be cancelled"):
+                await owner.cancel_async(str(created.id))
+            cancelled = await other.cancel_async(str(created.id))
+            assert cancelled.status == PromptGenerationStatus.CANCELLED
+            release.set()
+            await _settle_async(owner)
+
+        assert commits == [False]
+        assert await _read_async(sqlite_instance, created) == cancelled
+        assert await sqlite_instance.get_seeds_async(dataset_name="support_policy") == []
+    finally:
+        release.set()
+        await owner.shutdown_async()
+        await other.shutdown_async()
 
 
 async def test_retry_after_a_failed_save_saves_the_dataset_once_async(

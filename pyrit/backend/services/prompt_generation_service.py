@@ -59,6 +59,7 @@ _INTERRUPTED_MESSAGE = "The backend stopped before this generation finished. Ret
 _CANCELLABLE_STATUSES = frozenset(
     {PromptGenerationStatus.QUEUED, PromptGenerationStatus.RUNNING, PromptGenerationStatus.AWAITING_REVIEW}
 )
+_ORPHAN_CANCELLABLE_STATUSES = _CANCELLABLE_STATUSES | {PromptGenerationStatus.SAVING}
 
 
 class PromptGenerationNotFoundError(LookupError):
@@ -324,7 +325,9 @@ class PromptGenerationService:
         """
         Cancel a queued, running, or paused generation. Its checkpoint is kept for a retry.
 
-        A generation running in another backend stops at its next checkpoint.
+        A generation running in another backend stops at its next checkpoint. A generation saving in
+        another backend, or left saving by a backend that stopped, can also be cancelled: its dataset
+        is then not saved, because the commit requires the generation to still be saving.
 
         Args:
             generation_id (str): The generation ID.
@@ -333,12 +336,16 @@ class PromptGenerationService:
             PromptGenerationRecord: The cancelled generation.
 
         Raises:
-            PromptGenerationConflictError: If the generation is saving its dataset or already finished.
+            PromptGenerationConflictError: If this backend is saving the generation's dataset, or the
+                generation already finished.
         """
         record = await self.get_async(generation_id)
-        if record.status not in _CANCELLABLE_STATUSES or record.id in self._saving:
-            raise PromptGenerationConflictError(f"A {record.status.value} generation can't be cancelled.")
         task = self._tasks.get(record.id)
+        # A save running here finishes. A save without a task here may belong to a stopped backend, and
+        # cancelling it makes that owner's commit a no-op if it is still alive.
+        cancellable = _CANCELLABLE_STATUSES if task is not None else _ORPHAN_CANCELLABLE_STATUSES
+        if record.status not in cancellable or record.id in self._saving:
+            raise PromptGenerationConflictError(f"A {record.status.value} generation can't be cancelled.")
         if task is not None:
             self._cancel_requested.add(record.id)
             task.cancel()
@@ -350,7 +357,7 @@ class PromptGenerationService:
                 return record
         cancelled = await self._try_update_async(
             record=record,
-            expected_statuses=_CANCELLABLE_STATUSES,
+            expected_statuses=cancellable,
             status=PromptGenerationStatus.CANCELLED,
             execution_id=None,
         )

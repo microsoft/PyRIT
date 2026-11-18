@@ -699,7 +699,9 @@ pauses, cancellation, and retry. Records are stored in memory
 generations. `pause_for_review` is rejected for generators without a reviewable stage.
 
 Dataset names are create-only, under one rule shared with dataset uploads: a name is
-taken while stored seeds use it, an upload is staging it, or a generation holds it. A
+taken while stored seeds use it, an upload is staging it, or a generation holds it. The
+database compares names, so with a case-insensitive collation, such as SQL Server's
+default, a variant it treats as equal is also taken, including within one batch. A
 generation holds its name until it completes or is cancelled. Creating, retrying, and
 saving check the name under the dataset lifecycle lock. Saving creates the dataset and
 completes the record in one transaction, so a generation never has a saved dataset with
@@ -718,7 +720,9 @@ after a restart with SQLite memory, which one backend owns, active records witho
 task here become `interrupted`, and retry resumes from the last stored checkpoint.
 Shared memory, such as Azure SQL, is left unchanged because another backend may own
 those runs: a generation whose backend stopped stays active until it is cancelled, and
-can then be retried.
+can then be retried or deleted. A backend can't cancel a dataset save it is running
+itself, but it can cancel a generation that is saving elsewhere or was left saving by
+a stopped backend; that save then commits nothing.
 
 ### Manual Messages
 
