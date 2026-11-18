@@ -7,7 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackSeedGroup, ScenarioRunPlan, ScenarioRunPlanGroupKind, SeedObjective, TargetIdentifier
+from pyrit.models import (
+    AttackSeedGroup,
+    ComponentIdentifier,
+    ScenarioEvaluationIdentifier,
+    ScenarioIdentifier,
+    ScenarioRunPlan,
+    ScenarioRunPlanGroupKind,
+    SeedObjective,
+    TargetIdentifier,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetSource
@@ -204,7 +213,7 @@ class TestRapidResponseScorerPool:
         }
         baseline = next(g for g in plan.atomic_groups if g.atomic_attack_name == "baseline_airt_hate")
         assert baseline.kind is ScenarioRunPlanGroupKind.BASELINE
-        assert len(bindings["flip_airt_hate"].expectation_fingerprints) == 2
+        assert set(bindings["flip_airt_hate"].model_dump()) == {"candidate_index", "evaluation", "scorer_hash"}
         dumped = plan.model_dump(mode="json", exclude_none=True)
         assert all("objective_scorer_binding" in group for group in dumped["atomic_groups"])
 
@@ -252,7 +261,7 @@ class TestRapidResponseScorerPool:
     async def test_readiness_lists_every_candidate(self, objective_target, judges):
         hate, violence = judges
         scenario = RapidResponse(objective_scorer=_pool(hate, violence))
-        scenario.set_params_from_args(args={"objective_target": objective_target})
+        scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": _dataset_config()})
 
         readiness = scenario.get_readiness()
 
@@ -276,7 +285,11 @@ class TestRapidResponseScorerPool:
             return scenario._build_scenario_identifier()
 
         base = await identity(_pool(hate, violence), _dataset_config())
-        assert base.objective_scorer.params["requirements"]["datasets"]["airt_hate"]["evaluation"] == HATE
+        assert base.objective_scorer is None
+        assert (
+            base.get_child("objective_scorer_pool").params["requirements"]["datasets"]["airt_hate"]["evaluation"]
+            == HATE
+        )
         same = await identity(_pool(hate, violence), _dataset_config())
         reordered = await identity(
             CompatibleScorers(
@@ -289,6 +302,19 @@ class TestRapidResponseScorerPool:
         )
         assert base.hash == same.hash
         assert base.hash != reordered.hash
+        assert ScenarioEvaluationIdentifier(base).eval_hash != ScenarioEvaluationIdentifier(reordered).eval_hash
+
+    async def test_the_pool_identity_round_trips_through_storage(self, objective_target, judges):
+        scenario = await _initialize(
+            RapidResponse(objective_scorer=_pool(*judges)), target=objective_target, dataset_config=_dataset_config()
+        )
+        identity = scenario._build_scenario_identifier()
+
+        stored = ScenarioIdentifier.from_component_identifier(ComponentIdentifier.model_validate(identity.model_dump()))
+
+        assert stored.objective_scorer is None
+        assert stored.get_child("objective_scorer_pool").hash == identity.get_child("objective_scorer_pool").hash
+        assert ScenarioEvaluationIdentifier(stored).eval_hash == ScenarioEvaluationIdentifier(identity).eval_hash
 
     async def _saved_plan(self, objective_target, judges) -> tuple[RapidResponse, ScenarioRunPlan]:
         scenario = await _initialize(
@@ -300,16 +326,15 @@ class TestRapidResponseScorerPool:
         return scenario, ScenarioRunPlan.model_validate_json(scenario._build_run_plan().model_dump_json())
 
     @staticmethod
-    def _with_binding(plan: ScenarioRunPlan, *, update: dict, recompute_id: bool = False) -> ScenarioRunPlan:
+    def _with_binding(plan: ScenarioRunPlan, *, update: dict) -> ScenarioRunPlan:
         planned = plan.atomic_groups[-1]
         binding = planned.objective_scorer_binding.model_copy(update=update)
         group_update: dict = {"objective_scorer_binding": binding}
-        if recompute_id:
-            group_update["id"] = compute_atomic_group_id(
-                atomic_attack_name=planned.atomic_attack_name,
-                technique_eval_hash=planned.technique_eval_hash,
-                objective_scorer_binding=binding,
-            )
+        group_update["id"] = compute_atomic_group_id(
+            atomic_attack_name=planned.atomic_attack_name,
+            technique_eval_hash=planned.technique_eval_hash,
+            objective_scorer_binding=binding,
+        )
         groups = [*plan.atomic_groups[:-1], planned.model_copy(update=group_update)]
         return plan.model_copy(update={"atomic_groups": groups})
 
@@ -322,19 +347,11 @@ class TestRapidResponseScorerPool:
             group.atomic_attack_name for group in stored.atomic_groups
         ]
 
-    async def test_resume_refuses_changed_scoring_criteria(self, objective_target, judges):
-        scenario, stored = await self._saved_plan(objective_target, judges)
-        assert stored.atomic_groups[-1].objective_scorer_binding.candidate_index == 1
-
-        drifted = self._with_binding(stored, update={"expectation_fingerprints": ["changed"]})
-        with pytest.raises(ValueError, match="flip_airt_violence' no longer matches.*scoring criteria changed"):
-            scenario._apply_persisted_run_plan(stored_plan=drifted)
-
     async def test_resume_refuses_a_group_saved_under_another_selection(self, objective_target, judges):
         scenario, stored = await self._saved_plan(objective_target, judges)
 
         # A different selection is a different unit of work, so the saved group no longer exists.
-        reselected = self._with_binding(stored, update={"candidate_index": 0}, recompute_id=True)
+        reselected = self._with_binding(stored, update={"candidate_index": 0})
         with pytest.raises(ValueError, match="1 planned atomic group\\(s\\) are no longer reconstructable"):
             scenario._apply_persisted_run_plan(stored_plan=reselected)
 
@@ -355,6 +372,23 @@ class TestRapidResponseScorerPool:
             await _initialize(
                 RapidResponse(objective_scorer=judges[0]), target=objective_target, dataset_config=_dataset_config()
             )
+
+    async def test_datasets_without_an_evaluation_need_an_unbound_candidate(self, objective_target, judges):
+        undeclared = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="airt_hate"), DatasetSource(name="airt_violence")]
+        )
+        with pytest.raises(ValueError, match="these datasets require none: 'airt_hate', 'airt_violence'"):
+            await _initialize(
+                RapidResponse(objective_scorer=_pool(*judges)), target=objective_target, dataset_config=undeclared
+            )
+
+        general = SubStringScorer(substring="general")
+        pool = CompatibleScorers(candidates=[*_pool(*judges).candidates, general])
+        scenario = await _initialize(
+            RapidResponse(objective_scorer=pool), target=objective_target, dataset_config=undeclared
+        )
+        assert scenario._atomic_attacks
+        assert all(attack._objective_scorer is general for attack in scenario._atomic_attacks)
 
     async def test_a_scenario_evaluation_no_candidate_carries_fails_at_configuration(self, objective_target, judges):
         with (

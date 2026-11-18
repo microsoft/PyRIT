@@ -13,7 +13,7 @@ import asyncio
 import os
 
 from pyrit.models import AttackResult, ComponentIdentifier, Message, ScenarioResult, Score
-from pyrit.output._derivation import select_attacks
+from pyrit.output._derivation import attack_objective_scorer_identifier, select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
@@ -297,7 +297,6 @@ async def _collect_conversation_entries_async(
     if not selected:
         return []
 
-    objective_scorer_identifier = result.objective_scorer_identifier
     source = MemoryConversationSource()
     printer = JsonConversationPrinter(source=source)
     entries: list[ConversationEntry] = []
@@ -305,6 +304,9 @@ async def _collect_conversation_entries_async(
         # Orchestration envelopes have no conversation of their own.
         messages = (
             await source.get_messages_async(conversation_id=attack.conversation_id) if attack.conversation_id else []
+        )
+        objective_scorer_identifier = attack_objective_scorer_identifier(
+            attack=attack, run_scorer_identifier=result.objective_scorer_identifier
         )
         structured = await printer.build_async(
             messages,

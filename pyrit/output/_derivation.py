@@ -165,6 +165,28 @@ def attack_technique_label(*, atomic_attack_name: str, attack: AttackResult) -> 
     return attack.technique_name or atomic_attack_name
 
 
+def attack_objective_scorer_identifier(
+    *, attack: AttackResult, run_scorer_identifier: ComponentIdentifier | None
+) -> ComponentIdentifier | None:
+    """
+    Return the objective scorer that judged an attack.
+
+    Each attack records the scorer it ran with. That can differ from the run's: a run with a
+    scorer pool has no single scorer, and selects one per attack population. Results without
+    that record use the run's scorer.
+
+    Args:
+        attack (AttackResult): The attack whose judge to find.
+        run_scorer_identifier (ComponentIdentifier | None): The run's objective scorer, if it has one.
+
+    Returns:
+        ComponentIdentifier | None: The attack's recorded scorer, otherwise the run's.
+    """
+    strategy = attack.get_attack_strategy_identifier()
+    recorded = strategy.get_child("objective_scorer") if strategy is not None else None
+    return recorded if recorded is not None else run_scorer_identifier
+
+
 def select_attacks(
     result: ScenarioResult, *, attack_result_ids: list[str] | None = None
 ) -> list[tuple[str, AttackResult]]:
@@ -218,8 +240,7 @@ def select_objective_scores(
 
     A score only counts for the piece it is stored on: a duplicated piece's scores are stored on
     its original, and a message-level score is stored on one piece of the message. The identity
-    hash is matched before the class name. A scorer pool judges each attack with one of its
-    candidates, so any candidate's score counts for a pool.
+    hash is matched before the class name.
 
     Args:
         pieces (list[MessagePiece]): The pieces to pick scores for.
@@ -229,17 +250,6 @@ def select_objective_scores(
     Returns:
         dict[str, Score]: The objective score of each piece that has one, keyed by piece id.
     """
-    from pyrit.score import CompatibleScorers
-
-    judges = [objective_scorer_identifier]
-    if (objective_scorer_identifier.class_name, objective_scorer_identifier.class_module) == (
-        CompatibleScorers.__name__,
-        CompatibleScorers.__module__,
-    ):
-        judges = objective_scorer_identifier.get_child_list("sub_scorers")
-    judge_hashes = {judge.hash for judge in judges}
-    judge_class_names = {judge.class_name for judge in judges}
-
     hash_matches: dict[str, Score] = {}
     class_name_matches: dict[str, Score] = {}
     for score in scores:
@@ -247,9 +257,9 @@ def select_objective_scores(
         if identifier is None or score.message_piece_id is None:
             continue
         owner_id = str(score.message_piece_id)
-        if identifier.hash in judge_hashes:
+        if identifier.hash == objective_scorer_identifier.hash:
             hash_matches.setdefault(owner_id, score)
-        elif identifier.class_name in judge_class_names:
+        elif identifier.class_name == objective_scorer_identifier.class_name:
             class_name_matches.setdefault(owner_id, score)
 
     selected: dict[str, Score] = {}

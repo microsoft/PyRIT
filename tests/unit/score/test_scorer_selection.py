@@ -6,16 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.models import (
-    ComponentIdentifier,
-    MatchesObjective,
     MessageScorable,
     ProgramExecutionScorable,
-    Scorable,
-    Score,
     ScoringExpectation,
     ToolCallRequirement,
     ToolsCalled,
-    scoring_expectation_fingerprint,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
@@ -32,7 +27,6 @@ from pyrit.score import (
     SelfAskTrueFalseScorer,
     SubStringScorer,
     TrueFalseQuestion,
-    TrueFalseScorer,
     UnsupportedConditionError,
 )
 
@@ -241,7 +235,7 @@ def test_repeated_inputs_are_checked_once_per_candidate():
             requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=expectations
         )
     assert prepare.call_count == 2
-    assert len(selected.expectation_fingerprints) == 2
+    assert selected.scorer is scorer
 
 
 def test_empty_population_selects_first_candidate_meeting_requirements():
@@ -250,7 +244,22 @@ def test_empty_population_selects_first_candidate_meeting_requirements():
         requirements=ScorerRequirements(evaluation=THERAPIST), scorable_type=MessageScorable, expectations=[]
     )
     assert selected.candidate is therapist
-    assert selected.expectation_fingerprints == ()
+
+
+def test_a_population_without_an_evaluation_uses_an_unbound_candidate():
+    unbound = _substring("u")
+    pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring("c"), evaluation=CRISIS), unbound])
+    selected = pool.select(requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[None])
+    assert selected.scorer is unbound
+    (skipped,) = selected.skipped
+    assert skipped.kind is ScorerMismatchKind.EVALUATION
+    assert "bound to 'psychosocial.imminent_crisis'; the population requires none" in skipped.detail
+
+
+def test_bound_candidates_do_not_judge_a_population_without_an_evaluation():
+    pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring(), evaluation=CRISIS)])
+    with pytest.raises(NoCompatibleScorerError, match="This population requires no evaluation"):
+        pool.select(requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[None])
 
 
 @pytest.mark.parametrize("error", [RuntimeError, ValueError])
@@ -305,34 +314,3 @@ def test_scorer_validation_raises_typed_errors_with_existing_messages():
         MessageToolCallScorer().prepare_expectation(expectation=ScoringExpectation())
     assert isinstance(excinfo.value, ValueError)
     assert excinfo.value.scorer_name == "MessageToolCallScorer"
-
-
-class _ObjectiveJudge(TrueFalseScorer):
-    """A scorer that judges against the objective, so it supplies that criterion by default."""
-
-    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
-    CONDITION_TYPE = MatchesObjective
-
-    def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier()
-
-    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-        return []
-
-
-def test_fingerprints_cover_the_criteria_the_selected_scorer_supplies():
-    judge = _ObjectiveJudge()
-    condition_free = ScoringExpectation(objective="say it")
-    effective = condition_free.model_copy(update={"conditions": (MatchesObjective(),)})
-
-    by_judge = CompatibleScorers(candidates=[judge]).select(
-        requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[condition_free]
-    )
-    by_substring = CompatibleScorers(candidates=[_substring()]).select(
-        requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[condition_free]
-    )
-
-    # The judge supplies the objective criterion; the substring scorer judges the input as given.
-    assert by_judge.expectation_fingerprints == (scoring_expectation_fingerprint(effective),)
-    assert by_substring.expectation_fingerprints == (scoring_expectation_fingerprint(condition_free),)
-    assert by_judge.expectation_fingerprints != by_substring.expectation_fingerprints

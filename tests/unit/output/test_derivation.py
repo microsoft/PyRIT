@@ -24,6 +24,7 @@ from pyrit.models import (
 )
 from pyrit.output._derivation import (
     GroupStatistics,
+    attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
     resolve_scorer_name,
@@ -338,30 +339,20 @@ def test_select_objective_scores_reads_duplicated_piece_score_from_original():
     assert _selected([duplicate], scores) == {str(duplicate.id): "original"}
 
 
-def _with_sub_scorers(*, class_name: str, class_module: str) -> ComponentIdentifier:
-    return ComponentIdentifier(
-        class_name=class_name, class_module=class_module, children={"sub_scorers": [_OBJECTIVE, _REFUSAL]}
-    )
+def _attack_with_recorded_scorer(scorer: ComponentIdentifier | None) -> SimpleNamespace:
+    children = {"objective_scorer": scorer} if scorer is not None else {}
+    strategy = ComponentIdentifier(class_name="PromptSendingAttack", class_module="tests", children=children)
+    return SimpleNamespace(get_attack_strategy_identifier=lambda: strategy)
 
 
-def test_select_objective_scores_counts_any_candidate_of_a_scorer_pool():
-    from pyrit.score import CompatibleScorers
-
-    pool = _with_sub_scorers(class_name=CompatibleScorers.__name__, class_module=CompatibleScorers.__module__)
-    first, second = (MessagePiece(role="assistant", original_value=text) for text in ("first", "second"))
-    scores = [
-        _stored_score(owner=first.id, label="first candidate", scorer=_OBJECTIVE),
-        _stored_score(owner=second.id, label="second candidate", scorer=_REFUSAL),
-    ]
-    selected = select_objective_scores(pieces=[first, second], scores=scores, objective_scorer_identifier=pool)
-    assert {piece_id: score.score_rationale for piece_id, score in selected.items()} == {
-        str(first.id): "first candidate",
-        str(second.id): "second candidate",
-    }
+def test_attack_objective_scorer_identifier_prefers_the_scorer_the_attack_recorded():
+    attack = _attack_with_recorded_scorer(_REFUSAL)
+    assert attack_objective_scorer_identifier(attack=attack, run_scorer_identifier=_OBJECTIVE) == _REFUSAL
+    assert attack_objective_scorer_identifier(attack=attack, run_scorer_identifier=None) == _REFUSAL
 
 
-def test_select_objective_scores_does_not_count_a_composites_own_scorers():
-    composite = _with_sub_scorers(class_name="TrueFalseCompositeScorer", class_module="tests")
-    piece = MessagePiece(role="assistant", original_value="reply")
-    scores = [_stored_score(owner=piece.id, label="leaf", scorer=_OBJECTIVE)]
-    assert select_objective_scores(pieces=[piece], scores=scores, objective_scorer_identifier=composite) == {}
+def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
+    unrecorded = _attack_with_recorded_scorer(None)
+    no_identity = SimpleNamespace(get_attack_strategy_identifier=lambda: None)
+    assert attack_objective_scorer_identifier(attack=unrecorded, run_scorer_identifier=_OBJECTIVE) == _OBJECTIVE
+    assert attack_objective_scorer_identifier(attack=no_identity, run_scorer_identifier=None) is None

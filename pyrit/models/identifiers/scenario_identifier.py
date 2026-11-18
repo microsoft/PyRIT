@@ -58,5 +58,6 @@ class ScenarioIdentifier(ComponentIdentifier):
     #: the target registry.
     objective_target: Annotated[TargetIdentifier | None, Evaluate.Include(), Param.Include()] = Field(default=None)
     #: Primary scorer the scenario evaluates with. Run-resolved reference resolved
-    #: by name from the scorer registry.
+    #: by name from the scorer registry. Unset when the run selects from a scorer pool,
+    #: whose identity is the ``objective_scorer_pool`` child instead.
     objective_scorer: Annotated[ScorerIdentifier | None, Evaluate.Include(), Param.Include()] = Field(default=None)

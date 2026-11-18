@@ -66,10 +66,10 @@ class ScenarioRunPlanSeedPrompt(BaseModel):
 
 class ScenarioRunPlanScorerBinding(BaseModel):
     """
-    The objective scorer a pool selected for one atomic group, and the inputs it accepted.
+    The objective scorer a pool selected for one atomic group.
 
-    Recorded only for runs that use a scorer pool. Resume checks the current selection and
-    prepared inputs against it and refuses to run on drift, rather than selecting again.
+    Recorded only for runs that use a scorer pool. It is part of the group's id, so a
+    resumed run that would select a different scorer cannot match its saved groups.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -80,8 +80,6 @@ class ScenarioRunPlanScorerBinding(BaseModel):
     evaluation: str | None = None
     #: Content hash of the selected scorer's identifier.
     scorer_hash: str
-    #: Sorted unique fingerprints of the prepared expectations the scorer accepted.
-    expectation_fingerprints: list[str] = Field(default_factory=list)
 
 
 class ScenarioRunPlanAtomicGroup(BaseModel):

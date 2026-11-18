@@ -243,19 +243,10 @@ await output_scenario_async(custom_result)
 # await scenario.initialize_async()
 # ```
 #
-# Selection runs once per technique and dataset while the scenario initializes, and it never calls a
-# judge model. A candidate qualifies when it accepts the evidence the attack produces, carries the
-# required evaluation key, meets the technique's own scorer needs, and accepts the conditions of
-# every objective in the dataset. The first qualifying candidate in pool order is used, so order
-# only matters between candidates that both qualify. A dataset with no requirements uses the first
-# candidate that can judge its objectives.
-#
-# When no candidate qualifies, `incompatible_technique_policy` applies to that technique and dataset:
-# `skip` leaves it out with a warning, and `raise` stops with each candidate's reason. A required key
-# that no candidate is bound to, such as a typo, stops initialization and lists the keys the pool has.
-# With a baseline, each dataset gets its own baseline judged by the same scorer as its attacks. The
-# run plan records every selection, and a resumed run stops if the pool or the objectives' scoring
-# criteria have changed since it started.
+# Each dataset is judged by the candidate bound to the evaluation it names, and a dataset without
+# `scorer_requirements` uses a candidate without one. If no candidate can judge a dataset's
+# objectives, initialization fails and gives each candidate's reason. A technique that needs a
+# particular kind of scorer, such as TAP, follows `incompatible_technique_policy`.
 
 # %% [markdown]
 # (reporting-every-conversation)=
