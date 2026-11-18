@@ -278,7 +278,7 @@ class TestAttackSeedGroupInit:
                 SeedObjective(value="Test objective"),
                 SeedSimulatedConversation(
                     num_turns=3,
-                    adversarial_chat_system_prompt_path=adv_path,
+                    adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                 ),
             ]
         )
@@ -298,7 +298,7 @@ class TestAttackSeedGroupInit:
                 {
                     "seed_type": "simulated_conversation",
                     "num_turns": 5,
-                    "adversarial_chat_system_prompt_path": str(adv_path),
+                    "adversarial_chat_system_prompt": SeedPrompt.from_yaml_file(adv_path),
                 },
             ]
         )
@@ -319,7 +319,7 @@ class TestAttackSeedGroupInit:
                     SeedObjective(value="Objective"),
                     SeedSimulatedConversation(
                         num_turns=3,
-                        adversarial_chat_system_prompt_path=adv_path,
+                        adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                         sequence=0,
                     ),
                     SeedPrompt(value="Prompt 1", data_type="text", sequence=2, role="user"),
@@ -336,7 +336,7 @@ class TestAttackSeedGroupInit:
                 {
                     "seed_type": "simulated_conversation",
                     "num_turns": 2,
-                    "adversarial_chat_system_prompt_path": str(adv_path),
+                    "adversarial_chat_system_prompt": SeedPrompt.from_yaml_file(adv_path),
                 },
                 {"value": "Objective", "seed_type": "objective"},
             ]
@@ -403,7 +403,7 @@ class TestAttackSeedGroupSimulatedConversation:
                 SeedObjective(value="Objective"),
                 SeedSimulatedConversation(
                     num_turns=3,
-                    adversarial_chat_system_prompt_path=adv_path,
+                    adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                 ),
             ]
         )
@@ -422,7 +422,7 @@ class TestAttackSeedGroupSimulatedConversation:
                 SeedObjective(value="Objective"),
                 SeedSimulatedConversation(
                     num_turns=2,
-                    adversarial_chat_system_prompt_path=adv_path,
+                    adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                     sequence=0,
                 ),
                 SeedPrompt(value="Static follow-up", data_type="text", sequence=10, role="user"),
@@ -446,7 +446,7 @@ class TestAttackSeedGroupSimulatedConversation:
                 SeedPrompt(value="Static intro", data_type="text", sequence=0, role="user"),
                 SeedSimulatedConversation(
                     num_turns=2,
-                    adversarial_chat_system_prompt_path=adv_path,
+                    adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                     sequence=5,
                 ),
             ]
@@ -547,6 +547,68 @@ class TestAttackSeedGroupMessageExtraction:
         assert prepended is not None
         assert len(prepended) == 2
 
+    def test_next_message_include_final_assistant_returns_simulated_prefix(self):
+        """The explicit opt-in selects a trailing assistant sequence as the outgoing message."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="User msg", data_type="text", sequence=0, role="user"),
+                SeedPrompt(value="Assistant prefix", data_type="text", sequence=1, role="assistant"),
+            ]
+        )
+
+        next_msg = group.get_next_message(include_final_assistant=True)
+        assert next_msg is not None
+        assert next_msg.get_value() == "Assistant prefix"
+        assert next_msg.api_role == "assistant"
+        assert next_msg.is_simulated
+
+    def test_prepended_conversation_include_final_assistant_reserves_last_sequence(self):
+        """With the opt-in, the trailing assistant sequence is excluded from history."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="User msg", data_type="text", sequence=0, role="user"),
+                SeedPrompt(value="Assistant prefix", data_type="text", sequence=1, role="assistant"),
+            ]
+        )
+
+        prepended = group.get_prepended_conversation(include_final_assistant=True)
+        assert prepended is not None
+        assert len(prepended) == 1
+        assert prepended[0].get_value() == "User msg"
+
+    def test_include_final_assistant_with_single_sequence_has_no_history(self):
+        """A lone assistant sequence is the outgoing message with no prepended history."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="Assistant prefix", data_type="text", sequence=0, role="assistant"),
+            ]
+        )
+
+        assert group.get_prepended_conversation(include_final_assistant=True) is None
+        next_msg = group.get_next_message(include_final_assistant=True)
+        assert next_msg is not None
+        assert next_msg.get_value() == "Assistant prefix"
+
+    def test_include_final_assistant_keeps_user_ending_behavior(self):
+        """The opt-in is inert when the final sequence is a user turn."""
+        group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Objective"),
+                SeedPrompt(value="Assistant 1", data_type="text", sequence=0, role="assistant"),
+                SeedPrompt(value="User 2", data_type="text", sequence=1, role="user"),
+            ]
+        )
+
+        next_msg = group.get_next_message(include_final_assistant=True)
+        assert next_msg is not None
+        assert next_msg.get_value() == "User 2"
+        prepended = group.get_prepended_conversation(include_final_assistant=True)
+        assert prepended is not None
+        assert len(prepended) == 1
+
     def test_user_messages_returns_all_prompts_as_messages(self):
         """Test user_messages returns all prompts as Messages."""
         group = AttackSeedGroup(
@@ -587,7 +649,7 @@ class TestAttackSeedGroupRepr:
                 SeedObjective(value="Objective"),
                 SeedSimulatedConversation(
                     num_turns=3,
-                    adversarial_chat_system_prompt_path=adv_path,
+                    adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                 ),
             ]
         )

@@ -39,14 +39,16 @@ class ScorerIdentifier(ComponentIdentifier):
     The optional ``sub_scorers_order_independent`` param declares that the
     aggregation verdict does not depend on child order.
 
-    A source-backed scorer's ``source`` constructor argument is a reference
-    resolved by name from the source registry. The source's identity already sits
-    in ``children["source"]``, so it is declared in ``constructor_references``
-    rather than promoted to a typed field.
+    A source-backed scorer's ``source`` and ``trace_source`` constructor arguments
+    are references resolved by name from the source registry. Their identities
+    already sit in ``children``, so they are declared in ``constructor_references``
+    rather than promoted to typed fields.
     """
 
     component_type: ClassVar[ComponentType | None] = ComponentType.SCORER
-    constructor_references: ClassVar[Mapping[str, ComponentType]] = MappingProxyType({"source": ComponentType.SOURCE})
+    constructor_references: ClassVar[Mapping[str, ComponentType]] = MappingProxyType(
+        {"source": ComponentType.SOURCE, "trace_source": ComponentType.SOURCE}
+    )
 
     #: The scorer category (e.g., ``"true_false"`` or ``"float_scale"``).
     scorer_type: Annotated[str | None, Evaluate.Include()] = None

@@ -985,7 +985,7 @@ def test_sampling_resolution_does_not_modify_shared_model_profiles(patch_central
         api_key="test-only-key",
     )
     assert target.capabilities.supports_temperature
-    assert target.capabilities == profile.model_copy(update={"supports_temperature": True})
+    assert target.capabilities == profile.model_copy(update={"supports_temperature": True, "supports_prefill": True})
     assert get_known_capabilities(model) is profile
     assert not profile.supports_temperature
 

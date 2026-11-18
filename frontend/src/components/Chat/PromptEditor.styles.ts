@@ -29,6 +29,17 @@ export const usePromptEditorStyles = makeStyles({
   composerTrigger: {
     position: 'relative',
   },
+  seedInspiration: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
   disabledComposerOverlay: {
     position: 'absolute',
     inset: 0,

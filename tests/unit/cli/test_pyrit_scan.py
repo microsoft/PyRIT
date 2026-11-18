@@ -8,6 +8,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 import asyncio
 import logging
 from argparse import Namespace
+from contextlib import nullcontext
 from datetime import UTC
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -907,7 +908,12 @@ class TestBuildRunRequest:
     def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
         flags = [] if value is None else ["--max-dataset-size", value]
         parsed = pyrit_scan.parse_args(["run", "test", "--target", "target", *flags])
-        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        with (
+            pytest.warns(DeprecationWarning, match=r"--max-dataset-size.*removed in 1\.4\.0")
+            if value is not None
+            else nullcontext()
+        ):
+            request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
         shell_args = parse_run_arguments(
             args_string="test --target target " + ("--max-dataset-size ''" if value == "" else " ".join(flags))
         )
