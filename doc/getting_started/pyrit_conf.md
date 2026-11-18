@@ -154,6 +154,28 @@ initializers:
 
 Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
+#### Optional Scenario Suites
+
+The `scenario_suite` initializer registers read-only suites with fixed presets. The
+default `horizontal_techniques` suite applies 50 jailbreak templates, translation into
+10 languages, and 10 encodings and obfuscations to the same `airt_harms` text
+objectives, with one baseline. Launch it under **Scenario suites** in the GUI Scanner.
+
+```yaml
+initializers:
+  - name: target
+  - name: scorer
+  - name: technique
+  - name: scenario_suite
+```
+
+Presets list their templates, languages, and techniques explicitly, so results stay
+comparable across runs. This suite is text-only and uses the existing scenario scoring behavior.
+
+See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for the suite contents
+and running a suite.
+
+(custom-initializers-source)=
 ### `custom_initializers_source`
 
 Stores custom initializer Python files in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:
@@ -193,6 +215,8 @@ scenario_suites_source: https://account.blob.core.windows.net/pyrit-storage/scen
 Suites store ordered references to scenario presets and resolve each preset's current status when read. The `ScenarioSuiteRegistry` merges editable suites from this source with read-only suites registered by code. A stored document takes precedence when both layers use the same name, while creating or updating a document under a registered name is rejected so one name has one owner. Registered suites report no document version.
 
 A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
+
+`ConfigurationLoader` applies preset and suite storage sources before initializers register their definitions, including in notebooks and during live reload. Reload clears code registrations but preserves stored documents. Omitting a source setting restores its default location.
 
 ### `registry_recipes_source`
 
