@@ -59,6 +59,9 @@ class AzureBlobStorageTarget(PromptTarget):
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"container_url": True})
     environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"container_url"})
 
+    # The returned blob URL is a delivery receipt, not a reply, so it is never scored as one.
+    _SUPPORTS_RESPONSES: ClassVar[bool] = False
+
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             input_modalities=frozenset(

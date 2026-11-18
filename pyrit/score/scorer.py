@@ -432,6 +432,23 @@ class Scorer(Identifiable, abc.ABC):
             .intersection(*(child.get_supported_scorable_types() for child in children[1:]))
         )
 
+    def judges_side_effects(self) -> bool:
+        """
+        Check whether every leaf judges what the target did rather than what it said.
+
+        A leaf judges side effects when it accepts evidence that records them (e.g. a written
+        file or a tool trace); handed a message, it uses it only as an anchor for that evidence.
+        Such scorers can judge a target that never replies. A composite qualifies only when all
+        of its leaves do, though they may read different kinds of side effects.
+
+        Returns:
+            bool: True when every leaf judges side-effect evidence.
+        """
+        children = self._get_child_scorers()
+        if self.SUPPORTED_SCORABLE_TYPES or not children:
+            return any(scorable_type.RECORDS_SIDE_EFFECTS for scorable_type in self.get_supported_scorable_types())
+        return all(child.judges_side_effects() for child in children)
+
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the wrapped scorers, or an empty tuple for a leaf."""
         return ()

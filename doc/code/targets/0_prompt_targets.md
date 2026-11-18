@@ -89,7 +89,7 @@ requested temperature, resolved value, and source. Unknown provider defaults rem
 
 ## Chat-style targets vs general targets
 
-A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
+A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Most attacks need the target's responses, so they require `supports_responses`. `PromptSendingAttack` and the attacks built on it also work with write-only targets such as `TextTarget` and `AzureBlobStorageTarget`: the request is never scored as a response, and only scorers that judge side effects (such as `FileWriteScorer`) decide the outcome.
 
 With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@liu2024flipattack]). These algorithms require a target whose [`TargetCapabilities`](#target-capabilities) declare both `supports_multi_turn=True` and `supports_editable_history=True` — i.e. you can modify a conversation history. Consumers express this requirement via `CHAT_TARGET_REQUIREMENTS` and validate it against `target.configuration` at construction time. See [Target Capabilities](#target-capabilities) below for the full list of capabilities and how they compose into a `TargetConfiguration`.
 
@@ -153,7 +153,10 @@ This does not restore availability of [OpenAI's retired Sora service](https://he
 The Sora generation tutorial and live integration tests have been removed.
 The adapter, public exports, existing environment-variable support, and unit tests
 remain available; no replacement video service is configured by default.
-SDK 3's deprecation warnings remain visible; type-check exceptions are limited to
+SDK 3's deprecation warnings remain visible at runtime, including for compatible
+providers; the SDK warning does not check the configured endpoint. Mocked
+compatibility tests capture and assert the expected retirement warning while
+verifying Azure and custom-provider routing. Type-check exceptions are limited to
 the specific SDK calls in that adapter. Video scoring does not depend on Sora:
 see [scoring existing videos](../scoring/1_true_false_scorers.ipynb#scoring-existing-videos)
 and [float-scale media scorers](../scoring/2_float_scale_scorers.ipynb#multimodal-scorers).
@@ -257,6 +260,7 @@ defaults to `agentCard/v1.0`; set it to
 `agentCard/v0.3` for a preview endpoint. The test requires a successful text
 response, not just a non-empty error. It does not create Azure resources.
 
+(target-capabilities)=
 ## Target Capabilities
 
 Every `PromptTarget` exposes a `TargetConfiguration` (via `target.configuration`) that declares what the target natively supports. This lets attacks, converters, and scorers reason about whether a given target is suitable for a given workflow — and, where possible, adapt automatically when a capability is missing.
@@ -280,6 +284,7 @@ A `TargetConfiguration` composes three concerns:
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
 | `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides.                                                        |
+| `supports_responses`             | The target replies to requests. Defaults to `True`; write-only targets such as `TextTarget` and `AzureBlobStorageTarget` declare `False`. |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 

@@ -26,6 +26,7 @@ from pyrit.memory import data_serializer_factory
 from pyrit.models import (
     Message,
     MessagePiece,
+    ReasoningContentMetadata,
     TokenUsage,
     construct_response_from_request,
     read_usage_int,
@@ -39,6 +40,11 @@ logger = logging.getLogger(__name__)
 # included because it is handled separately (see ``is_content_filter_response``) before
 # validation; a target should check for content filtering first.
 DEFAULT_VALID_FINISH_REASONS: frozenset[str] = frozenset({"stop", "length", "content_filter", "tool_calls"})
+
+# Message fields that carry reasoning text in Chat Completions responses. Neither is part of the
+# OpenAI schema, so providers settled on two names: ``reasoning_content`` (DeepSeek, LiteLLM, xAI,
+# Qwen, older vLLM) and ``reasoning`` (OpenRouter, Ollama, newer vLLM).
+_REASONING_CONTENT_FIELDS: tuple[str, ...] = ("reasoning_content", "reasoning")
 
 
 def get_finish_reason(*, response: ChatCompletion) -> str | None:
@@ -305,9 +311,10 @@ def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any
 
     Captures token usage (see ``capture_token_usage``) together with the first choice's
     ``finish_reason``, which records why generation stopped — ``stop``, ``length`` (token limit),
-    ``content_filter`` or ``tool_calls``. Both come from the same response object, so capturing them
-    together keeps every call site consistent: success, truncation, and content filter all record
-    the same set of keys. Applies to every ``usage``-plus-``choices`` response shape: Chat
+    ``content_filter`` or ``tool_calls`` — and any reasoning text the model returned (see
+    ``capture_reasoning_content``). All of them come from the same response object, so capturing
+    them together keeps every call site consistent: success, truncation, and content filter all
+    record the same set of keys. Applies to every ``usage``-plus-``choices`` response shape: Chat
     Completions, Completions, and the LiteLLM responses modeled on them.
 
     Args:
@@ -326,6 +333,56 @@ def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any
     choices = getattr(response, "choices", None)
     finish_reason = get_finish_reason(response=response) if choices else None
     set_response_metadata(pieces=pieces, finish_reason=finish_reason)
+    capture_reasoning_content(pieces=pieces, response=response)
+
+
+def extract_reasoning_content(response: Any) -> str | None:
+    """
+    Extract the reasoning text a model returned next to its answer.
+
+    Reasoning models served over Chat Completions return their chain of thought in a message
+    field outside ``content``. The field is not part of the OpenAI schema, so its name depends
+    on the provider (see ``_REASONING_CONTENT_FIELDS``); the first non-empty string wins.
+
+    Args:
+        response (Any): The Chat Completions response object.
+
+    Returns:
+        str | None: The reasoning text, or None when the response carries none.
+    """
+    try:
+        message = response.choices[0].message
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+    for field in _REASONING_CONTENT_FIELDS:
+        value = getattr(message, field, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def capture_reasoning_content(*, pieces: list[MessagePiece], response: Any) -> None:
+    """
+    Copy the model's reasoning text into the first piece's metadata.
+
+    Read the stored text with ``ReasoningContentMetadata.from_metadata``. Keeping it in metadata
+    rather than a piece leaves outbound history unchanged. Response pieces inherit the request's
+    metadata, so reasoning is cleared from every piece first.
+
+    Args:
+        pieces (list[MessagePiece]): The constructed response pieces.
+        response (Any): The Chat Completions response object.
+    """
+    if not pieces:
+        return
+
+    for piece in pieces:
+        ReasoningContentMetadata.clear_metadata(metadata=piece.prompt_metadata)
+
+    reasoning = extract_reasoning_content(response)
+    if reasoning:
+        pieces[0].prompt_metadata.update(ReasoningContentMetadata(content=reasoning).to_metadata())
 
 
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:

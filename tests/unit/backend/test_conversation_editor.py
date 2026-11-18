@@ -11,12 +11,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
     AddMessageRequest,
+    AddMessageResponse,
     CreateAttackRequest,
     CreateConversationRequest,
     PaginationInfo,
@@ -30,6 +31,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
 from pyrit.backend.routes.attacks import get_saved_conversation_async as get_saved_conversation_route_async
+from pyrit.backend.routes.attacks import save_conversation_async as save_conversation_route_async
 from pyrit.backend.services import AttackService, TargetService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError
 from pyrit.memory import PromptMemoryEntry, SQLiteMemory
@@ -123,6 +125,7 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.filterwarnings("error:Pydantic serializer warnings:UserWarning")
 class TestConversationEditor:
     @pytest.mark.parametrize("same_attack", [False, True])
     @pytest.mark.parametrize(
@@ -262,6 +265,39 @@ class TestConversationEditor:
             assert piece.prompt_metadata["prepended_history"] is True
         assert RequestGenerationInfo.METADATA_KEY in metadata
 
+    @pytest.mark.parametrize("destination", ["same_attack", "new_attack"])
+    async def test_save_uuid_request_api_and_export_round_trip_async(
+        self, *, sqlite_instance: SQLiteMemory, destination: str
+    ) -> None:
+        service = AttackService()
+        source = await service.save_conversation_async(request=draft())
+        payload = draft(value="Edited copy").model_dump(mode="json", warnings="error")
+        payload.update(
+            destination=destination,
+            attack_result_id=source.attack.attack_result_id if destination == "same_attack" else None,
+            source_attack_result_id=source.attack.attack_result_id,
+            source_conversation_id=source.messages.conversation_id,
+        )
+        request = SaveConversationRequest.model_validate_json(json.dumps(payload))
+        assert isinstance(request.source_attack_result_id, uuid.UUID)
+        assert isinstance(request.source_conversation_id, uuid.UUID)
+        with patch("pyrit.backend.routes.attacks.get_attack_service", return_value=service):
+            saved = await save_conversation_route_async(body=request, request=Request({"type": "http"}))
+
+        expected_id = (
+            source.attack.attack_result_id
+            if destination == "same_attack"
+            else str(uuid.uuid5(request.save_id, "attack"))
+        )
+        response = AddMessageResponse.model_validate_json(saved.model_dump_json(warnings="error", round_trip=True))
+        assert response.attack.attack_result_id == expected_id
+        assert response.messages.conversation_id == str(request.save_id)
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[expected_id])
+        exported = AttackResult.model_validate_json(stored.model_dump_json(warnings="error"))
+        assert exported.attack_result_id == expected_id
+        assert isinstance(exported.attack_result_id, str)
+        assert await service.save_conversation_async(request=request) == saved
+
     async def test_edit_exit_does_not_replace_history_already_read_by_an_inflight_send_async(
         self, *, editor_target: MockPromptTarget, sqlite_instance: SQLiteMemory
     ) -> None:
@@ -347,7 +383,7 @@ class TestConversationEditor:
             assert original.get_identifier().hash == alias.get_identifier().hash
             request = draft(value="Copied context")
             request.destination = "same_attack"
-            request.attack_result_id = source.attack.attack_result_id
+            request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
             request.target_registry_name = "alias"
             with pytest.raises(ValueError, match="editable history"):
                 await service.save_conversation_async(request=request)
@@ -370,13 +406,13 @@ class TestConversationEditor:
         editor_target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
         copy = draft(value="Copied history")
         copy.target_registry_name = "selected"
-        copy.source_attack_result_id = source.attack.attack_result_id
+        copy.source_attack_result_id = uuid.UUID(source.attack.attack_result_id)
         copy.source_conversation_id = uuid.UUID(source.messages.conversation_id)
         copy.messages[0].role = role
         with pytest.raises(ValueError, match="editable history"):
             await service.save_conversation_async(request=copy)
         copy.destination = "same_attack"
-        copy.attack_result_id = source.attack.attack_result_id
+        copy.attack_result_id = uuid.UUID(source.attack.attack_result_id)
         with pytest.raises(ValueError, match="editable history"):
             await service.save_conversation_async(request=copy)
         with pytest.raises(ValueError, match="editable history"):
@@ -460,8 +496,8 @@ class TestConversationEditor:
         source = await service.save_conversation_async(request=draft())
         request = draft(value="Explicit saved copy")
         request.destination = "same_attack"
-        request.attack_result_id = source.attack.attack_result_id
-        request.source_attack_result_id = source.attack.attack_result_id
+        request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
+        request.source_attack_result_id = uuid.UUID(source.attack.attack_result_id)
         request.source_conversation_id = uuid.UUID(source.messages.conversation_id)
         saved = await service.save_conversation_async(request=request)
         assert saved.messages.conversation_id != source.messages.conversation_id
@@ -488,8 +524,8 @@ class TestConversationEditor:
         pieces = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
         request = draft(value="Edited history")
         request.destination = "same_attack"
-        request.attack_result_id = source.attack.attack_result_id
-        request.source_attack_result_id = source.attack.attack_result_id
+        request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
+        request.source_attack_result_id = uuid.UUID(source.attack.attack_result_id)
         request.source_conversation_id = uuid.UUID(conversation_id)
         request.reuse_unsent_conversation = True
         request.expected_source_piece_ids = [piece.id for piece in pieces]
@@ -502,8 +538,8 @@ class TestConversationEditor:
         source = await service.save_conversation_async(request=draft())
         request = draft(value="Stale edit")
         request.destination = "same_attack"
-        request.attack_result_id = source.attack.attack_result_id
-        request.source_attack_result_id = source.attack.attack_result_id
+        request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
+        request.source_attack_result_id = uuid.UUID(source.attack.attack_result_id)
         request.source_conversation_id = uuid.UUID(source.messages.conversation_id)
         request.reuse_unsent_conversation = True
         request.expected_source_piece_ids = []
@@ -521,8 +557,8 @@ class TestConversationEditor:
         pieces = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
         request = draft(value="Concurrent edit")
         request.destination = "same_attack"
-        request.attack_result_id = source.attack.attack_result_id
-        request.source_attack_result_id = source.attack.attack_result_id
+        request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
+        request.source_attack_result_id = uuid.UUID(source.attack.attack_result_id)
         request.source_conversation_id = uuid.UUID(conversation_id)
         request.reuse_unsent_conversation = True
         request.expected_source_piece_ids = [piece.id for piece in pieces]
@@ -580,7 +616,7 @@ class TestConversationEditor:
         assert loaded.messages.messages[0].message_pieces[0].original_value == "Upgraded history"
         assert await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id) == metadata
         copied_request = draft(value="Edited upgraded history")
-        copied_request.source_attack_result_id = attack.attack_result_id
+        copied_request.source_attack_result_id = uuid.UUID(attack.attack_result_id)
         copied_request.source_conversation_id = uuid.UUID(conversation_id)
         copied_request.messages[0].pieces[0].source_piece_id = loaded.messages.messages[0].message_pieces[0].id
         copied = await service.save_conversation_async(request=copied_request)
@@ -622,7 +658,7 @@ class TestConversationEditor:
         if related:
             branch = draft(value="Related history")
             branch.destination = "same_attack"
-            branch.attack_result_id = source.attack.attack_result_id
+            branch.attack_result_id = uuid.UUID(source.attack.attack_result_id)
             source = await service.save_conversation_async(request=branch)
 
         loaded = await service.get_saved_conversation_async(conversation_id=source.messages.conversation_id)
@@ -630,7 +666,7 @@ class TestConversationEditor:
         assert loaded.attack.attack_result_id == source.attack.attack_result_id
         assert loaded.messages == source.messages
         request = draft(value="Edited copy")
-        request.source_attack_result_id = loaded.attack.attack_result_id
+        request.source_attack_result_id = uuid.UUID(loaded.attack.attack_result_id)
         request.source_conversation_id = uuid.UUID(loaded.messages.conversation_id)
         request.messages[0].pieces[0].source_piece_id = loaded.messages.messages[0].message_pieces[0].id
         copied = await service.save_conversation_async(request=request)
@@ -688,8 +724,8 @@ class TestConversationEditor:
         source = await service.save_conversation_async(request=initial)
         request = draft()
         request.destination = "same_attack"
-        request.attack_result_id = source.attack.attack_result_id
-        request.source_attack_result_id = source.attack.attack_result_id
+        request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
+        request.source_attack_result_id = uuid.UUID(source.attack.attack_result_id)
         request.source_conversation_id = uuid.UUID(source.messages.conversation_id)
         request.target_registry_name = "selected" if bound else None
         request.messages = initial.messages
@@ -729,7 +765,7 @@ class TestConversationEditor:
         request.target_registry_name = "responses"
         if source:
             request.destination = "same_attack"
-            request.attack_result_id = source.attack.attack_result_id
+            request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
             request.target_registry_name = None
         request.messages[0].pieces = [
             ConversationPieceRequest(
@@ -774,7 +810,7 @@ class TestConversationEditor:
         source = await service.save_conversation_async(request=draft())
         request = draft()
         request.destination = "same_attack"
-        request.attack_result_id = source.attack.attack_result_id
+        request.attack_result_id = uuid.UUID(source.attack.attack_result_id)
         request.messages[0].pieces = [
             ConversationPieceRequest(
                 data_type="text",
@@ -1207,8 +1243,8 @@ class TestConversationEditor:
             capabilities=TargetCapabilities(supports_editable_history=True, supports_multi_turn=True)
         )
         request.save_id = uuid.uuid4()
-        request.source_attack_result_id = first.attack.attack_result_id
-        request.source_conversation_id = first.messages.conversation_id
+        request.source_attack_result_id = uuid.UUID(first.attack.attack_result_id)
+        request.source_conversation_id = uuid.UUID(first.messages.conversation_id)
         request.messages[0].pieces = request.messages[0].pieces[:1]
         request.messages[0].pieces[0].source_piece_id = first.messages.messages[0].message_pieces[0].id
         request.messages[1] = ConversationMessageRequest(
@@ -1229,7 +1265,7 @@ class TestConversationEditor:
         first = await service.save_conversation_async(request=draft())
         related = draft()
         related.destination = "same_attack"
-        related.attack_result_id = first.attack.attack_result_id
+        related.attack_result_id = uuid.UUID(first.attack.attack_result_id)
         related.expected_objective = first.attack.objective
         if tool_history:
             related.messages = [

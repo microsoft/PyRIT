@@ -25,7 +25,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.scenarios.garak import Divergence, DivergenceDatasetConfiguration, DivergenceTechnique
 from pyrit.score import DivergenceScorer, SubStringScorer, TrueFalseInverterScorer
@@ -79,7 +79,7 @@ class TestDivergence:
         scenario = Divergence()
         assert isinstance(scenario._objective_scorer, DivergenceScorer)
         assert scenario.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden
-        assert scenario._default_dataset_config.max_dataset_size == 10
+        assert scenario._default_dataset_config.max_total == 10
         assert scenario.required_datasets() == ["garak_divergence"]
         assert scenario._default_technique == DivergenceTechnique.DEFAULT
 
@@ -134,7 +134,7 @@ class TestDivergence:
             scenario=scenario,
             corpus=corpus,
             config=DivergenceDatasetConfiguration(
-                dataset_names=["garak_divergence"], max_per_dataset="all", max_total="all"
+                sources=[DatasetSource(name="garak_divergence")], max_per_dataset="all", max_total="all"
             ),
             techniques=techniques,
         )
@@ -283,7 +283,7 @@ class TestDivergence:
             corpus=corpus,
             target=target,
             config=DivergenceDatasetConfiguration(
-                dataset_names=["garak_divergence"], max_per_dataset="all", max_total="all"
+                sources=[DatasetSource(name="garak_divergence")], max_per_dataset="all", max_total="all"
             ),
         )
         word_by_prompt = {seed.value: seed.metadata["repeat_word"] for seed in corpus}
