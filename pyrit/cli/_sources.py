@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
 
 
-def _only_known(model_cls: type[BaseModel], data: dict[str, Any]) -> dict[str, Any]:
+def _only_known(model_cls: type[BaseModel], *, data: dict[str, Any]) -> dict[str, Any]:
     """
     Keep only the fields the domain model declares (drops view-only extras).
 
@@ -114,7 +114,7 @@ class RestApiConversationSource:
         Returns:
             MessagePiece: The hydrated piece.
         """
-        data = _only_known(MessagePiece, piece_json)
+        data = _only_known(MessagePiece, data=piece_json)
         # Defensive defaults before validation
         if not data.get("role"):
             data["role"] = message_role or "user"
@@ -133,6 +133,6 @@ class RestApiConversationSource:
             Score | None: The hydrated score, or None if it can't be validated.
         """
         try:
-            return Score.model_validate(_only_known(Score, score_json))
+            return Score.model_validate(_only_known(Score, data=score_json))
         except Exception:
             return None
