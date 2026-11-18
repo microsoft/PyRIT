@@ -194,16 +194,16 @@ class PuzzledConverter(Converter):
 
         rng = self._get_random_generator(stream="puzzle")
         if puzzle_type is PuzzleType.WORD_SEARCH:
-            puzzle_body = build_word_search(words, rng)
+            puzzle_body = build_word_search(words, rng=rng)
         elif puzzle_type is PuzzleType.ANAGRAM:
-            puzzle_body = build_anagram(words, rng)
+            puzzle_body = build_anagram(words, rng=rng)
         elif puzzle_type is PuzzleType.CROSSWORD:
             puzzle_body = build_crossword(words)
         else:
             assert_never(puzzle_type)
 
         semantics = await self._semantic_clues_async(words)
-        clues = "\n".join(self._clue_line(masked, semantics) for masked in mask_result.masked_words)
+        clues = "\n".join(self._clue_line(masked, semantics=semantics) for masked in mask_result.masked_words)
 
         formatted_prompt = self._prompt_template.render_template_value(
             masked_prompt=mask_result.masked_prompt,
@@ -216,7 +216,7 @@ class PuzzledConverter(Converter):
         return ConverterResult(output_text=formatted_prompt, output_type="text")
 
     @staticmethod
-    def _clue_line(masked: MaskedWord, semantics: dict[str, str]) -> str:
+    def _clue_line(masked: MaskedWord, *, semantics: dict[str, str]) -> str:
         """
         Format one clue line, appending the semantic description when one is available.
 
@@ -274,14 +274,14 @@ class PuzzledConverter(Converter):
                 raise EmptyResponseException(
                     message="The PuzzledConverter clue-generation target returned no response."
                 )
-            parsed = self._parse_semantic_clues(response[0].get_value(), missing)
+            parsed = self._parse_semantic_clues(response[0].get_value(), words=missing)
             for word in missing:
                 self._clue_cache[word.lower()] = parsed.get(word.lower(), "")
 
         return {word.lower(): clue for word in words if (clue := self._clue_cache.get(word.lower()))}
 
     @staticmethod
-    def _parse_semantic_clues(raw: str, words: list[str]) -> dict[str, str]:
+    def _parse_semantic_clues(raw: str, *, words: list[str]) -> dict[str, str]:
         """
         Extract a word-to-clue mapping from the model's response.
 

@@ -106,6 +106,26 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
         """Return ``TargetMetadata``; the base populates it from the common fields."""
         return TargetMetadata
 
+    def get_credential_parameter_names(self, name: str) -> frozenset[str]:
+        """
+        Return the names of a target class's credential parameters.
+
+        A target's credentials are the parameters its class marks ``sensitive``, such as ``api_key``,
+        ``sas_token``, or ``github_token``.
+
+        Args:
+            name (str): The catalog name of the target class.
+
+        Returns:
+            frozenset[str]: The credential parameter names, or none for an unknown class.
+        """
+        metadata = self.get_registered_class_metadata(name)
+        return (
+            frozenset(parameter.name for parameter in metadata.parameters if parameter.sensitive)
+            if metadata
+            else frozenset()
+        )
+
     async def create_instance_async(
         self,
         *,

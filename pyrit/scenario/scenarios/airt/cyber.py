@@ -65,18 +65,18 @@ class Cyber(Scenario):
     techniques.
     """
 
-    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
-    #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
-    #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
-    VERSION: int = 3
+    #: Bumped from 3 → 4 because the default objective scorer now applies the malware
+    #: question; earlier versions never did. ``use_cached`` only matches prior runs at
+    #: the current ``VERSION``.
+    VERSION: int = 4
 
     @classmethod
-    def get_override_composite_scorer_questions_path(cls) -> list[Path]:
+    def _get_additional_scoring_questions(cls) -> list[Path]:
         """
         Override true/false question paths for cyber objective scoring.
 
         Returns:
-            Sequence[Path]: Paths to true/false question paths for cyber objective scoring.
+            list[Path]: Paths to true/false question paths for cyber objective scoring.
         """
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"]
 

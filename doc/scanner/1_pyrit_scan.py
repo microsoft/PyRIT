@@ -313,6 +313,27 @@ MyCustomScenario()
 # ```
 
 # %% [markdown]
+# ## Updating a Target's Key
+#
+# A target you create through the API with `"private": true` is private: only you can see and use it, and `list-targets` shows it as `Account: Yours`. A private target allows credential updates, so when its key expires or changes, replace it with `set-target-credential`. A shared target allows them only when whoever created it, or the server's configuration, said so; then anyone signed in can update it, and everyone's requests use the new value. `list-targets` shows `Credential updates: allowed` for the targets you can update, and notes when the provider rejected a target's credentials on its last request. The value comes from a hidden prompt (`--prompt`), an environment variable (`--from-env VAR`), or the Anthropic `ant` CLI (`--from-ant`); it is never a command-line value. Add `--header NAME` to set it as a request header instead of the API key, such as a team gateway's own header, `Authorization`, or `Cookie`.
+#
+# ```shell
+# # One-time sign-in to the Claude Console for a workspace
+# ant auth login --profile copyrit --workspace-id <workspace_id>
+#
+# # Replace the key with your token, and re-send a fresh one every 15 minutes until Ctrl+C
+# pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
+#
+# # Or replace it with an API key from an environment variable
+# pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
+#
+# # Or set a request header, such as a gateway token, from a hidden prompt
+# pyrit_scan set-target-credential team-model --prompt --header X-Team-Token
+# ```
+#
+# `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone or another target took its name, for example after the backend restarts.
+
+# %% [markdown]
 # ## Stopping the Backend Server
 #
 # When you're done, stop the local backend that we started at the top of the notebook.
