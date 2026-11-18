@@ -8,6 +8,7 @@ import {
 } from '@fluentui/react-components'
 import { ChatRegular } from '@fluentui/react-icons'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useRuntime } from '@/hooks/useRuntime'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, FilterOption, TargetInstance } from '../../types'
@@ -35,10 +36,10 @@ type ListParams = Parameters<typeof attacksApi.listAttacks>[0]
 
 /**
  * One history page request. The cursor and the displayed page index always
- * change together, and `filterKey` records which filter visit they belong to.
+ * change together, and `listKey` records their runtime generation and filters.
  */
 interface PageRequest {
-  filterKey: string
+  listKey: string
   cursor: string | undefined
   page: number
   requestId: number
@@ -80,6 +81,7 @@ export default function AttackHistory({
   showTitle = true,
 }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
+  const runtime = useRuntime()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [error, setError] = useState<string | null>(null)
   const pending = useRef(false)
@@ -99,6 +101,18 @@ export default function AttackHistory({
     filterKey: string
     options: string[]
   } | null>(null)
+  const [optionsGeneration, setOptionsGeneration] = useState(runtime.generation)
+
+  // Reset before paint so the new runtime never offers the previous runtime's options.
+  if (optionsGeneration !== runtime.generation) {
+    setOptionsGeneration(runtime.generation)
+    setOperatorOptions([])
+    setOperationOptions([])
+    setAllOtherLabelOptions([])
+    setNarrowedOtherLabelOptions(null)
+    setOptionsError(null)
+    setNarrowedOptionsError(null)
+  }
 
   // Pagination
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
@@ -110,22 +124,23 @@ export default function AttackHistory({
     filters.operationId,
     filters.otherLabels,
   ])
+  const listKey = JSON.stringify([runtime.generation, filterKey])
   const [pageRequest, setPageRequest] = useState<PageRequest>(() => ({
-    filterKey,
+    listKey,
     cursor: undefined,
     page: 0,
     requestId: 0,
     quiet: false,
   }))
   const [settledRequestId, setSettledRequestId] = useState<number | null>(null)
-  // Every filter change (including A -> B -> A, even while B is still loading)
-  // starts a new visit on the first page, so a cursor from an earlier visit of
-  // the same filters is never reused.
+  // Every runtime or filter change (including A -> B -> A while B is loading)
+  // starts a new visit on the first page, so an earlier cursor is never reused.
   // Uses the "adjust state during render" pattern (see React docs:
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
   // instead of a useEffect so we don't trigger react-hooks/set-state-in-effect.
-  if (pageRequest.filterKey !== filterKey) {
-    setPageRequest({ filterKey, cursor: undefined, page: 0, requestId: pageRequest.requestId + 1, quiet: false })
+  if (pageRequest.listKey !== listKey) {
+    setPageRequest({ listKey, cursor: undefined, page: 0, requestId: pageRequest.requestId + 1, quiet: false })
+    setError(null)
   }
   const labelOptionFilterKey = JSON.stringify([
     filters.operator,
@@ -147,6 +162,7 @@ export default function AttackHistory({
   }, [])
 
   useEffect(() => {
+    if (!runtime.ready) return
     let cancelled = false
     let failed = false
     optionsPending.current = true
@@ -174,11 +190,11 @@ export default function AttackHistory({
       }
     })
     return () => { cancelled = true; optionsPending.current = false }
-  }, [optionsRevision])
+  }, [optionsRevision, runtime.ready, runtime.generation])
 
   // Arbitrary label options are narrowed by the active indexed attribution filters.
   useEffect(() => {
-    if (!hasLabelOptionFilters) return
+    if (!runtime.ready || !hasLabelOptionFilters) return
     let cancelled = false
     labelsApi.getLabels('attacks', {
       operator: filters.operator.length > 0 ? filters.operator : undefined,
@@ -204,12 +220,15 @@ export default function AttackHistory({
     hasLabelOptionFilters,
     labelOptionFilterKey,
     optionsRevision,
+    runtime.ready,
+    runtime.generation,
   ])
 
   // Fetch attacks whenever filters change or an event handler issues a new
   // page request. All setState calls live in .then/.catch so we don't trigger
   // react-hooks/set-state-in-effect.
   useEffect(() => {
+    if (!runtime.ready) return
     let cancelled = false
     pending.current = true
     const { cursor, requestId, quiet } = pageRequest
@@ -246,6 +265,7 @@ export default function AttackHistory({
     filters.operationId,
     filters.otherLabels,
     pageRequest,
+    runtime.ready,
   ])
 
   const handleNextPage = () => {
@@ -280,7 +300,7 @@ export default function AttackHistory({
       if (!optionsPending.current) setOptionsRevision((revision: number) => revision + 1)
       fetchAttacks(pageRequest.cursor, pageRequest.page, true)
     }
-  }, !displayLoading)
+  }, runtime.ready && !displayLoading)
   const emptyStateGuidance = activeTarget
     ? {
         text: 'Start an attack to see it here.',

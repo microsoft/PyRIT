@@ -123,6 +123,8 @@ class _MaskDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "cais/MASK"
+    required_environment_variables = ("HUGGINGFACE_TOKEN",)
+    access_url = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
     HF_REVISION: str = "4602b84dd9e2ca05c6e1eafbc14e556e908ac1bb"
     HF_SPLIT: str = "test"
     should_register = True

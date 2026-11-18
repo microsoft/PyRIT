@@ -983,7 +983,10 @@ class TestAttackExecution:
         # Verify that _evaluate_response_async was called even without objective scorer
         # This ensures auxiliary scores are still collected
         attack._evaluate_response_async.assert_called_once_with(
-            response=sample_response, objective=basic_context.objective, expectation=basic_context.expectation
+            response=sample_response,
+            objective=basic_context.objective,
+            expectation=basic_context.expectation,
+            side_effect_evidence_only=False,
         )
 
     async def test_perform_attack_without_scorer_retries_on_filtered_response(
@@ -1638,7 +1641,9 @@ class TestEdgeCasesAndErrorHandling:
                 SeedObjective(value="Test objective"),
                 SeedSimulatedConversation(
                     num_turns=1,
-                    adversarial_chat_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+                    adversarial_chat_system_prompt=await asyncio.to_thread(
+                        SeedPrompt.from_yaml_file, RTASystemPromptPaths.TEXT_GENERATION.value
+                    ),
                 ),
             ]
         )
