@@ -336,3 +336,32 @@ def test_select_objective_scores_reads_duplicated_piece_score_from_original():
     duplicate = MessagePiece(role="assistant", original_value="reply", original_prompt_id=original_id)
     scores = [_stored_score(owner=original_id, label="original", scorer=_OBJECTIVE)]
     assert _selected([duplicate], scores) == {str(duplicate.id): "original"}
+
+
+def _with_sub_scorers(*, class_name: str, class_module: str) -> ComponentIdentifier:
+    return ComponentIdentifier(
+        class_name=class_name, class_module=class_module, children={"sub_scorers": [_OBJECTIVE, _REFUSAL]}
+    )
+
+
+def test_select_objective_scores_counts_any_candidate_of_a_scorer_pool():
+    from pyrit.score import CompatibleScorers
+
+    pool = _with_sub_scorers(class_name=CompatibleScorers.__name__, class_module=CompatibleScorers.__module__)
+    first, second = (MessagePiece(role="assistant", original_value=text) for text in ("first", "second"))
+    scores = [
+        _stored_score(owner=first.id, label="first candidate", scorer=_OBJECTIVE),
+        _stored_score(owner=second.id, label="second candidate", scorer=_REFUSAL),
+    ]
+    selected = select_objective_scores(pieces=[first, second], scores=scores, objective_scorer_identifier=pool)
+    assert {piece_id: score.score_rationale for piece_id, score in selected.items()} == {
+        str(first.id): "first candidate",
+        str(second.id): "second candidate",
+    }
+
+
+def test_select_objective_scores_does_not_count_a_composites_own_scorers():
+    composite = _with_sub_scorers(class_name="TrueFalseCompositeScorer", class_module="tests")
+    piece = MessagePiece(role="assistant", original_value="reply")
+    scores = [_stored_score(owner=piece.id, label="leaf", scorer=_OBJECTIVE)]
+    assert select_objective_scores(pieces=[piece], scores=scores, objective_scorer_identifier=composite) == {}

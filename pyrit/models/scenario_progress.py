@@ -80,10 +80,6 @@ class ScenarioRunPlanScorerBinding(BaseModel):
     evaluation: str | None = None
     #: Content hash of the selected scorer's identifier.
     scorer_hash: str
-    #: The effective evaluation requirement the selection satisfied.
-    required_evaluation: str | None = None
-    #: Whether the selection had to guarantee float feedback.
-    requires_float_scale_value: bool = False
     #: Sorted unique fingerprints of the prepared expectations the scorer accepted.
     expectation_fingerprints: list[str] = Field(default_factory=list)
 

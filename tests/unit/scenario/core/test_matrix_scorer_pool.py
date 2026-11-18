@@ -4,11 +4,12 @@
 """Objective scorer pools in ``MatrixAtomicAttackBuilder``: per-cell selection, baselines, and policy."""
 
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
 from pyrit.models import (
     AttackSeedGroup,
     ScenarioRunPlanGroupKind,
@@ -28,10 +29,13 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackB
 from pyrit.score import (
     CompatibleScorers,
     ConflictingScorerRequirementsError,
+    FloatScaleThresholdScorer,
     MessageToolCallScorer,
+    PlagiarismScorer,
     ScorerCandidate,
     ScorerRequirements,
     SubStringScorer,
+    TrueFalseScorer,
 )
 
 HATE = "harm.hate"
@@ -116,7 +120,6 @@ class TestPoolSelection:
         hate_binding = by_name["prompt_sending_airt_hate"].objective_scorer_binding
         assert hate_binding.candidate_index == 0
         assert hate_binding.evaluation == HATE
-        assert hate_binding.required_evaluation == HATE
         assert hate_binding.scorer_hash == hate.get_identifier().hash
         assert len(hate_binding.expectation_fingerprints) == 2
         assert by_name["prompt_sending_airt_violence"].objective_scorer_binding.candidate_index == 1
@@ -128,7 +131,7 @@ class TestPoolSelection:
             dataset_groups={"misc": [_group("o1")]},
         )
         assert attacks[0]._objective_scorer is hate
-        assert attacks[0].objective_scorer_binding.required_evaluation is None
+        assert attacks[0].objective_scorer_binding.candidate_index == 0
 
     def test_conditions_steer_selection_to_a_scorer_that_can_judge_them(self) -> None:
         substring, tool_scorer = SubStringScorer(substring="x"), MessageToolCallScorer()
@@ -140,22 +143,33 @@ class TestPoolSelection:
         scorers = {attack.atomic_attack_name: attack._objective_scorer for attack in attacks}
         assert scorers == {"prompt_sending_plain": substring, "prompt_sending_agentic": tool_scorer}
 
+    @pytest.mark.parametrize("hate_preserves_float", [False, True])
     def test_technique_feedback_requirement_is_combined_with_the_dataset_requirement(
-        self, caplog: pytest.LogCaptureFixture
+        self, hate_preserves_float: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
-        pool, _, _ = _pool()
+        # Only the violence candidate guarantees float feedback until the hate one does too, so
+        # the hate cell depends on both the technique's and the dataset's requirement.
+        pool, hate, violence = _pool()
         ranking = _factory(
             name="tap",
             requirements=TechniqueRequirements(objective_scorer=ScorerRequirements(preserves_float_scale_value=True)),
         )
-        with caplog.at_level(logging.WARNING):
+        with (
+            patch.object(violence, "_preserves_float_scale_value", return_value=True),
+            patch.object(hate, "_preserves_float_scale_value", return_value=hate_preserves_float),
+            caplog.at_level(logging.WARNING),
+        ):
             attacks = _builder(pool).build(
                 technique_factories={"tap": ranking},
-                dataset_groups=DATASETS,
+                dataset_groups={"airt_hate": DATASETS["airt_hate"]},
                 dataset_scorer_requirements=REQUIREMENTS,
             )
-        assert attacks == []
-        assert "float_feedback" in caplog.text
+        if hate_preserves_float:
+            assert [attack._objective_scorer for attack in attacks] == [hate]
+        else:
+            assert attacks == []
+            assert "#0 SubStringScorer [harm.hate] (float_feedback)" in caplog.text
+            assert "#1 SubStringScorer [harm.violence] (evaluation)" in caplog.text
 
     def test_scenario_requirement_conflicting_with_a_dataset_raises(self) -> None:
         pool, _, _ = _pool()
@@ -229,16 +243,18 @@ class TestPoolBaselines:
     def test_one_dataset_judged_two_ways_gets_two_numbered_baselines(self) -> None:
         plain, ranked = SubStringScorer(substring="a"), SubStringScorer(substring="b")
         ranked_requirements = ScorerRequirements(preserves_float_scale_value=True)
-        ranked._preserves_float_scale_value = lambda: True  # type: ignore[method-assign]
         pool = CompatibleScorers(candidates=[plain, ranked])
-        attacks = _builder(pool).build(
-            technique_factories={
-                "send": _factory(name="send"),
-                "tap": _factory(name="tap", requirements=TechniqueRequirements(objective_scorer=ranked_requirements)),
-            },
-            dataset_groups={"d": [_group("o1")]},
-            include_baseline=True,
-        )
+        with patch.object(ranked, "_preserves_float_scale_value", return_value=True):
+            attacks = _builder(pool).build(
+                technique_factories={
+                    "send": _factory(name="send"),
+                    "tap": _factory(
+                        name="tap", requirements=TechniqueRequirements(objective_scorer=ranked_requirements)
+                    ),
+                },
+                dataset_groups={"d": [_group("o1")]},
+                include_baseline=True,
+            )
         baselines = [a for a in attacks if a.group_kind is ScenarioRunPlanGroupKind.BASELINE]
         assert [(b.atomic_attack_name, b._objective_scorer) for b in baselines] == [
             ("baseline_d__1", plain),
@@ -261,37 +277,53 @@ class TestPoolBaselines:
         assert attacks[0].seed_groups == [*DATASETS["airt_hate"], *DATASETS["airt_violence"]]
 
 
-class _NarrowScoringConfig(AttackScoringConfig):
-    """A config type an attack narrows to, accepting only substring scorers that look for 'ok'."""
+def _threshold_scorer() -> FloatScaleThresholdScorer:
+    return FloatScaleThresholdScorer(scorer=PlagiarismScorer(reference_text="unused"), threshold=0.5)
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if getattr(self.objective_scorer, "_substring", None) != "ok":
-            raise ValueError("This attack needs the 'ok' scorer.")
+
+class _BuggyScoringConfig(AttackScoringConfig):
+    """A narrowed config that declares any true/false scorer but fails for an unrelated reason."""
+
+    def __init__(self, *, objective_scorer: TrueFalseScorer) -> None:
+        raise TypeError("bug in the scoring config")
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestNarrowedScoringConfig:
     def test_pool_selection_is_passed_in_the_config_type_the_attack_accepts(self) -> None:
-        accepted = SubStringScorer(substring="ok")
-        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+        threshold = _threshold_scorer()
+        factory = _factory(name="tap", scoring_config_type=TAPAttackScoringConfig)
 
-        attacks = _builder(CompatibleScorers(candidates=[accepted])).build(
-            technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]}
+        attacks = _builder(CompatibleScorers(candidates=[threshold])).build(
+            technique_factories={"tap": factory}, dataset_groups={"d": [_group("o1")]}
         )
 
         config = factory.create.call_args.kwargs["attack_scoring_config"]
-        assert type(config) is _NarrowScoringConfig
-        assert config.objective_scorer is accepted
-        assert attacks[0]._objective_scorer is accepted
+        assert type(config) is TAPAttackScoringConfig
+        assert config.objective_scorer is threshold
+        assert attacks[0]._objective_scorer is threshold
 
-    def test_skip_drops_a_cell_whose_attack_cannot_carry_the_selected_scorer(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+    @pytest.mark.parametrize("policy", list(IncompatibleTechniquePolicy))
+    def test_a_later_candidate_the_config_can_carry_is_selected(self, policy: IncompatibleTechniquePolicy) -> None:
+        threshold = _threshold_scorer()
+        factory = _factory(name="tap", scoring_config_type=TAPAttackScoringConfig)
+
+        attacks = _builder(
+            CompatibleScorers(candidates=[SubStringScorer(substring="x"), threshold]), policy=policy
+        ).build(technique_factories={"tap": factory}, dataset_groups={"d": [_group("o1")]}, include_baseline=True)
+
+        assert [(a.atomic_attack_name, a._objective_scorer) for a in attacks] == [
+            ("baseline_d", threshold),
+            ("tap_d", threshold),
+        ]
+        assert attacks[1].objective_scorer_binding.candidate_index == 1
+        assert factory.create.call_args.kwargs["attack_scoring_config"].objective_scorer is threshold
+
+    def test_skip_drops_a_cell_no_candidate_config_can_carry(self, caplog: pytest.LogCaptureFixture) -> None:
+        factory = _factory(name="tap", scoring_config_type=TAPAttackScoringConfig)
         with caplog.at_level(logging.WARNING):
             attacks = _builder(CompatibleScorers(candidates=[SubStringScorer(substring="other")])).build(
-                technique_factories={"narrow": factory, "prompt_sending": _factory(name="prompt_sending")},
+                technique_factories={"tap": factory, "prompt_sending": _factory(name="prompt_sending")},
                 dataset_groups={"d": [_group("o1")]},
                 include_baseline=True,
             )
@@ -299,15 +331,31 @@ class TestNarrowedScoringConfig:
         # No binding or baseline names a scorer the narrowed attack would have replaced.
         factory.create.assert_not_called()
         assert [a.atomic_attack_name for a in attacks] == ["baseline_d", "prompt_sending_d"]
-        assert "cannot carry the selected scorer" in caplog.text
+        assert "#0 SubStringScorer (scoring_config)" in caplog.text
+        assert "only carries a FloatScaleThresholdScorer" in caplog.text
 
-    def test_raise_rejects_a_cell_whose_attack_cannot_carry_the_selected_scorer(self) -> None:
-        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
-        with pytest.raises(IncompatibleTechniqueError, match="Technique 'narrow', dataset 'd'.*cannot carry"):
-            _builder(
-                CompatibleScorers(candidates=[SubStringScorer(substring="other")]),
-                policy=IncompatibleTechniquePolicy.RAISE,
-            ).build(technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]})
+    def test_raise_names_the_scoring_config_reason_with_the_other_reasons(self) -> None:
+        factory = _factory(name="tap", scoring_config_type=TAPAttackScoringConfig)
+        pool = CompatibleScorers(
+            candidates=[SubStringScorer(substring="x"), ScorerCandidate(scorer=_threshold_scorer(), evaluation=HATE)]
+        )
+        with pytest.raises(IncompatibleTechniqueError) as excinfo:
+            _builder(pool, policy=IncompatibleTechniquePolicy.RAISE).build(
+                technique_factories={"tap": factory},
+                dataset_groups={"d": [_group("o1")]},
+                dataset_scorer_requirements={"d": ScorerRequirements(evaluation=VIOLENCE)},
+            )
+        message = str(excinfo.value)
+        assert "#0 SubStringScorer (scoring_config)" in message
+        assert "#1 FloatScaleThresholdScorer [harm.hate] (evaluation)" in message
+
+    @pytest.mark.parametrize("policy", list(IncompatibleTechniquePolicy))
+    def test_config_construction_errors_propagate(self, policy: IncompatibleTechniquePolicy) -> None:
+        factory = _factory(name="buggy", scoring_config_type=_BuggyScoringConfig)
+        with pytest.raises(TypeError, match="bug in the scoring config"):
+            _builder(CompatibleScorers(candidates=[SubStringScorer(substring="x")]), policy=policy).build(
+                technique_factories={"buggy": factory}, dataset_groups={"d": [_group("o1")]}
+            )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -352,12 +400,37 @@ class TestSingleScorerBaseline:
         assert [a.atomic_attack_name for a in attacks] == ["baseline"]
         assert attacks[0].seed_groups == [*DATASETS["airt_hate"], *DATASETS["airt_violence"]]
 
+    def test_no_baseline_when_the_scorer_can_judge_no_dataset(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING):
+            attacks = _builder(SubStringScorer(substring="x")).build(
+                technique_factories={"prompt_sending": _factory(name="prompt_sending")},
+                dataset_groups={"agentic": self.DATASETS["agentic"]},
+                include_baseline=True,
+            )
+
+        assert attacks == []
+        assert "Baseline, dataset 'agentic'" in caplog.text
+
     def test_single_scorer_keeps_the_plain_config_for_a_narrowed_attack(self) -> None:
-        factory = _factory(name="narrow", scoring_config_type=_NarrowScoringConfig)
+        factory = _factory(name="tap", scoring_config_type=TAPAttackScoringConfig)
         _builder(SubStringScorer(substring="other")).build(
-            technique_factories={"narrow": factory}, dataset_groups={"d": [_group("o1")]}
+            technique_factories={"tap": factory}, dataset_groups={"d": [_group("o1")]}
         )
         assert type(factory.create.call_args.kwargs["attack_scoring_config"]) is AttackScoringConfig
+
+
+class TestRequirementGuards:
+    def test_technique_requirements_reject_an_evaluation(self) -> None:
+        with pytest.raises(ValueError, match="algorithm needs, not an evaluation"):
+            TechniqueRequirements(objective_scorer=ScorerRequirements(evaluation=HATE))
+
+    def test_technique_requirements_reject_other_scorer_requirement_types(self) -> None:
+        with pytest.raises(TypeError, match="must be ScorerRequirements"):
+            TechniqueRequirements(objective_scorer={"preserves_float_scale_value": True})  # type: ignore[arg-type]
+
+    def test_builder_rejects_other_scorer_requirement_types(self) -> None:
+        with pytest.raises(TypeError, match="scorer_requirements must be ScorerRequirements or None"):
+            _builder(SubStringScorer(substring="x"), scorer_requirements={"evaluation": HATE})
 
 
 class TestTechniqueConfigurationIdentity:

@@ -251,10 +251,11 @@ await output_scenario_async(custom_result)
 # candidate that can judge its objectives.
 #
 # When no candidate qualifies, `incompatible_technique_policy` applies to that technique and dataset:
-# `skip` leaves it out with a warning, and `raise` stops with each candidate's reason. A mistyped key
-# is reported together with the keys the pool has. With a baseline, each dataset gets its own baseline
-# judged by the same scorer as its attacks. The run plan records every selection, and a resumed run
-# stops if the pool or the objectives' scoring criteria have changed since it started.
+# `skip` leaves it out with a warning, and `raise` stops with each candidate's reason. A required key
+# that no candidate is bound to, such as a typo, stops initialization and lists the keys the pool has.
+# With a baseline, each dataset gets its own baseline judged by the same scorer as its attacks. The
+# run plan records every selection, and a resumed run stops if the pool or the objectives' scoring
+# criteria have changed since it started.
 
 # %% [markdown]
 # (reporting-every-conversation)=

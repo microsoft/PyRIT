@@ -194,6 +194,8 @@ class ScorerMismatchKind(str, Enum):
     FLOAT_FEEDBACK = "float_feedback"
     #: The scorer cannot evaluate a condition or criterion an input carries.
     CONDITION = "condition"
+    #: The attack's narrower scoring config cannot carry this scorer, as TAP's needs a threshold scorer.
+    SCORING_CONFIG = "scoring_config"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -463,15 +465,11 @@ class CompatibleScorers:
                 continue
             # Fingerprint what the candidate will judge, so a change in the criteria it
             # supplies by default is drift even when the inputs are unchanged.
-            fingerprints = {
-                NO_EXPECTATION_FINGERPRINT if prepared is None else scoring_expectation_fingerprint(prepared)
-                for prepared in checked
-            }
             return ScorerSelection(
                 candidate=candidate,
                 candidate_index=index,
                 requirements=requirements,
-                expectation_fingerprints=tuple(sorted(fingerprints)),
+                expectation_fingerprints=fingerprint_expectations(checked),
                 skipped=tuple(mismatches),
             )
         raise NoCompatibleScorerError(

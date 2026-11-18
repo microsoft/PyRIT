@@ -182,14 +182,10 @@ class Scenario(ABC):
     #: an unavailable verdict is an expected result rather than a scenario error.
     RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
 
-    #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer and
-    #: selects from it per attack population. Unmigrated scenarios reject pools explicitly.
+    #: Whether the scenario accepts a ``CompatibleScorers`` pool as its objective scorer, selects
+    #: from it per attack population, and checks ``DatasetSource.scorer_requirements``. Unmigrated
+    #: scenarios reject pools and declared dataset requirements explicitly, so neither is silently ignored.
     SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = False
-
-    #: Whether the scenario checks its objective scorer against ``DatasetSource.scorer_requirements``.
-    #: Scenarios that do not check them reject a source that declares any, so a declared
-    #: requirement is never silently ignored.
-    ENFORCES_DATASET_SCORER_REQUIREMENTS: ClassVar[bool] = False
 
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
@@ -1090,7 +1086,7 @@ class Scenario(ABC):
             ValueError: If a dataset source declares scorer requirements and the scenario does
                 not enforce them.
         """
-        if type(self).ENFORCES_DATASET_SCORER_REQUIREMENTS:
+        if type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
             return
         declared = sorted(self._dataset_config.get_scorer_requirements_by_dataset())
         if declared:
@@ -1249,6 +1245,46 @@ class Scenario(ABC):
             self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
         ):
             raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+        self._validate_required_evaluations()
+
+    def _validate_required_evaluations(self) -> None:
+        """
+        Reject a required evaluation that no objective scorer candidate is bound to.
+
+        A key is configuration: a typo, or a key with a single unbound scorer, can never match.
+        It fails here instead of dropping its datasets under the incompatible technique policy,
+        which stays for incompatibilities that depend on the inputs.
+
+        Raises:
+            ValueError: If an evaluation the scenario or a dataset requires has no bound candidate,
+                or if they require different evaluations.
+        """
+        if not type(self).SUPPORTS_OBJECTIVE_SCORER_POOL:
+            return
+        scenario_requirements = self._get_objective_scorer_requirements()
+        owners: dict[str, list[str]] = {}
+        if scenario_requirements is not None and scenario_requirements.evaluation is not None:
+            owners.setdefault(scenario_requirements.evaluation, []).append("the scenario")
+        for name, requirements in sorted(self._dataset_config.get_scorer_requirements_by_dataset().items()):
+            evaluation = ScorerRequirements.combine(scenario_requirements, requirements).evaluation
+            if evaluation is not None:
+                owners.setdefault(evaluation, []).append(f"dataset '{name}'")
+        pool = self._objective_scorer_pool
+        available = {key for key in pool.evaluations if key is not None} if pool is not None else set()
+        missing = {key: names for key, names in owners.items() if key not in available}
+        if not missing:
+            return
+        required = "; ".join(f"{key!r} (required by {', '.join(names)})" for key, names in sorted(missing.items()))
+        if pool is None:
+            raise ValueError(
+                f"A single objective scorer is not bound to any evaluation, but these are required: {required}. "
+                "Pass a CompatibleScorers pool with a ScorerCandidate bound to each."
+            )
+        known = ", ".join(repr(key) for key in sorted(available)) or "none"
+        raise ValueError(
+            f"No objective scorer candidate is bound to these required evaluations: {required}. "
+            f"Evaluations in the pool: {known}. Check the key for a typo, or add a candidate bound to it."
+        )
 
     def _get_required_objective_keys(self) -> list[str]:
         """Return population names that must retain at least one objective."""

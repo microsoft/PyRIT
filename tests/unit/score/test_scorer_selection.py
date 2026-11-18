@@ -36,6 +36,8 @@ from pyrit.score import (
     UnsupportedConditionError,
 )
 
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
 CRISIS = "psychosocial.imminent_crisis"
 THERAPIST = "psychosocial.licensed_therapist"
 
@@ -261,7 +263,7 @@ def test_unexpected_validation_errors_propagate(error):
             )
 
 
-def test_selection_never_calls_a_judge_model(patch_central_database):
+def test_selection_never_calls_a_judge_model():
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.send_prompt_async = AsyncMock(side_effect=AssertionError("selection called a model"))
     judge = SelfAskTrueFalseScorer(
@@ -318,7 +320,7 @@ class _ObjectiveJudge(TrueFalseScorer):
         return []
 
 
-def test_fingerprints_cover_the_criteria_the_selected_scorer_supplies(patch_central_database):
+def test_fingerprints_cover_the_criteria_the_selected_scorer_supplies():
     judge = _ObjectiveJudge()
     condition_free = ScoringExpectation(objective="say it")
     effective = condition_free.model_copy(update={"conditions": (MatchesObjective(),)})

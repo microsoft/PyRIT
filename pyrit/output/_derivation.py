@@ -218,7 +218,8 @@ def select_objective_scores(
 
     A score only counts for the piece it is stored on: a duplicated piece's scores are stored on
     its original, and a message-level score is stored on one piece of the message. The identity
-    hash is matched before the class name.
+    hash is matched before the class name. A scorer pool judges each attack with one of its
+    candidates, so any candidate's score counts for a pool.
 
     Args:
         pieces (list[MessagePiece]): The pieces to pick scores for.
@@ -228,6 +229,17 @@ def select_objective_scores(
     Returns:
         dict[str, Score]: The objective score of each piece that has one, keyed by piece id.
     """
+    from pyrit.score import CompatibleScorers
+
+    judges = [objective_scorer_identifier]
+    if (objective_scorer_identifier.class_name, objective_scorer_identifier.class_module) == (
+        CompatibleScorers.__name__,
+        CompatibleScorers.__module__,
+    ):
+        judges = objective_scorer_identifier.get_child_list("sub_scorers")
+    judge_hashes = {judge.hash for judge in judges}
+    judge_class_names = {judge.class_name for judge in judges}
+
     hash_matches: dict[str, Score] = {}
     class_name_matches: dict[str, Score] = {}
     for score in scores:
@@ -235,9 +247,9 @@ def select_objective_scores(
         if identifier is None or score.message_piece_id is None:
             continue
         owner_id = str(score.message_piece_id)
-        if identifier.hash == objective_scorer_identifier.hash:
+        if identifier.hash in judge_hashes:
             hash_matches.setdefault(owner_id, score)
-        elif identifier.class_name == objective_scorer_identifier.class_name:
+        elif identifier.class_name in judge_class_names:
             class_name_matches.setdefault(owner_id, score)
 
     selected: dict[str, Score] = {}

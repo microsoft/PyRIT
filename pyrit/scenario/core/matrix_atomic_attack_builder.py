@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, cast, get_type_hints
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, MessageScorable, ScenarioRunPlanGroupKind, ScenarioRunPlanScorerBinding
@@ -43,6 +43,8 @@ from pyrit.scenario.core.technique_requirements import (
 from pyrit.score import (
     CompatibleScorers,
     NoCompatibleScorerError,
+    ScorerMismatch,
+    ScorerMismatchKind,
     ScorerRequirements,
     ScorerSelection,
 )
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from pyrit.converter import Converter
+    from pyrit.models import ScoringExpectation
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -142,9 +145,98 @@ def _binding(selection: ScorerSelection) -> ScenarioRunPlanScorerBinding:
         candidate_index=selection.candidate_index,
         evaluation=selection.evaluation,
         scorer_hash=selection.scorer.get_identifier().hash,
-        required_evaluation=selection.requirements.evaluation,
-        requires_float_scale_value=selection.requirements.preserves_float_scale_value,
         expectation_fingerprints=list(selection.expectation_fingerprints),
+    )
+
+
+def _narrowed_scoring_config_type(factory: AttackTechniqueFactory) -> type[AttackScoringConfig] | None:
+    """
+    Return the narrower scoring config type the technique's attack requires, if any.
+
+    Returns:
+        type[AttackScoringConfig] | None: The subtype, such as ``TAPAttackScoringConfig``, or None
+            when the attack accepts a plain ``AttackScoringConfig``.
+    """
+    required = factory.scoring_config_type
+    if (
+        not isinstance(required, type)
+        or required is AttackScoringConfig
+        or not issubclass(required, AttackScoringConfig)
+    ):
+        return None
+    return required
+
+
+def _carried_scorer_type(factory: AttackTechniqueFactory) -> type | None:
+    """
+    Return the objective scorer type the technique's narrowed scoring config declares.
+
+    This is the rule ``AdaptiveScenario`` uses: the config's ``objective_scorer`` annotation
+    decides which scorers it can carry, as ``FloatScaleThresholdScorer`` does for TAP.
+
+    Returns:
+        type | None: The declared scorer class, or None when any objective scorer is accepted.
+    """
+    narrowed = _narrowed_scoring_config_type(factory)
+    if narrowed is None:
+        return None
+    declared = get_type_hints(narrowed.__init__).get("objective_scorer")
+    return declared if isinstance(declared, type) else None
+
+
+def _select_carried(
+    *,
+    pool: CompatibleScorers,
+    requirements: ScorerRequirements,
+    expectations: Sequence[ScoringExpectation | None],
+    carried: type | None,
+) -> ScorerSelection:
+    """
+    Select from the pool candidates whose scorer is an instance of ``carried``.
+
+    Candidates keep their position in the full pool, and each passed-over one is reported with
+    a typed reason, so pool order still only breaks ties between candidates that fit.
+
+    Returns:
+        ScorerSelection: The selection, indexed against the full pool.
+
+    Raises:
+        NoCompatibleScorerError: If no candidate fits.
+    """
+    if carried is None:
+        return pool.select(requirements=requirements, scorable_type=MessageScorable, expectations=expectations)
+    positions = [index for index, candidate in enumerate(pool.candidates) if isinstance(candidate.scorer, carried)]
+    excluded = [
+        ScorerMismatch(
+            candidate_index=index,
+            candidate_label=candidate.label,
+            kind=ScorerMismatchKind.SCORING_CONFIG,
+            detail=f"the attack's scoring config only carries a {carried.__name__}.",
+        )
+        for index, candidate in enumerate(pool.candidates)
+        if not isinstance(candidate.scorer, carried)
+    ]
+
+    def in_pool(mismatch: ScorerMismatch) -> ScorerMismatch:
+        return replace(mismatch, candidate_index=positions[mismatch.candidate_index])
+
+    if not positions:
+        raise NoCompatibleScorerError(
+            requirements=requirements, mismatches=excluded, available_evaluations=pool.evaluations
+        )
+    fitting = CompatibleScorers(candidates=[pool.candidates[index] for index in positions])
+    try:
+        selection = fitting.select(requirements=requirements, scorable_type=MessageScorable, expectations=expectations)
+    except NoCompatibleScorerError as exc:
+        raise NoCompatibleScorerError(
+            requirements=requirements,
+            mismatches=sorted([*excluded, *map(in_pool, exc.mismatches)], key=lambda item: item.candidate_index),
+            available_evaluations=pool.evaluations,
+        ) from exc
+    index = positions[selection.candidate_index]
+    skipped = [*(item for item in excluded if item.candidate_index < index), *map(in_pool, selection.skipped)]
+    return replace(
+        selection, candidate_index=index, skipped=tuple(sorted(skipped, key=lambda item: item.candidate_index))
     )
 
 
@@ -525,16 +617,6 @@ class MatrixAtomicAttackBuilder:
                     continue
                 if isinstance(selection, ScorerSelection):
                     scoring_config = self._scoring_config_for(factory=factory, objective_scorer=selection.scorer)
-                    if scoring_config is None:
-                        # Checked before the selection is recorded, so no binding or baseline names
-                        # a scorer the attack would not use.
-                        self._reject(
-                            message=(
-                                f"Technique '{technique_name}', dataset '{dataset_name}': the attack's scoring "
-                                f"config type cannot carry the selected scorer {selection.candidate.label}."
-                            )
-                        )
-                        continue
                     binding = _binding(selection) if self._is_pool else None
                     if self._is_pool:
                         key = (
@@ -608,11 +690,16 @@ class MatrixAtomicAttackBuilder:
                     )
                     for group in groups
                 ]
-                baselines = build_baseline_atomic_attacks(
-                    objective_target=self._objective_target,
-                    objective_scorer=self._objective_scorer,
-                    seed_groups=all_seed_groups,
-                    memory_labels=self._memory_labels,
+                # As with a pool, a run whose scorer can judge no dataset has no baseline.
+                baselines = (
+                    build_baseline_atomic_attacks(
+                        objective_target=self._objective_target,
+                        objective_scorer=self._objective_scorer,
+                        seed_groups=all_seed_groups,
+                        memory_labels=self._memory_labels,
+                    )
+                    if all_seed_groups
+                    else []
                 )
             atomic_attacks = [*baselines, *atomic_attacks]
 
@@ -631,31 +718,23 @@ class MatrixAtomicAttackBuilder:
 
     def _scoring_config_for(
         self, *, factory: AttackTechniqueFactory, objective_scorer: TrueFalseScorer
-    ) -> AttackScoringConfig | None:
+    ) -> AttackScoringConfig:
         """
         Build the scoring config the technique's attack accepts, carrying the chosen scorer.
 
         An attack that narrows its config type, as TAP does with ``TAPAttackScoringConfig``,
         drops a plain config and judges with its own default scorer. A pool run records which
-        scorer it selected, so the narrowed type is built around that scorer instead.
+        scorer it selected, so the narrowed type is built around that scorer instead. Selection
+        only picks a scorer of the type that config declares, so construction errors propagate.
         Single-scorer runs keep the plain config.
 
         Returns:
-            AttackScoringConfig | None: The config to pass to ``factory.create``, or None when
-                the attack's config type cannot carry the scorer.
+            AttackScoringConfig: The config to pass to ``factory.create``.
         """
-        required = factory.scoring_config_type
-        if (
-            not self._is_pool
-            or not isinstance(required, type)
-            or required is AttackScoringConfig
-            or not issubclass(required, AttackScoringConfig)
-        ):
+        narrowed = _narrowed_scoring_config_type(factory) if self._is_pool else None
+        if narrowed is None:
             return AttackScoringConfig(objective_scorer=objective_scorer)
-        try:
-            return required(objective_scorer=objective_scorer)
-        except (TypeError, ValueError):
-            return None
+        return narrowed(objective_scorer=objective_scorer)
 
     def _baseline_can_judge(
         self,
@@ -705,6 +784,7 @@ class MatrixAtomicAttackBuilder:
 
         Requirements combine the scenario's, the technique's, and the dataset's. Inputs are the
         prepared execution copies, so technique seeds are composed exactly as they will run.
+        In a pool run, a candidate the technique's scoring config cannot carry is passed over.
 
         Returns:
             ScorerSelection | object | None: The selection; ``_SKIPPED`` when the cell is skipped;
@@ -727,8 +807,11 @@ class MatrixAtomicAttackBuilder:
             for group in seed_groups
         ]
         try:
-            return self._pool.select(
-                requirements=requirements, scorable_type=MessageScorable, expectations=expectations
+            return _select_carried(
+                pool=self._pool,
+                requirements=requirements,
+                expectations=expectations,
+                carried=_carried_scorer_type(factory) if self._is_pool else None,
             )
         except NoCompatibleScorerError as exc:
             message = f"Technique '{technique_name}', dataset '{dataset_name}': {exc}"
