@@ -366,6 +366,13 @@ async def test_all_builtin_default_size_contracts_are_bounded_async() -> None:
                     continue
                 scenario = registry.create_instance(name)
                 estimate = await scenario.get_default_run_size_estimate_async()
+                if not scenario.get_default_dataset_names() and isinstance(
+                    estimate.dataset_size, IndeterminateDatasetSize
+                ):
+                    # Without a default population or a fixed shape, the default size is honestly unknown.
+                    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable, name
+                    assert estimate.note, name
+                    continue
                 assert isinstance(estimate.dataset_size, BoundedDatasetSize), name
                 assert estimate.status is not ScenarioRunSizeEstimateStatus.Unavailable, name
                 finite_count = estimate.total_attack_count or estimate.maximum_attack_count

@@ -5,17 +5,25 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.5
+#       jupytext_version: 1.19.6
 # ---
 
 # %% [markdown]
-# # Execute a Technique
+# # Technique Scenarios
+#
+# The `technique` package runs catalog techniques without a harm-specific framing:
+#
+# - `technique.execute` (`Execute`) runs one technique against one free-text objective.
+# - `technique.sweep` (`Sweep`) runs selected techniques independently across datasets or
+#   inline seed groups.
+#
+# ## Execute a technique
 #
 # `technique.execute` runs one catalog technique against one free-text objective.
 # Use it to start an automated test or continue from a stored manual conversation.
 # It does not read datasets.
 #
-# ## CoPyRIT
+# ### CoPyRIT
 #
 # In the scenario form, select `technique.execute`, the objective target, and exactly one
 # concrete technique. Enter the objective. You can also enter harm categories,
@@ -38,7 +46,7 @@
 # hides unsupported inputs. More than one concrete technique causes an error.
 # This scenario does not add a "continue from conversation" button.
 #
-# ## Parameters
+# ### Parameters
 #
 # The catalog cells below run locally without model calls or credentials.
 
@@ -62,7 +70,7 @@ from pyrit.scenario.technique import ExecuteTechnique
 [technique.value for technique in ExecuteTechnique.expand({ExecuteTechnique.default()})]
 
 # %% [markdown]
-# ## Local example
+# ### Local example
 #
 # This example executes the real scenario against a local echo target. The target returns
 # the request unchanged, and a substring scorer checks the response. This demonstrates
@@ -113,7 +121,7 @@ demo_result = await demo.run_async()  # type: ignore
 await output_scenario_async(demo_result)  # type: ignore
 
 # %% [markdown]
-# ## SDK
+# ### SDK
 #
 # Run this example after your configuration registers `openai_chat`, `adversarial_chat`,
 # and the objective scorer target. Use your normal persistent memory configuration when
@@ -172,7 +180,7 @@ await output_scenario_async(demo_result)  # type: ignore
 # to the configured budget. Thus, a long manual conversation does not consume the new
 # automated-turn budget. An attack without `max_turns` is not changed.
 #
-# ## Retries and baseline
+# ### Retries and baseline
 #
 # `max_retries` handles execution errors. `retries_on_objective_failure` defaults to zero.
 # A value of 2 permits up to three fresh technique attempts, stopping at the first success.
@@ -195,3 +203,93 @@ await output_scenario_async(demo_result)  # type: ignore
 # The source-history fingerprint is stored in run metadata, not in launch parameters.
 #
 # For more details, see [Common Scenario Parameters](../code/scenarios/1_common_scenario_parameters.ipynb).
+
+# %% [markdown]
+# ## Sweep techniques across datasets
+#
+# `technique.sweep` (`Sweep`) runs each selected technique independently against named
+# datasets or inline seed groups. Results group by dataset. The baseline is on by default
+# and sends the same objectives unchanged, for comparison.
+#
+# The scenario has no default datasets and no harm-specific scoring. Select at least one
+# dataset or supply seed groups, and select an objective scorer or register a default one.
+# A sweep without a scorer fails rather than treating any non-refusal as success.
+#
+# ### CoPyRIT
+#
+# In the scenario form, select `technique.sweep`, the objective target, one or more datasets,
+# and optional per-dataset and total limits. All registered techniques are selectable; the
+# `light` techniques run when you select none. Readiness reports a missing dataset selection
+# before launch. For the fixed rapid response configuration, launch the
+# `rapid_response` suite under **Scenario suites**; it runs one sweep per harm dataset.
+#
+# ### Parameters
+#
+# The default selection is every registered technique tagged `light`:
+
+# %%
+from pyrit.scenario.technique import SweepTechnique
+
+[technique.value for technique in SweepTechnique.expand({SweepTechnique.default()})]
+
+# %% [markdown]
+# ### Local example
+#
+# This example sweeps the local demonstration technique over two inline objectives,
+# using the same echo target and substring scorer as above. It runs without credentials
+# or model calls and does not measure model safety.
+
+# %%
+from pyrit.models import AttackSeedGroup, SeedObjective
+from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario.technique import Sweep
+
+sweep = Sweep(objective_scorer=SubStringScorer(substring="Python process"))
+sweep.set_params_from_args(
+    args={
+        "objective_target": EchoTarget(),
+        "scenario_techniques": [SweepTechnique.prompt_sending_demo],
+        "dataset_config": DatasetAttackConfiguration(
+            seed_groups=[
+                AttackSeedGroup(seeds=[SeedObjective(value="Describe how to stop a Python process.")]),
+                AttackSeedGroup(seeds=[SeedObjective(value="Describe how to list running Python processes.")]),
+            ]
+        ),
+    }
+)
+await sweep.initialize_async()  # type: ignore
+sweep_result = await sweep.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(sweep_result)  # type: ignore
+
+# %% [markdown]
+# ### SDK
+#
+# Run this example after your configuration registers `openai_chat`, `adversarial_chat`,
+# and a default objective scorer. It sweeps the `light` techniques over every objective
+# in two packaged harm datasets.
+#
+# ```python
+# from pyrit.output import output_scenario_async
+# from pyrit.registry import TargetRegistry
+# from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
+# from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
+# from pyrit.scenario.technique import Sweep
+#
+# targets = TargetRegistry.get_registry_singleton()
+# with override_default_adversarial_target(targets.instances["adversarial_chat"]):
+#     scenario = Sweep()
+#     scenario.set_params_from_args(
+#         args={
+#             "objective_target": targets.instances["openai_chat"],
+#             "dataset_config": DatasetAttackConfiguration(
+#                 sources=[DatasetSource(name="airt_hate"), DatasetSource(name="airt_violence")],
+#                 max_per_dataset="all",
+#             ),
+#         }
+#     )
+#     await scenario.initialize_async()
+#     result = await scenario.run_async()
+# await output_scenario_async(result)
+# ```

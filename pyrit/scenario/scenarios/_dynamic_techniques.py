@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     LeakageTechnique: type[ScenarioTechnique]
     MultilingualTechnique: type[ScenarioTechnique]
     RapidResponseTechnique: type[ScenarioTechnique]
+    SweepTechnique: type[ScenarioTechnique]
 
 _REGISTRY_TECHNIQUE_BUILDERS = {
     "AdversarialBenchmarkTechnique": (
@@ -34,6 +35,7 @@ _REGISTRY_TECHNIQUE_BUILDERS = {
         "pyrit.scenario.scenarios.airt.rapid_response",
         "_build_rapid_response_technique",
     ),
+    "SweepTechnique": ("pyrit.scenario.scenarios.technique.sweep", "_build_sweep_technique"),
 }
 
 _TECHNIQUE_BUILDERS = {

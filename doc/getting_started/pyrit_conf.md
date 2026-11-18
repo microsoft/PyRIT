@@ -156,10 +156,16 @@ Full preload can take several minutes and may require network access, provider c
 
 #### Optional Scenario Suites
 
-The `scenario_suite` initializer registers read-only suites with fixed presets. The
-default `horizontal_techniques` suite applies 50 jailbreak templates, translation into
-10 languages, and 10 encodings and obfuscations to the same `airt_harms` text
-objectives, with one baseline. Launch it under **Scenario suites** in the GUI Scanner.
+The `scenario_suite` initializer registers read-only suites with fixed presets:
+
+- `horizontal_techniques` applies 50 jailbreak templates, translation into 10 languages,
+  and 10 encodings and obfuscations to the same `airt_harms` text objectives, with one baseline.
+- `rapid_response` runs `technique.sweep` once per packaged harm dataset
+  (`airt_hate`, `airt_fairness`, `airt_violence`, `airt_sexual`, `airt_harassment`,
+  `airt_misinformation`, and `airt_leakage`). Each preset applies the same 11 core techniques
+  to every objective in its dataset, with a baseline.
+
+Launch them under **Scenario suites** in the GUI Scanner.
 
 ```yaml
 initializers:
@@ -170,7 +176,10 @@ initializers:
 ```
 
 Presets list their templates, languages, and techniques explicitly, so results stay
-comparable across runs. This suite is text-only and uses the existing scenario scoring behavior.
+comparable across runs. These suites are text-only. `horizontal_techniques` uses the existing
+scenario scoring behavior. `rapid_response` presets name no scorer: select an objective
+scorer at launch, or register a default objective scorer (the `scorer` initializer tags one).
+A sweep without either fails rather than implicitly judging non-refusal as success.
 
 See [Scenario Suites](../code/scenarios/4_scenario_suites.ipynb) for the suite contents
 and running a suite.

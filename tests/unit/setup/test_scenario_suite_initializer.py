@@ -15,6 +15,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services import ScenarioRunService
+from pyrit.common.path import DATASETS_PATH
 from pyrit.datasets import TextJailBreak
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
@@ -23,6 +24,7 @@ from pyrit.models import (
     ScenarioSuite,
     ScenarioSuiteEntry,
     ScenarioSuiteLaunchEntrySnapshot,
+    SeedDataset,
     SeedObjective,
 )
 from pyrit.registry import (
@@ -34,15 +36,20 @@ from pyrit.registry import (
     ScenarioSuiteLaunchResolver,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
+    ScorerRegistry,
     TargetRegistry,
 )
 from pyrit.scenario.scenarios.airt import Multilingual
 from pyrit.scenario.scenarios.foundry import FoundryTechnique
+from pyrit.scenario.scenarios.technique import Sweep
+from pyrit.score import SubStringScorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
 from pyrit.setup.initializers import (
     HorizontalTechniquesSuite,
+    RapidResponseSuite,
     ScenarioSuiteInitializer,
+    ScorerInitializerTags,
     TargetInitializer,
     TechniqueInitializer,
 )
@@ -50,6 +57,10 @@ from pyrit.setup.initializers.techniques import build_technique_factories
 
 SUITE = "horizontal_techniques"
 PRESET_NAMES = [f"{SUITE}_jailbreaks", f"{SUITE}_multilingual", f"{SUITE}_encoding_obfuscation"]
+RAPID_RESPONSE_SUITE = "rapid_response"
+RAPID_RESPONSE_PRESET_NAMES = [f"{RAPID_RESPONSE_SUITE}_{harm}" for harm in RapidResponseSuite.HARMS]
+ALL_SUITES = sorted([SUITE, RAPID_RESPONSE_SUITE])
+ALL_PRESET_NAMES = sorted(PRESET_NAMES + RAPID_RESPONSE_PRESET_NAMES)
 
 
 SuiteBuilder = Callable[[], tuple[ScenarioSuite, list[ScenarioPreset]]]
@@ -108,9 +119,39 @@ def test_horizontal_suite_is_a_fixed_snapshot_of_packaged_catalogs() -> None:
     assert sources is not None and [source.name for source in sources] == ["airt_harms"]
 
 
+def test_rapid_response_suite_is_a_fixed_per_harm_snapshot() -> None:
+    suite, presets = RapidResponseSuite.build()
+    assert (
+        [preset.name for preset in presets]
+        == [entry.preset_name for entry in suite.entries]
+        == RAPID_RESPONSE_PRESET_NAMES
+    )
+    assert RapidResponseSuite.build() == (suite, presets)
+    light = {
+        factory.name for factory in build_technique_factories(groups=["core"]) if "light" in factory.technique_tags
+    }
+    techniques = RapidResponseSuite.TECHNIQUES
+    assert len(set(techniques)) == len(techniques) and set(techniques) <= light
+    packaged = {
+        SeedDataset.from_yaml_file(path).dataset_name
+        for path in (DATASETS_PATH / "seed_datasets" / "local" / "airt").glob("*.prompt")
+    }
+    for harm, preset in zip(RapidResponseSuite.HARMS, presets, strict=True):
+        assert preset.scenario_name == "technique.sweep"
+        assert preset.techniques == list(techniques)
+        assert preset.include_baseline is True and not preset.show_in_scanner
+        assert preset.datasets is not None and preset.datasets.sources is not None
+        assert [source.name for source in preset.datasets.sources] == [f"airt_{harm}"]
+        assert preset.datasets.max_per_dataset == preset.datasets.max_total == "all"
+        assert f"airt_{harm}" in packaged
+
+
 @pytest.mark.usefixtures("isolated_registries")
 async def test_discovery_has_no_parameters_and_does_not_build_async() -> None:
-    with patch.object(HorizontalTechniquesSuite, "build", side_effect=AssertionError("must not build")):
+    with (
+        patch.object(HorizontalTechniquesSuite, "build", side_effect=AssertionError("must not build")),
+        patch.object(RapidResponseSuite, "build", side_effect=AssertionError("must not build")),
+    ):
         registry = InitializerRegistry()
         assert "scenario_suite" in registry.get_class_names()
         assert registry.get_registered_class_metadata("scenario_suite").supported_parameters == ()
@@ -180,8 +221,8 @@ async def test_configuration_binds_requested_storage_before_suite_initialization
     suites = ScenarioSuiteRegistry.get_registry_singleton()
     assert presets.source == (config.scenario_presets_source or str(tmp_path / "defaults" / "scenario_presets"))
     assert suites.source == (config.scenario_suites_source or str(tmp_path / "defaults" / "scenario_suites"))
-    assert presets.instances.get_names() == sorted(PRESET_NAMES)
-    assert suites.instances.get_names() == [SUITE]
+    assert presets.instances.get_names() == ALL_PRESET_NAMES
+    assert suites.instances.get_names() == ALL_SUITES
 
 
 @pytest.mark.usefixtures("isolated_registries", "patch_central_database")
@@ -202,7 +243,7 @@ async def test_stored_documents_shadow_registrations_without_blocking_startup_as
 
     presets = ScenarioPresetRegistry.get_registry_singleton()
     suites = ScenarioSuiteRegistry.get_registry_singleton()
-    assert presets.instances.get_names() == sorted(PRESET_NAMES)
+    assert presets.instances.get_names() == ALL_PRESET_NAMES
     shadowed = await asyncio.to_thread(presets.get_preset, name=stored_preset.name)
     assert shadowed is not None and shadowed.origin == "stored" and shadowed.preset == stored_preset
     stored_suite = await asyncio.to_thread(suites.get_suite, name=SUITE)
@@ -219,7 +260,7 @@ async def test_live_reload_removes_suite_registration_and_keeps_stored_documents
     )
     prepared = await config.preflight_reinitialization_async(environment_values={})
     await config.apply_prepared_reinitialization_async(prepared=prepared)
-    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == [SUITE]
+    assert ScenarioSuiteRegistry.get_registry_singleton().instances.get_names() == ALL_SUITES
 
     config = replace(config, initializers=[])
     with (
@@ -286,5 +327,67 @@ async def test_horizontal_text_prepares_and_resumes_through_main_launch_path_asy
             resumed = await service._prepare_run_async(request=restored)
             assert resumed.scenario._objective_scorer.get_identifier().hash == scorer_hash
             assert resumed.scenario._scenario_result_id == scenario._scenario_result_id
+    finally:
+        await service.close_async()
+
+
+@pytest.mark.usefixtures("isolated_registries", "patch_central_database", "block_dataset_provider_lookup")
+async def test_rapid_response_prepares_one_sweep_per_harm_and_resumes_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    targets = TargetRegistry.get_registry_singleton()
+    targets.instances.register(MockPromptTarget(), name="chat")
+    targets.instances.register(MockPromptTarget(), name="objective")
+    scorer = SubStringScorer(substring="default")
+    ScorerRegistry.get_registry_singleton().instances.register(
+        scorer, name="configured", tags=[ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
+    )
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories(groups=["core"]))
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value=f"{harm} objective {index}", dataset_name=f"airt_{harm}")
+            for harm in RapidResponseSuite.HARMS
+            for index in range(2)
+        ],
+        added_by="test",
+    )
+    await ScenarioSuiteInitializer().initialize_async()
+    suite = ScenarioSuiteRegistry.get_registry_singleton().get_suite(name=RAPID_RESPONSE_SUITE).suite
+    resolved = ScenarioSuiteLaunchResolver().resolve(
+        name=RAPID_RESPONSE_SUITE,
+        request=LaunchScenarioSuiteRequest(
+            target_name="objective",
+            adversarial_target_name="chat",
+            entries=[
+                ScenarioSuiteLaunchEntrySnapshot(
+                    entry_id=entry.entry_id, preset_name=entry.preset_name, origin="registered", preset_version=None
+                )
+                for entry in suite.entries
+            ],
+        ),
+    )
+    service = ScenarioRunService()
+    try:
+        scenarios = [(await service._prepare_run_async(request=entry.request)).scenario for entry in resolved.entries]
+        for harm, scenario in zip(RapidResponseSuite.HARMS, scenarios, strict=True):
+            assert isinstance(scenario, Sweep)
+            assert [technique.value for technique in scenario._scenario_techniques] == sorted(
+                RapidResponseSuite.TECHNIQUES
+            )
+            assert scenario._objective_scorer.get_identifier().hash == scorer.get_identifier().hash
+            baseline, *attacks = scenario._atomic_attacks
+            assert baseline.atomic_attack_name == "baseline"
+            assert sorted(group.objective.value for group in baseline.seed_groups) == [
+                f"{harm} objective {index}" for index in range(2)
+            ]
+            assert attacks and {attack.display_group for attack in attacks} == {f"airt_{harm}"}
+
+        first = scenarios[0]
+        stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[first._scenario_result_id]))[0]
+        resumed = (await service._prepare_run_async(request=service._restore_launch_request(stored=stored))).scenario
+        assert resumed._scenario_result_id == first._scenario_result_id
+        assert [attack.atomic_attack_name for attack in resumed._atomic_attacks] == [
+            attack.atomic_attack_name for attack in first._atomic_attacks
+        ]
     finally:
         await service.close_async()
