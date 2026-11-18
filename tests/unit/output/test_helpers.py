@@ -390,6 +390,49 @@ async def test_output_scenario_attacks_async_rejects_unsupported_format_before_w
     assert path.read_text() == "existing report"
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("fmt", ["pretty", "json"])
+@pytest.mark.parametrize("outcome", [None, *AttackOutcome])
+async def test_output_scenario_attacks_async_filters_outcome_and_ids_before_limit(fmt, outcome, capsys):
+    attacks = [
+        AttackResult(conversation_id=str(uuid.uuid4()), objective=f"objective {index}", outcome=value)
+        for index, value in enumerate(
+            [
+                AttackOutcome.SUCCESS,
+                AttackOutcome.FAILURE,
+                AttackOutcome.SUCCESS,
+                AttackOutcome.ERROR,
+                AttackOutcome.SUCCESS,
+            ]
+        )
+    ]
+    result = make_scenario_result(attack_results={"tech_a": attacks})
+    matching = [attack for attack in attacks[1:] if outcome is None or attack.outcome == outcome]
+
+    await output_scenario_attacks_async(
+        result,
+        attack_result_ids=[attack.attack_result_id for attack in reversed(attacks[1:])],
+        limit=1,
+        outcome=outcome,
+        format=fmt,
+    )
+
+    output = capsys.readouterr().out
+    expected = matching[:1]
+    if fmt == "json":
+        document = json.loads(output)
+        assert [entry["id"] for entry in document["attacks"]] == [attack.attack_result_id for attack in expected]
+        assert document["total"] == len(matching)
+        assert document["shown"] == len(expected)
+    else:
+        for attack in attacks:
+            assert (attack.attack_result_id in output) == (attack in expected)
+        if not matching:
+            assert "No attack results." in output
+        elif len(matching) > 1:
+            assert f"Showing 1 of {len(matching)} attacks." in output
+
+
 @patch("pyrit.output.scorer.json.JsonScorerMemoryPrinter")
 async def test_output_scorer_async_json(mock_cls):
     mock_printer = MagicMock()
@@ -559,6 +602,52 @@ async def test_output_scenario_conversations_async_filters_ids_before_limit(scen
     document = json.loads(path.read_text(encoding="utf-8"))
     assert [entry["id"] for entry in document["conversations"]] == [second.attack_result_id]
     assert [call.kwargs["conversation_id"] for call in get_messages_async.call_args_list] == [second.conversation_id]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("helper", "fmt"),
+    [
+        (output_scenario_conversations_async, "json"),
+        (output_scenario_full_async, "json"),
+        (output_scenario_full_async, "html"),
+    ],
+)
+@pytest.mark.parametrize("outcome", [None, *AttackOutcome])
+async def test_scenario_report_helpers_filter_outcome_before_reading_conversations(
+    helper, fmt, outcome, scenario_result, tmp_path
+):
+    first, second, third = _all_attacks(scenario_result)
+    first.outcome = third.outcome = AttackOutcome.SUCCESS
+    expected = [attack for attack in (second, third) if outcome is None or attack.outcome == outcome][:1]
+    overview = JsonScenarioResultMemoryPrinter().build(scenario_result)
+    path = tmp_path / f"report.{fmt}"
+
+    with patch.object(
+        MemoryConversationSource, "get_messages_async", autospec=True, return_value=[]
+    ) as get_messages_async:
+        await helper(
+            scenario_result,
+            attack_result_ids=[third.attack_result_id, second.attack_result_id],
+            limit=1,
+            outcome=outcome,
+            format=fmt,
+            sink=FileSink(path=path),
+        )
+
+    output = path.read_text(encoding="utf-8")
+    if fmt == "json":
+        document = json.loads(output)
+        assert [entry["id"] for entry in document["conversations"]] == [attack.attack_result_id for attack in expected]
+        if helper is output_scenario_full_async:
+            assert document["overview"] == overview
+    else:
+        for attack in (first, second, third):
+            assert (attack.attack_result_id in output) == (attack in expected)
+        assert f"Conversations ({len(expected)})" in output
+    assert [call.kwargs["conversation_id"] for call in get_messages_async.call_args_list] == [
+        attack.conversation_id for attack in expected
+    ]
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -120,6 +120,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a scenario result and return it as a string.
@@ -132,6 +133,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 these attack ids. Ignored by the overview. Defaults to None.
             limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
                 to show. Ignored by the overview. Defaults to None.
+            outcome (AttackOutcome | None): For the ``"attacks"`` view, keep only attacks with
+                this outcome before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
@@ -141,7 +144,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 is configured.
         """
         if view == "attacks":
-            return self._render_attacks(result, attack_result_ids=attack_result_ids, limit=limit)
+            return self._render_attacks(result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
 
         parts: list[str] = []
 
@@ -238,6 +241,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         *,
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a compact per-attack table for the scenario's results.
@@ -250,11 +254,13 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             attack_result_ids (list[str] | None): When provided, keep only attacks
                 whose id is in this set. Defaults to None (all attacks).
             limit (int | None): Maximum number of attacks to show. Defaults to None.
+            outcome (AttackOutcome | None): Keep only attacks with this outcome before applying
+                ``limit``. Defaults to None.
 
         Returns:
             str: The rendered attacks table.
         """
-        selected = select_attacks(result, attack_result_ids=attack_result_ids)
+        selected = select_attacks(result, attack_result_ids=attack_result_ids, outcome=outcome)
         total = len(selected)
         if limit is not None:
             selected = selected[:limit]
@@ -336,6 +342,7 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render the scenario result and return it as a string.
@@ -348,8 +355,12 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
                 these attack ids. Ignored by the overview. Defaults to None.
             limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
                 to show. Ignored by the overview. Defaults to None.
+            outcome (AttackOutcome | None): For the ``"attacks"`` view, keep only attacks with
+                this outcome before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
         """
-        return await super().render_async(result, view=view, attack_result_ids=attack_result_ids, limit=limit)
+        return await super().render_async(
+            result, view=view, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome
+        )

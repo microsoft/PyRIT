@@ -10,6 +10,7 @@ from typing import NamedTuple
 from pydantic import ValidationError
 
 from pyrit.models import (
+    ComponentIdentifier,
     ScenarioResult,
     ScenarioSuiteExecutionEntrySummary,
     ScenarioSuiteExecutionMetadata,
@@ -24,6 +25,7 @@ class SuiteReportEntry(NamedTuple):
 
     entry: ScenarioSuiteExecutionEntrySummary
     statistics: SuiteEntryStatistics | None
+    objective_target_identifier: ComponentIdentifier | None = None
 
     @property
     def error(self) -> str | None:
@@ -108,7 +110,11 @@ class ScenarioSuiteResultPrinterBase(PrinterBase):
             if result is not None:
                 self._validate_result(execution=execution, entry=entry, result=result)
             report.append(
-                SuiteReportEntry(entry=entry, statistics=suite_entry_statistics(result) if result is not None else None)
+                SuiteReportEntry(
+                    entry=entry,
+                    statistics=suite_entry_statistics(result) if result is not None else None,
+                    objective_target_identifier=result.objective_target_identifier if result is not None else None,
+                )
             )
         return report
 

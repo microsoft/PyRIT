@@ -136,6 +136,33 @@ from pyrit.output import output_scenario_suite_async
 await output_scenario_suite_async(execution)  # type: ignore
 
 # %% [markdown]
+# ## Explore a scenario's results
+#
+# Each **Scenario Result ID** above identifies a child run stored in memory. Load one
+# to see its technique-level summary, individual attacks and/or conversations. This example
+# selects the first submitted entry; use another printed ID to explore a different scenario.
+# The limits and outcome filter keep the attack list output short.
+
+# %%
+from pyrit.memory import CentralMemory
+from pyrit.output import output_scenario_async, output_scenario_attacks_async
+
+scenario_result_ids = [entry.run.scenario_result_id for entry in execution.entries if entry.run is not None]
+if scenario_result_ids:
+    scenario_results = await CentralMemory.get_memory_instance().get_scenario_results_async(  # type: ignore
+        scenario_result_ids=scenario_result_ids
+    )
+else:
+    scenario_results = []
+
+if scenario_results:
+    scenario_result = scenario_results[1]
+    await output_scenario_async(scenario_result)  # type: ignore
+    await output_scenario_attacks_async(scenario_result, limit=3)  # type: ignore
+else:
+    print("No stored scenario result is available yet.")
+
+# %% [markdown]
 # ## Define your own suite
 #
 # ### In code

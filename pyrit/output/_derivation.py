@@ -25,6 +25,7 @@ from pyrit.analytics.scenario_statistics import (
 
 if TYPE_CHECKING:
     from pyrit.models import (
+        AttackOutcome,
         AttackResult,
         ComponentIdentifier,
         MessagePiece,
@@ -203,7 +204,10 @@ def attack_technique_label(*, atomic_attack_name: str, attack: AttackResult) -> 
 
 
 def select_attacks(
-    result: ScenarioResult, *, attack_result_ids: list[str] | None = None
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    outcome: AttackOutcome | None = None,
 ) -> list[tuple[str, AttackResult]]:
     """
     Return ``(atomic_attack_name, attack)`` pairs in scenario order.
@@ -216,6 +220,7 @@ def select_attacks(
     Args:
         result (ScenarioResult): The scenario result whose attacks to walk.
         attack_result_ids (list[str] | None): When provided, keep only these ids.
+        outcome (AttackOutcome | None): Keep only attacks with this outcome. Defaults to None.
 
     Returns:
         list[tuple[str, AttackResult]]: The selected pairs in scenario order.
@@ -225,7 +230,7 @@ def select_attacks(
         (atomic_attack_name, attack)
         for atomic_attack_name, attacks in result.attack_results.items()
         for attack in attacks
-        if attack.attack_result_id in id_filter
+        if attack.attack_result_id in id_filter and (outcome is None or attack.outcome == outcome)
     ]
 
 

@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from colorama import Fore, Style
 
 from pyrit.models import ScenarioResult, ScenarioSuiteExecutionSummary
+from pyrit.output._derivation import resolve_target_info
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scenario_suite_result.base import ScenarioSuiteResultPrinterBase, SuiteReportEntry
 from pyrit.output.sink import Sink
@@ -82,6 +83,16 @@ class PrettyScenarioSuiteResultPrinter(_PrettyPrinterMixin, ScenarioSuiteResultP
                 f"{self._indent * 2}• Last Updated: {execution.updated_at.isoformat(sep=' ', timespec='seconds')}",
                 Fore.CYAN,
             )
+        )
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
+        target = resolve_target_info(
+            next((row.objective_target_identifier for row in rows if row.objective_target_identifier is not None), None)
+        )
+        lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target.type or 'Unknown'}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Target Model: {target.model or 'Unknown'}", Fore.CYAN))
+        lines.append(
+            self._format_colored(f"{self._indent * 2}• Target Endpoint: {target.endpoint or 'Unknown'}", Fore.CYAN)
         )
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))

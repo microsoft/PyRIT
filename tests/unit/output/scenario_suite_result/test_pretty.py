@@ -2,9 +2,20 @@
 # Licensed under the MIT license.
 
 import pytest
-from unit.mocks import make_suite_execution, make_suite_execution_entry, make_suite_scenario_result
+from unit.mocks import (
+    make_scenario_identifier,
+    make_suite_execution,
+    make_suite_execution_entry,
+    make_suite_scenario_result,
+)
 
-from pyrit.models import AttackOutcome, ScenarioRunState, ScenarioSuiteExecutionStatus, ScenarioSuiteSubmissionState
+from pyrit.models import (
+    AttackOutcome,
+    ComponentIdentifier,
+    ScenarioRunState,
+    ScenarioSuiteExecutionStatus,
+    ScenarioSuiteSubmissionState,
+)
 from pyrit.output.scenario_suite_result.pretty import PrettyScenarioSuiteResultMemoryPrinter
 
 
@@ -79,12 +90,37 @@ async def test_write_async_shows_entries_without_results(printer, capsys):
     assert "Success Rate" not in out
 
 
+async def test_write_async_shows_target_from_available_result(printer, capsys):
+    first, second = make_suite_execution_entry(), make_suite_execution_entry(position=2)
+    execution = make_suite_execution(entries=[first, second])
+    result = make_suite_scenario_result(execution=execution, entry=second)
+    result.scenario_identifier = make_scenario_identifier(
+        objective_target=ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "test-model", "endpoint": "https://example.com/\x1b[2J"},
+        )
+    )
+
+    await printer.write_async(execution, results={str(result.id): result})
+    out = capsys.readouterr().out
+
+    assert "Target Information" in out
+    assert "Target Type: OpenAIChatTarget" in out
+    assert "Target Model: test-model" in out
+    assert "Target Endpoint: https://example.com/" in out
+    assert "\x1b[2J" not in out
+
+
 async def test_write_async_without_entries(printer, capsys):
     await printer.write_async(make_suite_execution(entries=[], status=ScenarioSuiteExecutionStatus.FAILED))
     out = capsys.readouterr().out
 
     assert "Status: FAILED" in out
     assert "No suite entries." in out
+    assert "Target Type: Unknown" in out
+    assert "Target Model: Unknown" in out
+    assert "Target Endpoint: Unknown" in out
 
 
 async def test_write_async_escapes_control_characters(printer, capsys):
