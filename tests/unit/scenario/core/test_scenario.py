@@ -1761,7 +1761,7 @@ class TestScenarioBaselineUniformObjectives:
         from pyrit.scenario import AttackTechnique
 
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_total=3)
 
         class TechniqueScenario(ConcreteScenarioWithTrueFalseScorer):
             async def _build_atomic_attacks_async(self, *, context):
@@ -1876,7 +1876,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         from pyrit.models import SeedGroup, SeedObjective
 
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        return DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        return DatasetAttackConfiguration(seed_groups=seed_groups, max_total=3)
 
     @pytest.mark.parametrize("resume_state", ["valid", "missing-id", "missing-dataset", "incompatible", "refreshed"])
     @pytest.mark.parametrize("configured_provider", [False, True], ids=["registered", "configured"])
