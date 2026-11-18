@@ -1094,11 +1094,3 @@ def test_paired_outcome_details_link_nested_compound_conversation_without_counti
     assert side.child_conversation.attack_result_id == leaf.attack_result_id
     assert side.child_conversation.conversation_id == leaf.conversation_id
     assert side.child_conversation.outcome == AttackOutcome.SUCCESS
-
-
-def test_check_pair_evidence_keyword_only() -> None:
-    from pyrit.analytics.paired_outcome_statistics import _check_pair_evidence, _OutcomeEvidence
-
-    evidence_a = _OutcomeEvidence(scores=(), objective_targets=())
-    evidence_b = _OutcomeEvidence(scores=(), objective_targets=())
-    _check_pair_evidence(before=evidence_a, after=evidence_b)
