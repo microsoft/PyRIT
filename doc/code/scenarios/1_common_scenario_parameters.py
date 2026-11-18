@@ -257,6 +257,7 @@ await output_scenario_async(custom_result)
 # stops if the pool or the objectives' scoring criteria have changed since it started.
 
 # %% [markdown]
+# (reporting-every-conversation)=
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use

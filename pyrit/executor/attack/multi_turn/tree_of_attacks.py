@@ -1564,8 +1564,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Tree of Attacks: Jailbreaking Black-Box LLMs Automatically
         [@mehrotra2023tap]
 
-    Returns:
-        AttackResult: The result of the TAP attack execution.
+    Execution returns an ``AttackResult`` containing the TAP attack result.
     """
 
     # Default paths for TAP attack prompts

@@ -56,6 +56,7 @@ These decisions apply to every change. The [style guide](../contributing/3_style
 - **Give each responsibility one owner.** Put new code in the component that owns the responsibility, as described below. If nothing fits, raise it with the maintainers instead of stretching a component.
 - **Keep logic in the library.** The backend, CLI, and frontend only expose and present library behavior. Implement new behavior in the owning library package, with any shared types in `pyrit.models`, then use it from the surfaces.
 - **Reuse and compose before adding.** Express new capability as a configuration of existing pieces: an attack technique instead of a new attack, a composite of scorers instead of a new scorer type, an existing model instead of a near-copy. Add a class only when composition can't express it.
+- **Port the logic, not the structure.** When a feature comes from other work, such as an algorithm from a paper like Crescendo or a scenario from Garak, keep its logic, but break it into PyRIT's components and follow PyRIT's rules. A hard-coded judge, for example, becomes a scorer. If a part doesn't fit, that's a sign the owning component should generalize, not a reason to work around it. Cite sources in `doc/references.bib`.
 - **Be consistent, but do what's best.** Match the patterns in the code you change, so PyRIT reads as one codebase. Consistency never outranks doing what's best: when a better way exists, take it, and move existing uses to it in their own PR, not inside an unrelated change.
 - **Don't over-engineer.** Build what the change needs now, as simply as possible. Don't add options, layers, abstractions, or branches for hypothetical needs. Handle the cases that occur in practice, and reject the rest with a clear error.
 - **Fail fast.** Validate inputs and configuration at construction or at the boundary, and raise specific, actionable errors. Never guess: report an outcome you can't determine as undetermined or as an error, not as false.
@@ -100,6 +101,7 @@ Surfaces run the core components, and the shared library supports both. The orch
 
 Converters, targets, and scorers are the bricks that attacks use. The registry builds components, and memory holds the shared record of conversations, scores, and results.
 
+(core-components)=
 # Core Components
 
 Core components are pluggable bricks. Each one can be swapped, combined, or replaced with a no-op, such as a converter that doesn't convert or a target that only prints. Most contributions belong in one of them. If yours doesn't fit, open an issue so we can discuss the architecture, and tell us what you want, or don't want, under Framework Plans.
@@ -120,7 +122,7 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 - Manage datasets at scale and load them more intelligently. Expect some redesign here.
 - Finish moving components from file paths and providers to seeds passed in or read from memory.
 - Express expected results as objective conditions in every executor, including benchmarks, instead of adding new seed types.
-- Execute objective decomposition paths in attacks (likely compound attacks), and reuse the same parent/child model for findings.
+- Execute objective decomposition paths in attacks (likely compound attacks).
 
 **Contributing (difficulty easy)**: Add seed dataset providers, prompts, and jailbreak templates for what you're testing.
 
