@@ -25,9 +25,9 @@ class TestSeedSimulatedConversationInit:
         sim_path.write_text("value: test\ndata_type: text\nparameters:\n  - objective\n  - num_turns")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=5,
-            simulated_target_system_prompt_path=sim_path,
+            simulated_target_system_prompt=SeedPrompt.from_yaml_file(sim_path),
         )
 
         assert conv.num_turns == 5
@@ -42,7 +42,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
         )
 
         assert conv.num_turns == 3  # default
@@ -56,7 +56,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
         )
 
         assert conv.num_turns == 3
@@ -68,7 +68,7 @@ class TestSeedSimulatedConversationInit:
 
         with pytest.raises(ValueError, match="num_turns must be a positive integer"):
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path=adv_path,
+                adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                 num_turns=0,
             )
 
@@ -79,7 +79,7 @@ class TestSeedSimulatedConversationInit:
 
         with pytest.raises(ValueError, match="num_turns must be a positive integer"):
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path=adv_path,
+                adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
                 num_turns=-1,
             )
 
@@ -89,7 +89,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
         )
 
         assert conv.data_type == "text"
@@ -100,7 +100,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=5,
         )
 
@@ -115,11 +115,11 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv1 = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=3,
         )
         conv2 = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=3,
         )
 
@@ -131,7 +131,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
         )
 
         assert conv.sequence == 0
@@ -142,7 +142,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             sequence=5,
         )
 
@@ -154,7 +154,7 @@ class TestSeedSimulatedConversationInit:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
         )
 
         assert conv.next_message_system_prompt is None
@@ -167,8 +167,8 @@ class TestSeedSimulatedConversationInit:
         next_msg_path.write_text("value: test\ndata_type: text\nparameters:\n  - objective\n  - conversation_context")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
-            next_message_system_prompt_path=next_msg_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
+            next_message_system_prompt=SeedPrompt.from_yaml_file(next_msg_path),
         )
 
         assert conv.next_message_system_prompt.value == "test"
@@ -184,7 +184,7 @@ class TestSeedSimulatedConversationFromMapping:
 
         data = {
             "num_turns": 5,
-            "adversarial_chat_system_prompt_path": str(adv_path),
+            "adversarial_chat_system_prompt": SeedPrompt.from_yaml_file(adv_path),
         }
         conv = SeedSimulatedConversation.model_validate(data)
 
@@ -198,7 +198,7 @@ class TestSeedSimulatedConversationFromMapping:
 
         data = {
             "num_turns": 3,
-            "adversarial_chat_system_prompt_path": str(adv_path),
+            "adversarial_chat_system_prompt": SeedPrompt.from_yaml_file(adv_path),
         }
         conv = SeedSimulatedConversation.model_validate(data)
 
@@ -211,7 +211,7 @@ class TestSeedSimulatedConversationFromMapping:
         adv_path.write_text("value: test\ndata_type: text")
 
         data = {
-            "adversarial_chat_system_prompt_path": str(adv_path),
+            "adversarial_chat_system_prompt": SeedPrompt.from_yaml_file(adv_path),
         }
         conv = SeedSimulatedConversation.model_validate(data)
 
@@ -234,7 +234,7 @@ class TestSeedSimulatedConversationGetIdentifier:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=3,
         )
         identifier = conv.get_identifier()
@@ -254,7 +254,7 @@ class TestSeedSimulatedConversationComputeHash:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
         )
         hash_value = conv.compute_hash()
 
@@ -268,11 +268,11 @@ class TestSeedSimulatedConversationComputeHash:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv1 = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=3,
         )
         conv2 = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=3,
         )
 
@@ -284,11 +284,11 @@ class TestSeedSimulatedConversationComputeHash:
         adv_path.write_text("value: test\ndata_type: text")
 
         conv1 = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=3,
         )
         conv2 = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=5,
         )
 
@@ -304,7 +304,7 @@ class TestSeedSimulatedConversationRepr:
         adv_path.write_text("name: my_adversarial\nvalue: test\ndata_type: text")
 
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
             num_turns=5,
         )
         repr_str = repr(conv)
@@ -340,11 +340,12 @@ class TestSeedSimulatedConversationLoadSimulatedTargetSystemPrompt:
             "  - num_turns"
         )
 
-        result = SeedSimulatedConversation.load_simulated_target_system_prompt(
-            objective="Test objective",
-            num_turns=5,
-            simulated_target_system_prompt_path=sim_path,
-        )
+        with pytest.warns(DeprecationWarning, match=r"load_simulated_target_system_prompt.*removed in 1\.4\.0"):
+            result = SeedSimulatedConversation.load_simulated_target_system_prompt(
+                objective="Test objective",
+                num_turns=5,
+                simulated_target_system_prompt_path=sim_path,
+            )
 
         assert "Test objective" in result
         assert "5" in result
@@ -354,7 +355,10 @@ class TestSeedSimulatedConversationLoadSimulatedTargetSystemPrompt:
         sim_path = tmp_path / "simulated.yaml"
         sim_path.write_text("value: 'No params'\ndata_type: text")
 
-        with pytest.raises(ValueError, match="objective and num_turns"):
+        with (
+            pytest.warns(DeprecationWarning, match="load_simulated_target_system_prompt"),
+            pytest.raises(ValueError, match="objective and num_turns"),
+        ):
             SeedSimulatedConversation.load_simulated_target_system_prompt(
                 objective="Test",
                 num_turns=3,
@@ -369,7 +373,7 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that the prefix is prepended ahead of the adversarial chat system prompt."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path))
 
         copied = conv.with_layered_prefix("Never break character.")
 
@@ -379,9 +383,9 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that a new prefix is combined ahead of a previously layered one."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path).with_layered_prefix(
-            "Never break character."
-        )
+        conv = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path)
+        ).with_layered_prefix("Never break character.")
 
         copied = conv.with_layered_prefix("Shared benchmark guidance.")
 
@@ -393,7 +397,7 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that a prefix containing Jinja syntax raises rather than silently rendering."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path))
 
         with pytest.raises(ValueError, match="must be static text without Jinja syntax"):
             conv.with_layered_prefix("Never break character {{ objective }}.")
@@ -402,7 +406,7 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that the original seed's adversarial chat system prompt is left untouched."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path))
         original_value = conv.adversarial_chat_system_prompt.value
 
         conv.with_layered_prefix("Never break character.")
@@ -413,7 +417,7 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that the copy gets a new id rather than reusing the original's."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path))
 
         copied = conv.with_layered_prefix("Never break character.")
 
@@ -423,7 +427,7 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that the derived value field reflects the combined prompt, not the stale original."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path))
 
         copied = conv.with_layered_prefix("Never break character.")
 
@@ -435,7 +439,9 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         """Test that fields unrelated to the adversarial prompt are carried over unchanged."""
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
-        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path, num_turns=5, sequence=2)
+        conv = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path), num_turns=5, sequence=2
+        )
 
         copied = conv.with_layered_prefix("Never break character.")
 
@@ -453,8 +459,8 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
         conv = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
-            simulated_target_system_prompt_path=sim_path,
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(adv_path),
+            simulated_target_system_prompt=SeedPrompt.from_yaml_file(sim_path),
             num_turns=1,
         )
 
@@ -466,7 +472,7 @@ class TestSeedSimulatedConversationWithLayeredPrefix:
 class TestSeedSimulatedConversationCanonicalPrompts:
     """Tests for the canonical SeedPrompt fields and the deprecated path inputs."""
 
-    def test_init_with_canonical_prompts(self):
+    def test_init_with_canonical_prompts(self, recwarn: pytest.WarningsRecorder):
         """Canonical SeedPrompt inputs populate the fields without touching disk."""
         conv = SeedSimulatedConversation(
             adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
@@ -479,6 +485,7 @@ class TestSeedSimulatedConversationCanonicalPrompts:
         assert conv.simulated_target_system_prompt.value == "target"
         assert conv.next_message_system_prompt is not None
         assert conv.next_message_system_prompt.value == "next"
+        assert not recwarn
 
     def test_path_inputs_are_not_model_fields(self):
         """The deprecated path inputs never become fields, so they cannot reach persistence."""
@@ -515,7 +522,10 @@ class TestSeedSimulatedConversationCanonicalPrompts:
 
     def test_missing_deprecated_path_raises(self, tmp_path):
         """A deprecated path that does not exist fails loudly rather than silently."""
-        with pytest.raises(FileNotFoundError):
+        with (
+            pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"),
+            pytest.raises(FileNotFoundError),
+        ):
             SeedSimulatedConversation(adversarial_chat_system_prompt_path=tmp_path / "missing.yaml")
 
     def test_deprecated_simulated_target_path_requires_parameters(self, tmp_path):
@@ -525,11 +535,15 @@ class TestSeedSimulatedConversationCanonicalPrompts:
         sim_path = tmp_path / "simulated.yaml"
         sim_path.write_text("value: no params\ndata_type: text")
 
-        with pytest.raises(ValueError, match="objective and num_turns"):
+        with (
+            pytest.warns(DeprecationWarning, match="system_prompt_path") as recorded,
+            pytest.raises(ValueError, match="objective and num_turns"),
+        ):
             SeedSimulatedConversation(
                 adversarial_chat_system_prompt_path=adv_path,
                 simulated_target_system_prompt_path=sim_path,
             )
+        assert len(recorded) == 2
 
     def test_explicit_none_simulated_target_falls_back_to_compliant(self):
         """An explicit None simulated target (as memory reconstruction sends) uses the default."""
@@ -570,8 +584,8 @@ class TestSeedSimulatedConversationIdentity:
         second = tmp_path / "second.yaml"
         second.write_text("value: same text\ndata_type: text")
 
-        conv1 = SeedSimulatedConversation(adversarial_chat_system_prompt_path=first)
-        conv2 = SeedSimulatedConversation(adversarial_chat_system_prompt_path=second)
+        conv1 = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(first))
+        conv2 = SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(second))
 
         assert conv1.value == conv2.value
 

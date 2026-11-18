@@ -257,8 +257,8 @@ print(f"'Have a nice day.' -> {clean.get_value()}")
 #
 # Most of the time a scorer is handed to an attack as the **objective scorer** that decides
 # whether the objective was met. Here a `SubStringScorer` and a local `TextTarget` keep the
-# example offline. `TextTarget` just records the prompt and returns no assistant content, so
-# there is nothing substantive for the scorer to flag — swap in an LLM-backed
+# example offline. `TextTarget` only records the prompt and never replies, so there is no response
+# for the scorer to judge and the outcome is `UNDETERMINED` — swap in an LLM-backed
 # [target](../targets/0_prompt_targets.md) (and any scorer) to score a real model response.
 # %%
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -274,6 +274,7 @@ result = await attack.execute_async(objective="Say something hateful")  # type: 
 await output_attack_async(result)
 
 # %% [markdown]
+# (batch-scoring)=
 # ## Batch scoring
 #
 # `BatchScorer` scores responses already in memory — for example everything an attack sent.

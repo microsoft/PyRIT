@@ -28,8 +28,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from pyrit.models.catalog import RegistryEntryOrigin
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator, Mapping
 
     from pyrit.models import ComponentIdentifier
     from pyrit.registry.tag_query import TagQuery
@@ -48,8 +50,12 @@ T = TypeVar("T", bound=SupportsIdentifier)  # The type of items stored
 #: Entry metadata naming the kind of saved recipe an entry was rebuilt from, such as ``"targets"``.
 SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 
-_saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
+#: Entry metadata marking an entry that the server's startup scripts registered, so its name is registered again
+#: after a restart. Entries with neither this nor the saved marker are gone after a restart.
+CONFIGURATION_ENTRY_METADATA_KEY = "configuration_entry"
 
+_saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
+_registration_origin: ContextVar[RegistryEntryOrigin | None] = ContextVar("_registration_origin", default=None)
 # The kind and name of the saved entry being rebuilt in this context, so registering that name marks the entry.
 _saved_entry_registration: ContextVar[tuple[str, str] | None] = ContextVar("_saved_entry_registration", default=None)
 
@@ -133,6 +139,56 @@ def _record_saved_entry_refusal(entry: RegistryEntry[Any] | None) -> str | None:
     if refusals is not None:
         refusals.append((kind, entry.name))
     return kind
+
+
+def registry_entry_origin(metadata: Mapping[str, Any]) -> RegistryEntryOrigin:
+    """
+    Tell where a registered entry comes from, from its metadata.
+
+    Args:
+        metadata (Mapping[str, Any]): The entry's registry metadata.
+
+    Returns:
+        RegistryEntryOrigin: Saved when rebuilt from a saved recipe, configuration when the server's startup scripts
+            registered it, and temporary otherwise, such as an entry created through the API without saving it or
+            one a scan's launch scripts registered.
+    """
+    if SAVED_ENTRY_METADATA_KEY in metadata:
+        return RegistryEntryOrigin.SAVED
+    if metadata.get(CONFIGURATION_ENTRY_METADATA_KEY):
+        return RegistryEntryOrigin.CONFIGURATION
+    return RegistryEntryOrigin.TEMPORARY
+
+
+@contextmanager
+def registration_origin(origin: RegistryEntryOrigin) -> Generator[None, None, None]:
+    """
+    Mark what code run in this context registers as coming from the server's startup scripts or a scan.
+
+    Entries registered while the startup scripts run are marked as configuration. Classes that first
+    appear while a scan's launch scripts run are temporary, since those scripts don't run at startup.
+
+    Args:
+        origin (RegistryEntryOrigin): ``CONFIGURATION`` for startup scripts, ``TEMPORARY`` for launch scripts.
+
+    Yields:
+        None: Control while the scripts run.
+    """
+    token = _registration_origin.set(origin)
+    try:
+        yield
+    finally:
+        _registration_origin.reset(token)
+
+
+def current_registration_origin() -> RegistryEntryOrigin | None:
+    """
+    Return the origin set by the innermost ``registration_origin`` around the caller, if any.
+
+    Returns:
+        RegistryEntryOrigin | None: The origin, or None outside any.
+    """
+    return _registration_origin.get()
 
 
 @contextmanager
@@ -380,6 +436,9 @@ class DefaultInstanceRegistry(Generic[T]):
         """
         Register a pre-configured instance.
 
+        An entry registered while the server's startup scripts run is marked as configuration
+        (see ``registration_origin``).
+
         Args:
             instance (T): The instance to register.
             name (str | None): The registry name. Defaults to the instance's
@@ -407,6 +466,8 @@ class DefaultInstanceRegistry(Generic[T]):
         if name is None:
             name = instance.get_identifier().unique_name
         entry_metadata = dict(metadata or {})
+        if _registration_origin.get() is RegistryEntryOrigin.CONFIGURATION:
+            entry_metadata[CONFIGURATION_ENTRY_METADATA_KEY] = True
         restoring = _saved_entry_registration.get()
         if restoring is not None and restoring[1] == name:
             entry_metadata[SAVED_ENTRY_METADATA_KEY] = restoring[0]
