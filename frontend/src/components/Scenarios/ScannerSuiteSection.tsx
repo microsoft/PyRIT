@@ -15,7 +15,7 @@ import {
 import { ChevronDownRegular, ChevronUpRegular, PlayRegular } from '@fluentui/react-icons'
 
 import LaunchSuiteDialog from '@/components/ScenarioSuites/LaunchSuiteDialog'
-import type { ScenarioPresetResponse, ScenarioSuiteResponse, TargetInstance } from '@/types'
+import type { ScenarioPresetResponse, ScenarioSuiteResponse, ScorerInstance, TargetInstance } from '@/types'
 
 import { useScannerSuiteSectionStyles } from './ScannerSuiteSection.styles'
 import { SCANNER_CELL_PADDING_CLASS, useScenarioCatalogStyles } from './ScenarioCatalog.styles'
@@ -32,6 +32,9 @@ interface ScannerSuiteSectionProps {
   operationId: string | null
   /** False while server defaults or the global Operation selection are unresolved. */
   defaultsReady: boolean
+  scorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
   onSuiteChanged: (name: string) => void
 }
 
@@ -177,6 +180,9 @@ export default function ScannerSuiteSection({
   labels,
   operationId,
   defaultsReady,
+  scorers,
+  scorersLoading,
+  scorersError,
   onSuiteChanged,
 }: ScannerSuiteSectionProps) {
   const catalogStyles = useScenarioCatalogStyles()
@@ -236,6 +242,9 @@ export default function ScannerSuiteSection({
           labels={labels}
           operationId={operationId}
           defaultsReady={defaultsReady}
+          scorers={scorers}
+          scorersLoading={scorersLoading}
+          scorersError={scorersError}
           onDismiss={() => setLaunching(null)}
           onSuiteChanged={() => {
             const changedName = launching.suite.name

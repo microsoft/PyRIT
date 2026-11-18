@@ -15,6 +15,7 @@ import {
 } from '@fluentui/react-components'
 import { useNavigate } from 'react-router'
 
+import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import TargetSelect from '@/components/Config/TargetSelect'
 import HelpField from '@/components/HelpField'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
@@ -34,9 +35,13 @@ import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
   LaunchScenarioSuiteRequest,
+  RegisteredComponentReference,
+  ScenarioSuiteEntryStatus,
   ScenarioSuiteResponse,
+  ScorerInstance,
   TargetInstance,
 } from '@/types'
+import { findRegisteredScorer } from '@/utils/scorerPresentation'
 
 import { useLaunchSuiteDialogStyles } from './LaunchSuiteDialog.styles'
 import { suiteExecutionRoutePath } from './suiteRoutes'
@@ -51,8 +56,26 @@ interface LaunchSuiteDialogProps {
   operationId: string | null
   /** False while server defaults or the global Operation selection are unresolved. */
   defaultsReady: boolean
+  scorers?: ScorerInstance[]
+  scorersLoading?: boolean
+  scorersError?: string | null
   onDismiss: () => void
   onSuiteChanged: () => void
+}
+
+/** Mirrors the server's precedence: a launch override, then the preset's scorer, then the scenario default. */
+function entryScorerLabel(
+  entry: ScenarioSuiteEntryStatus,
+  override: RegisteredComponentReference | null,
+  loadedScorers: ScorerInstance[] | null,
+): string {
+  const reference = override ?? entry.launch_defaults?.objective_scorer ?? null
+  if (!reference) {
+    return 'Scenario default scorer'
+  }
+  const unavailable = loadedScorers !== null && findRegisteredScorer(reference, loadedScorers) === undefined
+  const name = unavailable ? `${reference.registry_name} (unavailable)` : reference.registry_name
+  return override ? `${name} (launch override)` : `${name} (from preset)`
 }
 
 function initialTargetName(
@@ -76,6 +99,9 @@ export default function LaunchSuiteDialog({
   labels,
   operationId,
   defaultsReady,
+  scorers,
+  scorersLoading,
+  scorersError,
   onDismiss,
   onSuiteChanged,
 }: LaunchSuiteDialogProps) {
@@ -102,6 +128,9 @@ export default function LaunchSuiteDialog({
   )
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
+  const [scorerOverride, setScorerOverride] = useState<RegisteredComponentReference | null>(null)
+  // Availability is unknown until the registry has loaded; do not flag scorers as missing before then.
+  const loadedScorers = scorers && !scorersLoading && !scorersError ? scorers : null
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -125,6 +154,7 @@ export default function LaunchSuiteDialog({
       })),
       target_name: targetName,
       ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
+      ...(scorerOverride ? { objective_scorer: scorerOverride } : {}),
       max_concurrency: maxConcurrency,
       max_retries: maxRetries,
       ...(operationId ? { operation_id: operationId } : {}),
@@ -173,6 +203,14 @@ export default function LaunchSuiteDialog({
                           </Badge>
                         )}
                       </span>
+                      <Text
+                        as="p"
+                        size={200}
+                        className={styles.summaryText}
+                        data-testid={`launch-suite-entry-scorer-${entry.entry_id}`}
+                      >
+                        Scorer: {entryScorerLabel(entry, scorerOverride, loadedScorers)}
+                      </Text>
                     </li>
                   ))}
                 </ol>
@@ -201,6 +239,18 @@ export default function LaunchSuiteDialog({
                 hint="Only used by suite entries whose scenarios require a second target."
                 placeholder="Use server default"
                 disabled={submitting}
+              />
+              <ChatScorerPicker
+                label="Objective scorer override"
+                usage="scenario"
+                emptyOptionLabel="Use each preset's scorer"
+                help="Replaces every entry's objective scorer for this launch. Entries without a preset scorer use their scenario default."
+                value={scorerOverride}
+                scorers={scorers ?? []}
+                loading={scorersLoading}
+                error={scorersError}
+                disabled={submitting}
+                onChange={setScorerOverride}
               />
               <HelpField label="Max concurrency per run" help={HELP_DEFINITIONS.maxConcurrency}>
                 <SingleStepSpinButton

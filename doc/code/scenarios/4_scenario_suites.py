@@ -139,6 +139,27 @@ for entry in suite.entries:
 # `POST /api/scenario-presets` and `POST /api/scenario-suites`.
 # Presets are saved to `scenario_presets_source`; suites are saved to
 # `scenario_suites_source`. These stored definitions are editable, unlike code-registered ones.
+#
+# ### Per-preset objective scorers
+#
+# A preset can pin the objective scorer its entry uses, for example an inverted refusal
+# scorer for a preset whose prompts the target should refuse:
+#
+# ```python
+# from pyrit.models import ScenarioPresetLaunchDefaults
+# from pyrit.models.component_spec import RegisteredComponentReference
+#
+# launch_defaults = ScenarioPresetLaunchDefaults(
+#     objective_scorer=RegisteredComponentReference(registry_name="inverted_refusal", identifier_hash="...")
+# )
+# ```
+#
+# Pass `launch_defaults` to `ScenarioPreset`, or pick **Objective scorer** in the GUI preset
+# editor. Each suite entry uses the launch request's `objective_scorer` when one is given,
+# otherwise its preset's scorer, otherwise the scenario default. A launch-level scorer
+# replaces every entry's scorer. Readiness and preflight report a missing or changed preset
+# scorer against its entry. The identifier hash includes any judge target, so a pinned
+# scorer is specific to the deployment whose scorer registry produced it.
 
 # %% [markdown]
 # ## Run the suite

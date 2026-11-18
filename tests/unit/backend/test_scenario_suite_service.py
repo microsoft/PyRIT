@@ -12,7 +12,15 @@ import pytest
 from azure.core.exceptions import ServiceRequestError
 
 from pyrit.backend.services import ScenarioSuiteService, get_scenario_suite_service
-from pyrit.models import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
+from pyrit.models import (
+    PresetEntry,
+    PresetIssue,
+    ScenarioPreset,
+    ScenarioPresetLaunchDefaults,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
+)
+from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,
@@ -207,6 +215,29 @@ async def test_current_preset_origin_version_and_issues_are_projected(
     assert response.entry_statuses[0].origin == "registered"
     assert response.entry_statuses[0].preset_version is None
     assert response.entry_statuses[0].issues == [issue]
+
+
+async def test_entry_status_projects_the_preset_launch_defaults(
+    service: ScenarioSuiteService,
+    preset_registry: MagicMock,
+) -> None:
+    """Test that suite reads show each preset's pinned scorer before launch."""
+    scorer = RegisteredComponentReference(registry_name="inverted_refusal", identifier_hash="a" * 64)
+    preset_registry.get_preset.return_value = PresetEntry(
+        preset=ScenarioPreset(
+            name="nightly",
+            scenario_name="foundry.red_team_agent",
+            launch_defaults=ScenarioPresetLaunchDefaults(objective_scorer=scorer),
+        ),
+        origin="stored",
+        version="preset-v1",
+    )
+
+    response = await service.save_suite_async(suite=_suite(preset_names=("nightly",)), expected_version=None)
+
+    launch_defaults = response.entry_statuses[0].launch_defaults
+    assert launch_defaults is not None
+    assert launch_defaults.objective_scorer == scorer
 
 
 async def test_missing_preset_is_advisory_and_does_not_block_save(

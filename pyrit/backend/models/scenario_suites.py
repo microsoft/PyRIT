@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import IdentifierStr
-from pyrit.models import PresetIssue, ScenarioSuite
+from pyrit.models import PresetIssue, ScenarioPresetLaunchDefaults, ScenarioSuite
 
 __all__ = [
     "ScenarioSuiteEntryStatus",
@@ -35,6 +35,10 @@ class ScenarioSuiteEntryStatus(BaseModel):
     issues: list[PresetIssue] = Field(
         default_factory=list,
         description="Advisory issues for this entry; never used to reject saving the suite",
+    )
+    launch_defaults: ScenarioPresetLaunchDefaults | None = Field(
+        None,
+        description="The preset's fallbacks for launch-owned settings, or None when it sets none or is unresolved",
     )
 
 

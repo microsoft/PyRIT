@@ -374,6 +374,7 @@ class ScenarioPresetRegistry(Registry["ScenarioPreset", ScenarioPresetMetadata])
             *_technique_issues(preset=preset, metadata=metadata),
             *_parameter_issues(preset=preset, metadata=metadata),
             *_forbidden_baseline_issues(preset=preset, metadata=metadata),
+            *_launch_default_issues(preset=preset, metadata=metadata),
         ]
 
     def _get_storage(self) -> ScenarioPresetStorage:
@@ -500,5 +501,32 @@ def _forbidden_baseline_issues(*, preset: ScenarioPreset, metadata: ScenarioMeta
         PresetIssue(
             field="include_baseline",
             message=f"Scenario '{metadata.registry_name}' does not support a baseline run.",
+        )
+    ]
+
+
+def _launch_default_issues(*, preset: ScenarioPreset, metadata: ScenarioMetadata) -> list[PresetIssue]:
+    """
+    Report launch defaults the scenario structurally cannot accept.
+
+    Whether a referenced component is registered is deliberately not checked here: that
+    depends on the deployment and on any launch override, so launch readiness reports it.
+
+    Args:
+        preset (ScenarioPreset): The preset to check.
+        metadata (ScenarioMetadata): Registry metadata for the scenario it names.
+
+    Returns:
+        list[PresetIssue]: A single issue when the preset pins a scorer the scenario cannot use.
+    """
+    if preset.launch_defaults is None or preset.launch_defaults.objective_scorer is None:
+        return []
+    if metadata.supports_objective_scorer:
+        return []
+
+    return [
+        PresetIssue(
+            field="launch_defaults.objective_scorer",
+            message=f"Scenario '{metadata.registry_name}' does not support a custom objective scorer.",
         )
     ]
