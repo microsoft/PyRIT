@@ -62,6 +62,11 @@ class JsonFieldConverter(Converter):
         self._json_pointer = json_pointer
         self._reference_tokens = self._parse_json_pointer(json_pointer)
 
+    def _is_conversion_dispatch(self, prompt: str) -> bool:
+        # The wrapped converter owns the randomness, so both entry points must reach it in the same scope.
+        owner = next(cls for cls in type(self).__mro__ if "convert_async" in cls.__dict__)
+        return owner is JsonFieldConverter
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build identifier with the field pointer and the wrapped converter.

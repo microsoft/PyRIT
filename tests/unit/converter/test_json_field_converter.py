@@ -140,7 +140,6 @@ class _HomoglyphConverter(Converter):
         ("not json", "/state", "requires a JSON document"),
         ('{"state": "x"', "/state", "requires a JSON document"),
         ('{"state": "x"} trailing', "/state", "requires a JSON document"),
-        ("[" * 100_000 + "]" * 100_000, "/0", "requires a JSON document"),
         ('{"other": "x"}', "/state", "The object at '' has no key 'state'"),
         ("{}", "/state", "has no key 'state'"),
         ('{"a": {}}', "/a/b", "The object at '/a' has no key 'b'"),
@@ -169,6 +168,16 @@ async def test_rejects_documents_the_pointer_cannot_convert(prompt: str, json_po
     with pytest.raises(ValueError, match=re.escape(message)):
         await converter.convert_async(prompt=prompt)
     sub_converter.convert_async.assert_not_called()
+
+
+async def test_rejects_documents_too_deep_to_parse():
+    converter = JsonFieldConverter(sub_converter=_UpperConverter(), json_pointer="/state")
+
+    with (
+        patch("pyrit.converter.json_field_converter.json.loads", side_effect=RecursionError("too deep")),
+        pytest.raises(ValueError, match="requires a JSON document: too deep"),
+    ):
+        await converter.convert_async(prompt=_REQUEST)
 
 
 async def test_reports_the_escaped_path_of_a_missing_key():
@@ -319,6 +328,34 @@ async def test_wrapped_stochastic_converter_follows_the_configured_seed():
 
     assert first.output_text == second.output_text
     assert first.output_text != other.output_text
+
+
+@pytest.mark.parametrize("seed", range(5))
+async def test_both_entry_points_give_the_same_seeded_result(seed: int):
+    converter = JsonFieldConverter(sub_converter=RandomCapitalLettersConverter(percentage=50.0), json_pointer="/state")
+    prompt = '{"state": "abcdefghijklmnopqrstuvwxyz"}'
+
+    try:
+        configure_random_seed(seed=seed)
+        direct = await converter.convert_async(prompt=prompt)
+        configure_random_seed(seed=seed)
+        pipeline = await converter.convert_tokens_async(prompt=prompt)
+    finally:
+        configure_random_seed(seed=None)
+
+    assert direct.output_text == pipeline.output_text
+
+
+def test_subclass_overriding_convert_async_keeps_its_own_random_scope():
+    class _Subclass(JsonFieldConverter):
+        async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+            return await super().convert_async(prompt=prompt, input_type=input_type)
+
+    native = JsonFieldConverter(sub_converter=_UpperConverter(), json_pointer="/state")
+    subclass = _Subclass(sub_converter=_UpperConverter(), json_pointer="/state")
+
+    assert native._is_conversion_dispatch(_REQUEST) is True
+    assert subclass._is_conversion_dispatch(_REQUEST) is False
 
 
 def test_identifier_includes_pointer_and_sub_converter():
