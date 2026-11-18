@@ -3,11 +3,46 @@
 
 """Unit tests for the CLI-side ``RestApiConversationSource`` (pyrit.cli._sources)."""
 
+from __future__ import annotations
+
 import uuid
+from typing import TYPE_CHECKING, Any
+
+import pytest
 
 from pyrit.backend.models import ScoreView
-from pyrit.cli._sources import RestApiConversationSource
-from pyrit.models import ComponentIdentifier, Message, Score
+from pyrit.cli._sources import RestApiConversationSource, _only_known
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+
+class TestOnlyKnown:
+    @pytest.mark.parametrize("model_cls", [MessagePiece, Score])
+    @pytest.mark.parametrize("data", [{}, {"view_only": "ignored"}])
+    def test_empty_or_unknown_fields_return_empty_dict(self, model_cls: type[BaseModel], data: dict[str, Any]) -> None:
+        assert _only_known(model_cls, data=data) == {}
+
+    @pytest.mark.parametrize(
+        ("model_cls", "known"),
+        [
+            (MessagePiece, {"role": None, "original_value": "", "sequence": 0, "prompt_metadata": {"source": "rest"}}),
+            (Score, {"score_type": None, "score_rationale": "", "scorer_class_identifier": {"params": {}}}),
+        ],
+    )
+    def test_declared_values_are_preserved_without_mutating_input(
+        self, model_cls: type[BaseModel], known: dict[str, Any]
+    ) -> None:
+        data = {**known, "view_only": "ignored"}
+        original = data.copy()
+
+        result = _only_known(model_cls=model_cls, data=data)
+
+        assert result == known
+        assert all(result[key] is value for key, value in known.items())
+        assert data == original
+        assert result is not data
 
 
 class _FakeClient:

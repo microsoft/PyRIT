@@ -31,7 +31,7 @@ class _AnalysisResult(TypedDict, Generic[_StatisticsT]):
     By_attack_identifier: dict[str, _StatisticsT]
 
 
-def _compute_stats(successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
+def _compute_stats(*, successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
     statistics = compute_outcome_statistics(
         {
             AttackOutcome.SUCCESS: successes,
