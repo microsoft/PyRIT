@@ -4,7 +4,13 @@
 import uuid
 from types import SimpleNamespace
 
-from unit.mocks import make_scenario_result, make_sequential_attack_results
+from unit.mocks import (
+    make_scenario_result,
+    make_sequential_attack_results,
+    make_suite_execution,
+    make_suite_execution_entry,
+    make_suite_scenario_result,
+)
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.common.utils import to_sha256
@@ -24,6 +30,8 @@ from pyrit.models import (
 )
 from pyrit.output._derivation import (
     GroupStatistics,
+    SuiteEntryStatistics,
+    attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
     resolve_scorer_name,
@@ -31,6 +39,7 @@ from pyrit.output._derivation import (
     scenario_overview,
     select_attacks,
     select_objective_scores,
+    suite_entry_statistics,
 )
 
 
@@ -162,6 +171,52 @@ def test_scenario_overview_uses_display_group_map_even_when_plan_labels_differ()
         )
     ]
     assert overview.producer_counts == ScenarioProducerCounts(unknown=ScenarioProducerCategoryCounts(attempts=1))
+
+
+# --- suite_entry_statistics ---
+
+
+def test_suite_entry_statistics_counts_latest_outcomes_against_plan():
+    entry = make_suite_execution_entry()
+    execution = make_suite_execution(entries=[entry])
+    result = make_suite_scenario_result(
+        execution=execution,
+        entry=entry,
+        outcomes=[
+            ("A", AttackOutcome.ERROR),
+            ("A", AttackOutcome.SUCCESS),
+            ("B", AttackOutcome.FAILURE),
+            ("C", AttackOutcome.ERROR),
+            ("D", AttackOutcome.UNDETERMINED),
+        ],
+        planned_objectives=["A", "B", "C", "D", "E"],
+    )
+
+    assert suite_entry_statistics(result) == SuiteEntryStatistics(
+        completed=4,
+        planned=5,
+        successes=1,
+        failures=1,
+        errors=1,
+        undetermined=1,
+        success_rate_all=0.25,
+        success_percentage=25,
+    )
+
+
+def test_suite_entry_statistics_without_plan_or_completed_units():
+    entry = make_suite_execution_entry()
+    execution = make_suite_execution(entries=[entry])
+
+    unplanned = suite_entry_statistics(
+        make_suite_scenario_result(execution=execution, entry=entry, outcomes=[("X", AttackOutcome.FAILURE)])
+    )
+    empty = suite_entry_statistics(
+        make_suite_scenario_result(execution=execution, entry=entry, planned_objectives=["A"])
+    )
+
+    assert (unplanned.completed, unplanned.planned, unplanned.success_percentage) == (1, None, 0)
+    assert (empty.completed, empty.planned, empty.success_rate_all, empty.success_percentage) == (0, 1, None, None)
 
 
 # --- attack_score_display ---
@@ -336,3 +391,22 @@ def test_select_objective_scores_reads_duplicated_piece_score_from_original():
     duplicate = MessagePiece(role="assistant", original_value="reply", original_prompt_id=original_id)
     scores = [_stored_score(owner=original_id, label="original", scorer=_OBJECTIVE)]
     assert _selected([duplicate], scores) == {str(duplicate.id): "original"}
+
+
+def _attack_with_recorded_scorer(scorer: ComponentIdentifier | None) -> SimpleNamespace:
+    children = {"objective_scorer": scorer} if scorer is not None else {}
+    strategy = ComponentIdentifier(class_name="PromptSendingAttack", class_module="tests", children=children)
+    return SimpleNamespace(get_attack_strategy_identifier=lambda: strategy)
+
+
+def test_attack_objective_scorer_identifier_prefers_the_scorer_the_attack_recorded():
+    attack = _attack_with_recorded_scorer(_REFUSAL)
+    assert attack_objective_scorer_identifier(attack=attack, run_scorer_identifier=_OBJECTIVE) == _REFUSAL
+    assert attack_objective_scorer_identifier(attack=attack, run_scorer_identifier=None) == _REFUSAL
+
+
+def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
+    unrecorded = _attack_with_recorded_scorer(None)
+    no_identity = SimpleNamespace(get_attack_strategy_identifier=lambda: None)
+    assert attack_objective_scorer_identifier(attack=unrecorded, run_scorer_identifier=_OBJECTIVE) == _OBJECTIVE
+    assert attack_objective_scorer_identifier(attack=no_identity, run_scorer_identifier=None) is None

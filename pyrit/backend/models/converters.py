@@ -120,8 +120,8 @@ class CreateConverterRequest(RegistrationRequest):
         description=(
             "Save the converter so it comes back after the backend restarts or is reinitialized (true), or keep it "
             "only until then (false). A saved converter needs a name of lowercase letters, digits, and underscores, "
-            "and can't hold or use a key or an uploaded file. A copy made with source is saved as its changes and is "
-            "rebuilt from the converter it copies, which must not be Temporary."
+            "can't hold or use a key or an uploaded file, or be private. A copy made with source is saved as its "
+            "changes and is rebuilt from the converter it copies, which must not be Temporary."
         ),
     )
     source: SourceInstanceSpec | None = None
@@ -130,6 +130,13 @@ class CreateConverterRequest(RegistrationRequest):
         default_factory=dict,
         max_length=MAX_ITEMS,
         description="Converter constructor parameters",
+    )
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused. true requires register=true."
+        ),
     )
 
     @model_validator(mode="after")
@@ -149,6 +156,9 @@ class CreateConverterRequest(RegistrationRequest):
         if self.name is None:
             raise ValueError("persist requires a name")
         validate_registry_name(self.name)
+        # A saved converter is restored with no caller, so it would come back shared.
+        if self.private:
+            raise ValueError("A private converter can't be saved; leave out persist or private")
         return self
 
 

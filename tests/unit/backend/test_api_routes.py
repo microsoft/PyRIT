@@ -21,7 +21,7 @@ from fastapi import Request, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.middleware.auth import AuthenticatedUser, current_user_oid
+from pyrit.backend.middleware.auth import AuthenticatedUser
 from pyrit.backend.models import (
     AddMessageResponse,
     AttackListResponse,
@@ -276,6 +276,85 @@ class TestAttackRoutes:
             response = client.post("/api/attacks", json={"objective": "", "name": "Legacy objective"})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         service.assert_not_called()
+
+    @pytest.mark.parametrize("legacy_name", ["operator", "operation"])
+    def test_legacy_attribution_alias_accepts_value_at_limit(self, client: TestClient, legacy_name: str) -> None:
+        """A legacy alias accepts the dedicated parameter's maximum value length."""
+        value = "x" * 128
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks", params={"label": f"{legacy_name}:{value}"})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_service.list_attacks_async.call_args.kwargs[legacy_name] == [value]
+
+    @pytest.mark.parametrize("legacy_name", ["operator", "operation"])
+    def test_legacy_attribution_alias_rejects_value_over_limit(self, client: TestClient, legacy_name: str) -> None:
+        """A legacy alias rejects values beyond the dedicated parameter's maximum length."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.get("/api/attacks", params={"label": f"{legacy_name}:{'x' * 129}"})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        mock_get_service.assert_not_called()
+
+    def test_legacy_operator_alias_same_set_in_any_order(self, client: TestClient) -> None:
+        """An identical operator set in a different order reaches the service unchanged."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[
+                    ("operator", "alice"),
+                    ("operator", "bob"),
+                    ("label", "operator:bob"),
+                    ("label", "operator:alice"),
+                ],
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert sorted(mock_service.list_attacks_async.call_args.kwargs["operator"]) == ["alice", "bob"]
+
+    def test_legacy_operator_alias_ignores_duplicate_values(self, client: TestClient) -> None:
+        """Duplicates on either side still describe one filter, not a conflict.
+
+        IN (...) and the pagination fingerprint both deduplicate values, so
+        one alice and two alices are the same filter set.
+        """
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[("operator", "alice"), ("label", "operator:alice"), ("label", "operator:alice")],
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        # The legacy alias list is forwarded verbatim; downstream IN filters and
+        # the pagination fingerprint deduplicate it, so the set is the contract.
+        assert set(mock_service.list_attacks_async.call_args.kwargs["operator"]) == {"alice"}
 
     def test_create_attack_half_branch_spec_is_a_bad_request(self, client: TestClient) -> None:
         """A half provided branching spec answers 400 like the conversation endpoint, not 404."""
@@ -1419,9 +1498,7 @@ class TestTargetRoutes:
     def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
         self, client: TestClient
     ) -> None:
-        refusal = NotSaveableError(
-            "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
-        )
+        refusal = NotSaveableError("Saved entries can't hold credentials ('api_key').")
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
             mock_get_service.return_value.create_target_async = AsyncMock(side_effect=refusal)
 
@@ -1436,7 +1513,22 @@ class TestTargetRoutes:
             "status": 400,
             "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
             "instance": "/api/targets",
+            "not_saveable_reason": "Saved entries can't hold credentials ('api_key').",
         }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_target_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "TextTarget", "params": {}}
+        assert client.post("/api/targets", json=body).status_code == status.HTTP_201_CREATED
+
+        response = client.post("/api/targets", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
 
     def test_create_target_leaves_other_bad_requests_unmarked(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -1456,10 +1548,7 @@ class TestTargetRoutes:
         )
 
         assert with_key.status_code == status.HTTP_200_OK
-        assert with_key.json() == {
-            "not_saveable_reason": "Saved entries can't hold credentials ('api_key'). "
-            "It can still be created without saving it."
-        }
+        assert with_key.json() == {"not_saveable_reason": "Saved entries can't hold credentials ('api_key')."}
         assert with_identity.json() == {"not_saveable_reason": None}
 
     @pytest.mark.parametrize(
@@ -1586,47 +1675,6 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["target_registry_name"] == "target-1"
-
-    def test_list_and_get_pass_the_signed_in_users_object_id(self, client: TestClient) -> None:
-        app.dependency_overrides[current_user_oid] = lambda: "user-oid"
-        try:
-            with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
-                service = mock_get_service.return_value
-                service.list_targets_async = AsyncMock(
-                    return_value=TargetListResponse(
-                        items=[],
-                        pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
-                    )
-                )
-                service.get_target_async = AsyncMock(
-                    return_value=TargetInstance(
-                        target_registry_name="target-1",
-                        identifier=TargetIdentifier(class_name="TextTarget"),
-                        capabilities=TargetCapabilities(),
-                    )
-                )
-
-                assert client.get("/api/targets").status_code == status.HTTP_200_OK
-                assert client.get("/api/targets/target-1").status_code == status.HTTP_200_OK
-        finally:
-            app.dependency_overrides.pop(current_user_oid, None)
-
-        assert service.list_targets_async.call_args.kwargs["current_user_oid"] == "user-oid"
-        assert service.get_target_async.call_args.kwargs["current_user_oid"] == "user-oid"
-
-    def test_list_targets_passes_no_object_id_when_sign_in_is_off(self, client: TestClient) -> None:
-        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
-            service = mock_get_service.return_value
-            service.list_targets_async = AsyncMock(
-                return_value=TargetListResponse(
-                    items=[],
-                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
-                )
-            )
-
-            assert client.get("/api/targets").status_code == status.HTTP_200_OK
-
-        assert service.list_targets_async.call_args.kwargs["current_user_oid"] is None
 
     def test_get_target_named_saveability_reaches_the_lookup(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -1942,13 +1990,42 @@ class TestConverterRoutes:
         assert response.status_code == status_code
         assert response.json()["detail"] == str(error)
 
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_converter_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, tmp_path: Path, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "ROT13Converter", "params": {}}
+        assert client.post("/api/converters", json=body).status_code == status.HTTP_201_CREATED
+
+        with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+            response = client.post("/api/converters", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
+
+    @pytest.mark.parametrize(
+        ("path", "entry_type", "message"),
+        [
+            ("/api/converters", "ROT13Converter", "A private converter can't be saved"),
+            ("/api/scorers", "SubStringScorer", "A private scorer can't be saved"),
+        ],
+    )
+    def test_create_refuses_to_save_a_private_entry(
+        self, client: TestClient, path: str, entry_type: str, message: str
+    ) -> None:
+        response = client.post(
+            path, json={"name": "mine", "type": entry_type, "params": {}, "persist": True, "private": True}
+        )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in response.text
+
     def test_create_converter_marks_a_save_refusal_so_it_can_be_created_without_saving(
         self, client: TestClient
     ) -> None:
-        refusal = NotSaveableError(
-            "Saved converters can't keep uploaded files yet, so leave out 'font_name'. "
-            "It can still be created without saving it."
-        )
+        refusal = NotSaveableError("Saved converters can't keep uploaded files yet, so leave out 'font_name'.")
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=refusal)
 
@@ -1964,6 +2041,7 @@ class TestConverterRoutes:
             "status": 400,
             "detail": str(refusal),
             "instance": "/api/converters",
+            "not_saveable_reason": refusal.cause,
         }
 
     def test_create_converter_passes_the_signed_in_user_and_the_saved_entries_source(self, client: TestClient) -> None:

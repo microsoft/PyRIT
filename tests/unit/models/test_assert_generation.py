@@ -39,6 +39,7 @@ def group_metadata() -> AssertGroupMetadata:
         {"dimensions": [{"name": "channel", "levels": [{"name": "only", "definition": "One level."}]}]},
         {"dimensions": [{"name": "channel", "description": "A"}, {"name": "channel", "description": "B"}]},
         {"sampling": {"method": "stratified", "stratify_by": ["unknown"]}},
+        {"behavior_name": "another_behavior", "taxonomy": make_assert_taxonomy()},
     ],
 )
 def test_invalid_generation_request(updates: dict[str, object]) -> None:
@@ -81,6 +82,15 @@ def test_metadata_retains_the_configuration_and_assignment(group_metadata: Asser
     raw = group_metadata.to_metadata()
     raw[AssertGroupMetadata.METADATA_KEY]["config"]["behavior_name"] = "changed"
     with pytest.raises(ValidationError, match="taxonomy behavior"):
+        AssertGroupMetadata.from_metadata(raw)
+
+
+def test_metadata_rejects_a_taxonomy_other_than_the_request_taxonomy(group_metadata: AssertGroupMetadata) -> None:
+    raw = group_metadata.to_metadata()
+    supplied = make_assert_taxonomy().model_dump(mode="json")
+    supplied["behavior_categories"][0]["definition"] = "Explains the published exchange policy."
+    raw[AssertGroupMetadata.METADATA_KEY]["config"]["taxonomy"] = supplied
+    with pytest.raises(ValidationError, match="must match the request's taxonomy"):
         AssertGroupMetadata.from_metadata(raw)
 
 

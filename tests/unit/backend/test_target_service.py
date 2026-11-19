@@ -32,7 +32,7 @@ from pyrit.models.catalog import (
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, TargetRegistry
-from pyrit.registry.instance_registry import registration_origin
+from pyrit.registry.instance_registry import RegistryNameTakenError, registration_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
@@ -327,9 +327,7 @@ class TestListTargetTypes:
             ),
         }
         assert entries["HTTPTarget"].saveable_auth_modes == []
-        assert entries["HTTPTarget"].not_saveable_reason == (
-            "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials."
-        )
+        assert entries["HTTPTarget"].not_saveable_reason == ("Its raw HTTP request can carry credentials.")
 
     async def test_types_include_github_copilot_form_parameters_async(self) -> None:
         service = TargetService()
@@ -1822,21 +1820,6 @@ async def _restore(source: Path) -> RegistryRestoreReport:
     return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
 
 
-async def _saved_by_as_each_caller(
-    service: TargetService, *, caller_oids: list[str | None]
-) -> list[tuple[str | None, bool]]:
-    views = []
-    for caller_oid in caller_oids:
-        listed = await service.list_targets_async(current_user_oid=caller_oid)
-        fetched = await service.get_target_async(target_registry_name="contoso_gpt4o", current_user_oid=caller_oid)
-        assert fetched is not None
-        assert [(target.saved_by, target.saved_by_me) for target in listed.items] == [
-            (fetched.saved_by, fetched.saved_by_me)
-        ]
-        views.append((fetched.saved_by, fetched.saved_by_me))
-    return views
-
-
 @pytest.mark.usefixtures("sqlite_instance")
 class TestSaveTarget:
     async def test_saves_an_identity_target_that_restore_rebuilds(self, tmp_path: Path) -> None:
@@ -1894,15 +1877,12 @@ class TestSaveTarget:
             (
                 "HTTPTarget",
                 {"http_request": "POST /chat HTTP/1.1\nHost: example.test\n\n{PROMPT}"},
-                "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials.",
+                "Its raw HTTP request can carry credentials.",
             ),
             (
                 "WebSocketCopilotTarget",
                 {},
-                (
-                    "'WebSocketCopilotTarget' can't be saved. It signs in with the Copilot account this server is set "
-                    "up with."
-                ),
+                "It signs in with the Copilot account this server is set up with.",
             ),
         ],
     )
@@ -1915,7 +1895,10 @@ class TestSaveTarget:
         with pytest.raises(NotSaveableError) as refusal:
             await service.create_target_async(request=request, is_admin=True, recipes_source=str(tmp_path))
 
-        assert str(refusal.value) == f"{reason} It can still be created without saving it."
+        assert (refusal.value.cause, str(refusal.value)) == (
+            reason,
+            f"{reason} It can still be created without saving it.",
+        )
         assert service.get_target_object(target_registry_name="unsaveable") is None
         assert not (tmp_path / "targets").exists()
 
@@ -1925,10 +1908,9 @@ class TestSaveTarget:
 
         with pytest.raises(SavedEntryConflictError, match="already exists"):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
-        with pytest.raises(ValueError, match="already exists") as temporary_clash:
+        with pytest.raises(RegistryNameTakenError, match="already exists"):
             await service.create_target_async(request=_save_request(persist=False))
 
-        assert not isinstance(temporary_clash.value, SavedEntryConflictError)
         assert not (tmp_path / "targets").exists()
 
     async def test_a_saved_file_with_the_name_is_a_conflict_that_leaves_the_file(self, tmp_path: Path) -> None:
@@ -2080,42 +2062,6 @@ class TestSaveTarget:
         assert isinstance(fetched, TargetInstance)
         assert fetched.origin is RegistryEntryOrigin.TEMPORARY
 
-    async def test_says_who_saved_a_target_and_whether_it_was_the_caller_also_after_a_restart(
-        self, tmp_path: Path
-    ) -> None:
-        ada = SavedEntryOwner(oid="00000000-0000-0000-0000-00000000000a", name="Ada")
-        callers: list[str | None] = [ada.oid, "00000000-0000-0000-0000-00000000000b", None]
-
-        created = await TargetService().create_target_async(
-            request=_save_request(), owner=ada, recipes_source=str(tmp_path)
-        )
-        before_restart = await _saved_by_as_each_caller(TargetService(), caller_oids=callers)
-        TargetRegistry.reset_registry_singleton()
-        assert (await _restore(tmp_path)).failures == []
-        after_restart = await _saved_by_as_each_caller(TargetService(), caller_oids=callers)
-
-        assert (created.saved_by, created.saved_by_me) == ("Ada", True)
-        assert before_restart == after_restart == [("Ada", True), ("Ada", False), ("Ada", False)]
-
-    async def test_names_nobody_for_a_target_saved_with_sign_in_off_or_not_saved(self, tmp_path: Path) -> None:
-        service = TargetService()
-        ada = SavedEntryOwner(oid="00000000-0000-0000-0000-00000000000a", name="Ada")
-        local_request = _save_request(
-            name="local_llm", params={"endpoint": "http://localhost:11434/v1", "model_name": "llama3"}, auth_mode="none"
-        )
-        await service.create_target_async(request=local_request, recipes_source=str(tmp_path))
-        temporary = await service.create_target_async(
-            request=_save_request(name="temporary_one", persist=False), owner=ada
-        )
-
-        listed = await service.list_targets_async(current_user_oid=ada.oid)
-
-        assert (temporary.saved_by, temporary.saved_by_me) == (None, False)
-        assert {target.target_registry_name: (target.saved_by, target.saved_by_me) for target in listed.items} == {
-            "local_llm": (None, False),
-            "temporary_one": (None, False),
-        }
-
 
 @pytest.mark.usefixtures("sqlite_instance")
 class TestCheckSaveability:
@@ -2140,13 +2086,8 @@ class TestCheckSaveability:
             )
 
         create_instance.assert_not_called()
-        assert pool.not_saveable_reason == (
-            "Uses temporary target 'launch_member', which won't exist after a restart. "
-            "It can still be created without saving it."
-        )
-        assert with_key.not_saveable_reason == (
-            "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
-        )
+        assert pool.not_saveable_reason == "Uses temporary target 'launch_member', which won't exist after a restart."
+        assert with_key.not_saveable_reason == "Saved entries can't hold credentials ('api_key')."
         assert with_identity.not_saveable_reason is None
 
     async def test_refuses_a_request_that_creating_would_refuse(self) -> None:

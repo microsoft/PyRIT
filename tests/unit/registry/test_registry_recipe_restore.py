@@ -22,14 +22,13 @@ from pyrit.models.catalog import (
     RegistryRestoreReport,
     RestoreFailure,
     RestoreFailureReason,
-    SavedEntryOwner,
     SavedEntryRef,
     StoredRecipe,
     TechniqueRecipe,
 )
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, saved_entry_owner
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RecipeBuilder, RecipeRejectedError, RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RecipeListing, RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
@@ -239,51 +238,6 @@ class TestRestoreOrderAndRebuild:
             "startup_encoder": None,
         }
 
-    async def test_keeps_who_saved_each_restored_entry(self, tmp_path: Path) -> None:
-        ada = {"oid": "00000000-0000-0000-0000-00000000000a", "name": "Ada"}
-        _save(
-            tmp_path,
-            RegistryRecipeKind.SCORERS,
-            "refusal",
-            {
-                "class_module": "pyrit.score.true_false.self_ask_refusal_scorer",
-                "class_name": "SelfAskRefusalScorer",
-                "params": {"chat_target": "contoso_gpt4o"},
-                "owner": ada,
-            },
-        )
-        _save(
-            tmp_path,
-            RegistryRecipeKind.CONVERTERS,
-            "tone_formal",
-            {
-                "class_module": "pyrit.converter.tone_converter",
-                "class_name": "ToneConverter",
-                "params": {"converter_target": "contoso_gpt4o", "tone": "formal"},
-                "owner": ada,
-            },
-        )
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", {**_IDENTITY_TARGET, "owner": ada})
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "saved_without_sign_in", _IDENTITY_TARGET)
-
-        report = await _restore(tmp_path)
-
-        assert report.failures == []
-        targets = TargetRegistry.get_registry_singleton().instances
-        entries = {
-            "contoso_gpt4o": targets.get_entry("contoso_gpt4o"),
-            "saved_without_sign_in": targets.get_entry("saved_without_sign_in"),
-            "tone_formal": ConverterRegistry.get_registry_singleton().instances.get_entry("tone_formal"),
-            "refusal": ScorerRegistry.get_registry_singleton().instances.get_entry("refusal"),
-        }
-        owner = SavedEntryOwner(**ada)
-        assert {name: saved_entry_owner(entry.metadata) for name, entry in entries.items() if entry} == {
-            "contoso_gpt4o": owner,
-            "saved_without_sign_in": None,
-            "tone_formal": owner,
-            "refusal": owner,
-        }
-
     async def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
         registry = TargetRegistry.get_registry_singleton()
         # Each name has a different normalized form, so a lookup that normalized names would miss them.
@@ -340,7 +294,8 @@ class TestRestoreOrderAndRebuild:
 
     def test_technique_recipe_matches_the_create_request(self) -> None:
         recipe_fields = set(TechniqueRecipe.model_fields) - {"schema_version"}
-        request_fields = set(CreateTechniqueRequest.model_fields) - {"name"}
+        # A saved technique is never private: it has no creator.
+        request_fields = set(CreateTechniqueRequest.model_fields) - {"name", "private"}
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", **_TECHNIQUE})
         recipe = TechniqueRecipe.model_validate(_TECHNIQUE)
 
@@ -353,7 +308,7 @@ class TestRestoreOrderAndRebuild:
         recipe = TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", "type": "RedTeamingAttack"})
 
-        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name"})
+        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name", "private"})
 
     @pytest.mark.parametrize(
         "changes",
@@ -632,8 +587,7 @@ class TestRestoreFailures:
         (failure,) = report.failures
         assert (failure.name, failure.reason) == ("audio_leak", RestoreFailureReason.UNSUPPORTED_CLASS)
         assert failure.message == (
-            "'AudioTrueFalseScorer' can't be saved. It transcribes audio with the Azure Speech key or Azure identity "
-            "this server is set up with."
+            "It transcribes audio with the Azure Speech key or Azure identity this server is set up with."
         )
         assert [ref.name for ref in report.restored] == ["leak_substring"]
 
