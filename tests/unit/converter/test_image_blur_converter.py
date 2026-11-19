@@ -25,6 +25,16 @@ def _sharp_edge(mode: str = "RGB") -> Image.Image:
     return image
 
 
+def _color_key_png() -> Image.Image:
+    """An RGB PNG whose left half is the transparent color key (red) and whose right half is opaque blue."""
+    image = Image.new("RGB", (40, 10), color=(255, 0, 0))
+    image.paste((0, 0, 255), (20, 0, 40, 10))
+    image.info["transparency"] = (255, 0, 0)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return Image.open(BytesIO(buffer.getvalue()))
+
+
 def test_image_blur_converter_output_format_validation():
     for unsupported_format in ["GIF", "BMP", "TIFF", "jpg", "png"]:
         with pytest.raises(ValueError, match="Output format must be one of 'JPEG', 'PNG', or 'WEBP'"):
@@ -114,6 +124,25 @@ def test_image_blur_converter_keeps_transparent_colors_out_of_visible_edges() ->
             assert blue > 200
 
 
+def test_image_blur_converter_keeps_color_key_colors_out_of_visible_edges() -> None:
+    with _color_key_png() as source:
+        assert source.mode == "RGB"
+        blurred = _transform_png(ImageBlurConverter(radius=2.0), source)
+
+    assert blurred.mode == "RGBA"
+    alpha = [blurred.getpixel((x, 5))[3] for x in range(40)]
+    assert alpha[0] == 0
+    assert alpha[39] == 255
+    assert any(0 < value < 255 for value in alpha)
+    for x in range(40):
+        pixel = blurred.getpixel((x, 5))
+        assert isinstance(pixel, tuple)
+        red, _, blue, visible = pixel
+        if visible > 0:
+            assert red == 0
+            assert blue > 200
+
+
 @pytest.mark.parametrize("mode", ["LA", "PA"])
 def test_image_blur_converter_keeps_alpha_for_other_transparent_modes(mode: str) -> None:
     image = Image.new("RGBA", (20, 10), color=(0, 0, 0, 0))
@@ -138,7 +167,7 @@ def test_image_blur_converter_jpeg_output_from_transparent_input() -> None:
         assert blurred.mode == "RGB"
 
 
-async def test_image_blur_converter_convert_async_image_path() -> None:
+async def test_image_blur_converter_convert_image_path_async() -> None:
     image_bytes = BytesIO()
     _sharp_edge().save(image_bytes, format="PNG")
 
@@ -156,7 +185,7 @@ async def test_image_blur_converter_convert_async_image_path() -> None:
     mock_serializer.save_b64_image_async.assert_called_once()
 
 
-async def test_image_blur_converter_url_input() -> None:
+async def test_image_blur_converter_url_input_async() -> None:
     converter = ImageBlurConverter(output_format="WEBP")
     image_bytes = BytesIO()
     _sharp_edge().save(image_bytes, format="PNG")
@@ -173,6 +202,6 @@ async def test_image_blur_converter_url_input() -> None:
     assert mock_serializer.file_extension == "webp"
 
 
-async def test_image_blur_converter_rejects_unsupported_input() -> None:
+async def test_image_blur_converter_rejects_unsupported_input_async() -> None:
     with pytest.raises(ValueError, match="not supported"):
         await ImageBlurConverter().convert_async(prompt="hello", input_type="text")
