@@ -467,10 +467,6 @@ export interface ScorerInstance {
   chat_scoring_disabled_reason?: string | null
   /** Saved, from the server's configuration, or Temporary. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved it. */
-  saved_by_me?: boolean
 }
 
 export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
@@ -640,10 +636,6 @@ export interface ConverterInstance {
   description?: string | null
   /** Saved, from the server's configuration, or Temporary. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved it. */
-  saved_by_me?: boolean
 }
 
 export interface ConverterListResponse {
@@ -704,10 +696,6 @@ export interface TechniqueInstance {
   creation_statement: string
   /** Whether the technique comes back after a restart. */
   origin?: RegistryEntryOrigin | null
-  /** Name of the user who saved it, for display only; null when it isn't saved or was saved with sign-in off. */
-  saved_by?: string | null
-  /** Whether the signed-in user is the one who saved it. */
-  saved_by_me?: boolean
 }
 
 export interface TechniqueTypeEntry {

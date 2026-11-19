@@ -753,33 +753,6 @@ class TestGetConverter:
         assert result.identifier.class_name == "MockConverter"
 
 
-@pytest.mark.parametrize(
-    ("owner", "current_user_oid", "saved_by"),
-    [
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
-        (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
-        (None, "ada-oid", (None, False)),
-    ],
-)
-async def test_list_and_get_say_who_saved_each_converter(
-    owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
-) -> None:
-    service = ConverterService()
-    service._registry.instances.register(
-        Base64Converter(),
-        name="saved_base64",
-        metadata={SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner},
-    )
-
-    listed = (await service.list_converters_async(current_user_oid=current_user_oid)).items
-    fetched = await service.get_converter_async(converter_id="saved_base64", current_user_oid=current_user_oid)
-
-    assert [(item.saved_by, item.saved_by_me) for item in listed] == [saved_by]
-    assert fetched is not None and (fetched.saved_by, fetched.saved_by_me) == saved_by
-    assert "ada-oid" not in fetched.model_dump_json()
-
-
 class TestGetConverterObject:
     """Tests for ConverterService.get_converter_object method."""
 
@@ -2449,7 +2422,6 @@ class TestPersistConverter:
         )
 
         assert converter.origin is RegistryEntryOrigin.SAVED
-        assert (converter.saved_by, converter.saved_by_me) == ("Ada", True)
         assert _saved_converter(tmp_path, "caesar_converter") == {
             "schema_version": 1,
             "class_module": "pyrit.converter.caesar_converter",

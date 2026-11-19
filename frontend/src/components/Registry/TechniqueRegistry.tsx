@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
-  Badge, Button, Checkbox, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
+  Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { AddRegular } from '@fluentui/react-icons'
@@ -18,7 +18,6 @@ import { fetchAllPages } from '@/utils/fetchAllPages'
 import CreateTechniqueDialog from './CreateTechniqueDialog'
 import OriginBadge from './OriginBadge'
 import DeleteSavedEntryButton from './DeleteSavedEntryButton'
-import SavedBy from './SavedBy'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
 
@@ -106,12 +105,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
     })
   }
 
-  const [onlySavedByMe, setOnlySavedByMe] = useState(false)
-  const savedByMeCount = items.filter((item) => item.saved_by_me === true).length
-  // The checkbox only shows while the user has a saved technique, so it turns off when the last one goes.
-  if (onlySavedByMe && savedByMeCount === 0) setOnlySavedByMe(false)
   const visible = items.filter((item) => (
-    (!onlySavedByMe || item.saved_by_me === true) &&
     `${item.name} ${item.description ?? ''} ${item.attack_type} ${item.tags.join(' ')}`.toLowerCase().includes(search.toLowerCase())
     && (!typeFilter || item.attack_type === typeFilter)
     && (!tagFilter || item.tags.includes(tagFilter))
@@ -145,10 +139,6 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
           <option value="">All tags</option>
           {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
         </Select></Field>
-        {savedByMeCount > 0 && (
-          <Checkbox checked={onlySavedByMe} label={`Only techniques I saved (${savedByMeCount})`}
-            onChange={(_, data) => setOnlySavedByMe(data.checked === true)} />
-        )}
       </div>
       {loading && <Spinner label="Loading techniques..." />}
       {!loading && error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
@@ -168,7 +158,6 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
                 expanded={expanded.has(item.name)} onToggle={() => toggleDetails(item.name)}
                 nameContent={<>
                   {item.origin && <OriginBadge origin={item.origin} />}
-                  <SavedBy entry={item} />
                   {item.origin === 'saved' && (
                     <DeleteSavedEntryButton kind="techniques" name={item.name} onDeleted={() => {
                       setFocusRestore((current) => current + 1)

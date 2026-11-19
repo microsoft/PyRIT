@@ -8,12 +8,9 @@ Provides endpoints for managing converter instances and previewing conversions.
 Converter types are set at app startup - you cannot add new types at runtime.
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
@@ -43,9 +40,7 @@ router = APIRouter(prefix="/converters", tags=["converters"])
     "",
     response_model=ConverterInstanceListResponse,
 )
-async def list_converters(  # pyrit-async-suffix-exempt
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
-) -> ConverterInstanceListResponse:
+async def list_converters() -> ConverterInstanceListResponse:  # pyrit-async-suffix-exempt
     """
     List converter instances.
 
@@ -55,7 +50,7 @@ async def list_converters(  # pyrit-async-suffix-exempt
         ConverterInstanceListResponse: List of converter instances.
     """
     service = get_converter_service()
-    return await service.list_converters_async(current_user_oid=user_oid)
+    return await service.list_converters_async()
 
 
 @router.get(
@@ -140,11 +135,7 @@ async def create_converter(
         404: {"model": ProblemDetail, "description": "Converter not found"},
     },
 )
-async def get_converter(  # pyrit-async-suffix-exempt
-    *,
-    converter_id: IdentifierStr,
-    user_oid: Annotated[str | None, Depends(current_user_oid)],
-) -> ConverterInstance:
+async def get_converter(converter_id: IdentifierStr) -> ConverterInstance:  # pyrit-async-suffix-exempt
     """
     Get a converter instance by ID.
 
@@ -153,7 +144,7 @@ async def get_converter(  # pyrit-async-suffix-exempt
     """
     service = get_converter_service()
 
-    converter = await service.get_converter_async(converter_id=converter_id, current_user_oid=user_oid)
+    converter = await service.get_converter_async(converter_id=converter_id)
     if not converter:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

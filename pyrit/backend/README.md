@@ -154,7 +154,7 @@ or keep an uploaded file. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
 be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
-`temporary`, and its `saved_by` and `saved_by_me` say who saved it, both as for targets. `DELETE /api/converters/{id}`
+`temporary`, as for targets. `DELETE /api/converters/{id}`
 refuses a saved converter (**409**); delete it with `DELETE /api/saved-entries/converters/{id}` instead.
 
 ### Saved entries
@@ -163,8 +163,8 @@ Saved targets, converters, scorers, and techniques are addressed by their saved 
 `converters`, `scorers`, or `techniques`. These routes answer while the runtime isn't ready, so an entry that keeps it
 from starting can be deleted.
 
-- `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`), who
-  saved it (`saved_by`, `saved_by_me`), and whether the caller may change or delete it (`can_change`). **404** when no saved
+- `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`), and
+  whether the caller may change or delete it (`can_change`). **404** when no saved
   file has the name, including a name only a startup entry has.
 - `DELETE /api/saved-entries/{kind}/{name}?expected_version=<version>` - Delete the file and remove the entry it
   restored, so it doesn't come back after a restart; a startup entry with the same name stays. Who may delete it
@@ -712,8 +712,8 @@ at every start. A request receives **400** with `"type": "/errors/not-saveable"`
 `persist`, if its attack type was added by a scan's launch scripts, or a converter or the adversarial target it names
 is Temporary. A name or tag that clashes with a
 registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
-`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, and `saved_by` and
-`saved_by_me` say who saved it, as for targets. Settings changed for a single run aren't saved.
+`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
+changed for a single run aren't saved.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.

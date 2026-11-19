@@ -27,7 +27,7 @@ from pyrit.models.catalog import (
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import SavedEntryConflictError, ScorerRegistry, prepare_saved_params_async
-from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.score import Scorer, TrueFalseScorer
 
 
@@ -38,15 +38,7 @@ class ScorerService:
         """Initialize the service with the scorer registry singleton."""
         self._registry = ScorerRegistry.get_registry_singleton()
 
-    def _build_instance(
-        self,
-        *,
-        name: str,
-        scorer: Any,
-        origin: RegistryEntryOrigin | None,
-        owner: SavedEntryOwner | None = None,
-        current_user_oid: str | None = None,
-    ) -> ScorerInstance:
+    def _build_instance(self, *, name: str, scorer: Any, origin: RegistryEntryOrigin | None) -> ScorerInstance:
         from pyrit.backend.services.chat_scoring_service import ChatScoringService
 
         metadata = self._registry.get_registered_class_metadata(scorer.__class__.__name__)
@@ -67,8 +59,6 @@ class ScorerService:
             description=metadata.class_description or None if metadata else None,
             chat_scoring_disabled_reason=ChatScoringService.disabled_reason(scorer),
             origin=origin,
-            saved_by=(owner.name or None) if owner is not None else None,
-            saved_by_me=owner is not None and current_user_oid is not None and owner.oid == current_user_oid,
         )
 
     def resolve_registered_scorer(self, reference: RegisteredComponentReference) -> Scorer:
@@ -140,17 +130,9 @@ class ScorerService:
 
         return await asyncio.to_thread(list_types)
 
-    async def list_scorers_async(
-        self, *, limit: int = 50, cursor: str | None = None, current_user_oid: str | None = None
-    ) -> ScorerListResponse:
+    async def list_scorers_async(self, *, limit: int = 50, cursor: str | None = None) -> ScorerListResponse:
         """
         List named scorer instances in stable registry-name order.
-
-        Args:
-            limit (int): The most scorers to return. Defaults to 50.
-            cursor (str | None): The registry name to start after, or None for the first page. Defaults to None.
-            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark the scorers
-                they saved. Defaults to None.
 
         Returns:
             ScorerListResponse: A page and its pagination metadata.
@@ -172,11 +154,7 @@ class ScorerService:
             return ScorerListResponse(
                 items=[
                     self._build_instance(
-                        name=entry.name,
-                        scorer=entry.instance,
-                        origin=registry_entry_origin(entry.metadata),
-                        owner=saved_entry_owner(entry.metadata),
-                        current_user_oid=current_user_oid,
+                        name=entry.name, scorer=entry.instance, origin=registry_entry_origin(entry.metadata)
                     )
                     for entry in page
                 ],
@@ -190,16 +168,9 @@ class ScorerService:
 
         return await asyncio.to_thread(list_instances)
 
-    async def get_scorer_async(
-        self, *, scorer_registry_name: str, current_user_oid: str | None = None
-    ) -> ScorerInstance | None:
+    async def get_scorer_async(self, *, scorer_registry_name: str) -> ScorerInstance | None:
         """
         Get one registered scorer by name.
-
-        Args:
-            scorer_registry_name (str): The scorer's registry name.
-            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark a scorer
-                they saved. Defaults to None.
 
         Returns:
             ScorerInstance | None: The matching scorer, if present.
@@ -210,11 +181,7 @@ class ScorerService:
             if entry is None:
                 return None
             return self._build_instance(
-                name=scorer_registry_name,
-                scorer=entry.instance,
-                origin=registry_entry_origin(entry.metadata),
-                owner=saved_entry_owner(entry.metadata),
-                current_user_oid=current_user_oid,
+                name=scorer_registry_name, scorer=entry.instance, origin=registry_entry_origin(entry.metadata)
             )
 
         return await asyncio.to_thread(get_instance)
@@ -314,14 +281,7 @@ class ScorerService:
             except RegistryNameTakenError as error:
                 raise SavedEntryConflictError(str(error)) from error
             scorer = self._registry.create_instance_from_external_input(request.type, params=params)
-            # The user saving the scorer is the one asking, so the response marks it as theirs.
-            return scorer, self._build_instance(
-                name=name,
-                scorer=scorer,
-                origin=RegistryEntryOrigin.SAVED,
-                owner=owner,
-                current_user_oid=owner.oid if owner is not None else None,
-            )
+            return scorer, self._build_instance(name=name, scorer=scorer, origin=RegistryEntryOrigin.SAVED)
 
         scorer, instance = await asyncio.to_thread(build)
         await save_then_register_locked_async(

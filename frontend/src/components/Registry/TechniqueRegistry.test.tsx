@@ -501,36 +501,6 @@ describe('TechniqueRegistry', () => {
     expect(screen.getByRole('button', { name: 'Save technique' })).toBeEnabled()
   })
 
-  it('says who saved each technique and lists only yours on request', async () => {
-    const user = userEvent.setup()
-    techniques.listTechniques.mockResolvedValue(techniquePage([
-      { ...technique('mine_send'), origin: 'saved', saved_by: 'Ada', saved_by_me: true },
-      { ...technique('bobs_send'), origin: 'saved', saved_by: 'Bob' },
-      { ...technique('startup_send'), origin: 'configuration' },
-    ]))
-    render(tree())
-    const table = await screen.findByRole('table', { name: 'Registered techniques' })
-    const row = (name: string) => within(table).getByText(name).closest('tr') as HTMLElement
-
-    expect(within(row('mine_send')).getByText('Saved by you')).toBeInTheDocument()
-    expect(within(row('bobs_send')).getByText('Saved by Bob')).toBeInTheDocument()
-    expect(within(row('startup_send')).queryByText(/^Saved by /)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('checkbox', { name: 'Only techniques I saved (1)' }))
-    expect(within(table).queryByText('bobs_send')).not.toBeInTheDocument()
-    expect(within(table).getByText('mine_send')).toBeInTheDocument()
-  })
-
-  it('offers no list of your own techniques when none are yours, such as with sign-in off', async () => {
-    techniques.listTechniques.mockResolvedValue(techniquePage([
-      { ...technique('local_send'), origin: 'saved', saved_by: null },
-      { ...technique('bobs_send'), origin: 'saved', saved_by: 'Bob' },
-    ]))
-    render(tree())
-    await screen.findByRole('table', { name: 'Registered techniques' })
-
-    expect(screen.queryByRole('checkbox', { name: /Only techniques I saved/ })).not.toBeInTheDocument()
-  })
-
   it('lets a taken tag be changed and saved again', async () => {
     techniques.createTechnique.mockRejectedValueOnce(
       axiosError(409, { detail: "Tag 'first' conflicts with technique 'first'" }),
