@@ -107,6 +107,7 @@ it('defaults to the attack\'s own Operation and attaches the viewed attack', asy
   await waitFor(() => { expect(action).toHaveFocus() })
   expect(attacksApi.getAttack).toHaveBeenCalledWith('viewed')
   expect(operationsApi.get).toHaveBeenCalledWith('saved')
+  expect(operationsApi.getFindingFields).toHaveBeenCalledWith('saved')
   expect(operationsApi.attachFindingEvidence).toHaveBeenCalledWith('saved', 'finding', {
     attack_result_id: 'viewed',
   })

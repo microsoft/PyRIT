@@ -17,11 +17,12 @@ interface FindingFieldsState {
 }
 
 /**
- * Loads the active finding fields, and again when the runtime generation changes, because a live apply can
- * change them.
+ * Loads the finding fields of an operation, or of the deployment when no operation is given, and again when the
+ * runtime generation changes, because a live apply can change them.
+ * @param operationId - The operation whose findings the fields label and check.
  * @param enabled - Loads only while true, and again each time it turns true, so a closed dialog fetches nothing.
  */
-export function useFindingFields(enabled = true): FindingFieldsState {
+export function useFindingFields(operationId?: string, enabled = true): FindingFieldsState {
   const { generation } = useRuntime()
   const [fields, setFields] = useState<FindingFields | null>(null)
   const [error, setError] = useState('')
@@ -32,7 +33,7 @@ export function useFindingFields(enabled = true): FindingFieldsState {
   useEffect(() => {
     if (!enabled) return
     let ignore = false
-    operationsApi.getFindingFields()
+    operationsApi.getFindingFields(operationId)
       .then((loaded: FindingFields) => {
         if (!ignore) {
           const serialized = JSON.stringify(loaded)
@@ -50,7 +51,7 @@ export function useFindingFields(enabled = true): FindingFieldsState {
     return () => {
       ignore = true
     }
-  }, [attempt, enabled, generation])
+  }, [attempt, enabled, generation, operationId])
 
   const retry = useCallback(() => {
     setError('')

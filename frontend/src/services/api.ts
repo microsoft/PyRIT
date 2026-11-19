@@ -127,8 +127,10 @@ export const mediaApi = {
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
 export const operationsApi = {
-  getFindingFields: async (): Promise<FindingFields> => {
-    return (await apiClient.get('/operations/finding-fields')).data
+  /** Reads the deployment's finding fields, or the fields that label and check an operation's findings. */
+  getFindingFields: async (operationId?: string): Promise<FindingFields> => {
+    const path = operationId === undefined ? '/operations' : operationPath(operationId)
+    return (await apiClient.get(`${path}/finding-fields`)).data
   },
   list: async (): Promise<OperationListResponse> => {
     return (await apiClient.get('/operations')).data

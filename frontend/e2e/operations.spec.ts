@@ -555,7 +555,7 @@ test('keeps the page usable after removing a retired value and cancelling the ed
   expect(findingResponse.status()).toBe(201)
   // The seeded backend accepts only known keys, so the browser gets the fields without Description instead,
   // which makes the saved description a retired value. The list carries the backend's labels, so it changes too.
-  await page.route('**/api/operations/finding-fields', async route => {
+  await page.route(`**/api/operations/${operation.id}/finding-fields`, async route => {
     await route.fulfill({ json: { ...fields, fields: fields.fields.filter(field => field.key !== 'description') } })
   })
   await page.route(new RegExp(`/api/operations/${operation.id}/findings\\?`), async route => {

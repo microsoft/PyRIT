@@ -71,11 +71,24 @@ async def list_operations_async() -> OperationListResponse:
 @router.get("/finding-fields", response_model=FindingFields)
 async def get_finding_fields_async() -> FindingFields:
     """
-    Read the finding fields this deployment uses.
+    Read the finding fields this deployment uses. To show or edit an operation's findings, read that operation's
+    finding fields instead.
 
     Returns:
         FindingFields: The severity slot and the fields shown after it.
     """
+    return get_active_finding_fields()
+
+
+@router.get("/{operation_id}/finding-fields", response_model=FindingFields)
+async def get_operation_finding_fields_async(operation_id: UUID) -> FindingFields:
+    """
+    Read the finding fields that label and check an operation's findings.
+
+    Returns:
+        FindingFields: The severity slot and the fields shown after it.
+    """
+    await _require_operation_async(OperationService().get_async(operation_id))
     return get_active_finding_fields()
 
 

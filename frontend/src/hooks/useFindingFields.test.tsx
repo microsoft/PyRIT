@@ -108,14 +108,27 @@ describe('useFindingFields', () => {
     expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS)
   })
 
+  it('loads an operation\'s fields, and again for another operation', async () => {
+    mockGetFindingFields.mockResolvedValue(CONTOSO_FINDING_FIELDS)
+
+    const { result, rerender } = renderHook(({ operationId }: { operationId: string }) => useFindingFields(operationId), {
+      initialProps: { operationId: 'first' },
+    })
+    await waitFor(() => expect(result.current.fields).toBe(CONTOSO_FINDING_FIELDS))
+    rerender({ operationId: 'second' })
+
+    expect(mockGetFindingFields.mock.calls).toEqual([['first'], ['second']])
+  })
+
   it('loads only while enabled, again each time it is enabled, and clears an earlier failure', async () => {
     mockGetFindingFields
       .mockRejectedValueOnce(new Error('The Contoso backend is unavailable.'))
       .mockResolvedValueOnce(CONTOSO_FINDING_FIELDS)
 
-    const { result, rerender } = renderHook(({ enabled }: { enabled: boolean }) => useFindingFields(enabled), {
-      initialProps: { enabled: false },
-    })
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useFindingFields(undefined, enabled),
+      { initialProps: { enabled: false } },
+    )
     expect(mockGetFindingFields).not.toHaveBeenCalled()
 
     rerender({ enabled: true })

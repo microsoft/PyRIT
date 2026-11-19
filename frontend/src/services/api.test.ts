@@ -63,6 +63,11 @@ describe("api service", () => {
       expect(await operationsApi.getFindingFields()).toEqual(DEFAULT_FINDING_FIELDS_FIXTURE);
       expect(apiClient.get).toHaveBeenCalledWith("/operations/finding-fields");
     });
+    it("gets an operation's finding fields", async () => {
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: DEFAULT_FINDING_FIELDS_FIXTURE });
+      expect(await operationsApi.getFindingFields("a/b")).toEqual(DEFAULT_FINDING_FIELDS_FIXTURE);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/finding-fields");
+    });
     it("encodes evidence scope, searches literally, and preserves duplicate feedback", async () => {
       const page = { items: [], has_more: false, next_offset: null };
       (apiClient.get as jest.Mock).mockResolvedValue({ data: page });

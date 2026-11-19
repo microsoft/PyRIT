@@ -52,7 +52,7 @@ export default function OperationDetailPage({ onOperationChanged }: OperationDet
 function OperationDetailContent({ operationId, onOperationChanged }: { operationId: string } & OperationDetailPageProps) {
   const styles = useOperationsStyles()
   const navigate = useNavigate()
-  const { fields, error: fieldsError, retry: retryFields, fieldsRevision } = useFindingFields()
+  const { fields, error: fieldsError, retry: retryFields, fieldsRevision } = useFindingFields(operationId)
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0

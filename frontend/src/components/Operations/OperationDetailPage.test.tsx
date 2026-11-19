@@ -464,6 +464,7 @@ it('shows configured rows and retired values on a finding card', async () => {
   renderPage()
 
   const card = (await screen.findByRole('heading', { level: 2, name: contosoFinding.title })).closest('li') as HTMLElement
+  expect(operationsApi.getFindingFields).toHaveBeenCalledWith(OPERATION.id)
   expect(within(card).getByText('Sev 1')).toBeInTheDocument()
   const rows = ['Severity rationale: Customer impact', 'Category: Model security', 'Subcategory: System prompt leak',
     'Technique: Contoso persona swap', 'Owner: Contoso red team'].map(row => within(card).getByText(row))

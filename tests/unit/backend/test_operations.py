@@ -250,6 +250,17 @@ def test_finding_fields_returns_the_active_fields(
     assert TestClient(app).get("/api/operations/finding-fields").status_code != 200
 
 
+def test_operation_finding_fields_returns_the_active_fields_of_an_existing_operation(
+    compatibility_headers: dict[str, str], contoso_finding_fields: FindingFields
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation_id = client.post("/api/operations", json={"name": "Contoso"}).json()["id"]
+    path = f"/api/operations/{operation_id}/finding-fields"
+    assert FindingFields.model_validate(client.get(path).json()) == contoso_finding_fields
+    assert client.get(f"/api/operations/{MISSING_ID}/finding-fields").status_code == 404
+    assert TestClient(app).get(path).status_code != 200
+
+
 @pytest.mark.usefixtures("contoso_finding_fields")
 def test_finding_create_is_checked_against_the_active_fields(compatibility_headers: dict[str, str]) -> None:
     client = TestClient(app, headers=compatibility_headers)

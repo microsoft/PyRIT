@@ -57,7 +57,7 @@ export default function AttackAttemptDetails({
   const styles = useAttackAttemptDetailsStyles()
   const completed = attempt && 'outcome' in attempt ? attempt : null
   const { findings, loading: findingsLoading, error: findingsError, refresh: refreshFindings } = useAttackFindings(completed?.attack_result_id)
-  const { fields: findingFields } = useFindingFields(findings.length > 0)
+  const { fields: findingFields } = useFindingFields(undefined, findings.length > 0)
   const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt?.atomic_attack_name ?? 'Not recorded'
   const seeds = attempt && 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
   const datasetNames = [...new Set(seeds.flatMap((seed) =>
