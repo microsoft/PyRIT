@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
@@ -43,11 +43,15 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioExecutionStatistics,
     ScenarioExecutionUnit,
+    ScenarioJudgeAttribution,
+    ScenarioJudgeScope,
+    ScenarioJudgeStatistics,
     ScenarioProducerCategoryCounts,
     ScenarioProducerCounts,
     ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanScorerBinding,
     config_hash,
 )
 
@@ -162,11 +166,26 @@ class ScenarioAttempt:
     result_role: AttackResultRole | None
     attempt_index: int | None = None
     child_attack_result_ids: tuple[str, ...] = ()
+    objective_scorer: ComponentIdentifier | None = None
 
     @property
     def attack_result_id(self) -> str:
         """The persisted result ID."""
         return self.attempt_id
+
+
+def recorded_objective_scorer_identifier(attack_result: AttackResult) -> ComponentIdentifier | None:
+    """
+    Return the objective scorer an attack result recorded on its attack strategy identifier.
+
+    Returns:
+        ComponentIdentifier | None: The recorded scorer, or None when the result does not record one.
+    """
+    if not isinstance(attack_result.atomic_attack_identifier, ComponentIdentifier):
+        return None
+    strategy = attack_result.get_attack_strategy_identifier()
+    scorer = strategy.get_child("objective_scorer") if strategy is not None else None
+    return scorer if isinstance(scorer, ComponentIdentifier) else None
 
 
 def load_scenario_run_plan(scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
@@ -276,6 +295,7 @@ def resolve_attack_result_attempt(
         result_role=AttackResultMetadata.from_metadata(metadata=attribution_data).result_role,
         attempt_index=AttackResultMetadata.from_metadata(metadata=attribution_data).attempt_index,
         child_attack_result_ids=tuple(attack_result.metadata.get("child_attack_result_ids", ())),
+        objective_scorer=recorded_objective_scorer_identifier(attack_result),
     )
 
 
@@ -583,6 +603,7 @@ def compute_scenario_statistics(
 
     units_by_name: dict[str, list[ScenarioExecutionUnit]] = {}
     units_by_display_group: dict[str, list[ScenarioExecutionUnit]] = {}
+    unit_names: dict[ScenarioExecutionUnit, str] = {}
     if plan is not None:
         for group in plan.atomic_groups:
             group_units = [
@@ -591,6 +612,7 @@ def compute_scenario_statistics(
             ]
             units_by_name.setdefault(group.atomic_attack_name, []).extend(group_units)
             units_by_display_group.setdefault(group.display_group, []).extend(group_units)
+            unit_names.update(dict.fromkeys(group_units, group.atomic_attack_name))
         counted_units = list(dict.fromkeys(unit for units in units_by_name.values() for unit in units))
         planned: int | None = len(counted_units)
     else:
@@ -599,6 +621,7 @@ def compute_scenario_statistics(
             units_by_name.setdefault(name, []).append(unit)
             display_group = scenario_result.display_group_map.get(name, name)
             units_by_display_group.setdefault(display_group, []).append(unit)
+            unit_names[unit] = name
         counted_units = list(attempts_by_unit)
         planned = None
 
@@ -647,6 +670,15 @@ def compute_scenario_statistics(
             grouped.setdefault(attempt.unit, []).append(attempt)
         atomic_attack_attempts[name] = sum(len(select_execution_attempts(group)) for group in grouped.values())
 
+    judges = _compute_judge_statistics(
+        units=counted_units,
+        unit_names=unit_names,
+        attempts_by_unit=attempts_by_unit,
+        planned_groups_by_id=planned_groups_by_id,
+        run_scorer_identifier=scenario_result.objective_scorer_identifier,
+        is_planned=planned is not None,
+    )
+
     return ScenarioExecutionStatistics(
         overall=_count(counted_units, producer_attempts=attempts),
         atomic_attacks={
@@ -666,7 +698,165 @@ def compute_scenario_statistics(
         attempts=sum(len(select_execution_attempts(unit_attempts)) for unit_attempts in attempts_by_unit.values()),
         atomic_attack_attempts=atomic_attack_attempts,
         unattributed_attempts=unattributed_attempts,
+        judges=judges,
+        judge_scope=judge_scope(judges),
     )
+
+
+# Weakest evidence first: a judge's attribution reports the least direct source any of its units used.
+_ATTRIBUTION_STRENGTH = {
+    ScenarioJudgeAttribution.RUN: 0,
+    ScenarioJudgeAttribution.PLANNED: 1,
+    ScenarioJudgeAttribution.RECORDED: 2,
+}
+
+
+@dataclass(slots=True)
+class _JudgeBucket:
+    """Execution units attributed to one judge while their statistics are collected."""
+
+    scorer_hash: str | None
+    units: list[ScenarioExecutionUnit] = field(default_factory=list)
+    attributions: set[ScenarioJudgeAttribution] = field(default_factory=set)
+    attempted_attributions: set[ScenarioJudgeAttribution] = field(default_factory=set)
+    scorer_identifier: ComponentIdentifier | None = None
+    binding: ScenarioRunPlanScorerBinding | None = None
+
+    @property
+    def attribution(self) -> ScenarioJudgeAttribution:
+        """The weakest evidence among attempted units, or among all units before any attempt."""
+        candidates = self.attempted_attributions or self.attributions
+        return min(candidates, key=lambda value: _ATTRIBUTION_STRENGTH.get(value, -1))
+
+
+def _attribute_unit(
+    *,
+    attempts: Sequence[ScenarioAttempt],
+    binding: ScenarioRunPlanScorerBinding | None,
+    run_scorer_identifier: ComponentIdentifier | None,
+    plan_binds_scorers: bool,
+) -> tuple[ScenarioJudgeAttribution, str | None, ComponentIdentifier | None]:
+    """
+    Attribute one execution unit to the objective scorer that judged it.
+
+    The scorer recorded on the unit's effective result (its latest completion) is preferred, then
+    the latest recorded one. A planned pool binding applies when no result records a scorer, and a
+    single-scorer run's identifier applies only when the plan binds no scorers.
+
+    Returns:
+        tuple[ScenarioJudgeAttribution, str | None, ComponentIdentifier | None]: The attribution,
+            scorer hash, and scorer identifier when known.
+    """
+    completions = [attempt for attempt in attempts if attempt.attempt_index is None]
+    effective = completions[-1] if completions else (attempts[-1] if attempts else None)
+    recorded = effective.objective_scorer if effective is not None else None
+    if recorded is None:
+        recorded = next(
+            (attempt.objective_scorer for attempt in reversed(attempts) if attempt.objective_scorer is not None),
+            None,
+        )
+
+    if recorded is not None:
+        if binding is not None and recorded.hash != binding.scorer_hash:
+            return ScenarioJudgeAttribution.CONFLICT, None, None
+        return ScenarioJudgeAttribution.RECORDED, recorded.hash, recorded
+    if binding is not None:
+        return ScenarioJudgeAttribution.PLANNED, binding.scorer_hash, None
+    if run_scorer_identifier is not None and not plan_binds_scorers:
+        return ScenarioJudgeAttribution.RUN, run_scorer_identifier.hash, run_scorer_identifier
+    return ScenarioJudgeAttribution.UNKNOWN, None, None
+
+
+def _compute_judge_statistics(
+    *,
+    units: Sequence[ScenarioExecutionUnit],
+    unit_names: Mapping[ScenarioExecutionUnit, str],
+    attempts_by_unit: Mapping[ScenarioExecutionUnit, Sequence[ScenarioAttempt]],
+    planned_groups_by_id: Mapping[str, ScenarioRunPlanAtomicGroup],
+    run_scorer_identifier: ComponentIdentifier | None,
+    is_planned: bool,
+) -> list[ScenarioJudgeStatistics]:
+    """
+    Split the counted execution units by the objective scorer that judged them.
+
+    Units are grouped by scorer hash; conflicting and unknown attributions get one group each.
+    Each group is counted with the same latest-attempt policy as the overall statistics.
+
+    Returns:
+        list[ScenarioJudgeStatistics]: One entry per judge, in unit order.
+    """
+    plan_binds_scorers = any(group.objective_scorer_binding is not None for group in planned_groups_by_id.values())
+    buckets: dict[tuple[ScenarioJudgeAttribution | None, str | None], _JudgeBucket] = {}
+    for unit in units:
+        attempts = attempts_by_unit.get(unit, ())
+        planned_group = planned_groups_by_id.get(unit.atomic_group_id)
+        binding = planned_group.objective_scorer_binding if planned_group is not None else None
+        attribution, scorer_hash, identifier = _attribute_unit(
+            attempts=attempts,
+            binding=binding,
+            run_scorer_identifier=run_scorer_identifier,
+            plan_binds_scorers=plan_binds_scorers,
+        )
+        # Known scorers share one bucket whatever the evidence; conflicts and unknowns get their own.
+        key = (None, scorer_hash) if scorer_hash is not None else (attribution, None)
+        bucket = buckets.setdefault(key, _JudgeBucket(scorer_hash=scorer_hash))
+        bucket.units.append(unit)
+        bucket.attributions.add(attribution)
+        if attempts:
+            bucket.attempted_attributions.add(attribution)
+        if bucket.scorer_identifier is None and identifier is not None:
+            bucket.scorer_identifier = identifier
+        if bucket.binding is None and binding is not None and binding.scorer_hash == scorer_hash:
+            bucket.binding = binding
+
+    judges: list[ScenarioJudgeStatistics] = []
+    for bucket in buckets.values():
+        units_by_name: dict[str, list[ScenarioExecutionUnit]] = {}
+        for unit in bucket.units:
+            units_by_name.setdefault(unit_names.get(unit, ""), []).append(unit)
+        judges.append(
+            ScenarioJudgeStatistics(
+                attribution=bucket.attribution,
+                scorer_hash=bucket.scorer_hash,
+                scorer_identifier=bucket.scorer_identifier,
+                candidate_index=bucket.binding.candidate_index if bucket.binding is not None else None,
+                evaluation=bucket.binding.evaluation if bucket.binding is not None else None,
+                overall=count_execution_units(
+                    units=bucket.units,
+                    attempts_by_unit=attempts_by_unit,
+                    planned=len(bucket.units) if is_planned else None,
+                ),
+                atomic_attacks={
+                    name: count_execution_units(
+                        units=name_units,
+                        attempts_by_unit=attempts_by_unit,
+                        planned=len(name_units) if is_planned else None,
+                    )
+                    for name, name_units in units_by_name.items()
+                },
+            )
+        )
+    return judges
+
+
+def judge_scope(judges: Sequence[ScenarioJudgeStatistics]) -> ScenarioJudgeScope:
+    """
+    Classify whether one identified objective scorer judged every completed unit.
+
+    Only judges with completed units count: a planned scorer that has not judged anything yet does
+    not make the completed results mixed.
+
+    Returns:
+        ScenarioJudgeScope: The scope of the completed results.
+    """
+    active = [judge for judge in judges if judge.overall.completed]
+    if not active:
+        return ScenarioJudgeScope.NO_RESULTS
+    if len(active) > 1:
+        return ScenarioJudgeScope.MIXED_JUDGES
+    if active[0].scorer_hash is None:
+        return ScenarioJudgeScope.UNKNOWN_JUDGE
+    return ScenarioJudgeScope.SINGLE_JUDGE
 
 
 def _timestamp_order_key(timestamp: object) -> datetime:

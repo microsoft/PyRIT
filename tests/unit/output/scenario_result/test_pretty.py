@@ -4,7 +4,7 @@
 import uuid
 
 import pytest
-from unit.mocks import make_scenario_result, make_sequential_attack_results
+from unit.mocks import make_judged_scenario_result, make_scenario_result, make_sequential_attack_results
 
 from pyrit.models import (
     AttackOutcome,
@@ -309,3 +309,62 @@ async def test_render_attacks_leaves_out_orchestration_envelope_and_labels_child
     assert "technique: role_play" in text
     assert "technique: adaptive_text_airt_leakage::abc" not in text
     assert "Total attacks: 2" in text
+
+
+# --- judges ---
+
+_JUDGE_A = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+_JUDGE_B = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
+
+
+def _mixed_judge_result() -> ScenarioResult:
+    return make_judged_scenario_result(
+        groups=[
+            ("attack_a", _JUDGE_A, _JUDGE_A, [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS]),
+            ("attack_b", _JUDGE_B, _JUDGE_B, [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED]),
+        ]
+    )
+
+
+async def test_mixed_judges_label_the_headline_as_descriptive_and_break_down_each_judge(patch_central_database, capsys):
+    sorting_printer = PrettyScenarioResultMemoryPrinter(
+        width=200, enable_colors=False, sort_groups_by_success_rate=True
+    )
+
+    await sorting_printer.write_async(_mixed_judge_result())
+    out = capsys.readouterr().out
+
+    assert "Overall Success Rate" not in out
+    assert "Aggregate Success Rate (descriptive, across 2 judges): 50%" in out
+    assert "Per-Judge Breakdown" in out
+    assert f"Judge: JudgeA ({_JUDGE_A.hash[:12]})" in out
+    assert "Pool Candidate: #1" in out
+    assert "Success Rate: 100.0% of decided, 100.0% of all completed" in out
+    assert "Success Rate: N/A of decided, 0.0% of all completed" in out
+    assert "Groups are not ranked by success rate" in out
+    assert out.count("Total Techniques:") == 1
+
+
+async def test_single_judge_matching_the_run_scorer_adds_no_judge_line(printer, capsys):
+    result = make_judged_scenario_result(
+        groups=[("attack", None, _JUDGE_A, [AttackOutcome.SUCCESS])], objective_scorer_identifier=_JUDGE_A
+    )
+
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+
+    assert "Overall Success Rate: 100%" in out
+    assert "• Judge:" not in out
+    assert "Per-Judge Breakdown" not in out
+
+
+async def test_single_judge_differing_from_the_run_scorer_is_named_under_the_headline(printer, capsys):
+    result = make_judged_scenario_result(
+        groups=[("attack", None, _JUDGE_B, [AttackOutcome.SUCCESS])], objective_scorer_identifier=_JUDGE_A
+    )
+
+    await printer.write_async(result)
+    out = capsys.readouterr().out
+
+    assert "Overall Success Rate: 100%" in out
+    assert f"• Judge: JudgeB ({_JUDGE_B.hash[:12]}), recorded" in out

@@ -4,6 +4,7 @@
 import uuid
 from types import SimpleNamespace
 
+import pytest
 from unit.mocks import (
     make_scenario_result,
     make_sequential_attack_results,
@@ -20,8 +21,11 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
+    ScenarioJudgeAttribution,
+    ScenarioJudgeStatistics,
     ScenarioProducerCategoryCounts,
     ScenarioProducerCounts,
+    ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -34,6 +38,8 @@ from pyrit.output._derivation import (
     attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
+    format_rate,
+    judge_label,
     resolve_scorer_name,
     resolve_target_info,
     scenario_overview,
@@ -410,3 +416,27 @@ def test_attack_objective_scorer_identifier_falls_back_to_the_run_scorer():
     no_identity = SimpleNamespace(get_attack_strategy_identifier=lambda: None)
     assert attack_objective_scorer_identifier(attack=unrecorded, run_scorer_identifier=_OBJECTIVE) == _OBJECTIVE
     assert attack_objective_scorer_identifier(attack=no_identity, run_scorer_identifier=None) is None
+
+
+@pytest.mark.parametrize(
+    ("identifier", "scorer_hash", "attribution", "label"),
+    [
+        (ComponentIdentifier(class_name="JudgeA", class_module="tests"), "a" * 64, "recorded", f"JudgeA ({'a' * 12})"),
+        (None, "b" * 64, "planned", f"Scorer {'b' * 12}"),
+        (None, None, "conflict", "Conflicting scorer records"),
+        (None, None, "unknown", "Unknown scorer (not recorded)"),
+    ],
+)
+def test_judge_label_describes_how_much_is_known_about_the_scorer(identifier, scorer_hash, attribution, label):
+    judge = ScenarioJudgeStatistics(
+        attribution=ScenarioJudgeAttribution(attribution),
+        scorer_hash=scorer_hash,
+        scorer_identifier=identifier,
+        overall=ScenarioProgressCounts(completed=0, succeeded=0, errors=0, retries=0),
+    )
+
+    assert judge_label(judge) == label
+
+
+def test_format_rate_reports_one_decimal_or_not_applicable():
+    assert (format_rate(None), format_rate(2 / 3)) == ("N/A", "66.7%")

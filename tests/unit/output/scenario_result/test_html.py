@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 import pytest
-from unit.mocks import make_scenario_result
+from unit.mocks import make_judged_scenario_result, make_scenario_result
 
 from pyrit.models import (
     AttackOutcome,
@@ -463,3 +463,25 @@ async def test_html_report_labels_converted_types_from_real_builders():
     assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
     assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/dog.png</div>' in html
     assert '<div class="piece-label">Converted:</div><div class="piece">a dog on a log</div>' in html
+
+
+async def test_html_report_renders_per_judge_breakdown_from_real_builders(patch_central_database):
+    judge_a = ComponentIdentifier(class_name="JudgeA", class_module="tests.scorers")
+    judge_b = ComponentIdentifier(class_name="JudgeB", class_module="tests.scorers")
+    result = make_judged_scenario_result(
+        groups=[
+            ("attack_a", judge_a, judge_a, [AttackOutcome.SUCCESS]),
+            ("attack_b", judge_b, judge_b, [AttackOutcome.UNDETERMINED]),
+        ]
+    )
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+
+    html = await HtmlScenarioReportPrinter().render_async(
+        build_scenario_full_payload(result=result, overview=overview, entries=[])
+    )
+
+    assert re.search(r"Aggregate success rate\s+\(2 judges, descriptive\)", html)
+    assert "Per-judge breakdown" in html
+    assert f"JudgeA ({judge_a.hash[:12]})" in html
+    assert "<td>100.0%</td>" in html
+    assert "<td>N/A</td>" in html
