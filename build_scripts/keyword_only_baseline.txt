@@ -231,9 +231,6 @@ pyrit.score.scorer:Scorer.scale_value_float
 pyrit.score.scorer_evaluation.krippendorff:krippendorff_alpha
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.evaluate_dataset_async
 pyrit.score.scorer_evaluation.scorer_evaluator:ScorerEvaluator.from_scorer
-pyrit.score.scorer_evaluation.scorer_metrics_io:_append_jsonl_entry
-pyrit.score.scorer_evaluation.scorer_metrics_io:_create_staging_file
-pyrit.score.scorer_evaluation.scorer_metrics_io:_rewrite_jsonl_atomically
 pyrit.score.scorer_prompt_validator:ScorerPromptValidator.validate
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_mode_then
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_number_option
