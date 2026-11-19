@@ -310,9 +310,9 @@ async def test_compound_estimate_uses_initialization_cap_async(
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_7(self) -> None:
-        """VERSION 7 identifies runs using independent named-source and total limits."""
-        assert AdversarialBenchmark.VERSION == 7
+    def test_version_is_8(self) -> None:
+        """VERSION 8 prevents reuse of runs that substituted TAP's objective judge."""
+        assert AdversarialBenchmark.VERSION == 8
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""

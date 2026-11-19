@@ -5,9 +5,16 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, ScorableUnion, Score, ScoringExpectation
+from pyrit.models import (
+    ComponentIdentifier,
+    FloatFeedback,
+    MessageScorable,
+    Scorable,
+    ScorableUnion,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.observation.execution import _merge_observation_ids
-from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import (
     Scorer,
     SnapshotParticipation,
@@ -243,8 +250,9 @@ class _FallbackScorer(Scorer):
         }
         metadata["resolved_by"] = "fallback" if fallback is not None else "primary"
         # Attacks rank true/false scores by this top-level key, so keep the selected child's value.
-        if selected.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in selected.score_metadata:
-            metadata[ORIGINAL_FLOAT_VALUE_KEY] = selected.score_metadata[ORIGINAL_FLOAT_VALUE_KEY]
+        feedback = FloatFeedback.read(selected)
+        if feedback is not None:
+            metadata.update(feedback.to_metadata())
         rationale = primary.score_rationale
         if fallback_attempted:
             metadata["primary_rationale"] = primary.score_rationale or ""

@@ -15,7 +15,7 @@ from pyrit.models import (
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 # Score metadata coerces booleans to integers, so a boolean is only rejected on construction.
-INVALID = [None, "0.5", math.nan, math.inf, -0.1, 1.5]
+INVALID = [None, "0.5", math.nan, math.inf, -0.1, 1.5, 10**400]
 
 
 def _score(metadata: dict | None) -> Score:
@@ -68,3 +68,12 @@ def test_writing_and_removing_copy_the_metadata():
     assert metadata == {"model": "judge"}
     assert FloatFeedback.remove_from(written) == {"model": "judge"}
     assert FLOAT_FEEDBACK_METADATA_KEY in written
+
+
+def test_metadata_round_trip_preserves_unrelated_values():
+    feedback = FloatFeedback(value=0.0)
+    metadata = {"model": "judge", **feedback.to_metadata()}
+
+    assert FloatFeedback.from_metadata(metadata=metadata) == feedback
+    assert FloatFeedback.remove_from(metadata) == {"model": "judge"}
+    assert metadata == {"model": "judge", FLOAT_FEEDBACK_METADATA_KEY: 0.0}
