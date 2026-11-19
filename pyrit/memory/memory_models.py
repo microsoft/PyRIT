@@ -318,6 +318,7 @@ class PromptGenerationEntry(Base):
     review_completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     group_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True)
     group_label: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    group_index: Mapped[int] = mapped_column(INTEGER, nullable=False)
     progress: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -360,6 +361,7 @@ class PromptGenerationEntry(Base):
             "review_completed": validated.review_completed,
             "group_id": validated.group_id,
             "group_label": validated.group_label,
+            "group_index": validated.group_index,
             "error": validated.error,
             "created_by": validated.created_by,
             "updated_at": validated.updated_at,
@@ -386,6 +388,7 @@ class PromptGenerationEntry(Base):
             review_completed=self.review_completed,
             group_id=self.group_id,
             group_label=self.group_label,
+            group_index=self.group_index,
             progress=PromptGenerationProgress.model_validate(self.progress),
             checkpoint=self.checkpoint,
             summary=self.summary,

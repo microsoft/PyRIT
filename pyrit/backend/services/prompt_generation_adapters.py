@@ -20,6 +20,7 @@ from pyrit.backend.models.prompt_generations import (
     PromptGeneratorDescriptor,
     PromptGeneratorStage,
     PromptGeneratorTargetRole,
+    TargetObjectiveCreateRequest,
 )
 from pyrit.datasets import AssertProvider, TargetObjectiveProvider
 from pyrit.executor.promptgen import AssertGenerator, TargetObjectiveGenerator, TargetObjectiveGeneratorResult
@@ -82,9 +83,11 @@ class PromptGenerationAdapter(ABC):
         """
 
     @abstractmethod
-    def validate_targets(self, *, request: Mapping[str, Any], targets: Mapping[str, PromptTarget]) -> None:
+    def validate_targets(
+        self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None, targets: Mapping[str, PromptTarget]
+    ) -> None:
         """
-        Check that resolved targets can run the request, without model calls.
+        Check that resolved targets can run the remaining stages, without model calls.
 
         Raises:
             ValueError: If a target lacks a required capability.
@@ -93,6 +96,17 @@ class PromptGenerationAdapter(ABC):
     @abstractmethod
     def estimate(self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None) -> PromptGenerationEstimate:
         """Estimate the remaining work without model calls."""
+
+    def get_roles_to_run(self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None) -> set[str]:
+        """
+        Name the target roles that running the remaining stages needs.
+
+        Returns:
+            set[str]: The required roles and the role of each stage the generator still runs.
+        """
+        required = {role.role for role in self.descriptor.target_roles if role.required}
+        estimate = self.estimate(request=request, checkpoint=checkpoint)
+        return required | {stage.target_role for stage in estimate.stages}
 
     @abstractmethod
     def get_progress(
@@ -196,9 +210,13 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
         """
         return AssertGenerationConfig.model_validate(dict(request)).model_dump(mode="json")
 
-    def validate_targets(self, *, request: Mapping[str, Any], targets: Mapping[str, PromptTarget]) -> None:
-        """Check target capabilities and the request's web search policy."""
-        self._create_generator(targets).validate_config(config=AssertGenerationConfig.model_validate(dict(request)))
+    def validate_targets(
+        self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None, targets: Mapping[str, PromptTarget]
+    ) -> None:
+        """Check target capabilities, the web search policy, and earlier work's producers for the remaining stages."""
+        self._create_generator(targets).validate_checkpoint(
+            checkpoint=self._load_checkpoint(request=request, checkpoint=checkpoint)
+        )
 
     def estimate(self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None) -> PromptGenerationEstimate:
         """
@@ -355,12 +373,13 @@ class AssertGenerationAdapter(PromptGenerationAdapter):
 
     @staticmethod
     def _progress(checkpoint: AssertGenerationCheckpoint) -> PromptGenerationProgress:
-        stages = list(AssertGenerationStage)
-        next_stage = checkpoint.next_stage
-        done = stages if next_stage is None else stages[: stages.index(next_stage)]
+        # The estimate lists the stages the generator still runs, which skips stages the request supplies.
+        stages = [stage.value for stage in AssertGenerationStage]
+        remaining = [stage.stage for stage in AssertGenerator.estimate(checkpoint=checkpoint).stages]
+        current_stage = remaining[0] if remaining else None
         return PromptGenerationProgress(
-            completed_stages=[stage.value for stage in done],
-            current_stage=next_stage.value if next_stage is not None else None,
+            completed_stages=stages[: stages.index(current_stage)] if current_stage is not None else stages,
+            current_stage=current_stage,
             items_completed=len(checkpoint.groups),
             items_total=checkpoint.config.group_count,
         )
@@ -387,14 +406,16 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
 
     def normalize_request(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """
-        Validate an objective generation request.
+        Validate an objective generation request within the backend's size limits.
 
         Returns:
             dict[str, Any]: The request with defaults filled in.
         """
-        return TargetObjectiveGenerationRequest.model_validate(dict(request)).model_dump(mode="json")
+        return TargetObjectiveCreateRequest.model_validate(dict(request)).model_dump(mode="json")
 
-    def validate_targets(self, *, request: Mapping[str, Any], targets: Mapping[str, PromptTarget]) -> None:
+    def validate_targets(
+        self, *, request: Mapping[str, Any], checkpoint: Mapping[str, Any] | None, targets: Mapping[str, PromptTarget]
+    ) -> None:
         """Construct the generator, which checks the target and bundled prompt."""
         TargetObjectiveGenerator(target=targets[TargetObjectiveGenerator.GENERATION_ROLE])
 
@@ -474,10 +495,7 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
         result = TargetObjectiveGeneratorResult.model_validate(dict(checkpoint))
         parsed = TargetObjectiveGenerationRequest.model_validate(dict(request))
         dataset = TargetObjectiveProvider.package_result(
-            dataset_name=dataset_name,
-            result=result,
-            instructions=parsed.instructions,
-            harm_categories=parsed.harm_categories,
+            dataset_name=dataset_name, result=result, harm_categories=parsed.harm_categories, request=parsed
         )
         return dataset, {"objective_count": len(result.objectives)}
 
@@ -486,12 +504,12 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
         Read the generation request stored in objective metadata.
 
         Returns:
-            dict[str, Any] | None: The request, or None when no seed records one.
+            dict[str, Any] | None: The request, or None when no seed records a valid one.
         """
         for seed in seeds:
-            request = TargetObjectiveProvider.request_from_metadata(seed.metadata)
+            request = TargetObjectiveGenerationRequest.from_metadata(seed.metadata)
             if request is not None:
-                return self.normalize_request(request)
+                return request.model_dump(mode="json")
         return None
 
 

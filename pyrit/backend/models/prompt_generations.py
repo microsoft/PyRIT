@@ -16,7 +16,12 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 
 from pyrit.backend.models.common import IdentifierStr
-from pyrit.models import PromptGenerationEstimate, PromptGenerationProgress, PromptGenerationStatus
+from pyrit.models import (
+    PromptGenerationEstimate,
+    PromptGenerationProgress,
+    PromptGenerationStatus,
+    TargetObjectiveGenerationRequest,
+)
 from pyrit.models.prompt_generation import DatasetNameStr, GeneratorNameStr, TargetRoleStr
 
 
@@ -100,6 +105,15 @@ class PromptGenerationCreateRequest(BaseModel):
     request: dict[str, Any]
     targets: dict[TargetRoleStr, IdentifierStr] = Field(default_factory=dict)
     pause_for_review: bool = Field(False, description="Pause after a reviewable stage so its output can be edited")
+
+
+class TargetObjectiveCreateRequest(TargetObjectiveGenerationRequest):
+    """A ``target_objective`` request within the backend's size limits."""
+
+    count: Annotated[int, Field(strict=True, ge=1, le=1_000)]
+    harm_categories: list[Annotated[str, StringConstraints(pattern=r"\S", max_length=100)]] = Field(
+        default_factory=list, max_length=50
+    )
 
 
 class PromptGenerationPreflightResponse(BaseModel):

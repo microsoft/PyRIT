@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -84,7 +84,7 @@ class PromptGenerationService:
     overwriting the record.
     """
 
-    DEFAULT_MAX_CONCURRENT_GENERATIONS = 1
+    MAX_CONCURRENT_GENERATIONS = 1
     DEFAULT_ADDED_BY = "PromptGenerationService"
 
     def __init__(
@@ -93,10 +93,9 @@ class PromptGenerationService:
         memory: MemoryInterface | None = None,
         adapters: Mapping[str, PromptGenerationAdapter] | None = None,
         target_lookup: Callable[[str], PromptTarget | None] | None = None,
-        max_concurrent_generations: int = DEFAULT_MAX_CONCURRENT_GENERATIONS,
     ) -> None:
         """
-        Configure memory, generators, target lookup, and the concurrency limit.
+        Configure memory, generators, and target lookup.
 
         Args:
             memory (MemoryInterface | None): Memory that stores generations and receives datasets. Defaults to
@@ -105,17 +104,11 @@ class PromptGenerationService:
                 built-in generator.
             target_lookup (Callable[[str], PromptTarget | None] | None): Resolves a target registry name.
                 Defaults to the target registry.
-            max_concurrent_generations (int): Generations that run at once. Others wait in the queue.
-
-        Raises:
-            ValueError: If max_concurrent_generations is less than one.
         """
-        if max_concurrent_generations < 1:
-            raise ValueError("max_concurrent_generations must be at least 1.")
         self._memory = memory or CentralMemory.get_memory_instance()
         self._adapters = dict(adapters) if adapters is not None else create_prompt_generation_adapters()
         self._target_lookup = target_lookup or _lookup_registered_target
-        self._semaphore = asyncio.Semaphore(max_concurrent_generations)
+        self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_GENERATIONS)
         self._lock = asyncio.Lock()
         self._tasks: dict[uuid.UUID, asyncio.Task[None]] = {}
         self._executions: dict[uuid.UUID, uuid.UUID] = {}
@@ -218,7 +211,7 @@ class PromptGenerationService:
             _require_review_support(adapter=adapter, pause_for_review=request.pause_for_review)
             normalized = adapter.normalize_request(request.request)
             estimate = adapter.estimate(request=normalized, checkpoint=None)
-            self._validate_targets(adapter=adapter, request=normalized, targets=request.targets)
+            self._validate_targets(adapter=adapter, request=normalized, checkpoint=None, targets=request.targets)
         except ValueError as error:
             errors.append(_describe_error(error))
         return PromptGenerationPreflightResponse(
@@ -352,7 +345,8 @@ class PromptGenerationService:
             await asyncio.wait({task})
             self._cancel_requested.discard(record.id)
             record = await self._read_async(record.id)
-            # A task cancelled before it started never ran its handler, so its record is still queued.
+            # The task's handler records the cancel, unless the task never started or the handler's write
+            # failed, for example because memory failed. Then the record is still active and is cancelled below.
             if record.status not in _CANCELLABLE_STATUSES:
                 return record
         cancelled = await self._try_update_async(
@@ -487,12 +481,11 @@ class PromptGenerationService:
         _require_review_support(adapter=adapter, pause_for_review=request.pause_for_review)
         normalized = [adapter.normalize_request(item.request) for item in request.items]
         for item_request in normalized:
-            self._validate_targets(adapter=adapter, request=item_request, targets=request.targets)
+            self._validate_targets(adapter=adapter, request=item_request, checkpoint=None, targets=request.targets)
         names = [item.dataset_name for item in request.items]
         if len(set(names)) != len(names):
             raise ValueError("Each generation in a batch needs a different dataset name.")
         now = datetime.now(UTC)
-        # A millisecond apart, so batch members keep their request order after a restart and in browsers.
         records = [
             PromptGenerationRecord(
                 id=uuid.uuid4(),
@@ -504,9 +497,10 @@ class PromptGenerationService:
                 pause_for_review=request.pause_for_review,
                 group_id=group_id,
                 group_label=request.label if group_id is not None else None,
+                group_index=index,
                 progress=adapter.get_progress(request=item_request, checkpoint=None),
                 created_by=created_by,
-                created_at=now + timedelta(milliseconds=index),
+                created_at=now,
                 updated_at=now,
             )
             for index, (item, item_request) in enumerate(zip(request.items, normalized, strict=True))
@@ -528,7 +522,9 @@ class PromptGenerationService:
         if record.status not in allowed:
             raise PromptGenerationConflictError(f"A {record.status.value} generation can't be queued.")
         adapter = self._get_adapter(record.generator)
-        self._validate_targets(adapter=adapter, request=record.request, targets=record.targets)
+        self._validate_targets(
+            adapter=adapter, request=record.request, checkpoint=record.checkpoint, targets=record.targets
+        )
         try:
             queued = await self._try_update_async(
                 record=record,
@@ -590,7 +586,9 @@ class PromptGenerationService:
         if record.status != PromptGenerationStatus.QUEUED:
             return
         adapter = self._get_adapter(record.generator)
-        targets = self._resolve_targets(adapter=adapter, targets=record.targets)
+        targets = self._resolve_targets(
+            adapter=adapter, request=record.request, checkpoint=record.checkpoint, targets=record.targets
+        )
         execution_id = uuid.uuid4()
         running = await self._try_update_async(
             record=record,
@@ -722,11 +720,14 @@ class PromptGenerationService:
     ) -> PromptGenerationRecord | None:
         updated = _apply(record, **changes)
         async with self._lock:
+            # Write only the changed fields, so a transition built from an older read can't revert a
+            # concurrent write, such as a saved review or another backend's checkpoint.
             written = await self._memory.try_update_prompt_generation_async(
                 generation=updated,
                 expected_statuses=expected_statuses,
                 expected_execution_id=expected_execution_id,
                 reserve_dataset_name=reserve_dataset_name,
+                fields=[*changes, "updated_at"],
             )
         return updated if written else None
 
@@ -743,16 +744,39 @@ class PromptGenerationService:
         return next(iter(examples.values()), [])
 
     def _validate_targets(
-        self, *, adapter: PromptGenerationAdapter, request: Mapping[str, Any], targets: Mapping[str, str]
+        self,
+        *,
+        adapter: PromptGenerationAdapter,
+        request: Mapping[str, Any],
+        checkpoint: Mapping[str, Any] | None,
+        targets: Mapping[str, str],
     ) -> None:
-        adapter.validate_targets(request=request, targets=self._resolve_targets(adapter=adapter, targets=targets))
+        resolved = self._resolve_targets(adapter=adapter, request=request, checkpoint=checkpoint, targets=targets)
+        adapter.validate_targets(request=request, checkpoint=checkpoint, targets=resolved)
 
     def _resolve_targets(
-        self, *, adapter: PromptGenerationAdapter, targets: Mapping[str, str]
+        self,
+        *,
+        adapter: PromptGenerationAdapter,
+        request: Mapping[str, Any],
+        checkpoint: Mapping[str, Any] | None,
+        targets: Mapping[str, str],
     ) -> dict[str, PromptTarget]:
+        """
+        Resolve the targets that the remaining stages use. A role whose work is finished needs no target.
+
+        Returns:
+            dict[str, PromptTarget]: The resolved targets by role.
+
+        Raises:
+            ValueError: If a role is unknown, a required role has no target, or a needed target isn't registered.
+        """
         self._check_target_roles(adapter=adapter, targets=targets)
+        roles = adapter.get_roles_to_run(request=request, checkpoint=checkpoint)
         resolved: dict[str, PromptTarget] = {}
         for role, name in targets.items():
+            if role not in roles:
+                continue
             target = self._target_lookup(name)
             if target is None:
                 raise ValueError(f"Target '{name}' isn't registered.")

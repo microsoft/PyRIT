@@ -254,11 +254,11 @@ server-generated storage names and are never executed. Blob uploads are opaque
 attachments; local retrieval uses the existing media route's safe inline allowlist.
 
 Names are exact, nonempty, at most 256 UTF-16 code units, and have no surrounding
-whitespace or control characters. An existing stored dataset or in-progress upload
-with a database-collation-equivalent name returns `409`, never append/replace or
-silent deduplication. SQLite keeps its normal case-sensitive identity; SQL Server
-uses the existing seed-name column collation. Exact deletion remains exact even
-when legacy datasets contain collated aliases. Seed and journal names use Unicode
+whitespace or control characters. An existing stored dataset, in-progress upload, or
+unfinished prompt generation with a database-collation-equivalent name returns `409`,
+never append/replace or silent deduplication. SQLite keeps its normal case-sensitive
+identity; SQL Server uses the existing seed-name column collation. Exact deletion
+remains exact even when legacy datasets contain collated aliases. Seed and journal names use Unicode
 storage on SQL Server, including databases with non-UTF-8 collations.
 A provider-only name is allowed; its provider registration remains unchanged.
 Descriptive metadata, response schema, roles, sequence numbers, and grouping are
@@ -733,9 +733,9 @@ or lossless source. The GUI displays identity JSON, not the creation statement.
 
 Prompt generations run PyRIT's prompt generators as background jobs and store each
 result as a new named seed dataset. `GET /api/prompt-generators` describes each
-generator's stages, target roles, and the scenario that runs its datasets. v1
-registers `assert` (`AssertGenerator`, with a reviewable dimensions stage) and
-`target_objective` (`TargetObjectiveGenerator`).
+generator's stages, target roles, and, for ASSERT, the scenario that runs its datasets.
+Two generators are registered: `assert` (`AssertGenerator`, with a reviewable
+dimensions stage) and `target_objective` (`TargetObjectiveGenerator`).
 
 | Endpoint | Result |
 | --- | --- |
@@ -746,42 +746,27 @@ registers `assert` (`AssertGenerator`, with a reviewable dimensions stage) and
 | `GET`, `DELETE /api/prompt-generations/{id}` | Read or delete a record; deleting keeps the dataset |
 | `POST /api/prompt-generations/{id}/continue\|retry\|cancel` | Finish a review, resume from the last checkpoint, or cancel |
 | `GET`, `PUT /api/prompt-generations/{id}/review` | Read or save output awaiting review |
-| `GET /api/prompt-generations/{id}/estimate` | Remaining calls from the checkpoint; ASSERT is exact once the taxonomy exists |
+| `GET /api/prompt-generations/{id}/estimate` | Remaining calls from the checkpoint; ASSERT is exact once the taxonomy and dimension levels are known |
 | `GET /api/prompt-generations/from-dataset?selection_key=` | The request recorded in a generated dataset, to edit and regenerate under a new name |
 | `GET /api/prompt-generators/assert/behaviors\|suites` | The bundled ASSERT behavior and suite library |
 
-Generators own model calls, stages, validation, and resumable checkpoints; dataset
-providers package results. `PromptGenerationService` owns admission, one running
-generation at a time per backend by default, persistence of every checkpoint, review
-pauses, cancellation, and retry. Records are stored in memory
-(`PromptGenerationEntries`), so backends that share a database list the same
+Each backend runs one generation at a time and queues the rest. Records are stored in
+memory (`PromptGenerationEntries`), so backends that share a database list the same
 generations. `pause_for_review` is rejected for generators without a reviewable stage.
 
 Dataset names are create-only, under one rule shared with dataset uploads: a name is
-taken while stored seeds use it, an upload is staging it, or a generation holds it. The
-database compares names, so with a case-insensitive collation, such as SQL Server's
-default, a variant it treats as equal is also taken, including within one batch. A
-generation holds its name until it completes or is cancelled. Creating, retrying, and
-saving check the name under the dataset lifecycle lock. Saving creates the dataset and
-completes the record in one transaction, so a generation never has a saved dataset with
-an unfinished record. If the name was taken while generating, the save fails without
-adding seeds to the other dataset.
+taken while stored seeds use it, an upload is staging it, or a generation holds it, and
+the database's collation decides which names match. A generation holds its name until
+it completes or is cancelled. If the name is taken while generating, the save fails
+without adding seeds to the other dataset.
 
-Each record change is a compare-and-set on the statuses it expects. A run claims its
-generation with a new execution ID, and its checkpoint, review, save, and failure
-writes require that ID. A cancel or retry from another backend therefore stops the
-previous owner at its next checkpoint instead of being overwritten; a model call already
-in flight still finishes. Each backend runs only the generations queued or resumed
-through it, and the concurrency limit applies per backend.
-
+Failed, cancelled, and interrupted generations retry from their last checkpoint.
 Shutdown interrupts running generations but lets a dataset save finish. On first use
-after a restart with SQLite memory, which one backend owns, active records without a
-task here become `interrupted`, and retry resumes from the last stored checkpoint.
-Shared memory, such as Azure SQL, is left unchanged because another backend may own
-those runs: a generation whose backend stopped stays active until it is cancelled, and
-can then be retried or deleted. A backend can't cancel a dataset save it is running
-itself, but it can cancel a generation that is saving elsewhere or was left saving by
-a stopped backend; that save then commits nothing.
+after a restart with SQLite memory, active generations become `interrupted`. Shared
+memory, such as Azure SQL, leaves them active because another backend may own them:
+cancel a generation whose backend stopped, then retry or delete it. A cancel from
+another backend stops a run at its next checkpoint, and a save it was running then
+commits nothing; cancelling a save that this backend is running returns 409.
 
 ### Manual Messages
 

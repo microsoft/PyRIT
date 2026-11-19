@@ -10,7 +10,14 @@ from unit.mocks import MockPromptTarget
 from pyrit.datasets import SeedDatasetProvider, TargetObjectiveProvider
 from pyrit.executor.promptgen import TargetObjectiveGeneratorResult
 from pyrit.memory import MemoryInterface
-from pyrit.models import JsonResponseConfig, Message, SeedObjective, SeedOrigin, SeedPrompt
+from pyrit.models import (
+    JsonResponseConfig,
+    Message,
+    SeedObjective,
+    SeedOrigin,
+    SeedPrompt,
+    TargetObjectiveGenerationRequest,
+)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -65,12 +72,12 @@ class TestTargetObjectiveProvider:
         await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="operator")
         stored = await sqlite_instance.get_seeds_async(dataset_name="generated", origin=SeedOrigin.GENERATED)
         assert len(stored) == 10
-        request = {"instructions": "Test", "count": 10, "harm_categories": ["test"]}
+        request = TargetObjectiveGenerationRequest(instructions="Test", count=10, harm_categories=["test"])
         assert all(
-            seed.metadata == {"generation_conversation_id": result.conversation_id, "target_objective_request": request}
+            seed.metadata == {"generation_conversation_id": result.conversation_id, **request.to_metadata()}
             for seed in stored
         )
-        assert TargetObjectiveProvider.request_from_metadata(stored[0].metadata) == request
+        assert TargetObjectiveGenerationRequest.from_metadata(stored[0].metadata) == request
         by_conversation = await sqlite_instance.get_seeds_async(
             metadata={"generation_conversation_id": result.conversation_id}
         )
@@ -126,7 +133,7 @@ class TestTargetObjectiveProvider:
 def test_package_result_builds_named_generated_objectives() -> None:
     result = TargetObjectiveGeneratorResult(objectives=["First goal", "Second goal"], conversation_id=str(uuid4()))
     dataset = TargetObjectiveProvider.package_result(
-        dataset_name="generated", result=result, instructions="Ask for orders.", harm_categories=("privacy", "fraud")
+        dataset_name="generated", result=result, harm_categories=("privacy", "fraud")
     )
     assert dataset.dataset_name == "generated"
     assert [seed.value for seed in dataset.seeds] == result.objectives
@@ -136,25 +143,21 @@ def test_package_result_builds_named_generated_objectives() -> None:
         assert seed.origin is SeedOrigin.GENERATED
         assert not seed.is_jinja_template
         assert seed.harm_categories == ["privacy", "fraud"]
-        assert seed.metadata == {
-            "generation_conversation_id": result.conversation_id,
-            "target_objective_request": {
-                "instructions": "Ask for orders.",
-                "count": 2,
-                "harm_categories": ["privacy", "fraud"],
-            },
-        }
+        assert seed.metadata == {"generation_conversation_id": result.conversation_id}
 
 
-def test_request_from_metadata_ignores_seeds_without_a_request() -> None:
-    assert TargetObjectiveProvider.request_from_metadata(None) is None
-    assert TargetObjectiveProvider.request_from_metadata({"generation_conversation_id": "c"}) is None
-    assert TargetObjectiveProvider.request_from_metadata({"target_objective_request": "not a mapping"}) is None
+def test_package_result_stores_the_request() -> None:
+    result = TargetObjectiveGeneratorResult(objectives=["First goal", "Second goal"], conversation_id=str(uuid4()))
+    request = TargetObjectiveGenerationRequest(instructions="Ask for orders.", count=2, harm_categories=["privacy"])
+    dataset = TargetObjectiveProvider.package_result(
+        dataset_name="generated", result=result, harm_categories=request.harm_categories, request=request
+    )
+    assert all(TargetObjectiveGenerationRequest.from_metadata(seed.metadata) == request for seed in dataset.seeds)
 
 
 def test_package_result_defaults_to_no_harm_categories() -> None:
     result = TargetObjectiveGeneratorResult(objectives=["Literal {{ value }}"], conversation_id=str(uuid4()))
-    dataset = TargetObjectiveProvider.package_result(dataset_name="generated", result=result, instructions="Test")
+    dataset = TargetObjectiveProvider.package_result(dataset_name="generated", result=result)
     assert dataset.seeds[0].harm_categories == []
     assert dataset.seeds[0].value == "Literal {{ value }}"
 
@@ -163,7 +166,7 @@ def test_package_result_does_not_share_harm_category_lists() -> None:
     result = TargetObjectiveGeneratorResult(objectives=["First goal", "Second goal"], conversation_id=str(uuid4()))
     categories = ["privacy"]
     dataset = TargetObjectiveProvider.package_result(
-        dataset_name="generated", result=result, instructions="Test", harm_categories=categories
+        dataset_name="generated", result=result, harm_categories=categories
     )
     categories.append("changed")
     first, second = dataset.seeds
@@ -175,7 +178,7 @@ def test_package_result_does_not_share_harm_category_lists() -> None:
 def test_package_result_rejects_blank_name(name: str) -> None:
     result = TargetObjectiveGeneratorResult(objectives=["A goal"], conversation_id=str(uuid4()))
     with pytest.raises(ValueError, match="dataset_name"):
-        TargetObjectiveProvider.package_result(dataset_name=name, result=result, instructions="Test")
+        TargetObjectiveProvider.package_result(dataset_name=name, result=result)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -192,6 +195,9 @@ async def test_fetch_dataset_async_packages_the_generated_result_async() -> None
     ):
         dataset = await provider.fetch_dataset_async()
     package.assert_called_once_with(
-        dataset_name="generated", result=result, instructions="Test", harm_categories=["test"]
+        dataset_name="generated",
+        result=result,
+        harm_categories=["test"],
+        request=TargetObjectiveGenerationRequest(instructions="Test", count=1, harm_categories=["test"]),
     )
     assert dataset.seeds[0].value == "A goal"

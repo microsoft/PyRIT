@@ -10,11 +10,12 @@ and result summary.
 """
 
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any, ClassVar, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, ValidationError
 
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH
 
@@ -50,15 +51,46 @@ DATASET_NAME_RELEASING_STATUSES = frozenset({PromptGenerationStatus.COMPLETED, P
 
 
 class TargetObjectiveGenerationRequest(BaseModel):
-    """The ``request`` of a ``target_objective`` generation."""
+    """
+    The request of a ``target_objective`` generation, as ``TargetObjectiveGenerator`` accepts it.
 
+    Generated objectives store the request in their metadata so it can be edited and run again.
+    """
+
+    METADATA_KEY: ClassVar[str] = "pyrit_target_objective_request"
     model_config = ConfigDict(extra="forbid")
 
-    instructions: Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
-    count: Annotated[int, Field(strict=True, ge=1, le=1_000)]
-    harm_categories: list[Annotated[str, StringConstraints(min_length=1, max_length=100)]] = Field(
-        default_factory=list, max_length=50
-    )
+    instructions: Annotated[str, StringConstraints(pattern=r"\S")]
+    count: Annotated[int, Field(strict=True, ge=1)]
+    harm_categories: list[Annotated[str, StringConstraints(pattern=r"\S")]] = Field(default_factory=list)
+
+    def to_metadata(self) -> dict[str, Any]:
+        """
+        Serialize this request for seed metadata.
+
+        Returns:
+            dict[str, Any]: The metadata fragment that holds this request.
+        """
+        return {self.METADATA_KEY: self.model_dump(mode="json")}
+
+    @classmethod
+    def from_metadata(cls, metadata: Mapping[str, Any] | None) -> Self | None:
+        """
+        Read the request stored in seed metadata.
+
+        Args:
+            metadata (Mapping[str, Any] | None): A seed's metadata.
+
+        Returns:
+            Self | None: The request, or None if the metadata holds no valid request.
+        """
+        value = (metadata or {}).get(cls.METADATA_KEY)
+        if value is None:
+            return None
+        try:
+            return cls.model_validate(value)
+        except ValidationError:
+            return None
 
 
 class PromptGenerationProgress(BaseModel):
@@ -87,6 +119,7 @@ class PromptGenerationRecord(BaseModel):
     review_completed: bool = False
     group_id: uuid.UUID | None = Field(None, description="Shared by generations created together in one batch")
     group_label: str | None = None
+    group_index: int = Field(0, ge=0, description="Position in the batch request that created this generation")
     progress: PromptGenerationProgress = Field(default_factory=PromptGenerationProgress)
     checkpoint: dict[str, JsonValue] | None = Field(None, description="Generator-owned resumable progress")
     summary: dict[str, JsonValue] | None = Field(None, description="Generator-specific result summary")

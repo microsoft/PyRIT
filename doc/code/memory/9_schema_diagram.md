@@ -75,6 +75,7 @@ flowchart LR
         G_request["request (JSON)"]
         G_targets["targets (JSON)"]
         G_group_id["group_id (UUID)"]
+        G_group_index["group_index (INTEGER)"]
         G_progress["progress (JSON)"]
         G_checkpoint["checkpoint (JSON)"]
         G_summary["summary (JSON)"]
