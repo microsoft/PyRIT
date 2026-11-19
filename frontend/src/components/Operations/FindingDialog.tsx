@@ -25,14 +25,14 @@ export interface FindingSaveAttempt {
 }
 
 interface FindingDialogProps {
-  initialValues?: FindingCreate
-  editing?: boolean
-  context?: React.ReactNode
+  initialValues?: FindingCreate | undefined
+  editing?: boolean | undefined
+  context?: React.ReactNode | undefined
   /** The title of the finding this one is a sub-finding of. The parent is shown, not edited. */
-  parentTitle?: string
+  parentTitle?: string | undefined
   /** Shows an optional attack ID to link as evidence. */
-  evidenceField?: boolean
-  saveDisabled?: boolean
+  evidenceField?: boolean | undefined
+  saveDisabled?: boolean | undefined
   onSave: (draft: FindingCreate, attempt: FindingSaveAttempt) => Promise<void>
   onClose: () => void
 }
@@ -184,7 +184,7 @@ export default function FindingDialog({
                 onChange={(_, data) => { setDraft(value => ({ ...value, demonstrated: data.checked })) }} />
             </Field>
             {evidenceField && <Field label="Evidence attack ID"
-              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || undefined}
+              validationState={attackResultIdError ? 'error' : 'none'} validationMessage={attackResultIdError || null}
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
               <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
                 onChange={(_, data) => { setAttackResultId(data.value); setAttackResultIdError('') }} />

@@ -130,7 +130,7 @@ interface ConversationScoring {
   readonly conversationId: string
   readonly score: BackendScore | null
   readonly failure: ScoringFailure | null
-  readonly outcome?: AttackOutcome
+  readonly outcome?: AttackOutcome | undefined
   readonly latestResponseId: string | null
 }
 
@@ -154,11 +154,11 @@ function conversationScoringOf(conversationId: string, response: ConversationMes
 
 interface ChatWindowProps {
   /** Shared layout slot; standalone chat renders its toolbar inline. */
-  toolbarContainer?: HTMLElement | null
+  toolbarContainer?: HTMLElement | null | undefined
   activeTarget: TargetInstance | null
-  draftTargetReference?: TargetReference | null
+  draftTargetReference?: TargetReference | null | undefined
   /** Route identity is available before the attack's metadata has loaded. */
-  draftContext?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId'>
+  draftContext?: Pick<ChatDraftContextState, 'originatingAttackId' | 'originatingConversationId'> | undefined
   availableTargets: TargetInstance[]
   targetsLoading: boolean
   targetsError: string | null
@@ -175,56 +175,56 @@ interface ChatWindowProps {
     target?: TargetInstance | null,
   ) => void
   onSelectConversation: (conversationId: string) => void
-  onObjectiveChange?: (objective: string) => void
-  onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
-  onAttackChange?: (attack: AttackSummary) => void
-  labels?: Record<string, string>
+  onObjectiveChange?: ((objective: string) => void) | undefined
+  onHumanScoreChange?: ((score: BackendScore | null, outcome: AttackOutcome) => void) | undefined
+  onAttackChange?: ((attack: AttackSummary) => void) | undefined
+  labels?: Record<string, string> | undefined
   /** The saved Operation that new attacks join, or null for none. */
-  operationId?: string | null
+  operationId?: string | null | undefined
   /** False while the current generation's server defaults or Operation selection are not ready; launching is gated. */
-  defaultsReady?: boolean
-  scorerDefaultsReady?: boolean
+  defaultsReady?: boolean | undefined
+  scorerDefaultsReady?: boolean | undefined
   /** Why new attacks are unavailable when the defaults have loaded but the Operation selection is not ready. */
-  newActivityBlockedReason?: string
-  onNavigate?: (view: ViewName) => void
+  newActivityBlockedReason?: string | undefined
+  onNavigate?: ((view: ViewName) => void) | undefined
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
-  attackOperator?: string | null
+  attackOperator?: string | null | undefined
   /** Target info that the current attack was started with (for cross-target guard). */
-  attackTarget?: TargetInfo | null
+  attackTarget?: TargetInfo | null | undefined
   /** Result of resolving the persisted attack target against the current registry. */
-  targetResolutionStatus?: AttackTargetResolutionStatus
+  targetResolutionStatus?: AttackTargetResolutionStatus | undefined
   /** Re-run target registry resolution after a transient or unavailable result. */
-  onRetryTargetResolution?: () => void
+  onRetryTargetResolution?: (() => void) | undefined
   /** True while a historical attack is being loaded from the history view. */
-  isLoadingAttack?: boolean
+  isLoadingAttack?: boolean | undefined
   /** Number of related (non-main) conversations in the loaded attack. */
-  relatedConversationCount?: number
+  relatedConversationCount?: number | undefined
   /** The loaded attack's objective (empty for new/manual attacks). */
-  objective?: string
+  objective?: string | undefined
   /** The loaded attack's current outcome. */
-  outcome?: AttackOutcome
-  automatedScore?: BackendScore | null
-  chatScorer?: RegisteredComponentReference | null
-  chatScorerInherited?: boolean
-  executionReadOnly?: boolean
+  outcome?: AttackOutcome | undefined
+  automatedScore?: BackendScore | null | undefined
+  chatScorer?: RegisteredComponentReference | null | undefined
+  chatScorerInherited?: boolean | undefined
+  executionReadOnly?: boolean | undefined
   /** A scan is still running this attack: its transcript and conversations refresh until the result is saved. */
-  inProgress?: boolean
+  inProgress?: boolean | undefined
   /** The scan run that produced this attack, for returning to it while the attack runs. */
-  attackScenarioResultId?: string | null
-  manualContinuation?: ManualContinuation | null
-  defaultChatScorer?: RegisteredComponentReference | null
-  availableScorers?: ScorerInstance[]
-  scorersLoading?: boolean
-  scorersError?: string | null
-  humanScore?: BackendScore | null
-  lastResponseMessagePieceId?: string | null
+  attackScenarioResultId?: string | null | undefined
+  manualContinuation?: ManualContinuation | null | undefined
+  defaultChatScorer?: RegisteredComponentReference | null | undefined
+  availableScorers?: ScorerInstance[] | undefined
+  scorersLoading?: boolean | undefined
+  scorersError?: string | null | undefined
+  humanScore?: BackendScore | null | undefined
+  lastResponseMessagePieceId?: string | null | undefined
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
-  scenarioResultId?: string | null
-  onReturnToScan?: () => void
-  findingEvidenceId?: string | null
+  scenarioResultId?: string | null | undefined
+  onReturnToScan?: (() => void) | undefined
+  findingEvidenceId?: string | null | undefined
   /** Verified scan-scoped readers for recorded evidence without a saved attack result. */
-  readConversationById?: (conversationId: string) => Promise<ConversationMessagesResponse>
-  readConversations?: ReadAttackConversationReferences
+  readConversationById?: ((conversationId: string) => Promise<ConversationMessagesResponse>) | undefined
+  readConversations?: ReadAttackConversationReferences | undefined
 }
 
 export default function ChatWindow({
@@ -454,7 +454,7 @@ export default function ChatWindow({
     sendId: string
     history: AcceptedSendHistory
     conversationId: string | null
-    draftRevision?: number
+    draftRevision?: number | undefined
   } | null>(null)
   const acceptedSendCheckRef = useRef<string | null>(null)
   const importInFlightRef = useRef<string | null>(null)
@@ -701,9 +701,14 @@ export default function ChatWindow({
       preserveOnUnmountRef.current?.()
       const operation = getPendingSend(composerIdentity.conversationId ?? PENDING_SEND_CONVERSATION_ID)
       if (operation && inputBoxRef.current?.getDraftRevision() === operation.draftRevision) {
-        operation.preservedDraft = draftHandoff.getPreservedDraft(
+        const preserved = draftHandoff.getPreservedDraft(
           composerIdentity.attackId, composerIdentity.conversationId,
-        ) ?? undefined
+        )
+        operation.preservedDraft = preserved ? {
+          originatingAttackId: preserved.originatingAttackId,
+          originatingConversationId: preserved.originatingConversationId,
+          sequence: preserved.sequence,
+        } : undefined
       }
     }
     activateComposerIdentity(reset)
@@ -2196,7 +2201,7 @@ export default function ChatWindow({
               </MessageBarBody></MessageBar>
             )}
             <div className={styles.savedTranscriptActions}>
-              <Text ref={transcriptStatusRef} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
+              <Text ref={transcriptStatusRef as never} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
                 {isLoadingMessages || awaitingConversationLoad ? 'Loading saved transcript... '
                   : isLoadingMoreMessages ? 'Loading more message pieces... ' : ''}
                 {isTranscriptIncomplete
@@ -2205,7 +2210,7 @@ export default function ChatWindow({
               </Text>
               {messagePagination.has_more && (
                 <Button className={styles.ribbonAction} disabled={isLoadingMoreMessages || isLoadingMessages || awaitingConversationLoad}
-                  icon={isLoadingMoreMessages ? <Spinner size="tiny" /> : undefined}
+                  {...(isLoadingMoreMessages ? { icon: <Spinner size="tiny" /> } : {})}
                   onClick={(event: MouseEvent<HTMLButtonElement>) => {
                     if (event.currentTarget === document.activeElement) transcriptStatusRef.current?.focus({ preventScroll: true })
                     if (messageContinuationIssue?.restartRequired && attackResultId && viewedConversationId) {

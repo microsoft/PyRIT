@@ -232,7 +232,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
         </div>
         <div className={styles.headerActions}>
           <Button
-            ref={newPresetButton}
+            ref={newPresetButton as never}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}

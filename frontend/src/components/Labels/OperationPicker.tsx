@@ -13,7 +13,7 @@ const MAX_LISTED = 200
 
 interface OperationPickerProps {
   selection: OperationSelectionState
-  warning?: string
+  warning?: string | undefined
   onSelect: (operation: Operation | null) => void
   onRetry: () => void
 }
@@ -72,7 +72,7 @@ export default function OperationPicker({ selection, warning, onSelect, onRetry 
     }}>
       <div className={styles.operationStatus}>
         <Combobox
-          ref={localInputRef}
+          ref={localInputRef as never}
           className={mergeClasses(styles.operationPicker, warning ? styles.metadataWarning : undefined)}
           aria-describedby={selection.status === 'error' ? errorId
             : selection.status === 'unregistered' ? unregisteredId : undefined}
@@ -97,7 +97,7 @@ export default function OperationPicker({ selection, warning, onSelect, onRetry 
           }}
           onKeyDownCapture={event => { if (event.key === 'Tab') event.stopPropagation() }}
           onKeyDown={event => { if (event.key === 'Escape') dismiss() }}
-          positioning={{ matchTargetSize: undefined, autoSize: 'width' }}
+          positioning={{ autoSize: 'width' }}
           listbox={{ className: styles.operationListbox }}
           aria-label="Operation"
           data-testid="edit-label-operation"

@@ -15,26 +15,26 @@ interface PromptEditorProps {
   attachments: MessageAttachment[]
   onInputChange: (value: string) => void
   onAttachmentsChange: (attachments: MessageAttachment[]) => void
-  disabled?: boolean
-  disabledReason?: string
-  fileDropEnabled?: boolean
-  header?: ReactNode
-  setup?: ReactNode
-  warning?: ReactNode
-  actions?: ReactNode
-  attachmentMenuItems?: ReactNode
-  showTextInput?: boolean
-  textareaRef?: RefObject<HTMLTextAreaElement | null>
-  onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
+  disabled?: boolean | undefined
+  disabledReason?: string | undefined
+  fileDropEnabled?: boolean | undefined
+  header?: ReactNode | undefined
+  setup?: ReactNode | undefined
+  warning?: ReactNode | undefined
+  actions?: ReactNode | undefined
+  attachmentMenuItems?: ReactNode | undefined
+  showTextInput?: boolean | undefined
+  textareaRef?: RefObject<HTMLTextAreaElement | null> | undefined
+  onKeyDown?: ((event: KeyboardEvent<HTMLTextAreaElement>) => void) | undefined
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
-  undoLastSend?: UndoLastSendAction
-  convertedValue?: string | null
+  undoLastSend?: UndoLastSendAction | undefined
+  convertedValue?: string | null | undefined
   onConvertedValueChange: (value: string) => void
-  mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
+  mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>> | undefined
   onClearMediaConversion: (pieceId: string) => void
-  convertedFileChip?: ConvertedFileChip | null
-  onClearConvertedFileChip?: () => void
+  convertedFileChip?: ConvertedFileChip | null | undefined
+  onClearConvertedFileChip?: (() => void) | undefined
 }
 
 function attachmentIcon(kind: MessageAttachment['type']): string {

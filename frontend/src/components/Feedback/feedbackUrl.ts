@@ -18,37 +18,37 @@ const TITLE_MAX_CHARS = 80
 export type FeedbackCategory = 'bug' | 'feature' | 'doc' | 'praise' | 'other'
 
 export interface FeedbackContext {
-  app_version?: string
-  current_view?: string
-  target_type?: string
+  app_version?: string | undefined
+  current_view?: string | undefined
+  target_type?: string | undefined
 }
 
 export interface FeedbackContactAndContext {
-  optional_contact?: string
-  context?: FeedbackContext
+  optional_contact?: string | undefined
+  context?: FeedbackContext | undefined
 }
 
 export interface BugFields {
   category: 'bug'
   describe: string
-  repro?: string
-  expected?: string
-  actual?: string
-  versions?: string
+  repro?: string | undefined
+  expected?: string | undefined
+  actual?: string | undefined
+  versions?: string | undefined
 }
 
 export interface FeatureFields {
   category: 'feature'
-  problem?: string
+  problem?: string | undefined
   solution: string
-  alternatives?: string
-  additional_context?: string
+  alternatives?: string | undefined
+  additional_context?: string | undefined
 }
 
 export interface DocFields {
   category: 'doc'
   issue: string
-  suggestion?: string
+  suggestion?: string | undefined
 }
 
 export interface PraiseFields {

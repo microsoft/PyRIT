@@ -17,7 +17,7 @@ type SuccessfulEstimateResult = Extract<ScenarioRunEstimateResult, { status: 'av
 
 /** The backend answer for one request key. */
 export type EstimateRequestState =
-  | { status: 'resolved', requestKey: string, result: ScenarioRunEstimateResult, datasetSettings?: ScenarioDatasetSettings }
+  | { status: 'resolved', requestKey: string, result: ScenarioRunEstimateResult, datasetSettings?: ScenarioDatasetSettings | undefined }
   | { status: 'error', requestKey: string, error: string }
 
 interface UseScenarioRunEstimateInput {

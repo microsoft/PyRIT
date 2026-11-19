@@ -135,7 +135,7 @@ function MemberMedia({
   onRefreshUrls,
 }: {
   member: SeedRecord
-  onRefreshUrls?: (memberId: string) => Promise<string | null>
+  onRefreshUrls?: ((memberId: string) => Promise<string | null>) | undefined
 }) {
   const styles = useSeedExampleDetailStyles()
   const mapped = mapMediaUrl({
@@ -194,7 +194,7 @@ function MemberView({
   failedKey,
   onCopy,
   onRefreshUrls,
-}: MemberViewProps & { onRefreshUrls?: (memberId: string) => Promise<string | null> }) {
+}: MemberViewProps & { onRefreshUrls?: ((memberId: string) => Promise<string | null>) | undefined }) {
   const styles = useSeedExampleDetailStyles()
   const valueKey = `${member.id}:value`
   const idKey = `${member.id}:id`

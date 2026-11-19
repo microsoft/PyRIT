@@ -15,7 +15,7 @@ import { useGenerationSettingsStyles } from './GenerationSettings.styles'
 interface GenerationSettingsProps {
   readonly value: RequestGenerationDraft
   readonly onChange: (value: RequestGenerationDraft) => void
-  readonly target?: TargetInstance | null
+  readonly target?: TargetInstance | null | undefined
   readonly disabled: boolean
 }
 
@@ -81,7 +81,7 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
       }}>
       <Tooltip content={editable ? `Adjust temperature. ${description}` : description} relationship="description">
         <PopoverTrigger disableButtonEnhancement>
-          <Button ref={triggerRef} size="small" appearance={editable ? 'secondary' : 'subtle'}
+          <Button ref={triggerRef as never} size="small" appearance={editable ? 'secondary' : 'subtle'}
             icon={<TemperatureRegular />} disabled={disabled} disabledFocusable={!disabled && !editable}
             className={mergeClasses(styles.button, supported && hasOverride && styles.override, supported && !!error && styles.invalid)}
             aria-label={label} aria-invalid={!!error} data-testid="temperature-control">
@@ -98,7 +98,8 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
           }
         }}>
         <div className={styles.content}>
-          <HelpField label="Temperature" validationState={error ? 'error' : 'none'} validationMessage={error}
+          <HelpField label="Temperature" validationState={error ? 'error' : 'none'}
+            {...(error ? { validationMessage: error } : {})}
             hint="Blank uses target default."
             help={`${rangeDescription} Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
             <Input type="text" inputMode="decimal" value={input ?? ''} placeholder="Default" disabled={!editable}

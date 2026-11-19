@@ -60,7 +60,7 @@ export interface ScenarioLaunchInput {
   scenario: RegisteredScenario
   targetName: string
   adversarialTargetName: string
-  scoringTargetName?: string
+  scoringTargetName?: string | undefined
   techniques: string[]
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
@@ -68,16 +68,16 @@ export interface ScenarioLaunchInput {
    * Preset values sent verbatim over the built form values: parameters the form has no
    * control for, and rendered ones whose field is untouched.
    */
-  presetScenarioParams?: Record<string, unknown>
+  presetScenarioParams?: Record<string, unknown> | undefined
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
   includeBaseline: boolean
-  techniqueOverride?: TechniqueOverride
-  techniqueEditError?: string
-  supportsPrependedConversation?: boolean
-  supportsPrompt?: boolean
-  objectiveScorer?: RegisteredComponentReference | null
-  scorerError?: string
+  techniqueOverride?: TechniqueOverride | undefined
+  techniqueEditError?: string | undefined
+  supportsPrependedConversation?: boolean | undefined
+  supportsPrompt?: boolean | undefined
+  objectiveScorer?: RegisteredComponentReference | null | undefined
+  scorerError?: string | undefined
   operationId: string | null
   maxConcurrency: number
   maxRetries: number

@@ -27,7 +27,7 @@ interface VersionedInput extends ConverterInputPiece {
 }
 
 interface ConversionState {
-  scopeKey?: string
+  scopeKey?: string | undefined
   generation: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
@@ -57,12 +57,12 @@ interface ConversionScope {
   pieceType?: string
   pieceId?: string
   afterStageId?: string
-  includeIncomplete?: boolean
+  includeIncomplete?: boolean | undefined
 }
 
 interface PieceConverterOptions {
-  initialSnapshot?: ChatConverterSnapshot
-  selectedIds?: ReadonlySet<string>
+  initialSnapshot?: ChatConverterSnapshot | undefined
+  selectedIds?: ReadonlySet<string> | undefined
 }
 
 function omitPieces<T>(values: Record<string, T>, ids: Set<string>): Record<string, T> {

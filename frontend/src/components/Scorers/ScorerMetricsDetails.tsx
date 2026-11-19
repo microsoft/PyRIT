@@ -6,9 +6,9 @@ import { formatScorerMetric, scorerMetricLabel } from '@/utils/scorerPresentatio
 import { useScorerMetricsDetailsStyles } from './ScorerMetricsDetails.styles'
 
 interface ScorerMetricsDetailsProps {
-  metrics?: ScorerEvaluationMetrics | null
-  scoreType?: string | null
-  fallback?: string
+  metrics?: ScorerEvaluationMetrics | null | undefined
+  scoreType?: string | null | undefined
+  fallback?: string | undefined
 }
 
 export default function ScorerMetricsDetails({

@@ -23,13 +23,13 @@ interface FindingEvidenceDialogProps {
   attackResultId: string
   disabled: boolean
   /** The Operation selected for new activity, used when the attack has no Operation of its own. */
-  defaultOperationId?: string | null
+  defaultOperationId?: string | null | undefined
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Receives focus when the dialog closes, such as the control that opened it. */
-  returnFocusRef?: React.RefObject<HTMLElement | null>
+  returnFocusRef?: React.RefObject<HTMLElement | null> | undefined
   /** Called after the attack is linked to a finding, new or existing. */
-  onAttached?: () => void
+  onAttached?: (() => void) | undefined
 }
 
 interface AttachmentSource {
@@ -191,7 +191,7 @@ export default function FindingEvidenceDialog({
           <DialogContent className={styles.content}>
             <div className={styles.pickerHeader}>
               <Field label="Operation" validationState={operationsError ? 'error' : 'none'}
-                validationMessage={operationsError ? `Could not load operations: ${operationsError}` : undefined}>
+                {...(operationsError ? { validationMessage: `Could not load operations: ${operationsError}` } : {})}>
                 <Dropdown placeholder="Choose an operation" value={operation?.name ?? ''}
                   selectedOptions={operation ? [operation.id] : []} disabled={submitting}
                   onOptionSelect={(_, data) => {
@@ -203,7 +203,7 @@ export default function FindingEvidenceDialog({
                   {operations.map(item => <Option key={item.id} value={item.id}>{item.name}</Option>)}
                 </Dropdown>
               </Field>
-              <Button ref={newFindingRef} className={styles.button} icon={<AddRegular />}
+              <Button ref={newFindingRef as never} className={styles.button} icon={<AddRegular />}
                 disabled={submitting || disabled || !operation}
                 onClick={() => {
                   if (operation) {

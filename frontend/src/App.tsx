@@ -165,29 +165,29 @@ interface LoadedAttack {
   id: string
   loadSequence: number
   targetSource: 'persisted' | 'created'
-  targetGeneration?: string
+  targetGeneration?: string | undefined
   mainConversationId: string | null
   labels: Record<string, string> | null
   operator: string | null
   target: TargetInfo | null
-  targetUnbound?: boolean
-  createdTarget?: TargetInstance
+  targetUnbound?: boolean | undefined
+  createdTarget?: TargetInstance | undefined
   knownConversationIds: string[]
   relatedConversationCount: number
   objective: string
   outcome: NonNullable<AttackSummary['outcome']>
   automatedScore: BackendScore | null
   humanScore: BackendScore | null
-  chatScorer?: RegisteredComponentReference | null
-  chatScorerInherited?: boolean
-  executionReadOnly?: boolean
+  chatScorer?: RegisteredComponentReference | null | undefined
+  chatScorerInherited?: boolean | undefined
+  executionReadOnly?: boolean | undefined
   /** A scan is still running this attack; it is read from the live run until its result is saved. */
-  inProgress?: boolean
+  inProgress?: boolean | undefined
   /** The scan run that produced this attack. */
-  scenarioResultId?: string | null
+  scenarioResultId?: string | null | undefined
   /** Verified SDK provenance for interrupted evidence that has no saved attack result. */
-  recordedConversations?: ScenarioActiveConversation[]
-  manualContinuation?: ManualContinuation | null
+  recordedConversations?: ScenarioActiveConversation[] | undefined
+  manualContinuation?: ManualContinuation | null | undefined
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
 }

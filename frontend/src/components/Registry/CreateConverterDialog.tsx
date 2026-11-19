@@ -79,22 +79,22 @@ interface CreateConverterDialogProps {
   open: boolean
   onClose: () => void
   onCreated: (converterId: string, isCurrentOpening: boolean) => void
-  editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec }
-  onTemporary?: (spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void
-  allowUploads?: boolean
+  editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec | undefined } | undefined
+  onTemporary?: ((spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void) | undefined
+  allowUploads?: boolean | undefined
 }
 
 interface ParameterInputProps {
   parameter: Parameter
-  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean }>
+  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean | undefined }>
   value: string
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
-  onFiles: (files: File[], onReadSuccess?: () => void) => void
+  onFiles: (files: File[], onReadSuccess?: (() => void) | undefined) => void
   allowUploads: boolean
-  disabled?: boolean
-  selectedFile?: SelectedFile
+  disabled?: boolean | undefined
+  selectedFile?: SelectedFile | undefined
 }
 
 interface SelectedFile {
@@ -324,7 +324,7 @@ function ParameterInput({
                 onChange(data.value)
               }}
             />}
-            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={uploadsDisabled} onClick={onBrowse}>
+            <Button ref={replaceButtonRef as never} type="button" className={styles.fileButton} disabled={uploadsDisabled} onClick={onBrowse}>
               {hasFileValue ? 'Replace' : 'Upload'}
             </Button>
             {hasFileValue && <Button type="button" className={styles.fileButton} disabled={uploadsDisabled}
@@ -716,7 +716,7 @@ export default function CreateConverterDialog({
             >
               {error && (
                 <MessageBar intent="error">
-                  <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
+                  <MessageBarBody ref={errorRef as never} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
                 </MessageBar>
               )}
               {fileNotice && <MessageBar intent="info">

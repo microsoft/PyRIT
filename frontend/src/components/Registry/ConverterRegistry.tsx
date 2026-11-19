@@ -273,7 +273,7 @@ export default function ConverterRegistry() {
         <div className={styles.actions}>
           <Button
             {...restoreFocusTarget}
-            ref={newConverterRef}
+            ref={newConverterRef as never}
             className={styles.action}
             appearance="primary"
             icon={<AddRegular />}

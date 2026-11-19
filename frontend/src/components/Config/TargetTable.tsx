@@ -107,12 +107,12 @@ const COLUMN_TOOLTIPS = {
 } as const
 
 /** Composite icon: f(x) with a small return-arrow badge for function call outputs. */
-const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement> & { className?: string }>(
+const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement> & { className?: string | undefined }>(
   function FunctionCallOutputIcon({ className, ...rest }, ref) {
     const styles = useTargetTableStyles()
     return (
       <span ref={ref} className={styles.compositeIcon} {...rest}>
-        <MathFormulaRegular className={className} />
+        <MathFormulaRegular {...(className ? { className } : {})} />
         <ArrowHookUpLeftRegular className={styles.compositeBadge} />
       </span>
     )

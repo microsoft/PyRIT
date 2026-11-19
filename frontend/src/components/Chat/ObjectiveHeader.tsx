@@ -52,34 +52,34 @@ const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the
 
 interface ObjectiveHeaderProps {
   objective: string
-  draftMode?: boolean
-  outcome?: AttackOutcome
-  automatedScore?: BackendScore | null
-  humanScore?: BackendScore | null
-  canUpdateOutcome?: boolean
-  canRemoveHumanScore?: boolean
-  onUpdateHumanScore?: (value: boolean, rationale: string) => Promise<void>
-  onRemoveHumanScore?: () => Promise<void>
-  canAdd?: boolean
-  onAdd?: (objective: string, expectedObjective: string) => Promise<void>
+  draftMode?: boolean | undefined
+  outcome?: AttackOutcome | undefined
+  automatedScore?: BackendScore | null | undefined
+  humanScore?: BackendScore | null | undefined
+  canUpdateOutcome?: boolean | undefined
+  canRemoveHumanScore?: boolean | undefined
+  onUpdateHumanScore?: ((value: boolean, rationale: string) => Promise<void>) | undefined
+  onRemoveHumanScore?: (() => Promise<void>) | undefined
+  canAdd?: boolean | undefined
+  onAdd?: ((objective: string, expectedObjective: string) => Promise<void>) | undefined
   /** Opens the finding dialog for the viewed conversation from Attack Result Details. */
-  onAddFinding?: () => void
-  canAddFinding?: boolean
+  onAddFinding?: (() => void) | undefined
+  canAddFinding?: boolean | undefined
   /** Receives the outcome badge button, so a dialog opened from its details can return focus to it. */
-  outcomeButtonRef?: React.Ref<HTMLButtonElement>
-  chatScorer?: RegisteredComponentReference | null
-  chatScorerInherited?: boolean
-  scoringFailure?: ScoringFailure | null
-  scorers?: ScorerInstance[]
-  scorersLoading?: boolean
-  scorersError?: string | null
-  canUpdateScorer?: boolean
-  onUpdateScorer?: (reference: RegisteredComponentReference | null) => Promise<void>
-  canApplyScorer?: boolean
-  onApplyScorer?: () => Promise<void>
+  outcomeButtonRef?: React.Ref<HTMLButtonElement> | undefined
+  chatScorer?: RegisteredComponentReference | null | undefined
+  chatScorerInherited?: boolean | undefined
+  scoringFailure?: ScoringFailure | null | undefined
+  scorers?: ScorerInstance[] | undefined
+  scorersLoading?: boolean | undefined
+  scorersError?: string | null | undefined
+  canUpdateScorer?: boolean | undefined
+  onUpdateScorer?: ((reference: RegisteredComponentReference | null) => Promise<void>) | undefined
+  canApplyScorer?: boolean | undefined
+  onApplyScorer?: (() => Promise<void>) | undefined
   /** True while the selected scorer is applied to this conversation's latest response. */
-  applyingScorer?: boolean
-  applyStatus?: ApplyScorerStatus | null
+  applyingScorer?: boolean | undefined
+  applyStatus?: ApplyScorerStatus | null | undefined
 }
 
 /** The only score type whose value answers "was the objective met?". */
@@ -141,7 +141,11 @@ export default function ObjectiveHeader({
   const configurePositioning = useCallback<PositioningConfigurationFn>(({ options }) => ({
     ...options,
     // Keep the editor on screen when its anchor leaves a narrow viewport.
-    unstable_disableTether: isNarrow ? 'all' : options.unstable_disableTether,
+    ...(isNarrow
+      ? { unstable_disableTether: 'all' }
+      : options.unstable_disableTether !== undefined
+        ? { unstable_disableTether: options.unstable_disableTether }
+        : {}),
   }), [isNarrow])
   const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -292,7 +296,7 @@ export default function ObjectiveHeader({
       >
         <PopoverTrigger disableButtonEnhancement>
           <Button
-            ref={outcomeButtonRef}
+            ref={outcomeButtonRef as never}
             appearance="transparent"
             size="small"
             className={styles.outcomeButton}

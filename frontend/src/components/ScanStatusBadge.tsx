@@ -48,8 +48,8 @@ interface ScanStatusBadgeProps {
   /** Mark terminal states with an icon as well as color. */
   readonly withIcon?: boolean
   /** Replaces the standard status label, such as a suite's wording for a running entry. */
-  readonly label?: string
-  readonly testId?: string
+  readonly label?: string | undefined
+  readonly testId?: string | undefined
 }
 
 /** The lifecycle state of a scan, suite, or suite entry, with one color per state everywhere. */
@@ -60,12 +60,13 @@ export default function ScanStatusBadge({
   label,
   testId,
 }: ScanStatusBadgeProps) {
+  const icon = withIcon ? scanStatusIcon(status) : undefined
   return (
     <Badge
       appearance={appearance}
       color={SCAN_STATUS_COLORS[status]}
-      icon={withIcon ? scanStatusIcon(status) : undefined}
-      data-testid={testId}
+      {...(icon ? { icon } : {})}
+      {...(testId ? { 'data-testid': testId } : {})}
     >
       {label ?? SCAN_STATUS_LABELS[status]}
     </Badge>

@@ -162,7 +162,7 @@ export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteL
         </div>
         <div className={styles.headerActions}>
           <Button
-            ref={newSuiteButton}
+            ref={newSuiteButton as never}
             className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
