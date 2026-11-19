@@ -110,7 +110,7 @@ class FencedCodeBlockSelector:
             comment = _COMMENT_START.match(lines[index])
             if comment is not None:
                 # Markdown reads everything up to the line that closes the comment as HTML, so no fence opens in it.
-                index = _skip_comment(lines, index, start=comment.end())
+                index = _skip_comment(lines=lines, index=index, start=comment.end())
                 continue
             opening = _OPENING_FENCE.match(lines[index])
             index += 1
@@ -122,7 +122,7 @@ class FencedCodeBlockSelector:
             closing = re.compile(rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$")
             content: list[str] = []
             while index < len(lines) and closing.match(lines[index]) is None:
-                content.append(_remove_indent(lines[index], indent))
+                content.append(_remove_indent(line=lines[index], width=indent))
                 index += 1
             if index == len(lines):
                 raise ProgramSelectionError("the text has an unclosed code fence, so its code may be incomplete")
@@ -140,7 +140,7 @@ class FencedCodeBlockSelector:
         return blocks[0]
 
 
-def _skip_comment(lines: list[str], index: int, *, start: int) -> int:
+def _skip_comment(*, lines: list[str], index: int, start: int) -> int:
     """
     Return the index of the first line after an HTML comment that opens on ``lines[index]``.
 
@@ -158,7 +158,7 @@ def _skip_comment(lines: list[str], index: int, *, start: int) -> int:
     return len(lines)
 
 
-def _remove_indent(line: str, width: int) -> str:
+def _remove_indent(*, line: str, width: int) -> str:
     """
     Remove up to ``width`` columns of leading indentation, counting tabs to four-column stops.
 
