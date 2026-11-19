@@ -558,7 +558,7 @@ def test_check_saved_entry_params_refuses_a_scorer_type_that_cant_be_saved(
     refusal = _component_refusal(ScorerRegistry, class_name, params)
 
     assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CLASS
-    assert str(refusal).startswith(f"'{class_name}' can't be saved. ")
+    assert str(refusal) == ScorerRegistry.get_registry_singleton().get_class(class_name).not_saveable_reason
 
 
 @pytest.mark.parametrize(
@@ -614,22 +614,16 @@ def test_check_saveable_class_refuses_only_the_converters_and_scorers_that_use_t
         ),
         "AudioFloatScaleScorer": (
             RestoreFailureReason.UNSUPPORTED_CLASS,
-            (
-                "'AudioFloatScaleScorer' can't be saved. It transcribes audio with the Azure Speech key or Azure "
-                "identity this server is set up with."
-            ),
+            ("It transcribes audio with the Azure Speech key or Azure identity this server is set up with."),
         ),
         "AudioTrueFalseScorer": (
             RestoreFailureReason.UNSUPPORTED_CLASS,
-            (
-                "'AudioTrueFalseScorer' can't be saved. It transcribes audio with the Azure Speech key or Azure "
-                "identity this server is set up with."
-            ),
+            ("It transcribes audio with the Azure Speech key or Azure identity this server is set up with."),
         ),
         "LocalRefusalClassifierScorer": (
             RestoreFailureReason.UNSUPPORTED_CLASS,
             (
-                "'LocalRefusalClassifierScorer' can't be saved. Its model can come from a folder on this server, or be "
+                "Its model can come from a folder on this server, or be "
                 "downloaded with this server's Hugging Face sign-in."
             ),
         ),

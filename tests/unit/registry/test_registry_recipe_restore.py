@@ -587,8 +587,7 @@ class TestRestoreFailures:
         (failure,) = report.failures
         assert (failure.name, failure.reason) == ("audio_leak", RestoreFailureReason.UNSUPPORTED_CLASS)
         assert failure.message == (
-            "'AudioTrueFalseScorer' can't be saved. It transcribes audio with the Azure Speech key or Azure identity "
-            "this server is set up with."
+            "It transcribes audio with the Azure Speech key or Azure identity this server is set up with."
         )
         assert [ref.name for ref in report.restored] == ["leak_substring"]
 
