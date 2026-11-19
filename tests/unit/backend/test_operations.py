@@ -34,6 +34,7 @@ from pyrit.models import (
     Operation,
     Score,
 )
+from pyrit.models.harm_category import HarmCategory
 from pyrit.setup.finding_fields import reset_active_finding_fields, set_active_finding_fields
 from unit.backend.mocks import read_finding_async
 
@@ -246,8 +247,53 @@ def test_finding_fields_returns_the_active_fields(
     assert FindingFields.model_validate(client.get("/api/operations/finding-fields").json()) == contoso_finding_fields
     reset_active_finding_fields()
     assert FindingFields.model_validate(client.get("/api/operations/finding-fields").json()) == DEFAULT_FINDING_FIELDS
-    assert client.get("/api/operations/finding-options").status_code != 200
     assert TestClient(app).get("/api/operations/finding-fields").status_code != 200
+
+
+def test_finding_api_accepts_and_returns_deprecated_fields(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation_id = client.post("/api/operations", json={"name": "Older client"}).json()["id"]
+    path = f"/api/operations/{operation_id}/findings"
+    old = {
+        "title": "Leak",
+        "severity": "other",
+        "severity_other": "Sev 2.5",
+        "harm_type": "Other",
+        "harm_type_other": "Model theft",
+        "description": "Notes",
+    }
+    with pytest.warns(DeprecationWarning, match=r"FindingCreateRequest\(\w+=\.\.\.\) is deprecated"):
+        created = client.post(path, json=old)
+    assert created.status_code == 201
+    assert created.json()["severity"] == "Sev 2.5"
+    assert created.json()["field_values"] == {"harm_type": "Model theft", "description": "Notes"}
+    deprecated = {key: value for key, value in old.items() if key not in ("title", "severity")}
+    assert created.json().items() >= {**deprecated, "severity_other": "Sev 2.5"}.items()
+    assert client.get(path).json()["items"][0].items() >= created.json().items()
+
+    edit = {**old, "severity": "low", "severity_other": None, "harm_type": "Malware", "harm_type_other": None}
+    with pytest.warns(DeprecationWarning, match=r"FindingUpdateRequest\(\w+=\.\.\.\) is deprecated"):
+        updated = client.put(f"{path}/{created.json()['id']}", json={**edit, "description": ""})
+    assert updated.status_code == 200
+    assert updated.json()["field_values"] == {"harm_type": "Malware"}
+    expected = {"description": "", "severity_other": None, "harm_type": "Malware", "harm_type_other": None}
+    assert updated.json().items() >= expected.items()
+
+
+def test_finding_options_and_deprecated_finding_keys_are_marked_deprecated(
+    compatibility_headers: dict[str, str],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    with pytest.warns(DeprecationWarning, match=r"GET /operations/finding-options is deprecated .* 1\.5\.0"):
+        response = client.get("/api/operations/finding-options")
+    assert response.json() == {"harm_types": [category.value for category in HarmCategory]}
+    schema = app.openapi()
+    assert schema["paths"]["/api/operations/finding-options"]["get"]["deprecated"] is True
+    for model in ("FindingResponse", "FindingListItem"):
+        properties = schema["components"]["schemas"][model]["properties"]
+        assert all(
+            properties[key]["deprecated"] for key in ("description", "severity_other", "harm_type", "harm_type_other")
+        )
 
 
 def test_operation_finding_fields_returns_the_active_fields_of_an_existing_operation(
@@ -296,7 +342,6 @@ def test_finding_api_round_trips_field_values_and_drops_blanks(compatibility_hea
     assert updated.json()["created_at"] == finding["created_at"]
     for invalid in [
         {"severity": " "},
-        {"severity": "low", "harm_type": "Malware"},
         {"severity": "low", "field_values": {"harm_type": 3}},
     ]:
         assert client.post(path, json={"title": "Invalid", **invalid}).status_code == 422
@@ -379,7 +424,6 @@ def test_finding_create_saves_nothing_when_its_evidence_cannot_be_linked(
         ("/api/operations", {"name": "😀" * 65}),
         ("findings", {"title": "", "severity": "low"}),
         ("findings", {"title": "Assessment", "severity": " "}),
-        ("findings", {"title": "Assessment", "severity": "low", "description": "x"}),
         ("findings", {"title": "Assessment", "severity": "low", "operation": "Case"}),
     ],
 )
@@ -420,6 +464,7 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
         "title": "Edited",
         "severity": "critical",
         "field_values": {"description": "Notes"},
+        "description": "Notes",
     }
     assert client.get(path).json()["items"] == [
         _listed(edited.json(), _row("description", "Description", "Notes", multiline=True))
@@ -450,7 +495,6 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
     for invalid in [
         {**body, "title": " "},
         {"title": "Assessment", "severity": " "},
-        {"title": "Assessment", "severity": "low", "description": "x"},
         {**body, "operation_id": other_id},
         {**body, "created_at": original["created_at"]},
     ]:

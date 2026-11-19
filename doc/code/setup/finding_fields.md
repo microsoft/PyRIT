@@ -84,3 +84,20 @@ With `allow_custom_initializers: true`, the backend runs every script in that so
 ## Upgrading
 
 One database migration moves findings saved before finding fields existed. It stores Other severity text as the `severity` itself, and moves the harm type and description into field values. Finding IDs and evidence don't change. Downgrading that migration refuses while any finding exists.
+
+### Code written for PyRIT 1.2
+
+PyRIT 1.2 had fixed finding fields. Code that uses them still works, with a deprecation warning, until PyRIT 1.5.0:
+
+| PyRIT 1.2 | Use instead |
+|---|---|
+| `FindingSeverity` | The option keys of `FindingFields.severity`, such as `"critical"` |
+| `description` | `field_values["description"]` |
+| `harm_type` and `harm_type_other` | `field_values["harm_type"]`, which holds the category or its Other text |
+| `severity_other` | `severity`, which holds Other text itself |
+| `finding.severity.value` | `finding.severity` |
+| `GET /api/operations/finding-options` | `GET /api/operations/{operation_id}/finding-fields` |
+
+Creating or updating a finding with the old fields moves their values the way the migration does, so they fill the default fields' keys. A deployment whose fields don't use those keys rejects them. API responses still include the old fields, marked deprecated in the API schema.
+
+Two checks can't keep working. A severity with Other text is that text, so it no longer equals `FindingSeverity.OTHER`. A severity is now a string, so it isn't an instance of `FindingSeverity`.

@@ -737,6 +737,17 @@ def __getattr__(name: str) -> object:
     Returns:
         object: The resolved export.
     """
+    # TODO(PyRIT 1.5): Remove FindingSeverity.
+    if name == "FindingSeverity":
+        from pyrit.common import print_deprecation_message
+        from pyrit.models.finding import _FindingSeverity
+
+        print_deprecation_message(
+            old_item=f"{__name__}.FindingSeverity",
+            new_item="the option keys of FindingFields.severity",
+            removed_in="1.5.0",
+        )
+        return _FindingSeverity
     return resolve_lazy_export(
         name=name,
         module_name=__name__,

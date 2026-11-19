@@ -15,7 +15,9 @@ from pyrit.backend.models.operations import (
     FindingExportRequest,
     FindingListItem,
     FindingListResponse,
+    FindingOptionsResponse,
     FindingPathsUpdateRequest,
+    FindingResponse,
     FindingUpdateRequest,
     OperationCreateRequest,
     OperationDetail,
@@ -31,8 +33,10 @@ from pyrit.backend.services.operation_service import (
     OperationNotFoundError,
     OperationService,
 )
+from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import OperationInUseError
 from pyrit.models import Finding, FindingFields, FindingValuesError, Operation
+from pyrit.models.harm_category import HarmCategory
 from pyrit.setup.finding_fields import get_active_finding_fields
 
 T = TypeVar("T")
@@ -78,6 +82,23 @@ async def get_finding_fields_async() -> FindingFields:
         FindingFields: The severity slot and the fields shown after it.
     """
     return get_active_finding_fields()
+
+
+# TODO(PyRIT 1.5): Remove this route.
+@router.get("/finding-options", response_model=FindingOptionsResponse, deprecated=True)
+async def get_finding_options_async() -> FindingOptionsResponse:
+    """
+    List the harm categories a finding could use in PyRIT 1.2. Read an operation's finding fields instead.
+
+    Returns:
+        FindingOptionsResponse: Selectable categories, including Other.
+    """
+    print_deprecation_message(
+        old_item="GET /operations/finding-options",
+        new_item="GET /operations/{operation_id}/finding-fields",
+        removed_in="1.5.0",
+    )
+    return FindingOptionsResponse(harm_types=list(HarmCategory))
 
 
 @router.get("/{operation_id}/finding-fields", response_model=FindingFields)
@@ -142,7 +163,7 @@ async def delete_operation_async(operation_id: UUID) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{operation_id}/findings", response_model=Finding, status_code=status.HTTP_201_CREATED)
+@router.post("/{operation_id}/findings", response_model=FindingResponse, status_code=status.HTTP_201_CREATED)
 async def create_operation_finding_async(*, operation_id: UUID, request: FindingCreateRequest) -> Finding:
     """
     Record a finding in an operation, optionally under a parent and with a saved attack result as evidence.
@@ -236,7 +257,7 @@ async def export_operation_findings_async(*, operation_id: UUID, request: Findin
     )
 
 
-@router.put("/{operation_id}/findings/{finding_id}", response_model=Finding)
+@router.put("/{operation_id}/findings/{finding_id}", response_model=FindingResponse)
 async def update_operation_finding_async(
     *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
 ) -> Finding:

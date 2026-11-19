@@ -4,7 +4,7 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
 from pyrit.backend.models.common import MAX_ITEMS, IdentifierStr, TextStr
@@ -19,6 +19,7 @@ from pyrit.models import (
     OperationUsage,
 )
 from pyrit.models.finding_fields import FindingValueRow
+from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import OperationName
 
 # Ten pages of the export dialog; the dashboard keeps its selection within this.
@@ -64,7 +65,43 @@ class FindingPathItem(DecompositionPath):
     complete: bool = Field(description="Whether every step is a demonstrated sub-finding. Derived, never stored.")
 
 
-class FindingListItem(Finding):
+# TODO(PyRIT 1.5): Remove with GET /operations/finding-options.
+class FindingOptionsResponse(BaseModel):
+    """The harm categories a finding could use in PyRIT 1.2."""
+
+    harm_types: list[HarmCategory]
+
+
+class FindingResponse(Finding):
+    """A saved finding, with the PyRIT 1.2 fields that its values stand for."""
+
+    # TODO(PyRIT 1.5): Remove the PyRIT 1.2 fields.
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def description(self) -> str:
+        """Deprecated: read field_values["description"] instead."""
+        return self._deprecated_values().description
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def severity_other(self) -> str | None:
+        """Deprecated: read severity, which holds Other text itself."""
+        return self._deprecated_values().severity_other
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def harm_type(self) -> HarmCategory | None:
+        """Deprecated: read field_values["harm_type"] instead."""
+        return self._deprecated_values().harm_type
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def harm_type_other(self) -> str | None:
+        """Deprecated: read field_values["harm_type"] instead."""
+        return self._deprecated_values().harm_type_other
+
+
+class FindingListItem(FindingResponse):
     """
     A finding with its evidence and sub-finding counts, whether each of its paths is complete, and its values as the
     active finding fields label them.
