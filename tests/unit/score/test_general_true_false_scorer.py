@@ -7,9 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, ScorerIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import SelfAskGeneralTrueFalseScorer
+from pyrit.score import (
+    CallableResponseHandler,
+    JsonSchemaResponseHandler,
+    SelfAskGeneralTrueFalseScorer,
+)
 
 
 @pytest.fixture
@@ -211,3 +215,140 @@ async def test_general_scorer_category_precedence_async(
     assert score[0].score_category == expected_category
     assert score[0].score_value == "true"
     chat_target.send_prompt_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("key_name", "custom_value"),
+    [
+        ("score_value_output_key", "custom_score"),
+        ("rationale_output_key", "custom_rationale"),
+        ("description_output_key", "custom_description"),
+        ("metadata_output_key", "custom_metadata"),
+        ("category_output_key", "custom_category"),
+    ],
+)
+def test_general_true_false_scorer_identifier_differs_by_output_keys(key_name: str, custom_value: str) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    default_scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+    )
+    custom_scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+        **{key_name: custom_value},
+    )
+
+    default_ident = default_scorer.get_identifier()
+    custom_ident = custom_scorer.get_identifier()
+
+    assert default_ident.unique_name != custom_ident.unique_name
+    assert default_ident.hash != custom_ident.hash
+    assert default_ident.eval_hash != custom_ident.eval_hash
+
+    default_wire = default_ident.children["response_handler"].children["response_handler"]
+    custom_wire = custom_ident.children["response_handler"].children["response_handler"]
+    assert isinstance(default_wire, ComponentIdentifier)
+    assert isinstance(custom_wire, ComponentIdentifier)
+    assert custom_wire.params[key_name] == custom_value
+    assert default_wire.params[key_name] != custom_value
+
+
+def test_general_true_false_scorer_identifier_deterministic() -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer_1 = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+        score_value_output_key="verdict",
+        rationale_output_key="reason",
+    )
+    scorer_2 = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+        score_value_output_key="verdict",
+        rationale_output_key="reason",
+    )
+
+    ident_1 = scorer_1.get_identifier()
+    ident_2 = scorer_2.get_identifier()
+    assert ident_1.unique_name == ident_2.unique_name
+    assert ident_1.hash == ident_2.hash
+    assert ident_1.eval_hash == ident_2.eval_hash
+    assert ident_1.children == ident_2.children
+    round_tripped = ScorerIdentifier.model_validate_json(ident_1.model_dump_json())
+    assert round_tripped.hash == ident_1.hash
+
+
+def test_general_true_false_scorer_identifier_reflects_json_schema_response_handler() -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    default_scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+    )
+    handler = JsonSchemaResponseHandler(
+        score_value_output_key="custom_score_from_handler",
+        rationale_output_key="custom_rationale_from_handler",
+    )
+    scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+        response_handler=handler,
+    )
+
+    ident = scorer.get_identifier()
+    assert ident.unique_name != default_scorer.get_identifier().unique_name
+    wire_ident = ident.children["response_handler"].children["response_handler"]
+    assert isinstance(wire_ident, ComponentIdentifier)
+    assert wire_ident == handler.get_identifier()
+    assert wire_ident.params["score_value_output_key"] == "custom_score_from_handler"
+    assert wire_ident.params["rationale_output_key"] == "custom_rationale_from_handler"
+
+
+@pytest.mark.parametrize(
+    ("key_name", "custom_value"),
+    [
+        ("score_value_output_key", "verdict"),
+        ("rationale_output_key", "reason"),
+        ("description_output_key", "desc"),
+        ("metadata_output_key", "meta"),
+        ("category_output_key", "label"),
+    ],
+)
+def test_general_true_false_scorer_identifier_reflects_callable_response_handler(
+    key_name: str, custom_value: str
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    def parser(_: str) -> dict[str, str]:
+        return {"score_value": "true", "verdict": "false", "rationale": "r"}
+
+    default_handler = CallableResponseHandler(parser=parser)
+    custom_handler = CallableResponseHandler(parser=parser, **{key_name: custom_value})
+
+    scorer_1 = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+        response_handler=default_handler,
+    )
+    scorer_2 = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Score this.",
+        response_handler=custom_handler,
+    )
+
+    ident_1 = scorer_1.get_identifier()
+    ident_2 = scorer_2.get_identifier()
+    assert ident_1.hash != ident_2.hash
+    assert ident_1.unique_name != ident_2.unique_name
+    assert ident_1.eval_hash != ident_2.eval_hash
+    wire_ident = ident_2.children["response_handler"].children["response_handler"]
+    assert isinstance(wire_ident, ComponentIdentifier)
+    assert wire_ident == custom_handler.get_identifier()
+    assert wire_ident.params[key_name] == custom_value

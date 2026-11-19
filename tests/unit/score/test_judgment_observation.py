@@ -1532,6 +1532,11 @@ async def test_general_scorer_rejects_replay_when_category_policy_changes_async(
     changed_handler = JsonSchemaResponseHandler(category_conflict_policy=changed_policy)
     changed = _general_scorer(scorer_type, target=target, category="harm", response_handler=changed_handler)
 
+    # ResponseHandler identity includes category_conflict_policy, so replay is rejected at scorer validation.
+    with pytest.raises(NonReplayableObservationError, match="scorer configuration that acquired it"):
+        await changed.score_observation_async(observation=observation, expectation=expectation)
+    # Even when source_identifier matches (e.g. legacy acquisitions), the replay contract still rejects policy drift.
+    changed._identifier = scorer.get_identifier()
     with pytest.raises(NonReplayableObservationError, match="handler or category"):
         await changed.score_observation_async(observation=observation, expectation=expectation)
     target.send_prompt_async.assert_awaited_once()
