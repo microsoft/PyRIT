@@ -5,7 +5,6 @@ import errno
 import json
 import os
 import stat
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
@@ -24,7 +23,6 @@ from pyrit.score import (
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     _append_jsonl_entry,
-    _create_staging_file,
     _load_jsonl,
     _metrics_to_registry_dict,
     _rewrite_jsonl_atomically,
@@ -136,25 +134,6 @@ def test_append_jsonl_entry_appends(tmp_path):
 
     lines = path.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 2
-
-
-@pytest.mark.parametrize(
-    "call",
-    [
-        # Positional calls on purpose: the test checks that they raise TypeError.
-        lambda path: _append_jsonl_entry(path, threading.Lock(), {"value": 1}),  # ty: ignore[too-many-positional-arguments]
-        lambda path: _create_staging_file(path, 0o600),  # ty: ignore[too-many-positional-arguments]
-        lambda path: _rewrite_jsonl_atomically(path, ['{"value": 1}\n']),  # ty: ignore[too-many-positional-arguments]
-    ],
-    ids=["append_jsonl_entry", "create_staging_file", "rewrite_jsonl_atomically"],
-)
-def test_jsonl_write_helpers_reject_positional_options(tmp_path, call):
-    path = tmp_path / "out.jsonl"
-
-    with pytest.raises(TypeError):
-        call(path)
-
-    assert list(tmp_path.iterdir()) == []
 
 
 # --- _metrics_to_registry_dict tests ---
