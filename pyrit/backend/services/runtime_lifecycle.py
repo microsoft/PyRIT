@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
+from pyrit.auth import caller_principal_context
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
@@ -227,7 +228,10 @@ class RuntimeLifecycle:
             return {**self.status(), "outcome": "restart-required"}
         if (self.apply_task and not self.apply_task.done()) or self.edit_lock.locked() or self.management_operations:
             return {**self.status(), "outcome": "busy"}
-        self.apply_task = asyncio.create_task(self._apply_async(version=version))
+        # Setup code runs as the server, like startup: it sees only shared entries and owns none.
+        self.apply_task = asyncio.create_task(
+            self._apply_async(version=version), context=caller_principal_context(None)
+        )
         self.outcome, self.message = "validating", "Validating saved sources."
         return {**self.status(), "outcome": "accepted"}
 

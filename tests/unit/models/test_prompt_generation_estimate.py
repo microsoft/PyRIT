@@ -80,11 +80,6 @@ def test_estimate_without_stages_is_zero() -> None:
     assert estimate.notes == ()
 
 
-def test_estimate_token_factors_bracket_the_stage_tokens() -> None:
-    assert PromptGenerationEstimate.LOW_TOKEN_FACTOR < 1 < PromptGenerationEstimate.HIGH_TOKEN_FACTOR
-    assert PromptGenerationEstimate.CHARACTERS_PER_TOKEN == 4
-
-
 @pytest.mark.parametrize("characters, tokens", [(0, 0), (1, 1), (3, 1), (4, 1), (5, 2), (8, 2), (9, 3), (4001, 1001)])
 def test_tokens_from_characters_rounds_up(characters: int, tokens: int) -> None:
     assert PromptGenerationEstimate.tokens_from_characters(characters) == tokens

@@ -218,6 +218,7 @@ if TYPE_CHECKING:
         ScenarioRunPlan,
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanGroupKind,
+        ScenarioRunPlanScorerBinding,
         ScenarioRunPlanSeedGroup,
         ScenarioRunPlanSeedPrompt,
         ScenarioRunProgress,
@@ -268,6 +269,7 @@ if TYPE_CHECKING:
         Scorable,
         ScorableUnion,
         Score,
+        ScorerCapabilities,
         ScorerTargetResponsePayload,
         ScoreStatus,
         ScoreType,
@@ -362,6 +364,7 @@ if TYPE_CHECKING:
         AssertTaxonomy,
         AssertTerm,
     )
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -389,6 +392,7 @@ if TYPE_CHECKING:
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
     "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",
@@ -602,6 +606,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Score": "pyrit.models.score",
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
+    "ScorerCapabilities": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",
@@ -686,6 +691,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioQueueSnapshot": "pyrit.models.scenario_progress",
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
+    "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
     "ScenarioRunPlanGroupKind": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedGroup": "pyrit.models.scenario_progress",

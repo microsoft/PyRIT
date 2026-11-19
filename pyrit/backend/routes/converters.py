@@ -84,6 +84,8 @@ async def create_converter(
 
     try:
         return await service.create_converter_async(request=request)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -3,7 +3,8 @@
 
 import json
 import math
-from collections.abc import Iterator
+import re
+from collections.abc import Callable, Iterator
 from itertools import product
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -15,6 +16,7 @@ from unit.assert_mocks import (
     make_assert_config,
     make_assert_generation_target,
     make_assert_group_content,
+    make_assert_systematization,
     make_assert_taxonomy,
 )
 
@@ -26,11 +28,14 @@ from pyrit.models import (
     AssertGenerationConfig,
     AssertGenerationStage,
     AssertGroupMetadata,
+    AssertSystematization,
     AssertTaxonomy,
     ComponentIdentifier,
     Message,
     PromptGenerationEstimate,
+    TargetIdentifier,
 )
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget, RoundRobinTarget
 
 _POLICY_STAGES = ["systematization", "taxonomy", "dimensions"]
 
@@ -375,6 +380,7 @@ class TestReviewedPolicy:
             metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
             assert metadata.taxonomy == taxonomy
             assert metadata.dimensions == dimensions
+            assert metadata.config.taxonomy == taxonomy
             assert metadata.config.dimensions == dimensions
             assert all(dimension.levels for dimension in metadata.config.dimensions)
             assert metadata.provenance.edited_stages == (
@@ -382,6 +388,40 @@ class TestReviewedPolicy:
                 AssertGenerationStage.DIMENSIONS,
             )
             assert metadata.provenance.dimensions_conversation_id == stopped.provenance.dimensions_conversation_id
+
+    async def test_rerun_from_a_stored_group_request_reproduces_the_reviewed_policy_async(self) -> None:
+        target = make_assert_generation_target()
+        generator = AssertGenerator(target=target)
+        stopped, _ = await _advance_async(
+            generator=generator,
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=_described_config()),
+            stop_after=AssertGenerationStage.DIMENSIONS,
+        )
+        assert stopped.dimensions is not None
+        taxonomy = _reviewed_taxonomy()
+        dimensions = tuple(_reviewed_dimensions(stopped.dimensions))
+        reviewed, _ = await _advance_async(
+            generator=generator,
+            target=target,
+            checkpoint=stopped.with_reviewed_policy(taxonomy=taxonomy, dimensions=dimensions),
+        )
+        stored = generator.build_result(checkpoint=reviewed).seed_groups[0].objective.metadata
+        stored_config = AssertGroupMetadata.from_metadata(stored).config
+
+        rerun, stages = await _advance_async(
+            generator=generator, target=target, checkpoint=AssertGenerationCheckpoint(config=stored_config)
+        )
+        result = generator.build_result(checkpoint=rerun)
+
+        assert set(stages) == {"seed_groups"}
+        assert (result.taxonomy, result.dimensions, result.systematization) == (taxonomy, dimensions, None)
+        assert set(rerun.targets) == {AssertGenerator.GENERATION_ROLE}
+        for group in result.seed_groups:
+            metadata = AssertGroupMetadata.from_metadata(group.objective.metadata)
+            assert (metadata.config, metadata.taxonomy, metadata.dimensions) == (stored_config, taxonomy, dimensions)
+            assert metadata.provenance.edited_stages == ()
+            assert metadata.provenance.conversation_ids == (metadata.provenance.group_generation_conversation_id,)
 
     async def test_unreviewed_policy_records_no_edits_async(self) -> None:
         target = make_assert_generation_target()
@@ -436,7 +476,7 @@ class TestCheckpointRejection:
         send.assert_not_called()
         assert [group.objective.value for group in result.seed_groups] == [group.objective for group in groups]
         assert result.generation_conversation_ids == checkpoint.conversation_ids
-        assert result.generation_targets == checkpoint.targets
+        assert result.generation_targets == {}
         assert result.coverage.sample_size == 2
 
 
@@ -462,6 +502,44 @@ class TestValidateConfig:
                     checkpoint=AssertGenerationCheckpoint(config=make_assert_config(web_search=True))
                 )
         send.assert_not_called()
+
+    async def test_resume_without_research_stages_accepts_a_research_target_without_web_search_async(self) -> None:
+        generation, stopped = await _stop_web_search_generation_async(
+            config=make_assert_config(web_search=True), stop_after=AssertGenerationStage.DIMENSIONS
+        )
+        with patch.object(
+            generation, "_send_prompt_to_target_async", side_effect=assert_generation_response_async
+        ) as send:
+            complete = await AssertGenerator(target=generation).advance_async(checkpoint=stopped)
+        assert set(_sent_stages(send)) == {"seed_groups"}
+        assert complete.next_stage is None
+
+    async def test_resume_with_research_stages_left_rejects_a_research_target_without_web_search_async(
+        self,
+    ) -> None:
+        generation, stopped = await _stop_web_search_generation_async(
+            config=_described_config(web_search=True), stop_after=AssertGenerationStage.TAXONOMY
+        )
+        with (
+            patch.object(generation, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match="supports_web_search"),
+        ):
+            await AssertGenerator(target=generation).advance_async(checkpoint=stopped)
+        send.assert_not_called()
+
+
+async def _stop_web_search_generation_async(
+    *, config: AssertGenerationConfig, stop_after: AssertGenerationStage
+) -> tuple[Any, AssertGenerationCheckpoint]:
+    generation, research = make_assert_generation_target(), make_assert_generation_target(web_search=True)
+    with (
+        patch.object(generation, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+        patch.object(research, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+    ):
+        stopped = await AssertGenerator(target=generation, research_target=research).advance_async(
+            checkpoint=AssertGenerationCheckpoint(config=config), stop_after=stop_after
+        )
+    return generation, stopped
 
 
 def _stage_names(checkpoint: AssertGenerationCheckpoint) -> list[str]:
@@ -513,7 +591,22 @@ def test_estimate_notes_web_search() -> None:
     )
     assert not any("Web search" in note for note in plain.notes)
     assert any("Web search" in note for note in searched.notes)
-    assert searched.stages == plain.stages
+    assert [(stage.stage, stage.min_calls, stage.max_calls) for stage in searched.stages] == [
+        (stage.stage, stage.min_calls, stage.max_calls) for stage in plain.stages
+    ]
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+    [
+        AssertGenerationCheckpoint(config=make_assert_config(web_search=True, taxonomy=make_assert_taxonomy())),
+        make_assert_checkpoint(config=make_assert_config(web_search=True)),
+    ],
+)
+def test_estimate_omits_the_web_search_note_without_research_stages(checkpoint: AssertGenerationCheckpoint) -> None:
+    estimate = AssertGenerator.estimate(checkpoint=checkpoint)
+    assert {stage.target_role for stage in estimate.stages} == {AssertGenerator.GENERATION_ROLE}
+    assert not any("Web search" in note for note in estimate.notes)
 
 
 def test_estimate_skips_completed_policy_stages() -> None:
@@ -574,6 +667,17 @@ class TestEstimateMatchesGeneration:
             assert estimate.max_calls == total_batches - checkpoint.completed_batches
         assert AssertGenerator.estimate(checkpoint=final).max_calls == 0
 
+    async def test_estimate_with_a_supplied_policy_is_exact_before_any_call_async(self) -> None:
+        target = make_assert_generation_target()
+        checkpoint = AssertGenerationCheckpoint(
+            config=make_assert_config(taxonomy=make_assert_taxonomy(), group_count=24)
+        )
+        estimate = AssertGenerator.estimate(checkpoint=checkpoint)
+        _, stages = await _advance_async(generator=AssertGenerator(target=target), target=target, checkpoint=checkpoint)
+        assert estimate.exact_calls
+        assert [stage.stage for stage in estimate.stages] == ["seed_groups"]
+        assert estimate.min_calls == estimate.max_calls == len(stages)
+
 
 @pytest.mark.parametrize(
     "checkpoint", [AssertGenerationCheckpoint(config=_described_config(web_search=True)), make_assert_checkpoint()]
@@ -632,7 +736,9 @@ class TestCheckpointIntegrity:
         packager = make_assert_generation_target()
         with patch.object(packager, "get_identifier", return_value=_OTHER_TARGET):
             result = AssertGenerator(target=packager).build_result(checkpoint=complete)
-        assert result.generation_targets == complete.targets
+        assert result.generation_targets == {
+            role: identifier.model_dump(mode="json") for role, identifier in complete.targets.items()
+        }
         assert result.generation_targets[AssertGenerator.GENERATION_ROLE]["hash"] == target.get_identifier().hash
 
     async def test_resume_rejects_groups_with_unplanned_assignments_async(self) -> None:
@@ -696,6 +802,262 @@ class TestCheckpointIntegrity:
             executed
         )
 
+    async def test_resume_rejects_a_stored_producer_whose_content_does_not_match_its_hash_async(self) -> None:
+        target = make_assert_generation_target()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=target),
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.TAXONOMY,
+        )
+        assert AssertGenerationCheckpoint.model_validate_json(stopped.model_dump_json()) == stopped
+        data = stopped.model_dump(mode="json")
+        data["targets"][AssertGenerator.GENERATION_ROLE]["class_name"] = "SomeOtherTarget"
+        edited = AssertGenerationCheckpoint.model_validate(data)
+
+        with (
+            patch.object(target, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match=r"generation work was produced by a different target \(SomeOtherTarget"),
+        ):
+            await AssertGenerator(target=target).advance_async(checkpoint=edited)
+        send.assert_not_called()
+
+    async def test_resume_rejects_stored_group_ids_that_a_remaining_batch_assigns_before_any_call_async(
+        self,
+    ) -> None:
+        target = make_assert_generation_target()
+        generator = AssertGenerator(target=target)
+        on_checkpoint = AsyncMock()
+        await _advance_async(
+            generator=generator,
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config(group_count=12)),
+            on_checkpoint=on_checkpoint,
+        )
+        partial = next(saved for saved in _saved_checkpoints(on_checkpoint) if saved.completed_batches == 1)
+        first, *others = partial.groups
+        reserved = f"group_{len(partial.groups):06d}"
+        renamed = AssertGenerationCheckpoint.model_validate(
+            {**partial.model_dump(), "groups": [first.model_copy(update={"group_id": reserved}), *others]}
+        )
+        rejection = re.escape(f"use IDs ['{reserved}'] that the remaining batches assign")
+        with pytest.raises(ValueError, match=rejection):
+            AssertGenerator.estimate(checkpoint=renamed)
+        saved = AsyncMock()
+        with (
+            patch.object(target, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match=rejection),
+        ):
+            await generator.advance_async(checkpoint=renamed, on_checkpoint=saved)
+        send.assert_not_called()
+        saved.assert_not_awaited()
+
+
+_RESEARCH_TARGET = ComponentIdentifier(
+    class_name="ResearchTarget", class_module="tests.research", params={"model_name": "research"}
+)
+
+
+def _openai_target(**settings: Any) -> OpenAIResponseTarget:
+    """Build a real target, whose identifier records its settings as a deployed target's does."""
+    return OpenAIResponseTarget(
+        **{
+            "endpoint": "https://example.org/openai/v1",
+            "model_name": "gpt-x",
+            "api_key": "test-key",
+            "custom_configuration": make_assert_generation_target().configuration,
+            **settings,
+        }
+    )
+
+
+def _round_robin_target(**settings: Any) -> RoundRobinTarget:
+    """Build a round-robin target whose inner targets share the given settings."""
+    return RoundRobinTarget(targets=[_openai_target(**settings), _openai_target(**settings)])
+
+
+@pytest.mark.usefixtures("patch_central_database", "no_retry_wait")
+class TestRoleProducers:
+    async def test_checkpoint_records_each_role_with_its_own_target_async(self) -> None:
+        generation, research = make_assert_generation_target(), make_assert_generation_target()
+        with (
+            patch.object(research, "get_identifier", return_value=_RESEARCH_TARGET),
+            patch.object(
+                generation, "_send_prompt_to_target_async", side_effect=assert_generation_response_async
+            ) as generation_send,
+            patch.object(
+                research, "_send_prompt_to_target_async", side_effect=assert_generation_response_async
+            ) as research_send,
+        ):
+            complete = await AssertGenerator(target=generation, research_target=research).advance_async(
+                checkpoint=AssertGenerationCheckpoint(config=_described_config())
+            )
+        assert complete.targets[AssertGenerator.RESEARCH_ROLE].hash == _RESEARCH_TARGET.hash
+        assert complete.targets[AssertGenerator.GENERATION_ROLE].hash == generation.get_identifier().hash
+        assert _sent_stages(research_send) == ["systematization", "dimensions"]
+        assert set(_sent_stages(generation_send)) == {"taxonomy", "seed_groups"}
+
+    @pytest.mark.parametrize(
+        "stop_after, changed_role",
+        [
+            (AssertGenerationStage.SYSTEMATIZATION, AssertGenerator.RESEARCH_ROLE),
+            (AssertGenerationStage.TAXONOMY, AssertGenerator.GENERATION_ROLE),
+            (AssertGenerationStage.DIMENSIONS, AssertGenerator.GENERATION_ROLE),
+        ],
+    )
+    async def test_resume_rejects_a_changed_role_target_before_any_call_async(
+        self, stop_after: AssertGenerationStage, changed_role: str
+    ) -> None:
+        generation, research, replacement = (make_assert_generation_target() for _ in range(3))
+        with (
+            patch.object(research, "get_identifier", return_value=_RESEARCH_TARGET),
+            patch.object(generation, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+            patch.object(research, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+        ):
+            stopped = await AssertGenerator(target=generation, research_target=research).advance_async(
+                checkpoint=AssertGenerationCheckpoint(config=_described_config()), stop_after=stop_after
+            )
+        targets = {AssertGenerator.GENERATION_ROLE: generation, AssertGenerator.RESEARCH_ROLE: research}
+        targets[changed_role] = replacement
+        on_checkpoint = AsyncMock()
+        with (
+            patch.object(research, "get_identifier", return_value=_RESEARCH_TARGET),
+            patch.object(replacement, "get_identifier", return_value=_OTHER_TARGET),
+            patch.object(generation, "_send_prompt_to_target_async") as generation_send,
+            patch.object(research, "_send_prompt_to_target_async") as research_send,
+            patch.object(replacement, "_send_prompt_to_target_async") as replacement_send,
+            pytest.raises(ValueError, match=f"{changed_role} work was produced by a different target"),
+        ):
+            await AssertGenerator(
+                target=targets[AssertGenerator.GENERATION_ROLE], research_target=targets[AssertGenerator.RESEARCH_ROLE]
+            ).advance_async(checkpoint=stopped, on_checkpoint=on_checkpoint)
+        for send in (generation_send, research_send, replacement_send):
+            send.assert_not_called()
+        on_checkpoint.assert_not_awaited()
+
+    async def test_resume_without_research_stages_accepts_a_new_research_target_async(self) -> None:
+        target = make_assert_generation_target()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=target),
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.TAXONOMY,
+        )
+        research = make_assert_generation_target()
+        with (
+            patch.object(research, "get_identifier", return_value=_OTHER_TARGET),
+            patch.object(research, "_send_prompt_to_target_async") as research_send,
+        ):
+            complete, stages = await _advance_async(
+                generator=AssertGenerator(target=target, research_target=research), target=target, checkpoint=stopped
+            )
+        research_send.assert_not_called()
+        assert set(stages) == {"seed_groups"}
+        assert complete.next_stage is None
+        assert complete.targets[AssertGenerator.RESEARCH_ROLE] == stopped.targets[AssertGenerator.RESEARCH_ROLE]
+
+    @pytest.mark.parametrize(
+        "is_stored",
+        [
+            pytest.param(lambda saved: saved.next_stage == AssertGenerationStage.TAXONOMY, id="after-systematization"),
+            pytest.param(lambda saved: saved.completed_batches == 1, id="after-one-batch"),
+        ],
+    )
+    async def test_resume_with_only_a_changed_rate_limit_continues_async(
+        self, is_stored: Callable[[AssertGenerationCheckpoint], bool]
+    ) -> None:
+        original = _openai_target()
+        on_checkpoint = AsyncMock()
+        await _advance_async(
+            generator=AssertGenerator(target=original),
+            target=original,
+            checkpoint=AssertGenerationCheckpoint(config=_described_config(group_count=12)),
+            on_checkpoint=on_checkpoint,
+        )
+        saved = next(checkpoint for checkpoint in _saved_checkpoints(on_checkpoint) if is_stored(checkpoint))
+        stored = AssertGenerationCheckpoint.model_validate_json(saved.model_dump_json())
+
+        slower = _openai_target(max_requests_per_minute=10)
+        complete, stages = await _advance_async(
+            generator=AssertGenerator(target=slower), target=slower, checkpoint=stored
+        )
+
+        assert complete.next_stage is None
+        assert complete.groups[: len(stored.groups)] == stored.groups
+        assert stages.count("seed_groups") == complete.completed_batches - stored.completed_batches
+        live = TargetIdentifier.from_component_identifier(slower.get_identifier())
+        roles = (AssertGenerator.RESEARCH_ROLE, AssertGenerator.GENERATION_ROLE)
+        assert complete.targets == {role: stored.targets.get(role, live) for role in roles}
+
+    async def test_resume_with_slower_round_robin_targets_continues_async(self) -> None:
+        original = _round_robin_target()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=original),
+            target=original,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.DIMENSIONS,
+        )
+        stored = AssertGenerationCheckpoint.model_validate_json(stopped.model_dump_json())
+
+        slower = _round_robin_target(max_requests_per_minute=10)
+        complete, stages = await _advance_async(
+            generator=AssertGenerator(target=slower), target=slower, checkpoint=stored
+        )
+
+        assert complete.next_stage is None
+        assert set(stages) == {"seed_groups"}
+        assert complete.targets == stored.targets
+
+    @pytest.mark.parametrize("build", [_openai_target, _round_robin_target], ids=["direct", "round-robin"])
+    @pytest.mark.parametrize("changes", [{"model_name": "gpt-y"}, {"temperature": 0.5}])
+    async def test_resume_with_a_changed_generation_setting_is_rejected_before_any_call_async(
+        self, build: Callable[..., PromptTarget], changes: dict[str, Any]
+    ) -> None:
+        original = build()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=original),
+            target=original,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.DIMENSIONS,
+        )
+        changed = build(max_requests_per_minute=10, **changes)
+        with (
+            patch.object(changed, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match="generation work was produced by a different target"),
+        ):
+            await AssertGenerator(target=changed).advance_async(checkpoint=stopped)
+        send.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database", "no_retry_wait")
+class TestSuppliedTaxonomy:
+    @pytest.mark.parametrize(
+        "config, policy_stages",
+        [
+            (make_assert_config(taxonomy=make_assert_taxonomy()), []),
+            (_described_config(taxonomy=make_assert_taxonomy()), ["dimensions"]),
+        ],
+    )
+    async def test_supplied_taxonomy_skips_the_research_and_taxonomy_calls_async(
+        self, config: AssertGenerationConfig, policy_stages: list[str]
+    ) -> None:
+        target = make_assert_generation_target()
+        generator = AssertGenerator(target=target)
+        complete, stages = await _advance_async(
+            generator=generator, target=target, checkpoint=AssertGenerationCheckpoint(config=config)
+        )
+        assert stages == policy_stages + ["seed_groups"] * complete.completed_batches
+        assert (complete.systematization, complete.taxonomy) == (None, config.taxonomy)
+        provenance = complete.provenance
+        assert (provenance.systematization_conversation_id, provenance.taxonomy_conversation_id) == (None, None)
+        assert generator.build_result(checkpoint=complete).taxonomy == config.taxonomy
+
+    def test_validate_config_skips_the_research_target_when_no_research_stage_runs(self) -> None:
+        generator = AssertGenerator(target=make_assert_generation_target())
+        generator.validate_config(config=make_assert_config(web_search=True, taxonomy=make_assert_taxonomy()))
+        with pytest.raises(ValueError, match="supports_web_search"):
+            generator.validate_config(config=_described_config(web_search=True, taxonomy=make_assert_taxonomy()))
+
 
 def _seed_group_stage(estimate: PromptGenerationEstimate) -> Any:
     return next(stage for stage in estimate.stages if stage.stage == AssertGenerationStage.SEED_GROUPS.value)
@@ -720,3 +1082,106 @@ def test_estimate_counts_the_seed_group_payload(changes: dict[str, Any]) -> None
     )
     added = PromptGenerationEstimate.tokens_from_characters(39_000) * plain.max_calls
     assert heavy.max_tokens - plain.max_tokens >= added
+
+
+def test_estimate_counts_dimension_descriptions_in_the_dimensions_stage() -> None:
+    def dimensions_stage_tokens(description: str) -> int:
+        config = make_assert_config(dimensions=[{"name": "channel", "description": description}])
+        estimate = AssertGenerator.estimate(checkpoint=AssertGenerationCheckpoint(config=config))
+        return next(stage.max_tokens for stage in estimate.stages if stage.stage == "dimensions")
+
+    assert dimensions_stage_tokens("d" * 40_020) - dimensions_stage_tokens("d" * 20) == 10_000
+
+
+# A multiple of CHARACTERS_PER_TOKEN, so each request that carries it grows by an exact token count.
+_PADDING = "z" * 40_000
+
+
+def _systematization(padding: str) -> AssertSystematization:
+    data = make_assert_systematization().model_dump(mode="json")
+    data["scope"] += padding
+    return AssertSystematization.model_validate(data)
+
+
+def _taxonomy(padding: str) -> AssertTaxonomy:
+    data = make_assert_taxonomy().model_dump(mode="json")
+    data["behavior_categories"][0]["definition"] += padding
+    return AssertTaxonomy.model_validate(data)
+
+
+def _dimensions(padding: str) -> tuple[AssertDimension, ...]:
+    config = _described_config()
+    levels = [
+        {"name": f"level_{index}", "definition": f"Condition {index}."} for index in range(config.dimension_level_count)
+    ]
+    levels[0]["definition"] += padding
+    return tuple(
+        AssertDimension.model_validate({**item.model_dump(mode="json"), "levels": levels}) for item in config.dimensions
+    )
+
+
+@pytest.mark.parametrize(
+    "build, stages",
+    [
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(
+                config=_described_config(), systematization=_systematization(padding)
+            ),
+            ["taxonomy"],
+            id="stored-systematization",
+        ),
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(
+                config=_described_config(), systematization=make_assert_systematization(), taxonomy=_taxonomy(padding)
+            ),
+            ["dimensions", "seed_groups"],
+            id="stored-taxonomy",
+        ),
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(config=make_assert_config(taxonomy=_taxonomy(padding))),
+            ["seed_groups"],
+            id="supplied-taxonomy",
+        ),
+        pytest.param(
+            lambda padding: AssertGenerationCheckpoint(
+                config=_described_config(),
+                systematization=make_assert_systematization(),
+                taxonomy=make_assert_taxonomy(),
+                dimensions=_dimensions(padding),
+            ),
+            ["seed_groups"],
+            id="stored-dimension-levels",
+        ),
+    ],
+)
+def test_estimate_counts_the_stored_or_supplied_policy(
+    build: Callable[[str], AssertGenerationCheckpoint], stages: list[str]
+) -> None:
+    small = {stage.stage: stage for stage in AssertGenerator.estimate(checkpoint=build("")).stages}
+    large = {stage.stage: stage for stage in AssertGenerator.estimate(checkpoint=build(_PADDING)).stages}
+    added = PromptGenerationEstimate.tokens_from_characters(len(_PADDING))
+    for name in stages:
+        growth = (large[name].min_tokens - small[name].min_tokens, large[name].max_tokens - small[name].max_tokens)
+        assert growth == (large[name].min_calls * added, large[name].max_calls * added)
+
+
+@pytest.mark.parametrize("policy_exists", [False, True])
+def test_estimate_counts_the_escaped_request_that_is_sent(policy_exists: bool) -> None:
+    def estimate(context: str) -> PromptGenerationEstimate:
+        if policy_exists:
+            return AssertGenerator.estimate(
+                checkpoint=make_assert_checkpoint(config=make_assert_config(context=context))
+            )
+        return AssertGenerator.estimate(
+            checkpoint=AssertGenerationCheckpoint(config=_described_config(context=context))
+        )
+
+    assert estimate("一" * 300) == estimate("x" * 1800)
+
+
+@pytest.mark.parametrize("group_count, completed_batches", [(0, 1), (1, 0), (0, 5), (0, 50)])
+def test_estimate_rejects_a_checkpoint_that_resuming_rejects(group_count: int, completed_batches: int) -> None:
+    groups = tuple(make_assert_group_content(index=index) for index in range(group_count))
+    checkpoint = make_assert_checkpoint(groups=groups, completed_batches=completed_batches)
+    with pytest.raises(ValueError, match="don't match the planned coverage assignments"):
+        AssertGenerator.estimate(checkpoint=checkpoint)

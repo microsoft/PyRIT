@@ -294,8 +294,10 @@ async def assert_generation_response_async(*, normalized_conversation: list[Mess
     stage = request.prompt_metadata["assert_stage"]
     if stage == "systematization":
         value = make_assert_systematization().model_dump(mode="json")
+        value["behavior"] = value["concept_spec"]["behavior"] = payload["behavior_name"]
     elif stage == "taxonomy":
         value = make_assert_taxonomy().model_dump(mode="json")
+        value["behavior"]["name"] = payload["behavior_name"]
     elif stage == "dimensions":
         value = {
             "dimensions": [
