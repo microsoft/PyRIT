@@ -2828,9 +2828,9 @@ class MemoryInterface(abc.ABC):
 
         filtered_results: list[Model] = list(results)
         for _col, vals, attr_name in other_large_params:
-            # Compare as text, as the SQL filter does: UUID columns load as uuid.UUID, but callers
-            # pass their string form. NULL never matches an IN filter.
-            vals_set = {str(value) for value in vals}
+            # Compare string forms: UUID columns load as uuid.UUID, but callers pass their string form.
+            # As with SQL IN, NULL matches nothing, on either side.
+            vals_set = {str(value) for value in vals if value is not None}
             filtered_results = [
                 e
                 for e in filtered_results

@@ -356,13 +356,16 @@ class TestBatchingScale:
         matching = pieces[:250]
         converted_values = [piece.converted_value for piece in matching]
 
+        # The first matching piece's id is left out, so the in-Python filter must drop it
+        prompt_ids = [str(uuid.uuid4())] + [piece.id for piece in pieces[1:]]
+
         results = await sqlite_instance.get_message_pieces_async(
-            prompt_ids=[piece.id for piece in pieces],
+            prompt_ids=prompt_ids,
             original_values=original_values,
             converted_values=converted_values,
         )
 
-        assert {str(result.id) for result in results} == {str(piece.id) for piece in matching}
+        assert {str(result.id) for result in results} == {str(piece.id) for piece in matching[1:]}
 
 
 class TestExecuteBatchedQuery:
