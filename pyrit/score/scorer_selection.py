@@ -16,9 +16,9 @@ execution fallback. Execution outcomes never advance the pool.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pyrit.models import (
     Scorable,
@@ -29,7 +29,7 @@ from pyrit.models import (
 from pyrit.score.expectation_errors import AmbiguousConditionError, ExpectationMismatchError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Sequence
 
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -42,10 +42,9 @@ __all__ = [
     "ScorerMismatchKind",
     "ScorerRequirements",
     "ScorerSelection",
-    "fingerprint_expectations",
 ]
 
-#: Fingerprint recorded for an input with no expectation.
+#: Key used to deduplicate inputs that carry no expectation.
 NO_EXPECTATION_FINGERPRINT = "none"
 
 
@@ -137,15 +136,6 @@ class ScorerRequirements:
             evaluation = item.evaluation
         return cls(preserves_float_scale_value=preserves, evaluation=evaluation)
 
-    def to_identity(self) -> dict[str, str | bool | None]:
-        """
-        Return the requirement values that feed run identity.
-
-        Returns:
-            dict[str, str | bool | None]: A JSON-serializable view.
-        """
-        return {"evaluation": self.evaluation, "preserves_float_scale_value": self.preserves_float_scale_value}
-
 
 @dataclass(frozen=True, kw_only=True)
 class ScorerCandidate:
@@ -188,12 +178,14 @@ class ScorerMismatchKind(str, Enum):
 
     #: The scorer does not accept the evidence family the attack supplies.
     EVIDENCE = "evidence"
-    #: The candidate is not bound to the evaluation the run promises.
+    #: The candidate's evaluation binding differs from what the population requires.
     EVALUATION = "evaluation"
     #: The attack ranks by float feedback and the scorer does not guarantee it.
     FLOAT_FEEDBACK = "float_feedback"
     #: The scorer cannot evaluate a condition or criterion an input carries.
     CONDITION = "condition"
+    #: The attack's narrower scoring config cannot carry this scorer, as TAP's needs a threshold scorer.
+    SCORING_CONFIG = "scoring_config"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -226,22 +218,15 @@ class ScorerMismatch:
 @dataclass(frozen=True, kw_only=True)
 class ScorerSelection:
     """
-    The chosen candidate and how it was chosen.
+    The chosen candidate.
 
     Attributes:
         candidate (ScorerCandidate): The selected candidate.
         candidate_index (int): Its position in the pool.
-        requirements (ScorerRequirements): The effective requirements it satisfied.
-        expectation_fingerprints (tuple[str, ...]): Sorted, unique fingerprints of the effective
-            expectations the candidate prepared from the inputs, for resume drift checks.
-        skipped (tuple[ScorerMismatch, ...]): Earlier candidates and why each was passed over.
     """
 
     candidate: ScorerCandidate
     candidate_index: int
-    requirements: ScorerRequirements
-    expectation_fingerprints: tuple[str, ...]
-    skipped: tuple[ScorerMismatch, ...] = field(default_factory=tuple)
 
     @property
     def scorer(self) -> TrueFalseScorer:
@@ -282,28 +267,13 @@ class NoCompatibleScorerError(ValueError):
                 f"No candidate is bound to the required evaluation {requirements.evaluation!r}; "
                 f"evaluations in the pool: {known}. Check the key for a typo, or add a candidate for it."
             )
+        if requirements.evaluation is None and None not in available_evaluations:
+            lines.append(
+                "This population requires no evaluation, and every candidate is bound to one. Declare "
+                "scorer_requirements on its dataset, or add a candidate without an evaluation."
+            )
         lines.extend(mismatch.describe() for mismatch in self.mismatches)
         super().__init__("\n".join(lines))
-
-
-def fingerprint_expectations(expectations: Iterable[ScoringExpectation | None]) -> tuple[str, ...]:
-    """
-    Fingerprint a population's prepared expectations, ignoring order and duplicates.
-
-    Args:
-        expectations (Iterable[ScoringExpectation | None]): The prepared expectations.
-
-    Returns:
-        tuple[str, ...]: Sorted unique fingerprints; ``"none"`` stands for no expectation.
-    """
-    return tuple(
-        sorted(
-            {
-                NO_EXPECTATION_FINGERPRINT if expectation is None else scoring_expectation_fingerprint(expectation)
-                for expectation in expectations
-            }
-        )
-    )
 
 
 def _check_input_expectations(
@@ -346,9 +316,10 @@ class CompatibleScorers:
     An immutable, ordered pool of objective scorer candidates.
 
     ``select`` returns the first candidate that meets the effective requirements and
-    accepts every prepared expectation of a population. Order breaks ties between
-    candidates that answer the same question; it never changes which question is answered,
-    because a required evaluation key excludes candidates bound to other keys.
+    accepts every prepared expectation of a population. A candidate bound to an evaluation
+    judges only populations that require that evaluation, and a population that requires
+    none uses a candidate without one. Order therefore breaks ties between candidates that
+    answer the same question; it never changes which question is answered.
 
     Example:
         >>> pool = CompatibleScorers(
@@ -437,7 +408,7 @@ class CompatibleScorers:
                 expectations. Empty populations accept any candidate that meets the requirements.
 
         Returns:
-            ScorerSelection: The chosen candidate, its index, and the reasons earlier ones were skipped.
+            ScorerSelection: The chosen candidate and its index.
 
         Raises:
             TypeError: If an argument has the wrong type.
@@ -451,29 +422,17 @@ class CompatibleScorers:
         unique = _check_input_expectations(expectations)
         mismatches: list[ScorerMismatch] = []
         for index, candidate in enumerate(self._candidates):
-            checked = self._check_candidate(
+            mismatch = self._check_candidate(
                 index=index,
                 candidate=candidate,
                 requirements=requirements,
                 scorable_type=scorable_type,
                 expectations=tuple(unique.values()),
             )
-            if isinstance(checked, ScorerMismatch):
-                mismatches.append(checked)
+            if mismatch is not None:
+                mismatches.append(mismatch)
                 continue
-            # Fingerprint what the candidate will judge, so a change in the criteria it
-            # supplies by default is drift even when the inputs are unchanged.
-            fingerprints = {
-                NO_EXPECTATION_FINGERPRINT if prepared is None else scoring_expectation_fingerprint(prepared)
-                for prepared in checked
-            }
-            return ScorerSelection(
-                candidate=candidate,
-                candidate_index=index,
-                requirements=requirements,
-                expectation_fingerprints=tuple(sorted(fingerprints)),
-                skipped=tuple(mismatches),
-            )
+            return ScorerSelection(candidate=candidate, candidate_index=index)
         raise NoCompatibleScorerError(
             requirements=requirements, mismatches=mismatches, available_evaluations=self.evaluations
         )
@@ -486,13 +445,12 @@ class CompatibleScorers:
         requirements: ScorerRequirements,
         scorable_type: type[Scorable],
         expectations: tuple[ScoringExpectation | None, ...],
-    ) -> ScorerMismatch | tuple[ScoringExpectation | None, ...]:
+    ) -> ScorerMismatch | None:
         """
-        Return the first known reason a candidate cannot judge the population, or what it will judge.
+        Return the first known reason a candidate cannot judge the population.
 
         Returns:
-            ScorerMismatch | tuple[ScoringExpectation | None, ...]: The typed reason, or, when the
-                candidate is compatible, the effective expectation it prepared for each input.
+            ScorerMismatch | None: The typed reason, or None when the candidate is compatible.
         """
 
         def mismatch(*, kind: ScorerMismatchKind, detail: str) -> ScorerMismatch:
@@ -505,47 +463,38 @@ class CompatibleScorers:
                 kind=ScorerMismatchKind.EVIDENCE,
                 detail=f"does not accept {scorable_type.__name__} evidence (accepts: {accepted}).",
             )
-        if requirements.evaluation is not None and candidate.evaluation != requirements.evaluation:
+        if candidate.evaluation != requirements.evaluation:
             bound = repr(candidate.evaluation) if candidate.evaluation is not None else "no evaluation"
+            required = repr(requirements.evaluation) if requirements.evaluation is not None else "none"
             return mismatch(
                 kind=ScorerMismatchKind.EVALUATION,
-                detail=f"is bound to {bound}, not {requirements.evaluation!r}.",
+                detail=f"is bound to {bound}; the population requires {required}.",
             )
         if requirements.preserves_float_scale_value and not capabilities.preserves_float_scale_value:
             return mismatch(
                 kind=ScorerMismatchKind.FLOAT_FEEDBACK,
                 detail="does not guarantee a float value on each true/false result.",
             )
-        prepared: list[ScoringExpectation | None] = []
         for expectation in expectations:
             try:
-                effective = candidate.scorer.prepare_expectation(expectation=expectation)
+                candidate.scorer.prepare_expectation(expectation=expectation)
             except ExpectationMismatchError as exc:
                 return mismatch(kind=ScorerMismatchKind.CONDITION, detail=f"{exc} (rejected by {exc.scorer_name}).")
-            # A scorer that hands back nothing usable is judging the input as it was given.
-            prepared.append(effective if isinstance(effective, ScoringExpectation) else expectation)
-        return tuple(prepared)
+        return None
 
-    def get_identifier(self, *, requirements: Mapping[str, Any] | None = None) -> ScorerIdentifier:
+    def get_identifier(self) -> ScorerIdentifier:
         """
-        Identify the ordered pool for run identity.
+        Identify the ordered pool.
 
         The identity includes each candidate's full scorer identity and evaluation key in
         pool order, so a different pool, order, or binding means a different run.
 
-        Args:
-            requirements (Mapping[str, Any] | None): The run's requirement owners and their
-                values (see ``ScorerRequirements.to_identity``), when any are declared.
-
         Returns:
             ScorerIdentifier: The pool's identity.
         """
-        params: dict[str, Any] = {"evaluations": [candidate.evaluation for candidate in self._candidates]}
-        if requirements:
-            params["requirements"] = dict(requirements)
         return ScorerIdentifier.of(
             self,
-            params=params,
+            params={"evaluations": [candidate.evaluation for candidate in self._candidates]},
             scorer_type="true_false",
             sub_scorers=[candidate.scorer.get_identifier() for candidate in self._candidates],
         )

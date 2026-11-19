@@ -52,7 +52,7 @@ from pyrit.models import (
     TargetIdentifier,
     UndeterminedScoreError,
 )
-from pyrit.prompt_target import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import AttemptObserver, ScorerRequirements
 
 if TYPE_CHECKING:
@@ -73,7 +73,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
-    from pyrit.prompt_target import CapabilityName, PromptTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score import Scorer
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -734,7 +734,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
-    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: Attacks need the target's responses by default. An override keeps
+    #: ``CapabilityName.RESPONSES`` unless the attack supports write-only targets.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
+        native_required=frozenset({CapabilityName.RESPONSES})
+    )
     ADVERSARIAL_TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
     #: What the attack's algorithm needs from its objective scorer, such as float feedback for
     #: ranking. Scenarios combine this with technique and dataset requirements before selecting

@@ -60,3 +60,13 @@ class Modality(str, Enum):
     IMAGE = "image"
     AUDIO = "audio"
     VIDEO = "video"
+
+    @classmethod
+    def data_type_aliases(cls) -> dict[str, str]:
+        """
+        Map stored media data types to their canonical content modalities.
+
+        Returns:
+            Storage aliases keyed by data type; other values keep their identity.
+        """
+        return {f"{modality.value}_path": modality.value for modality in (cls.IMAGE, cls.AUDIO, cls.VIDEO)}

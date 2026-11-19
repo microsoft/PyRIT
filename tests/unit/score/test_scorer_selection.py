@@ -6,16 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.models import (
-    ComponentIdentifier,
-    MatchesObjective,
     MessageScorable,
     ProgramExecutionScorable,
-    Scorable,
-    Score,
     ScoringExpectation,
     ToolCallRequirement,
     ToolsCalled,
-    scoring_expectation_fingerprint,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
@@ -32,9 +27,10 @@ from pyrit.score import (
     SelfAskTrueFalseScorer,
     SubStringScorer,
     TrueFalseQuestion,
-    TrueFalseScorer,
     UnsupportedConditionError,
 )
+
+pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 CRISIS = "psychosocial.imminent_crisis"
 THERAPIST = "psychosocial.licensed_therapist"
@@ -130,7 +126,7 @@ def test_required_evaluation_wins_regardless_of_order(reverse):
 
     assert selected.candidate is crisis
     assert selected.evaluation == CRISIS
-    assert [m.kind for m in selected.skipped] == ([] if reverse else [ScorerMismatchKind.EVALUATION])
+    assert selected.candidate_index == (0 if reverse else 1)
 
 
 def test_order_breaks_ties_between_matching_candidates():
@@ -177,10 +173,14 @@ def test_unsupported_condition_skips_to_a_candidate_that_accepts_it():
         requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[_tools("lookup")]
     )
     assert selected.scorer is tool_scorer
-    (skipped,) = selected.skipped
-    assert skipped.kind is ScorerMismatchKind.CONDITION
-    assert "ToolsCalled" in skipped.detail
-    assert "rejected by SubStringScorer" in skipped.detail
+    with pytest.raises(NoCompatibleScorerError) as excinfo:
+        CompatibleScorers(candidates=[substring]).select(
+            requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[_tools("lookup")]
+        )
+    (mismatch,) = excinfo.value.mismatches
+    assert mismatch.kind is ScorerMismatchKind.CONDITION
+    assert "ToolsCalled" in mismatch.detail
+    assert "rejected by SubStringScorer" in mismatch.detail
 
 
 def test_missing_condition_skips_to_next_candidate():
@@ -189,8 +189,13 @@ def test_missing_condition_skips_to_next_candidate():
         requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[ScoringExpectation()]
     )
     assert selected.scorer is substring
-    assert selected.skipped[0].kind is ScorerMismatchKind.CONDITION
-    assert "requires one ToolsCalled condition" in selected.skipped[0].detail
+    with pytest.raises(NoCompatibleScorerError) as excinfo:
+        CompatibleScorers(candidates=[tool_scorer]).select(
+            requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[ScoringExpectation()]
+        )
+    (mismatch,) = excinfo.value.mismatches
+    assert mismatch.kind is ScorerMismatchKind.CONDITION
+    assert "requires one ToolsCalled condition" in mismatch.detail
 
 
 def test_candidate_must_accept_every_input_in_the_population():
@@ -239,7 +244,7 @@ def test_repeated_inputs_are_checked_once_per_candidate():
             requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=expectations
         )
     assert prepare.call_count == 2
-    assert len(selected.expectation_fingerprints) == 2
+    assert selected.scorer is scorer
 
 
 def test_empty_population_selects_first_candidate_meeting_requirements():
@@ -248,7 +253,23 @@ def test_empty_population_selects_first_candidate_meeting_requirements():
         requirements=ScorerRequirements(evaluation=THERAPIST), scorable_type=MessageScorable, expectations=[]
     )
     assert selected.candidate is therapist
-    assert selected.expectation_fingerprints == ()
+
+
+def test_a_population_without_an_evaluation_uses_an_unbound_candidate():
+    unbound = _substring("u")
+    pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring("c"), evaluation=CRISIS), unbound])
+    selected = pool.select(requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[None])
+    assert selected.scorer is unbound
+    assert selected.candidate_index == 1
+
+
+def test_bound_candidates_do_not_judge_a_population_without_an_evaluation():
+    pool = CompatibleScorers(candidates=[ScorerCandidate(scorer=_substring(), evaluation=CRISIS)])
+    with pytest.raises(NoCompatibleScorerError, match="This population requires no evaluation") as excinfo:
+        pool.select(requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[None])
+    (mismatch,) = excinfo.value.mismatches
+    assert mismatch.kind is ScorerMismatchKind.EVALUATION
+    assert "bound to 'psychosocial.imminent_crisis'; the population requires none" in mismatch.detail
 
 
 @pytest.mark.parametrize("error", [RuntimeError, ValueError])
@@ -261,7 +282,7 @@ def test_unexpected_validation_errors_propagate(error):
             )
 
 
-def test_selection_never_calls_a_judge_model(patch_central_database):
+def test_selection_never_calls_a_judge_model():
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.send_prompt_async = AsyncMock(side_effect=AssertionError("selection called a model"))
     judge = SelfAskTrueFalseScorer(
@@ -303,34 +324,3 @@ def test_scorer_validation_raises_typed_errors_with_existing_messages():
         MessageToolCallScorer().prepare_expectation(expectation=ScoringExpectation())
     assert isinstance(excinfo.value, ValueError)
     assert excinfo.value.scorer_name == "MessageToolCallScorer"
-
-
-class _ObjectiveJudge(TrueFalseScorer):
-    """A scorer that judges against the objective, so it supplies that criterion by default."""
-
-    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
-    CONDITION_TYPE = MatchesObjective
-
-    def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier()
-
-    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-        return []
-
-
-def test_fingerprints_cover_the_criteria_the_selected_scorer_supplies(patch_central_database):
-    judge = _ObjectiveJudge()
-    condition_free = ScoringExpectation(objective="say it")
-    effective = condition_free.model_copy(update={"conditions": (MatchesObjective(),)})
-
-    by_judge = CompatibleScorers(candidates=[judge]).select(
-        requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[condition_free]
-    )
-    by_substring = CompatibleScorers(candidates=[_substring()]).select(
-        requirements=ScorerRequirements(), scorable_type=MessageScorable, expectations=[condition_free]
-    )
-
-    # The judge supplies the objective criterion; the substring scorer judges the input as given.
-    assert by_judge.expectation_fingerprints == (scoring_expectation_fingerprint(effective),)
-    assert by_substring.expectation_fingerprints == (scoring_expectation_fingerprint(condition_free),)
-    assert by_judge.expectation_fingerprints != by_substring.expectation_fingerprints
