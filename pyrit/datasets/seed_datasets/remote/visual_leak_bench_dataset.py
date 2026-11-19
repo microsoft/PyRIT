@@ -241,7 +241,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         example_id = filename.rsplit(".", 1)[0]
         group_id = uuid.uuid4()
 
-        harm_categories = self._build_harm_categories(category_str, pii_type_str)
+        harm_categories = self._build_harm_categories(category_str, pii_type_str=pii_type_str)
         standardized_harm_categories = self._standardize_harm_categories(
             harm_categories,
             alias_overrides={
@@ -258,7 +258,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         )
         text_prompt_value = self._get_query_prompt(category_str)
 
-        local_image_path = await self._fetch_and_save_image_async(image_url, example_id)
+        local_image_path = await self._fetch_and_save_image_async(image_url=image_url, example_id=example_id)
 
         image_prompt = SeedPrompt(
             value=local_image_path,
@@ -301,7 +301,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
 
         return [image_prompt, text_prompt]
 
-    def _build_harm_categories(self, category_str: str, pii_type_str: str) -> list[str]:
+    def _build_harm_categories(self, category_str: str, *, pii_type_str: str) -> list[str]:
         """
         Build the harm categories list for a given example.
 
@@ -334,7 +334,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             return self.PII_LEAKAGE_PROMPT
         return self.OCR_INJECTION_PROMPT
 
-    async def _fetch_and_save_image_async(self, image_url: str, example_id: str) -> str:
+    async def _fetch_and_save_image_async(self, *, image_url: str, example_id: str) -> str:
         """
         Fetch and save an image from the VisualLeakBench dataset.
 

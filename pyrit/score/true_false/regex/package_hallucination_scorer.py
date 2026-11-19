@@ -688,7 +688,7 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
 
         return candidates
 
-    def _resolve_ruby_feature_to_gem(self, feature: str, declared_gems: set[str]) -> str:
+    def _resolve_ruby_feature_to_gem(self, *, feature: str, declared_gems: set[str]) -> str:
         """
         Resolve a Ruby require feature path to its owning gem or candidate name.
 
@@ -776,7 +776,7 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
                 if self._is_ruby_local_path(req):
                     continue
                 clean_ref = self._strip_ruby_feature_extension(req)
-                resolved_gems.add(self._resolve_ruby_feature_to_gem(clean_ref, ruby_gems))
+                resolved_gems.add(self._resolve_ruby_feature_to_gem(feature=clean_ref, declared_gems=ruby_gems))
             return resolved_gems
 
         # Relative and absolute paths name local files and ``node:`` names a Node.js built-in, so neither

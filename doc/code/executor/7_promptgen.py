@@ -102,6 +102,41 @@ print(f"Stored {len(assert_result.seed_groups)} seed groups.")
 # the [`foundry.assert_policy` scenario](../../scanner/foundry.ipynb).
 
 # %% [markdown]
+# ### Review the policy before generating seed groups
+#
+# `advance_async` runs the same stages and returns an `AssertGenerationCheckpoint`. This example
+# starts from a behavior in the bundled ASSERT library, estimates the model calls, and stops after
+# the dimensions stage to review the taxonomy. `with_reviewed_policy` applies the edits. The reviewed
+# policy becomes part of the request that each seed group stores, so a rerun from that request skips
+# the research stages.
+
+# %%
+from pyrit.datasets import load_assert_behavior_preset
+from pyrit.models import AssertGenerationCheckpoint, AssertGenerationStage
+
+preset = load_assert_behavior_preset("prompt_injection")
+print(preset.summary)
+draft = AssertGenerationCheckpoint(
+    config=preset.to_config(group_count=2, context="An email assistant summarizes messages and drafts replies.")
+)
+print(f"Up to {AssertGenerator.estimate(checkpoint=draft).max_calls} model calls")
+draft = await assert_generator.advance_async(checkpoint=draft, stop_after=AssertGenerationStage.DIMENSIONS)  # type: ignore
+for category in draft.taxonomy.behavior_categories:
+    print(f"{'Permissible' if category.permissible else 'Impermissible'}: {category.name}")
+
+first_category, *other_categories = draft.taxonomy.behavior_categories
+revised_category = first_category.model_copy(update={"definition": f"{first_category.definition} Cite the policy."})
+reviewed = draft.with_reviewed_policy(
+    taxonomy=draft.taxonomy.model_copy(update={"behavior_categories": (revised_category, *other_categories)}),
+    dimensions=draft.dimensions,
+)
+reviewed = await assert_generator.advance_async(checkpoint=reviewed)  # type: ignore
+reviewed_result = assert_generator.build_result(checkpoint=reviewed)
+print(f"{len(reviewed_result.seed_groups)} seed groups from the reviewed policy")
+rerun = AssertGenerator.estimate(checkpoint=AssertGenerationCheckpoint(config=reviewed_result.config))
+print(f"A rerun from the stored request needs {rerun.max_calls} model calls")
+
+# %% [markdown]
 # ## Anecdoctor Generator
 #
 # Few-shot prompting produces passable attack prompts; knowledge-graph augmentation makes them more coherent and targeted.

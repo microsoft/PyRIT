@@ -779,6 +779,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
+        self._configure_scenario_sources()
         initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
         initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)
         if not initializers:
@@ -883,6 +884,7 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
+        await asyncio.to_thread(self._configure_scenario_sources)
         resolved_initializers = self.resolve_initializers(
             raise_on_initializer_error=raise_on_initializer_error,
         )
@@ -903,6 +905,13 @@ class ConfigurationLoader(YamlLoadable):
             seed=self.seed,
             raise_on_initializer_error=raise_on_initializer_error,
         )
+
+    def _configure_scenario_sources(self) -> None:
+        """Bind preset and suite storage before initializers register their definitions."""
+        from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
+
+        ScenarioPresetRegistry.get_registry_singleton().configure_source(self.scenario_presets_source)
+        ScenarioSuiteRegistry.get_registry_singleton().configure_source(self.scenario_suites_source)
 
 
 async def initialize_from_config_async(

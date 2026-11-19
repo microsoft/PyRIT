@@ -99,6 +99,8 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     size: str = "huge"  # 30968 prompts (default config)
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
+    source_url = "https://huggingface.co/datasets/Babelscape/ALERT"
+
     def __init__(
         self,
         *,

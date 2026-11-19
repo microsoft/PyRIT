@@ -9,18 +9,30 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.datasets.assert_library import (
+        list_assert_behavior_presets,
+        list_assert_suite_presets,
+        load_assert_behavior_preset,
+        load_assert_suite_preset,
+    )
     from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
     from pyrit.datasets.seed_datasets.generated.assert_provider import AssertProvider
     from pyrit.datasets.seed_datasets.generated.target_objective_provider import TargetObjectiveProvider
     from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
     from pyrit.datasets.seed_datasets.seed_metadata import (
+        SeedDatasetDescriptor,
         SeedDatasetFilter,
         SeedDatasetLoadTime,
         SeedDatasetMetadata,
     )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "SeedDatasetDescriptor": "pyrit.datasets.seed_datasets.seed_metadata",
     "AssertProvider": "pyrit.datasets.seed_datasets.generated.assert_provider",
+    "list_assert_behavior_presets": "pyrit.datasets.assert_library",
+    "list_assert_suite_presets": "pyrit.datasets.assert_library",
+    "load_assert_behavior_preset": "pyrit.datasets.assert_library",
+    "load_assert_suite_preset": "pyrit.datasets.assert_library",
     "TargetObjectiveProvider": "pyrit.datasets.seed_datasets.generated.target_objective_provider",
     "SeedDatasetFilter": "pyrit.datasets.seed_datasets.seed_metadata",
     "SeedDatasetMetadata": "pyrit.datasets.seed_datasets.seed_metadata",

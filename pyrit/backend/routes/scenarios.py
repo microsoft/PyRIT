@@ -36,7 +36,10 @@ from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
+from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
+    ScenarioRunNotFoundError,
+)
 from pyrit.models import (
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
