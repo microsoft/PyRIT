@@ -2659,7 +2659,7 @@ describe("App", () => {
     await user.click(await screen.findByTestId("open-attack"));
 
     await waitFor(() =>
-      expect(await screen.findByTestId("target-resolution-status")).toHaveTextContent("resolved")
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
     expect(await screen.findByTestId("active-target-name")).toHaveTextContent("test_target");
     expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
