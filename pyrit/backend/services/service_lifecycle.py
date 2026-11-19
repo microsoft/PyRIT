@@ -4,6 +4,7 @@
 """Explicit lifecycle for backend-owned cached services."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from pyrit.backend.services.analytics_service import close_analytics_service_async, get_analytics_service
 from pyrit.backend.services.attack_service import get_attack_service
@@ -37,6 +38,15 @@ def has_active_analytics_work() -> bool:
     return bool(get_analytics_service.cache_info().currsize and get_analytics_service().has_active_work)
 
 
+async def _close_service_async(*, name: str, close: Callable[[], Awaitable[None]]) -> None:
+    """Close one service, noting which service failed without replacing the error."""
+    try:
+        await close()
+    except (Exception, asyncio.CancelledError) as error:
+        error.add_note(f"Failed to close {name}.")
+        raise
+
+
 async def close_services_async() -> None:
     """Close existing resources, then invalidate cached registry and memory references."""
     errors: list[BaseException] = []
@@ -60,15 +70,30 @@ async def _close_cached_services_async() -> None:
         get_manual_send_scheduler().stop_admission()
     try:
         if get_message_send_service.cache_info().currsize:
-            await get_message_send_service().shutdown_async()
+            await _close_service_async(
+                name="message send service",
+                close=get_message_send_service().shutdown_async,
+            )
     finally:
         try:
             if get_scenario_service.cache_info().currsize:
-                await get_scenario_service().close_async()
+                await _close_service_async(
+                    name="scenario service",
+                    close=get_scenario_service().close_async,
+                )
             if get_converter_service.cache_info().currsize:
-                await get_converter_service().close_async()
-            await reset_scenario_suite_execution_service_async()
-            await reset_scenario_run_service_async()
+                await _close_service_async(
+                    name="converter service",
+                    close=get_converter_service().close_async,
+                )
+            await _close_service_async(
+                name="scenario suite execution service",
+                close=reset_scenario_suite_execution_service_async,
+            )
+            await _close_service_async(
+                name="scenario run service",
+                close=reset_scenario_run_service_async,
+            )
         finally:
             for factory in (
                 get_attack_service,
