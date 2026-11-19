@@ -66,9 +66,11 @@ its database collation.
 - `POST /api/targets` - Create (and optionally register) a target
 - `POST /api/targets/saveability` - Say whether a target could be saved, without building or saving it. Send the
   create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, which gives only
-  the cause, or null when the save checks pass. It runs the checks a create with `persist` runs before the target is
-  built, so a request they refuse gets the same 400 or 403. The target's own constructor checks don't run, so null
-  doesn't mean the create succeeds: a round robin with one member gets null here and a 400 from create
+  the cause, or null when the save checks pass. It runs create's parameter, permission, and save checks on those
+  three fields only, and a request the parameter or permission checks refuse gets the same 400 or 403 as create. It
+  doesn't check the name or the registration options (`register`, `private`, and `allow_credential_updates`), and
+  the target's own constructor checks don't run, so null doesn't mean the create succeeds: a round robin with one
+  member gets null here and a 400 from create
 - `PUT /api/targets/{id}/credentials` - Update the API key or request headers of a target that allows it
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.

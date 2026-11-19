@@ -2514,8 +2514,7 @@ class TestPersistConverter:
             await upload_service.create_converter_async(request=request, recipes_source=str(tmp_path))
 
         assert str(refusal.value) == (
-            "Saved converters can't keep uploaded files yet, so leave out 'font_name'. "
-            "It can still be created without saving it."
+            "Saved converters can't keep uploaded files yet ('font_name'). It can still be created without saving it."
         )
         assert list(upload_service._upload_path.iterdir()) == []
         assert upload_service._registry.instances.get("banner") is None
@@ -2814,7 +2813,7 @@ class TestPersistConverterWithADefaultTarget:
 
         assert str(refusal.value) == (
             "'converter_target' is left to a default target that isn't registered, so it won't exist after a "
-            "restart. Name a target to save it. It can still be created without saving it."
+            "restart. It can still be created without saving it."
         )
         assert not (tmp_path / "converters").exists()
 
