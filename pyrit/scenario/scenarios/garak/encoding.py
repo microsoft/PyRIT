@@ -13,6 +13,7 @@ from pyrit.converter import (
     AtbashConverter,
     Base64Converter,
     Base2048Converter,
+    BifidConverter,
     BinAsciiConverter,
     BrailleConverter,
     Converter,
@@ -125,6 +126,7 @@ class EncodingTechnique(ScenarioTechnique):
     Zalgo = ("zalgo", set[str]())
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
+    Bifid = ("bifid", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -311,6 +313,7 @@ class Encoding(Scenario):
             ([ZalgoConverter()], "zalgo", "zalgo"),
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+            ([BifidConverter()], "bifid", "bifid"),
         ]
 
     # These are the same as Garak encoding attacks
