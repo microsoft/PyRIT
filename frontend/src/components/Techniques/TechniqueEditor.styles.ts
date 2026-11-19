@@ -10,6 +10,10 @@ export const useTechniqueEditorStyles = makeStyles({
     },
   },
   content: { minWidth: 0, overflowY: 'auto', maxHeight: '65vh' },
+  // DialogBody is a grid with the actions in its third row; while the warning shows, it takes that row and the
+  // actions move below it.
+  temporaryWarning: { gridRowStart: 3, gridRowEnd: 3, gridColumnStart: 1, gridColumnEnd: 4 },
+  actionsBelowWarning: { gridRowStart: 4, gridRowEnd: 4 },
   form: {
     display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0,
     maxWidth: '100%', gap: tokens.spacingVerticalL,

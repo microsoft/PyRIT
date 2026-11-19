@@ -15,7 +15,7 @@ import {
   buildParametersFromForm, getInitialFormValues, nonNullableTypeName, type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 import { convertersApi, techniquesApi } from '@/services/api'
-import { isNotSaveableError, toApiError } from '@/services/errors'
+import { isNotSaveableError, notSaveableReason, toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import { validateRegistryName } from '@/utils/registryName'
 import type {
@@ -305,7 +305,7 @@ export default function TechniqueEditor({
       if (active.current) {
         const apiError = toApiError(err)
         if (!original && temporaryReason === null && isNotSaveableError(apiError)) {
-          setSaveRefusal({ formKey, reason: apiError.detail })
+          setSaveRefusal({ formKey, reason: notSaveableReason(apiError) ?? apiError.detail })
         } else if (!original && apiError.status === 409 && apiError.type === undefined) {
           // A taken name or tag is a 409 without a problem type, so changing either lets the user try again.
           setNameConflict({ name, tags, detail: apiError.detail })
@@ -428,14 +428,6 @@ export default function TechniqueEditor({
                   )}
                 </>
               )}
-              {!editing && temporaryReason && (
-                <MessageBar intent="warning" role="status">
-                  <MessageBarBody>
-                    <MessageBarTitle>This technique can&apos;t be saved</MessageBarTitle>
-                    {temporaryReason} {TEMPORARY_TECHNIQUE_NOTE}
-                  </MessageBarBody>
-                </MessageBar>
-              )}
               {autoApply && validating && !editError && <Spinner size="tiny" label="Validating technique settings..." />}
               {autoApply && !validating && revision > 0 && !displayedError && <Text role="status">Technique settings applied to this run.</Text>}
             </div>
@@ -450,7 +442,16 @@ export default function TechniqueEditor({
           <DialogContent className={styles.content}>
             {content}
           </DialogContent>
-          <DialogActions>
+          {/* Outside the scrolling form, so it shows next to the button it explains without moving the fields. */}
+          {!editing && temporaryReason && (
+            <MessageBar intent="warning" className={styles.temporaryWarning} role="status">
+              <MessageBarBody>
+                <MessageBarTitle>This technique can&apos;t be saved</MessageBarTitle>
+                {temporaryReason} {TEMPORARY_TECHNIQUE_NOTE}
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <DialogActions className={!editing && temporaryReason ? styles.actionsBelowWarning : undefined}>
             <Button className={styles.action} onClick={onClose}>Cancel</Button>
             <Button className={styles.action} appearance="primary"
               disabled={loading || submitting || !name.trim() || !selected || nameMessage !== null}

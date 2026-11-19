@@ -441,16 +441,22 @@ describe('TechniqueRegistry', () => {
   })
 
   it('offers a Temporary technique when the server refuses to save it, until a value changes', async () => {
-    techniques.createTechnique.mockRejectedValueOnce(
-      axiosError(400, { type: '/errors/not-saveable', detail: 'Refused. It can still be created without saving it.' }),
-    )
+    techniques.createTechnique.mockRejectedValueOnce(axiosError(400, {
+      type: '/errors/not-saveable',
+      detail: 'Refused. It can still be created without saving it.',
+      not_saveable_reason: 'Refused.',
+    }))
     render(tree())
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'refused')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
     await user.click(screen.getByRole('button', { name: 'Save technique' }))
 
-    expect(await screen.findByText(/Refused\. It can still be created without saving it\./)).toBeInTheDocument()
+    // The cause and the Temporary note, each once.
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Refused. A Temporary technique is gone after the backend restarts or is reinitialized.',
+    )
+    expect(screen.queryByText(/It can still be created without saving it/)).not.toBeInTheDocument()
     expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({ persist: true })
     await user.type(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' }), '1')
     expect(screen.queryByText(/Refused\./)).not.toBeInTheDocument()
