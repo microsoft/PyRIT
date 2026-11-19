@@ -181,8 +181,6 @@ def recorded_objective_scorer_identifier(attack_result: AttackResult) -> Compone
     Returns:
         ComponentIdentifier | None: The recorded scorer, or None when the result does not record one.
     """
-    if not isinstance(attack_result.atomic_attack_identifier, ComponentIdentifier):
-        return None
     strategy = attack_result.get_attack_strategy_identifier()
     scorer = strategy.get_child("objective_scorer") if strategy is not None else None
     return scorer if isinstance(scorer, ComponentIdentifier) else None

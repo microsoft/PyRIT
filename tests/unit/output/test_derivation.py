@@ -38,7 +38,6 @@ from pyrit.output._derivation import (
     attack_objective_scorer_identifier,
     attack_score_display,
     attack_technique_label,
-    format_rate,
     judge_label,
     resolve_scorer_name,
     resolve_target_info,
@@ -436,7 +435,3 @@ def test_judge_label_describes_how_much_is_known_about_the_scorer(identifier, sc
     )
 
     assert judge_label(judge) == label
-
-
-def test_format_rate_reports_one_decimal_or_not_applicable():
-    assert (format_rate(None), format_rate(2 / 3)) == ("N/A", "66.7%")

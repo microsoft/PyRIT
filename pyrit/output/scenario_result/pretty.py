@@ -206,8 +206,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             )
             lines.append(
                 self._format_colored(
-                    f"{self._indent * 3}Judges apply different rubrics; compare success rates only within one "
-                    "judge (see Per-Judge Breakdown).",
+                    f"{self._indent * 3}Judges apply different rubrics; compare rates only within one judge.",
                     Fore.YELLOW,
                 )
             )

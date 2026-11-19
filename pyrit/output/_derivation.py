@@ -20,6 +20,7 @@ from pyrit.analytics import (
 )
 from pyrit.analytics.scenario_statistics import (
     combine_execution_counts,
+    recorded_objective_scorer_identifier,
     select_execution_attack_result_ids,
 )
 from pyrit.models import ScenarioJudgeAttribution
@@ -260,8 +261,7 @@ def attack_objective_scorer_identifier(
     Returns:
         ComponentIdentifier | None: The attack's recorded scorer, otherwise the run's.
     """
-    strategy = attack.get_attack_strategy_identifier()
-    recorded = strategy.get_child("objective_scorer") if strategy is not None else None
+    recorded = recorded_objective_scorer_identifier(attack)
     return recorded if recorded is not None else run_scorer_identifier
 
 

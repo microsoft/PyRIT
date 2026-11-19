@@ -50,7 +50,11 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
       {%- if report.overview.stats.judge_scope == "mixed_judges" %}Aggregate success rate
       ({{ report.overview.judges | selectattr("num_objective_executions") | list | length }} judges, descriptive)
       {%- else %}Success rate{% endif %}</div>
-      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div></div>
+      <div class="value">{{ report.overview.stats.overall_success_rate }}%</div>
+      {%- if report.overview.stats.judge_scope in ("single_judge", "unknown_judge") %}
+      {%- set judge = report.overview.judges | selectattr("num_objective_executions") | first %}
+      <div class="muted">Judge: {{ judge.label }} ({{ judge.attribution }})</div>
+      {%- endif %}</div>
     <div class="card"><div class="label">Techniques</div>
       <div class="value">{{ report.overview.stats.total_techniques }}</div></div>
     <div class="card"><div class="label">Objective executions</div>
