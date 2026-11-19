@@ -51,6 +51,16 @@ async def _convert_png_async(converter: ImageNoiseConverter, image_bytes: bytes)
         return base64.b64decode(mock_serializer.save_b64_image_async.call_args.kwargs["data"])
 
 
+def _color_key_png() -> Image.Image:
+    """An RGB PNG whose left half is the transparent color key (red) and whose right half is opaque blue."""
+    image = Image.new("RGB", (40, 10), color=(255, 0, 0))
+    image.paste((0, 0, 255), (20, 0, 40, 10))
+    image.info["transparency"] = (255, 0, 0)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return Image.open(BytesIO(buffer.getvalue()))
+
+
 def test_image_noise_converter_output_format_validation():
     for unsupported_format in ["GIF", "BMP", "TIFF", "jpg", "png"]:
         with pytest.raises(ValueError, match="Output format must be one of 'JPEG', 'PNG', or 'WEBP'"):
@@ -117,6 +127,17 @@ def test_image_noise_converter_preserves_size_and_alpha(seeded: None, mode: str)
     assert not np.array_equal(np.asarray(noisy)[..., :3], np.full((20, 25, 3), 90))
 
 
+def test_image_noise_converter_keeps_color_key_transparency(seeded: None) -> None:
+    with _color_key_png() as source:
+        assert source.mode == "RGB"
+        noisy = _transform_png(ImageNoiseConverter(), source)
+
+    assert noisy.mode == "RGBA"
+    alpha = np.asarray(noisy.getchannel("A"))
+    assert (alpha[:, :20] == 0).all()
+    assert (alpha[:, 20:] == 255).all()
+
+
 @pytest.mark.parametrize("mode", ["L", "1", "P", "I;16", "CMYK"])
 def test_image_noise_converter_handles_non_rgb_modes(seeded: None, mode: str) -> None:
     image = Image.new(mode, (30, 20))
@@ -139,7 +160,7 @@ def test_image_noise_converter_jpeg_output_from_transparent_input(seeded: None) 
         assert noisy.mode == "RGB"
 
 
-async def test_image_noise_converter_same_seed_gives_identical_output() -> None:
+async def test_image_noise_converter_same_seed_gives_identical_output_async() -> None:
     image_bytes = _png_bytes(Image.new("RGB", (32, 32), color=(128, 128, 128)))
     numpy_state = np.random.get_state()
 
@@ -164,7 +185,7 @@ async def test_image_noise_converter_same_seed_gives_identical_output() -> None:
     assert current_numpy_state[2:] == numpy_state[2:]
 
 
-async def test_image_noise_converter_url_input() -> None:
+async def test_image_noise_converter_url_input_async() -> None:
     converter = ImageNoiseConverter(output_format="WEBP")
     image_bytes = _png_bytes(Image.new("RGB", (16, 16), color=(10, 200, 30)))
 
@@ -181,6 +202,6 @@ async def test_image_noise_converter_url_input() -> None:
     assert mock_serializer.file_extension == "webp"
 
 
-async def test_image_noise_converter_rejects_unsupported_input() -> None:
+async def test_image_noise_converter_rejects_unsupported_input_async() -> None:
     with pytest.raises(ValueError, match="not supported"):
         await ImageNoiseConverter().convert_async(prompt="hello", input_type="text")
