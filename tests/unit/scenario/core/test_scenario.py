@@ -61,12 +61,9 @@ from pyrit.scenario import (
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, DatasetConstraintError, Scenario, ScenarioTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
-from pyrit.scenario.scenarios.garak.exploitation import Exploitation
-from pyrit.scenario.scenarios.garak.figstep import FigStep
-from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection
+from pyrit.scenario.scenarios.airt import Psychosocial
+from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
+from pyrit.scenario.scenarios.garak import Exploitation, FigStep, SystemPromptExtraction, WebInjection
 from pyrit.score import (
     Scorer,
     SubStringScorer,
