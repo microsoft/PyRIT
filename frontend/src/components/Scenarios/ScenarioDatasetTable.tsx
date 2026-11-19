@@ -256,7 +256,7 @@ export default function ScenarioDatasetTable({
           <Text id={`${loadingId}-label`} className={styles.loadingLabel}>Dataset loading</Text>
           <div className={styles.loadingControl}>
             <RadioGroup aria-labelledby={`${loadingId}-label`} aria-describedby={`${loadingId}-hint`}
-              value={mixedPolicies ? '' : policies[0]} layout="horizontal"
+              value={mixedPolicies ? '' : (policies[0] ?? '')} layout="horizontal"
               className={styles.policyTrack}
               disabled={busy || !canSetLoading} onChange={(_, data) => {
                 if (data.value === 'never' || data.value === 'if_missing' || data.value === 'always') changeLoading(data.value)

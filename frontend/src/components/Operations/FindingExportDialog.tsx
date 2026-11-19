@@ -261,7 +261,7 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
       else setOpen(false)
     }}>
       <DialogTrigger disableButtonEnhancement>
-        <Button ref={triggerRef} className={styles.button} icon={<ArrowDownloadRegular />}>Export findings</Button>
+        <Button ref={triggerRef as never} className={styles.button} icon={<ArrowDownloadRegular />}>Export findings</Button>
       </DialogTrigger>
       <DialogSurface>
         <DialogBody>

@@ -124,17 +124,17 @@ interface ScorerPickerData {
 
 interface ScenarioDetailProps extends ScorerPickerData {
   /** A saved run to start from, or undefined for a fresh form. */
-  initialRun?: RunScenarioRequest
+  initialRun?: RunScenarioRequest | undefined
   /** The scan the saved run came from, for the back link. */
-  sourceRunId?: string
+  sourceRunId?: string | undefined
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
   /** The saved Operation that new runs join, or null for none. */
-  operationId?: string | null
+  operationId?: string | null | undefined
   /** False while the current generation's server defaults are still loading. */
-  defaultsReady?: boolean
+  defaultsReady?: boolean | undefined
   onNavigate: (view: ViewName) => void
 }
 
@@ -327,11 +327,11 @@ function ScenarioDetailContent({
 }
 
 interface ScenarioLaunchFormProps extends ScorerPickerData {
-  initialRun?: RunScenarioRequest
-  sourceRunId?: string
+  initialRun?: RunScenarioRequest | undefined
+  sourceRunId?: string | undefined
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
-  preset?: ScenarioPresetResponse | null
+  preset?: ScenarioPresetResponse | null | undefined
   initialConversationId: string
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
@@ -339,7 +339,7 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
   labels: Record<string, string>
   operationId: string | null
   /** False while the current generation's server defaults are still loading. */
-  defaultsReady?: boolean
+  defaultsReady?: boolean | undefined
   onNavigate: (view: ViewName) => void
 }
 
@@ -1057,7 +1057,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
-                ref={launchButtonRef}
+                ref={launchButtonRef as never}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"

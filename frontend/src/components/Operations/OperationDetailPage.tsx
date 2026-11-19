@@ -40,7 +40,7 @@ interface PathsTarget {
 
 interface OperationDetailPageProps {
   /** Called after the Operation is renamed or deleted, so views holding it can refresh. */
-  onOperationChanged?: () => void
+  onOperationChanged?: (() => void) | undefined
 }
 
 export default function OperationDetailPage({ onOperationChanged }: OperationDetailPageProps) {
@@ -241,7 +241,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
               void navigate('/operations')
             }} />
           <FindingExportDialog key={current.operation.id} operation={current.operation} />
-          <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
+          <Button ref={newFindingRef as never} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
             returnFocusRef.current = event.currentTarget
             setDialog({ editing: null, parent: null })
           }}>New finding</Button>

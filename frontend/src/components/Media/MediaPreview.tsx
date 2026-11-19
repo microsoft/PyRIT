@@ -9,21 +9,21 @@ import { useMediaPreviewStyles } from './MediaPreview.styles'
 export interface MediaPreviewProps {
   readonly type: 'image' | 'audio' | 'video'
   readonly src: string
-  readonly alt?: string
-  readonly className?: string
-  readonly hiddenClassName?: string
-  readonly containerClassName?: string
-  readonly spinnerClassName?: string
+  readonly alt?: string | undefined
+  readonly className?: string | undefined
+  readonly hiddenClassName?: string | undefined
+  readonly containerClassName?: string | undefined
+  readonly spinnerClassName?: string | undefined
   /** Mount the media element only after the user asks. Chat leaves this off. */
-  readonly lazy?: boolean
+  readonly lazy?: boolean | undefined
   /** Offer retry and download after a failed load. Chat leaves this off. */
-  readonly recovery?: boolean
+  readonly recovery?: boolean | undefined
   /**
    * Dataset details refetch a signed display URL before trying again.
    * Return that URL so this preview can use it in the same update.
    * Chat leaves this unset, so a retry only remounts the current src.
    */
-  readonly onRetry?: () => Promise<string | void> | string | void
+  readonly onRetry?: (() => Promise<string | void> | string | void) | undefined
 }
 
 function isAbortError(err: unknown): boolean {

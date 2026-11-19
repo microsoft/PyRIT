@@ -75,7 +75,7 @@ export default function AtomicAttackGroupsSection({
             aria-controls="atomic-groups-panel"
             aria-label={`${sectionExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
             data-testid="toggle-atomic-groups-btn"
-            ref={toggleRef}
+            ref={toggleRef as never}
             onClick={() => setSectionExpandedChoice(!sectionExpanded)}
           >
           </Button>

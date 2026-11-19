@@ -55,8 +55,8 @@ const SEARCH_HELP = 'Search looks through stored text prompts and objectives. Si
 interface SeedExampleBrowserProps {
   dataset: DatasetInfo
   onCatalogStale: () => void
-  activeAttackId?: string | null
-  activeConversationId?: string | null
+  activeAttackId?: string | null | undefined
+  activeConversationId?: string | null | undefined
 }
 
 function toOptions(values: readonly string[]): FilterOption[] {
@@ -335,7 +335,9 @@ export function SeedExampleBrowserView({
         content: {
           text: outcome.type === 'single_prompt' ? outcome.text : (outcome.composerDraft?.text ?? ''),
           attachments: outcome.type === 'single_prompt' ? outcome.attachments : (outcome.composerDraft?.attachments ?? []),
-          textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata,
+          ...((outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata) !== undefined
+            ? { textMetadata: outcome.type === 'single_prompt' ? outcome.textMetadata : outcome.composerDraft?.textMetadata }
+            : {}),
         },
         ...(outcome.type === 'conversation'
           ? {
@@ -470,7 +472,7 @@ export function SeedExampleBrowserView({
             </MessageBarBody>
           </MessageBar>
           <Button
-            ref={listRetryRef}
+            ref={listRetryRef as never}
             className={styles.touchTarget}
             appearance="primary"
             icon={<ArrowSyncRegular />}
@@ -493,7 +495,7 @@ export function SeedExampleBrowserView({
         <div>
           <p className={styles.message}>Choose one page link, or start again from the first page.</p>
           <Button
-            ref={cursorButtonRef}
+            ref={cursorButtonRef as never}
             className={styles.touchTarget}
             appearance="primary"
             onClick={restartFromFirstPage}
@@ -602,7 +604,7 @@ export function SeedExampleBrowserView({
       {query.exampleId && detailState.error && (
         <div>
           <MessageBar intent="error"><MessageBarBody>{detailState.error.detail}</MessageBarBody></MessageBar>
-          <Button ref={detailRetryRef} className={styles.touchTarget} appearance="primary" onClick={detailState.retry}>
+          <Button ref={detailRetryRef as never} className={styles.touchTarget} appearance="primary" onClick={detailState.retry}>
             Retry example
           </Button>
         </div>

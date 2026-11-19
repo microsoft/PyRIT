@@ -13,7 +13,7 @@ import { attackConversationRoutePath } from '@/utils/routeParams'
 export interface ScenarioRunDetailsContext {
   readonly scenarioResultId: string
   /** The run's Operation, offered first when attaching an attack to a finding. */
-  readonly operationId?: string | null
+  readonly operationId?: string | null | undefined
   readonly plan: ScenarioRunPlan | null
   readonly summary: ScenarioProgressSummary
   readonly activeConversations: readonly ScenarioActiveConversation[]
@@ -27,11 +27,11 @@ interface ScenarioAttackDetailsProps {
   readonly context: ScenarioRunDetailsContext
   readonly attempt: ScenarioRunAttempt | null
   /** The planned group to describe while the attack has no attempt yet. */
-  readonly atomicGroupId?: string | null
+  readonly atomicGroupId?: string | null | undefined
   /** The hierarchy node the details were opened from, which may carry the objective. */
-  readonly hierarchySelection?: ScenarioHierarchyNode | null
-  readonly preparing?: boolean
-  readonly framed?: boolean
+  readonly hierarchySelection?: ScenarioHierarchyNode | null | undefined
+  readonly preparing?: boolean | undefined
+  readonly framed?: boolean | undefined
 }
 
 /** One scan attack's details, resolved from the run's plan, progress, and saved hierarchy. */

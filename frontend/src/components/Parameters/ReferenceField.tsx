@@ -11,10 +11,10 @@ interface ReferenceFieldProps {
   label: string
   options: RegistryReferenceOption[]
   value: string | string[]
-  multiple?: boolean
-  disabled?: boolean
-  hint?: string
-  readonly help?: string
+  multiple?: boolean | undefined
+  disabled?: boolean | undefined
+  hint?: string | undefined
+  readonly help?: string | undefined
   onChange: (value: string | string[]) => void
 }
 

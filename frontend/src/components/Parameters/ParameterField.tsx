@@ -24,21 +24,21 @@ export interface ParameterFieldProps {
   disabled: boolean
   onChange: (name: string, value: ParameterFormValue) => void
   /** Optional presentation label when the parameter name should remain unchanged for submission. */
-  label?: string
+  label?: string | undefined
   /** Present the declared default as guidance while keeping the field unset. */
-  showDefaultHint?: boolean
+  showDefaultHint?: boolean | undefined
   /** Let a list field distinguish an explicit empty list from an omitted value. */
-  allowEmptyList?: boolean
+  allowEmptyList?: boolean | undefined
   /** Show required validation for a structured input whose variant is unset. */
-  showRequiredError?: boolean
+  showRequiredError?: boolean | undefined
   /** Prefix for `data-testid` attributes. Defaults to `'param'` (e.g. `param-<name>`). */
-  testIdPrefix?: string
+  testIdPrefix?: string | undefined
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
-  extraHint?: string
+  extraHint?: string | undefined
   /** Associate a server-side validation error with this field's control. */
-  validationMessage?: string
+  validationMessage?: string | undefined
   /** Ref for a multiline control when the parent needs to restore focus. */
-  controlRef?: Ref<HTMLTextAreaElement>
+  controlRef?: Ref<HTMLTextAreaElement> | undefined
 }
 
 /**
@@ -279,7 +279,7 @@ export default function ParameterField({
         validationState={externalValidationMessage ? 'error' : 'none'}
       >
         <Textarea
-          ref={controlRef}
+          ref={controlRef as never}
           className={styles.control}
           value={stringValue}
           placeholder={placeholder}

@@ -11,22 +11,22 @@ import { useConverterCardStyles } from './ConverterCard.styles'
 
 interface ConverterCardProps {
   name: string
-  converter?: ConverterInstance
-  temporary?: boolean
-  disabled?: boolean
-  context?: string
-  testId?: string
-  dragTestId?: string
+  converter?: ConverterInstance | undefined
+  temporary?: boolean | undefined
+  disabled?: boolean | undefined
+  context?: string | undefined
+  testId?: string | undefined
+  dragTestId?: string | undefined
   onRemove: () => void
-  onSettings?: () => void
-  onReset?: () => void
-  onSave?: () => void
+  onSettings?: (() => void) | undefined
+  onReset?: (() => void) | undefined
+  onSave?: (() => void) | undefined
   onMove: (delta: number) => void
-  onDragStart?: DragEventHandler<HTMLDivElement>
-  onDragEnd?: DragEventHandler<HTMLDivElement>
-  onDragOver?: DragEventHandler<HTMLDivElement>
-  onDrop?: DragEventHandler<HTMLDivElement>
-  children?: ReactNode
+  onDragStart?: DragEventHandler<HTMLDivElement> | undefined
+  onDragEnd?: DragEventHandler<HTMLDivElement> | undefined
+  onDragOver?: DragEventHandler<HTMLDivElement> | undefined
+  onDrop?: DragEventHandler<HTMLDivElement> | undefined
+  children?: ReactNode | undefined
 }
 
 /** Converter stage shared by single-message, bulk conversation, and technique editing. */

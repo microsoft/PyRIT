@@ -370,7 +370,7 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
               {isFeedbackCategory(category) && (
                 <Button
                   {...confirmRestoreFocusTarget}
-                  ref={submitButtonRef}
+                  ref={submitButtonRef as never}
                   appearance="primary"
                   onClick={handleSubmit}
                   disabled={!canSubmit}

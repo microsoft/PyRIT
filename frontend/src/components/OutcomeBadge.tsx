@@ -45,23 +45,23 @@ function outcomeLabel(outcome: AttackDisplayOutcome, labelStyle: OutcomeLabelSty
 }
 
 interface OutcomeBadgeProps {
-  readonly outcome?: AttackDisplayOutcome | null
-  readonly testId?: string
-  readonly className?: string
-  readonly appearance?: BadgeProps['appearance']
-  readonly size?: BadgeProps['size']
-  readonly label?: string
-  readonly labelStyle?: OutcomeLabelStyle
+  readonly outcome?: AttackDisplayOutcome | null | undefined
+  readonly testId?: string | undefined
+  readonly className?: string | undefined
+  readonly appearance?: BadgeProps['appearance'] | undefined
+  readonly size?: BadgeProps['size'] | undefined
+  readonly label?: string | undefined
+  readonly labelStyle?: OutcomeLabelStyle | undefined
   /** Opens the score behind the outcome from the badge. */
-  readonly score?: ScoreSummary | null
+  readonly score?: ScoreSummary | null | undefined
   /** Shown in the score popover when no score was saved; also enables the popover without a score. */
-  readonly scoreFallback?: string
+  readonly scoreFallback?: string | undefined
   /** Score action label, combined with the displayed outcome in the button's accessible name. */
-  readonly scoreButtonLabel?: string
+  readonly scoreButtonLabel?: string | undefined
 }
 
 interface OutcomeIconProps {
-  readonly outcome?: AttackDisplayOutcome | null
+  readonly outcome?: AttackDisplayOutcome | null | undefined
 }
 
 export function OutcomeIcon({ outcome }: OutcomeIconProps) {
@@ -98,9 +98,9 @@ export default function OutcomeBadge({
     <Badge
       appearance={appearance}
       icon={OUTCOME_ICONS[normalizedOutcome]}
-      size={size}
+      {...(size ? { size } : {})}
       className={mergeClasses(styles[normalizedOutcome], styles[appearance], className)}
-      data-testid={testId}
+      {...(testId ? { 'data-testid': testId } : {})}
     >
       {displayLabel}
     </Badge>

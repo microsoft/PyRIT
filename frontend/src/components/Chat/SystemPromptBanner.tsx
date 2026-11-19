@@ -43,7 +43,7 @@ export default function SystemPromptBanner({ content }: SystemPromptBannerProps)
         <Caption1 className={styles.label}>System Prompt</Caption1>
       )}
       <Text
-        ref={contentRef}
+        ref={contentRef as never}
         className={mergeClasses(styles.content, expanded ? styles.contentExpanded : styles.contentCollapsed)}
         data-testid="system-prompt-banner-content"
       >

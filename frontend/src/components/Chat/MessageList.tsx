@@ -38,31 +38,31 @@ import { formatStructuredMessage, getRenderMessagePieces } from './messageViewMo
 import ScoreDetails from './ScoreDetails'
 
 interface MessageListProps {
-  onEditConversation?: () => void
+  onEditConversation?: (() => void) | undefined
   /** Stable identity for the conversation; isolates transient download errors across switches. */
-  conversationId?: string | null
+  conversationId?: string | null | undefined
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
-  onCopyToInput?: (messageIndex: number) => void
-  copyToInputDisabledReason?: string
-  onCopyToNewConversation?: (messageIndex: number) => void
-  onCopyToNewAttack?: (messageIndex: number) => void
-  onUseInTechnique?: (messageIndex: number) => void
-  copyConversationDisabled?: boolean
-  copyConversationDisabledReason?: string
-  newConversationDisabledReason?: string
-  getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
-  getBranchConversationDescription?: (messageIndex: number) => string | undefined
+  onCopyToInput?: ((messageIndex: number) => void) | undefined
+  copyToInputDisabledReason?: string | undefined
+  onCopyToNewConversation?: ((messageIndex: number) => void) | undefined
+  onCopyToNewAttack?: ((messageIndex: number) => void) | undefined
+  onUseInTechnique?: ((messageIndex: number) => void) | undefined
+  copyConversationDisabled?: boolean | undefined
+  copyConversationDisabledReason?: string | undefined
+  newConversationDisabledReason?: string | undefined
+  getBranchConversationDisabledReason?: ((messageIndex: number) => string | undefined) | undefined
+  getBranchConversationDescription?: ((messageIndex: number) => string | undefined) | undefined
   /** True while loading a historical attack's messages */
-  isLoading?: boolean
+  isLoading?: boolean | undefined
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
-  savedEvidence?: boolean
+  savedEvidence?: boolean | undefined
   /** Announce new live/manual messages, not an initial page of historical evidence. */
-  announceUpdates?: boolean
+  announceUpdates?: boolean | undefined
   /** Only show temperature evidence when the viewed target supports runtime temperature. */
-  showGenerationInfo?: boolean
+  showGenerationInfo?: boolean | undefined
   /** Conversation-wide default: render message text as Markdown. */
-  globalMarkdown?: boolean
+  globalMarkdown?: boolean | undefined
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
@@ -368,7 +368,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                     withArrow
                   >
                     <Tab
-                      ref={score.id === selectedScore.id ? selectedTabRef : undefined}
+                      {...(score.id === selectedScore.id ? { ref: selectedTabRef as never } : {})}
                       value={score.id}
                       id={`message-score-tab-${groupId}-${scoreIndex}`}
                       aria-label={scoreContext}

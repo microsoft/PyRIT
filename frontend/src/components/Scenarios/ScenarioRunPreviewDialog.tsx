@@ -48,17 +48,17 @@ interface ScenarioRunPreviewDialogProps {
   /** The objective target name, or null when the scenario takes no target. */
   objectiveTarget: string | null
   /** The objective scorer label, or null when the scenario takes no objective scorer. */
-  objectiveScorer?: string | null
+  objectiveScorer?: string | null | undefined
   /** The adversarial target shown, or null when the scenario has no adversarial target. */
   adversarialTarget: string | null
   /** The selected techniques, or null when the scenario takes neither techniques nor a baseline. */
   techniques: { baseline: boolean, names: string[] } | null
-  techniqueOverride?: TechniqueOverride
+  techniqueOverride?: TechniqueOverride | undefined
   datasets: DatasetSelectionPreview | null
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
   /** Preset parameters sent verbatim that have no rendered field, already formatted. */
-  carriedParameters?: { name: string, value: string }[]
+  carriedParameters?: { name: string, value: string }[] | undefined
   estimateState: ScenarioRunEstimateState
 }
 

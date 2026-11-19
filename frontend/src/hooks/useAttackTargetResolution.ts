@@ -21,7 +21,7 @@ interface RegistryResolution {
   attackLoadSequence: number
   generation: string
   status: 'idle' | 'resolved' | 'unavailable' | 'ambiguous' | 'error'
-  target?: TargetInstance
+  target?: TargetInstance | undefined
 }
 
 interface UseAttackTargetResolutionOptions {
@@ -29,9 +29,9 @@ interface UseAttackTargetResolutionOptions {
   attackLoadSequence: number
   attackTarget: TargetInfo | null
   attackTargetSource: 'persisted' | 'created'
-  createdTarget?: TargetInstance | null
-  targetUnbound?: boolean
-  createdTargetGeneration?: string
+  createdTarget?: TargetInstance | null | undefined
+  targetUnbound?: boolean | undefined
+  createdTargetGeneration?: string | undefined
 }
 
 interface UseAttackTargetResolutionResult {

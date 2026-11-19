@@ -11,8 +11,8 @@ const SCORER_METRICS_DOCUMENTATION_URL = 'https://microsoft.github.io/PyRIT/late
 
 interface ScorerEvaluationDetailsProps {
   readonly name: string
-  readonly metrics?: ScorerEvaluationMetrics | null
-  readonly scoreType?: string | null
+  readonly metrics?: ScorerEvaluationMetrics | null | undefined
+  readonly scoreType?: string | null | undefined
 }
 
 /** Official evaluation quality of a run's recorded scorer configuration, independent of today's registry. */

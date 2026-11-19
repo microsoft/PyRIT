@@ -55,22 +55,22 @@ const PANEL_RESIZE_STEP = 16
 interface ValuePreviewProps {
   dataType: string
   emptyText: string
-  label?: string
-  sectionTestId?: string
-  testId?: string
-  value?: string
-  editorLabel?: string
-  allowSelection?: boolean
-  edited?: boolean
-  onChange?: (value: string) => void
+  label?: string | undefined
+  sectionTestId?: string | undefined
+  testId?: string | undefined
+  value?: string | undefined
+  editorLabel?: string | undefined
+  allowSelection?: boolean | undefined
+  edited?: boolean | undefined
+  onChange?: ((value: string) => void) | undefined
 }
 
 interface ConverterPanelProps {
   onClose: () => void
   controller: ChatConverterController
-  selectedMessageCount?: number
-  onApply?: (updates: PieceConversionUpdates) => void
-  resizeBoundaryRef?: RefObject<HTMLDivElement | null>
+  selectedMessageCount?: number | undefined
+  onApply?: ((updates: PieceConversionUpdates) => void) | undefined
+  resizeBoundaryRef?: RefObject<HTMLDivElement | null> | undefined
 }
 
 interface SelectedConverter extends ConverterInstance {
@@ -194,7 +194,7 @@ export default function ConverterPanel({
   const [settings, setSettings] = useState<{
     stageId: string
     pieceType: string
-    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec | undefined }
   } | null>(null)
   const [settingsGeneration, setSettingsGeneration] = useState(generation)
   if (settingsGeneration !== generation) {

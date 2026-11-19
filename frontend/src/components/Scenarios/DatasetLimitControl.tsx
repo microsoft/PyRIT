@@ -10,10 +10,10 @@ interface DatasetLimitControlProps {
   label: string
   value: ScenarioDatasetLimit | null | undefined
   defaultValue: number | 'all'
-  text?: string
-  showLabel?: boolean
-  hint?: string
-  draft?: string
+  text?: string | undefined
+  showLabel?: boolean | undefined
+  hint?: string | undefined
+  draft?: string | undefined
   disabled: boolean
   onChange: (value: ScenarioDatasetLimit) => void
   onDraftChange: (text: string | null) => void
@@ -34,7 +34,7 @@ export default function DatasetLimitControl({
     <PopoverSurface aria-label={`Edit ${label}`}>
       <div className={styles.limitEditor}>
         <Field label={label} validationState={invalid ? 'error' : 'none'}
-          validationMessage={invalid ? 'Enter a positive integer.' : undefined}>
+          validationMessage={invalid ? 'Enter a positive integer.' : null}>
           <Input aria-label={label} inputMode="numeric" disabled={disabled || limit === 'all'}
             value={draft ?? (limit === 'all' ? '' : String(limit))}
             onChange={(_, data) => {

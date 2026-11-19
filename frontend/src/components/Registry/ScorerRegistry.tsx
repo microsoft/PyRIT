@@ -107,7 +107,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
         <Table className={mergeClasses(styles.table, scorerStyles.comparisonTable)} aria-label={title}>
           <TableHeader><TableRow>
             <TableHeaderCell className={scorerStyles.nameColumn} sortable
-              sortDirection={sort.column === 'name' ? sort.direction : undefined}
+              {...(sort.column === 'name' ? { sortDirection: sort.direction } : {})}
               button={{ className: scorerStyles.sortButton, onClick: () => toggleSort('name') }}>Name</TableHeaderCell>
             <TableHeaderCell className={scorerStyles.typeColumn}>Type</TableHeaderCell>
             <TableHeaderCell aria-label="Scorable" className={scorerStyles.scorableColumn}>
@@ -115,7 +115,8 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
             </TableHeaderCell>
             {metrics.map((name: string) => (
               <TableHeaderCell key={name}
-                sortable sortDirection={sort.column === name ? sort.direction : undefined}
+                sortable
+                {...(sort.column === name ? { sortDirection: sort.direction } : {})}
                 button={{ className: scorerStyles.sortButton, onClick: () => toggleSort(name) }}
                 className={family === 'float_scale' ? scorerStyles.scaleMetricColumn : scorerStyles.binaryMetricColumn}>
                 <Tooltip content={scorerMetricDescription(name)} relationship="description">
@@ -127,7 +128,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               </TableHeaderCell>
             ))}
             <TableHeaderCell className={scorerStyles.timeColumn} sortable
-              sortDirection={sort.column === 'average_score_time_seconds' ? sort.direction : undefined}
+              {...(sort.column === 'average_score_time_seconds' ? { sortDirection: sort.direction } : {})}
               button={{ className: scorerStyles.sortButton, onClick: () => toggleSort('average_score_time_seconds') }}>
               <span className={scorerStyles.numeric}>Avg time</span>
             </TableHeaderCell>

@@ -288,13 +288,13 @@ interface DetailState {
   pageStart: number
   nextCursor: string | null
   status: 'loading' | 'ready' | 'error'
-  error?: string
+  error?: string | undefined
 }
 
 function TransitionDetails({ label, transition, count, scenarioResultId, baselineId, attackId }: TransitionRowProps) {
   const styles = usePairedOutcomesStyles()
   const [state, setState] = useState<DetailState>({ pairs: [], pageStart: 0, nextCursor: null, status: 'loading' })
-  const [request, setRequest] = useState<{ cursor?: string; version: number }>({ version: 0 })
+  const [request, setRequest] = useState<{ cursor?: string | undefined; version: number }>({ version: 0 })
   const detailsRegion = useRef<HTMLElement>(null)
   const firstNewPair = useRef<HTMLElement>(null)
 
@@ -341,7 +341,7 @@ function TransitionDetails({ label, transition, count, scenarioResultId, baselin
   const fetchPage = (cursor?: string) => {
     if (document.activeElement instanceof HTMLButtonElement) detailsRegion.current?.focus({ preventScroll: true })
     setState((previous) => ({ ...previous, status: 'loading', error: undefined }))
-    setRequest((previous) => ({ cursor, version: previous.version + 1 }))
+    setRequest((previous) => ({ ...(cursor !== undefined ? { cursor } : {}), version: previous.version + 1 }))
   }
 
   return (

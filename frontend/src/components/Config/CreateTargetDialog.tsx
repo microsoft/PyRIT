@@ -763,7 +763,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 label="Target Type"
                 hint="Each option shows what the target does, its implementation class, and how it authenticates."
                 required
-                validationMessage={fieldErrors.targetType}
+                validationMessage={fieldErrors.targetType || null}
                 validationState={fieldErrors.targetType ? 'error' : 'none'}
               >
                 <Dropdown
@@ -997,9 +997,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasEndpointField && (
                     <Field
                       label="Endpoint URL"
-                      hint={endpointParameter?.description || undefined}
+                      hint={endpointParameter?.description || null}
                       required={endpointRequired}
-                      validationMessage={fieldErrors.endpoint}
+                      validationMessage={fieldErrors.endpoint || null}
                       validationState={fieldErrors.endpoint ? 'error' : 'none'}
                     >
                       <Input
@@ -1017,9 +1017,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : (modelNameParameter?.description || null)}
                       required={modelNameRequired}
-                      validationMessage={fieldErrors.modelName}
+                      validationMessage={fieldErrors.modelName || null}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}
                     >
                       <Input
@@ -1058,9 +1058,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasUnderlyingModelField && (underlyingModelRequired || hasDifferentUnderlying) && (
                     <Field
                       label="Underlying Model"
-                      hint={underlyingModelParameter?.description || undefined}
+                      hint={underlyingModelParameter?.description || null}
                       required={underlyingModelRequired}
-                      validationMessage={fieldErrors.underlyingModel}
+                      validationMessage={fieldErrors.underlyingModel || null}
                       validationState={fieldErrors.underlyingModel ? 'error' : 'none'}
                     >
                       <Input
@@ -1148,9 +1148,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
                       label="API Key"
-                      hint={apiKeyParameter?.description || undefined}
+                      hint={apiKeyParameter?.description || null}
                       required={apiKeyRequired}
-                      validationMessage={fieldErrors.apiKey}
+                      validationMessage={fieldErrors.apiKey || null}
                       validationState={fieldErrors.apiKey ? 'error' : 'none'}
                     >
                       <Input

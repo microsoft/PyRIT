@@ -41,7 +41,7 @@ export interface CopyFirstPromptSend {
   historySignature: string
   cutoffIndex: number
   originalValue: string
-  textMetadata?: Record<string, unknown>
+  textMetadata?: Record<string, unknown> | undefined
   attachments: MessageAttachment[]
   converters: ChatConverterSnapshot
 }
@@ -60,9 +60,9 @@ export interface UseConversationCopyOptions {
   activeTarget: TargetInstance | null
   targetResolutionStatus: AttackTargetResolutionStatus | undefined
   objective: string
-  labels?: Record<string, string>
-  defaultChatScorer?: RegisteredComponentReference | null
-  newAttackContext?: NewAttackContext
+  labels?: Record<string, string> | undefined
+  defaultChatScorer?: RegisteredComponentReference | null | undefined
+  newAttackContext?: NewAttackContext | undefined
   runtimeGeneration: string
   runtimeReady: boolean
   defaultsReady: boolean
@@ -71,10 +71,10 @@ export interface UseConversationCopyOptions {
   isMutationLocked: boolean
   /** True while a send or another conversation edit is in flight. */
   isBusy: boolean
-  recoverableSend?: CopyRecoverableSend
-  firstPromptSend?: CopyFirstPromptSend
+  recoverableSend?: CopyRecoverableSend | undefined
+  firstPromptSend?: CopyFirstPromptSend | undefined
   converters: ChatConverterController
-  promptRestoreDisabledReason: (snapshot?: ChatConverterSnapshot) => string | undefined
+  promptRestoreDisabledReason: (snapshot?: ChatConverterSnapshot | undefined) => string | undefined
   /** Live reads used to detect that the user moved on while the copy was loading. */
   getViewedConversationId: () => string | null
   getViewedAttackId: () => string | null
@@ -97,9 +97,9 @@ export interface UseConversationCopyOptions {
   onConversationCreated: (
     attackResultId: string, conversationId: string, objective?: string, target?: TargetInstance | null,
   ) => void
-  onAttackChange?: (attack: AttackSummary) => void
+  onAttackChange?: ((attack: AttackSummary) => void) | undefined
   /** Claims the destination before navigation transfers a restored composer draft. */
-  onRestoreDestination?: (attackId: string, conversationId: string) => void
+  onRestoreDestination?: ((attackId: string, conversationId: string) => void) | undefined
 }
 
 export interface ConversationCopy {

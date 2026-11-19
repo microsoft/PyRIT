@@ -66,15 +66,15 @@ function referenceValue(value: ParameterFormValue | undefined): string | string[
 }
 
 interface TechniqueEditorProps {
-  onClose?: () => void
-  onCreated?: () => void
+  onClose?: (() => void) | undefined
+  onCreated?: (() => void) | undefined
   /** Both configurations remain source-pinned. The initial value can include applied run-local edits. */
-  original?: TechniqueConfiguration
-  initial?: TechniqueConfiguration
-  onApplied?: (result: TechniqueEditResponse) => void
-  autoApply?: boolean
-  onPending?: () => void
-  disabled?: boolean
+  original?: TechniqueConfiguration | undefined
+  initial?: TechniqueConfiguration | undefined
+  onApplied?: ((result: TechniqueEditResponse) => void) | undefined
+  autoApply?: boolean | undefined
+  onPending?: (() => void) | undefined
+  disabled?: boolean | undefined
 }
 
 /** Shared creation and run-local editor. Edit mode never registers a technique. */
@@ -291,7 +291,7 @@ export default function TechniqueEditor({
                 && event.currentTarget.contains(event.target)) event.preventDefault()
             }}>
               {loading && <Spinner label="Loading technique types..." />}
-              {displayedError && <MessageBar intent="error" role="alert" ref={errorRef} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
+              {displayedError && <MessageBar intent="error" role="alert" ref={errorRef as never} tabIndex={-1}><MessageBarBody>{displayedError}</MessageBarBody></MessageBar>}
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>

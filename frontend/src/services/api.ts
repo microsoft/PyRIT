@@ -1,4 +1,4 @@
-import axios, { type InternalAxiosRequestConfig } from 'axios'
+import axios, { type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
 import { decodeBlobErrorAsync, toApiError } from './errors'
@@ -118,6 +118,20 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
+function withConfig(opts: {
+  signal?: AbortSignal | undefined
+  params?: unknown
+  responseType?: 'blob' | 'json' | 'text' | 'arraybuffer' | 'stream' | undefined
+  paramsSerializer?: AxiosRequestConfig['paramsSerializer'] | undefined
+}): AxiosRequestConfig {
+  const config: AxiosRequestConfig = {}
+  if (opts.signal !== undefined) config.signal = opts.signal
+  if (opts.params !== undefined) config.params = opts.params
+  if (opts.responseType !== undefined) config.responseType = opts.responseType
+  if (opts.paramsSerializer !== undefined) config.paramsSerializer = opts.paramsSerializer
+  return config
+}
+
 export const mediaApi = {
   upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
     return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
@@ -187,7 +201,7 @@ export const operationsApi = {
     operationId: string, request: FindingExportRequest, signal?: AbortSignal,
   ): Promise<Blob> => {
     return (await apiClient.post<Blob>(
-      `${operationPath(operationId)}/findings/export`, request, { responseType: 'blob', signal },
+      `${operationPath(operationId)}/findings/export`, request, withConfig({ responseType: 'blob', signal }),
     )).data
   },
 }
@@ -309,7 +323,7 @@ export const analyticsApi = {
   getAssertPolicyMetrics: async (scenarioResultId: string, signal?: AbortSignal): Promise<AssertPolicyMetrics> => {
     const response = await apiClient.get<AssertPolicyMetrics>(
       '/analytics/assert',
-      { params: { scenario_result_id: scenarioResultId }, signal },
+      withConfig({ params: { scenario_result_id: scenarioResultId }, signal }),
     )
     return response.data
   },
@@ -317,21 +331,21 @@ export const analyticsApi = {
     query: AttackAnalyticsQuery,
     signal?: AbortSignal,
   ): Promise<AttackAnalyticsReport> => {
-    const response = await apiClient.post<AttackAnalyticsReport>('/analytics/attacks/query', query, { signal })
+    const response = await apiClient.post<AttackAnalyticsReport>('/analytics/attacks/query', query, withConfig({ signal }))
     return response.data
   },
   results: async (
     query: AttackAnalyticsResultsQuery,
     signal?: AbortSignal,
   ): Promise<AttackAnalyticsResults> => {
-    const response = await apiClient.post<AttackAnalyticsResults>('/analytics/attacks/results', query, { signal })
+    const response = await apiClient.post<AttackAnalyticsResults>('/analytics/attacks/results', query, withConfig({ signal }))
     return response.data
   },
   facets: async (
     query: AttackAnalyticsFacetQuery,
     signal?: AbortSignal,
   ): Promise<AttackAnalyticsFacets> => {
-    const response = await apiClient.post<AttackAnalyticsFacets>('/analytics/attacks/facets', query, { signal })
+    const response = await apiClient.post<AttackAnalyticsFacets>('/analytics/attacks/facets', query, withConfig({ signal }))
     return response.data
   },
 }
@@ -591,7 +605,7 @@ export const attacksApi = {
   ): Promise<MessageSendStatus> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/message-sends/${encodeURIComponent(sendId)}`,
-      { params: { wait_ms: 1000 }, signal },
+      withConfig({ params: { wait_ms: 1000 }, signal }),
     )
     return response.data
   },
@@ -746,7 +760,7 @@ export const scenariosApi = {
     const response = await apiClient.post(
       `/scenarios/catalog/${encodeURIComponent(scenarioName)}/estimate`,
       request,
-      { signal },
+      withConfig({ signal }),
     )
     return response.data
   },
@@ -758,14 +772,14 @@ export const scenariosApi = {
 
   /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
-    limit?: number
-    cursor?: string
-    scenario_names?: string[]
-    run_statuses?: ScenarioRunState[]
-    label?: string[]
-    operation_id?: string[]
-    reference_id?: string
-    sort_by?: 'created_at' | 'activity'
+    limit?: number | undefined
+    cursor?: string | undefined
+    scenario_names?: string[] | undefined
+    run_statuses?: ScenarioRunState[] | undefined
+    label?: string[] | undefined
+    operation_id?: string[] | undefined
+    reference_id?: string | undefined
+    sort_by?: ('created_at' | 'activity') | undefined
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -783,13 +797,13 @@ export const scenariosApi = {
   ): Promise<ScenarioRunProgress> => {
     const response = await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
-      { params, signal },
+      withConfig({ params, signal }),
     )
     return response.data
   },
 
   getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
-    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, withConfig({ signal }))).data,
 
   getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
     (await apiClient.get(
@@ -804,7 +818,7 @@ export const scenariosApi = {
   ): Promise<ScenarioHierarchyProjection> => {
     const response = await apiClient.get<ScenarioHierarchyProjection>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
-      { params, signal },
+      withConfig({ params, signal }),
     )
     return response.data
   },
@@ -818,7 +832,7 @@ export const scenariosApi = {
   ): Promise<ScenarioHierarchyNode> => {
     const response = await apiClient.get<ScenarioHierarchyNode>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
-      { params, signal },
+      withConfig({ params, signal }),
     )
     return response.data
   },
@@ -830,7 +844,7 @@ export const scenariosApi = {
   ): Promise<PairedOutcomeStatistics> => {
     const response = await apiClient.get<PairedOutcomeStatistics>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
-      { params, signal },
+      withConfig({ params, signal }),
     )
     return response.data
   },
@@ -848,13 +862,13 @@ export const scenariosApi = {
   ): Promise<PairedOutcomeDetailPage> => {
     const response = await apiClient.get<PairedOutcomeDetailPage>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
-      { params, signal },
+      withConfig({ params, signal }),
     )
     return response.data
   },
 
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
-    const response = await apiClient.get('/scenarios/runs/queue', { signal })
+    const response = await apiClient.get('/scenarios/runs/queue', withConfig({ signal }))
     return response.data
   },
 
@@ -862,7 +876,7 @@ export const scenariosApi = {
     const response = await apiClient.post(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/cancel`,
       undefined,
-      { signal },
+      withConfig({ signal }),
     )
     return response.data
   },
@@ -880,7 +894,7 @@ export const scenarioPresetsApi = {
     includeEstimates = false,
   ): Promise<ScenarioPresetListResponse> => {
     const params = { include_estimates: includeEstimates }
-    const response = await apiClient.get('/scenario-presets', { params, signal })
+    const response = await apiClient.get('/scenario-presets', withConfig({ params, signal }))
     return response.data
   },
 
@@ -922,7 +936,7 @@ export const scenarioPresetsApi = {
 
 export const scenarioSuitesApi = {
   list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
-    const response = await apiClient.get('/scenario-suites', { signal })
+    const response = await apiClient.get('/scenario-suites', withConfig({ signal }))
     return response.data
   },
 
@@ -978,7 +992,7 @@ export const scenarioSuitesApi = {
   ): Promise<ScenarioSuiteExecutionSummary> => {
     const response = await apiClient.get(
       `/scenario-suites/executions/${encodeURIComponent(executionId)}`,
-      { signal },
+      withConfig({ signal }),
     )
     return response.data
   },
@@ -990,7 +1004,7 @@ export const scenarioSuitesApi = {
     const response = await apiClient.post(
       `/scenario-suites/executions/${encodeURIComponent(executionId)}/cancel`,
       undefined,
-      { signal },
+      withConfig({ signal }),
     )
     return response.data
   },
@@ -1024,10 +1038,10 @@ export const datasetsApi = {
     { loaded_only }: { readonly loaded_only: boolean },
     signal?: AbortSignal,
   ): Promise<DatasetListResponse> => {
-    const response = await apiClient.get('/datasets', {
+    const response = await apiClient.get('/datasets', withConfig({
       params: { loaded_only },
       signal,
-    })
+    }))
     return response.data
   },
 
@@ -1042,11 +1056,11 @@ export const datasetsApi = {
     if (!params.selection_key) {
       throw new Error('A dataset selection key is required to list seed examples.')
     }
-    const response = await apiClient.get('/datasets/seeds', {
+    const response = await apiClient.get('/datasets/seeds', withConfig({
       params: seedListQuery(params),
       paramsSerializer: { indexes: null },
       signal,
-    })
+    }))
     return response.data
   },
 
@@ -1062,10 +1076,10 @@ export const datasetsApi = {
     if (!selectionKey) {
       throw new Error('A dataset selection key is required to read a seed example.')
     }
-    const response = await apiClient.get(`/datasets/seeds/${encodeURIComponent(exampleId)}`, {
+    const response = await apiClient.get(`/datasets/seeds/${encodeURIComponent(exampleId)}`, withConfig({
       params: { selection_key: selectionKey },
       signal,
-    })
+    }))
     return response.data
   },
 }
