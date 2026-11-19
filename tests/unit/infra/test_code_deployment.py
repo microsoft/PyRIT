@@ -201,6 +201,7 @@ class TestPypiBuild(unittest.TestCase):
         for state in ("legacy", "missing-stamp", "malformed-stamp", "stamped"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
+                (root / "litellm.py").write_text("", encoding="utf-8")
                 package = root / "pyrit"
                 package.mkdir()
                 (package / "__init__.py").write_text("from ._version import __version__\n", encoding="utf-8")
