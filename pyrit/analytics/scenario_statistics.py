@@ -668,12 +668,15 @@ def compute_scenario_statistics(
             grouped.setdefault(attempt.unit, []).append(attempt)
         atomic_attack_attempts[name] = sum(len(select_execution_attempts(group)) for group in grouped.values())
 
+    run_scorer_identifier = scenario_result.objective_scorer_identifier
     judges = _compute_judge_statistics(
         units=counted_units,
         unit_names=unit_names,
         attempts_by_unit=attempts_by_unit,
         planned_groups_by_id=planned_groups_by_id,
-        run_scorer_identifier=scenario_result.objective_scorer_identifier,
+        run_scorer_identifier=(
+            run_scorer_identifier if isinstance(run_scorer_identifier, ComponentIdentifier) else None
+        ),
         is_planned=planned is not None,
     )
 
