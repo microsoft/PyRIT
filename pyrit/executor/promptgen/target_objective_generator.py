@@ -134,15 +134,11 @@ class TargetObjectiveGenerator(
             PromptGenerationEstimate: One call and an approximate token range.
 
         Raises:
-            ValueError: If count isn't a positive integer.
+            ValueError: If the request is invalid, as execution would reject it.
         """
-        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-            raise ValueError("count must be a positive integer.")
-        characters = (
-            len(_load_default_prompt_text(cls.DEFAULT_SYSTEM_PROMPT_PATH))
-            + len(instructions)
-            + sum(len(category) for category in harm_categories)
-            + 100
+        _validate_request(instructions=instructions, count=count, harm_categories=harm_categories)
+        characters = len(_load_default_prompt_text(cls.DEFAULT_SYSTEM_PROMPT_PATH)) + len(
+            _request_text(instructions=instructions, count=count, harm_categories=harm_categories)
         )
         tokens = PromptGenerationEstimate.tokens_from_characters(characters) + count * cls.OUTPUT_TOKENS_PER_OBJECTIVE
         stage = PromptGenerationStageEstimate(
@@ -176,12 +172,9 @@ class TargetObjectiveGenerator(
             return await super().execute_with_context_async(context=context)
 
     def _validate_context(self, *, context: TargetObjectiveGeneratorContext) -> None:
-        if not isinstance(context.instructions, str) or not context.instructions.strip():
-            raise ValueError("instructions must be a non-empty string.")
-        if isinstance(context.count, bool) or not isinstance(context.count, int) or context.count < 1:
-            raise ValueError("count must be a positive integer.")
-        if any(not category.strip() for category in context.harm_categories):
-            raise ValueError("harm_categories must contain non-empty strings.")
+        _validate_request(
+            instructions=context.instructions, count=context.count, harm_categories=context.harm_categories
+        )
 
     async def _setup_async(self, *, context: TargetObjectiveGeneratorContext) -> None:
         prompt = self._system_prompt.value
@@ -193,12 +186,8 @@ class TargetObjectiveGenerator(
         context._conversation_initialized = True
 
     async def _perform_async(self, *, context: TargetObjectiveGeneratorContext) -> TargetObjectiveGeneratorResult:
-        prompt = json.dumps(
-            {
-                "instructions": context.instructions,
-                "count": context.count,
-                "harm_categories": context.harm_categories,
-            }
+        prompt = _request_text(
+            instructions=context.instructions, count=context.count, harm_categories=context.harm_categories
         )
         message = Message.from_prompt(prompt=prompt, role="user")
         message.message_pieces[0].prompt_metadata = self._json_response_config.to_metadata()
@@ -276,6 +265,25 @@ class TargetObjectiveGenerator(
         ):
             raise ValueError("response_json_schema must require an objectives array with string items.")
         return Draft202012Validator(schema)
+
+
+def _validate_request(*, instructions: object, count: object, harm_categories: Sequence[object]) -> None:
+    if not isinstance(instructions, str) or not instructions.strip():
+        raise ValueError("instructions must be a non-empty string.")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError("count must be a positive integer.")
+    if any(not isinstance(category, str) or not category.strip() for category in harm_categories):
+        raise ValueError("harm_categories must contain non-empty strings.")
+
+
+def _request_text(*, instructions: str, count: int, harm_categories: Sequence[str]) -> str:
+    """
+    Serialize the generation request that is sent to the target.
+
+    Returns:
+        str: The JSON request text.
+    """
+    return json.dumps({"instructions": instructions, "count": count, "harm_categories": list(harm_categories)})
 
 
 @functools.cache

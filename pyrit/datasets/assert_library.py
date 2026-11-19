@@ -6,14 +6,14 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Any, TypeVar
+from pathlib import Path
+from typing import TypeVar
 
-from pyrit.common.path import ASSERT_BEHAVIORS_PATH, ASSERT_SUITES_PATH
-from pyrit.common.yaml_helper import safe_load_yaml
+from pyrit.common.path import DATASETS_PATH
 from pyrit.models import AssertBehaviorPreset, AssertSuitePreset
 
-if TYPE_CHECKING:
-    from pathlib import Path
+ASSERT_BEHAVIOR_PRESETS_PATH = Path(DATASETS_PATH, "assert_behaviors").resolve()
+ASSERT_SUITE_PRESETS_PATH = Path(DATASETS_PATH, "assert_suites").resolve()
 
 PresetT = TypeVar("PresetT", AssertBehaviorPreset, AssertSuitePreset)
 
@@ -28,7 +28,7 @@ def list_assert_behavior_presets() -> dict[str, AssertBehaviorPreset]:
     return dict(_load_behaviors())
 
 
-def get_assert_behavior_preset(name: str) -> AssertBehaviorPreset:
+def load_assert_behavior_preset(name: str) -> AssertBehaviorPreset:
     """
     Load one bundled ASSERT behavior preset.
 
@@ -54,7 +54,7 @@ def list_assert_suite_presets() -> dict[str, AssertSuitePreset]:
     return dict(_load_suites())
 
 
-def get_assert_suite_preset(name: str) -> AssertSuitePreset:
+def load_assert_suite_preset(name: str) -> AssertSuitePreset:
     """
     Load one bundled ASSERT suite preset.
 
@@ -72,39 +72,28 @@ def get_assert_suite_preset(name: str) -> AssertSuitePreset:
 
 @functools.cache
 def _load_behaviors() -> dict[str, AssertBehaviorPreset]:
-    presets = [
-        AssertBehaviorPreset.model_validate(_read_preset(path=path, kind="behavior"))
-        for path in sorted(ASSERT_BEHAVIORS_PATH.glob("*.yaml"))
-    ]
-    return _index(presets)
+    return _load_presets(preset_type=AssertBehaviorPreset, directory=ASSERT_BEHAVIOR_PRESETS_PATH)
 
 
 @functools.cache
 def _load_suites() -> dict[str, AssertSuitePreset]:
     behaviors = _load_behaviors()
-    suites = [
-        AssertSuitePreset.model_validate(_read_preset(path=path, kind="scenario"))
-        for path in sorted(ASSERT_SUITES_PATH.glob("*.yaml"))
-    ]
-    for suite in suites:
+    suites = _load_presets(preset_type=AssertSuitePreset, directory=ASSERT_SUITE_PRESETS_PATH)
+    for suite in suites.values():
         missing = sorted(set(suite.behaviors) - set(behaviors))
         if missing:
             raise ValueError(f"ASSERT suite {suite.name!r} refers to unknown behaviors: {missing}.")
-    return _index(suites)
+    return suites
 
 
-def _read_preset(*, path: Path, kind: str) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as file:
-        data = safe_load_yaml(file)
-    if not isinstance(data, dict) or data.pop("kind", None) != kind:
-        raise ValueError(f"{path} is not an ASSERT {kind} preset.")
-    if data.get("name") != path.stem:
-        raise ValueError(f"{path} must declare name {path.stem!r}.")
-    return data
-
-
-def _index(presets: list[PresetT]) -> dict[str, PresetT]:
-    return {preset.name: preset for preset in presets}
+def _load_presets(*, preset_type: type[PresetT], directory: Path) -> dict[str, PresetT]:
+    presets: dict[str, PresetT] = {}
+    for path in sorted(directory.glob("*.yaml")):
+        preset = preset_type.from_yaml_file(path)
+        if preset.name != path.stem:
+            raise ValueError(f"{path} must declare name {path.stem!r}.")
+        presets[preset.name] = preset
+    return presets
 
 
 def _lookup(*, presets: dict[str, PresetT], name: str, kind: str) -> PresetT:
