@@ -569,6 +569,8 @@ class TestClassMetadata:
                 "token_insert_mode",
                 "token_to_repeat",
                 "tokenizer",
+                "top_right_key",
+                "bottom_left_key",
             }
         )
 

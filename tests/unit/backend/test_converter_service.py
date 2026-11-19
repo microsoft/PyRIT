@@ -2153,6 +2153,7 @@ def _try_instantiate_converter(converter_name: str):
         "PromptTemplateConverter": {"template": "Test {{ prompt }}"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
         "VigenereConverter": {"key": "testvalue"},
+        "FourSquareConverter": {"top_right_key": "testvalue", "bottom_left_key": "keyword"},
         "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
     }
 
