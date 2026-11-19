@@ -15,7 +15,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioOverloadSummary,
     ScenarioProducerCounts,
     ScenarioTargetSummary,
-)  # noqa: TC001
+)
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -64,6 +64,24 @@ class ScenarioRunPlanSeedPrompt(BaseModel):
     parameters: list[str] = Field(default_factory=list)
 
 
+class ScenarioRunPlanScorerBinding(BaseModel):
+    """
+    The objective scorer a pool selected for one atomic group.
+
+    Recorded only for runs that use a scorer pool. It is part of the group's id, so a
+    resumed run that would select a different scorer cannot match its saved groups.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Position of the selected candidate in the pool.
+    candidate_index: int = Field(ge=0)
+    #: The selected candidate's evaluation key, if it has one.
+    evaluation: str | None = None
+    #: Content hash of the selected scorer's identifier.
+    scorer_hash: str
+
+
 class ScenarioRunPlanAtomicGroup(BaseModel):
     """A planned atomic-attack group and its ordered units of work."""
 
@@ -80,6 +98,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
     #: Unknown for legacy plans; saved attempts and result roles cannot establish topology.
     is_compound: bool | None = None
+    #: The selected objective scorer for pool runs; absent for single-scorer runs.
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None
 
 
 class ScenarioRunPlan(BaseModel):

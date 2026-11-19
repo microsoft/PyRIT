@@ -167,12 +167,26 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
             entries = self.get_all_instances()
-            names = {entry.name.casefold(): entry.name for entry in entries}
-            tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
+            # Names are global, so a technique can't take a name, or a tag spelled like one, that another caller's
+            # private technique uses. A tag groups techniques, so the exact same tag can be used by every caller.
+            every_entry = self.get_all_instances_of_every_owner()
+            names = {entry.name.casefold(): entry.name for entry in every_entry}
+            tags = {tag.casefold(): tag for entry in every_entry for tag in entry.instance.technique_tags}
+            visible_names = {entry.name.casefold() for entry in entries}
+            visible_tags = {tag.casefold() for entry in entries for tag in entry.instance.technique_tags}
+            hidden_names = names.keys() - visible_names
+            hidden_tags = {folded: tag for folded, tag in tags.items() if folded not in visible_tags}
+            # A clash with a technique the caller can't see says only that the selector is taken.
             folded_name = factory.name.casefold()
+            if folded_name in hidden_names or folded_name in hidden_tags:
+                raise TechniqueSelectorConflictError(f"The technique name or tag '{factory.name}' is taken.")
+            for tag in factory.technique_tags:
+                folded = tag.casefold()
+                if folded in hidden_names or hidden_tags.get(folded, tag) != tag:
+                    raise TechniqueSelectorConflictError(f"The technique name or tag '{tag}' is taken.")
             if folded_name in names:
                 # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
-                _record_saved_entry_refusal(self.get_entry(names[folded_name]))
+                _record_saved_entry_refusal(self._registry_items.get(names[folded_name]))
                 raise TechniqueSelectorConflictError(
                     f"Technique '{factory.name}' already exists (names are case-insensitive)"
                 )
@@ -516,9 +530,14 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return converters
 
     @property
-    def catalog_revision(self) -> tuple[object, int]:
-        """Cache key for scenario selections, metadata, and estimates derived from registered factories."""
-        return self.instances, self.instances.revision
+    def catalog_revision(self) -> tuple[object, int, str | None]:
+        """
+        Cache key for scenario selections, metadata, and estimates derived from registered factories.
+
+        It includes whose private techniques the caller in scope sees, so a result derived from one
+        caller's private techniques is never reused for another.
+        """
+        return self.instances, self.instances.revision, self.instances.visibility_key
 
     def _discover(self) -> None:
         """Register no classes: attack class discovery belongs to ``AttackRegistry``."""
@@ -631,7 +650,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         """
 
         @lru_cache(maxsize=1)
-        def cached(revision: tuple[object, int]) -> type[ScenarioTechnique]:
+        def cached(revision: tuple[object, int, str | None]) -> type[ScenarioTechnique]:
             technique_class = builder()
             technique_class._selection_catalog = (builder, revision[0])
             return technique_class

@@ -75,6 +75,8 @@ The command validates the database target, applies migrations, and checks the re
 
 Add `--check-only` to validate the target and check the schema without applying migrations. The command returns a nonzero exit code if the check fails. Internal deployments use this check to avoid stopping the app when the schema is already current.
 
+Add `--check-upgradable` instead to check that migrating can change the database. It fails when the database is stamped with a revision that this release's migrations do not contain, which means a newer release already migrated it, or when the database is already at this release's head, so upgrading cannot fix a schema mismatch. Internal deployments run this check before stopping the app to migrate.
+
 For non-production Azure SQL initialization, callers can instead explicitly pass `skip_schema_migration=False` to `AzureSQLMemory` or `initialize_pyrit_async`. The production connection guard and `PYRIT_REQUIRE_CURRENT_SCHEMA=true` still prevent initialization from migrating, even with this opt-in.
 
 When initialization runs a migration, the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
