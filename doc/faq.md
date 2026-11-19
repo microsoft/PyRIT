@@ -30,6 +30,14 @@ Python 3.11, 3.12, 3.13, and 3.14. See [User Local Installation](./getting_start
 
 No. PyRIT works with any OpenAI-compatible API, including models that run on your own machine. Some optional features use Azure services, such as Azure SQL as a memory backend or Azure AI Content Safety for scoring.
 
+### Do I need to set up a database?
+
+No. `await initialize_pyrit_async(memory_db_type=IN_MEMORY)` gives you an in-memory database that needs no setup and is discarded when the process ends. The `sqlite` backend keeps results in a local file. Azure SQL is optional and is mainly useful when several people share results. See [Memory](./code/memory/0_memory.md).
+
+### Where does my `.env` file go?
+
+In `~/.pyrit/.env`. PyRIT finds it there automatically. Values in `~/.pyrit/.env.local` override it, which is useful for local changes. To load files from other locations, list them under `env_files` in `~/.pyrit/.pyrit_conf`. See [Populating Secrets](./getting_started/populating_secrets.md) and [Configuration File](./getting_started/pyrit_conf.md).
+
 ## Models and Providers
 
 ### Can I use PyRIT with an OpenAI API key?
@@ -50,19 +58,31 @@ Yes. A target is anything you can send a prompt to. Start with [`HTTPTarget`](./
 
 If your application returns its answer through a second request, for example by polling with a conversation ID, make both calls inside that method and return the final text. PyRIT stores and scores whatever the target returns.
 
+### Can I test agents and copilots?
+
+Yes. `A2ATarget` talks to agents that expose the A2A protocol. See [Prompt Targets](./code/targets/0_prompt_targets.md). For Microsoft Copilots there are the [Playwright Copilot target](./code/targets/10_2_playwright_target_copilot.ipynb) and the [WebSocket Copilot target](./code/targets/10_3_websocket_copilot_target.ipynb). For any other agent, use `HTTPTarget`, the Playwright target, or a custom target, as described in the previous answer.
+
+### Can I test image, audio, or video?
+
+Yes. Targets, converters, and scorers can all be multimodal. [Prompt Targets](./code/targets/0_prompt_targets.md) lists the multimodal targets, and the [Realtime target](./code/targets/realtime_target.ipynb) holds audio conversations. Converters can turn a text prompt into another modality. See the [audio](./code/converters/2_audio_converters.ipynb), [image](./code/converters/3_image_converters.ipynb), and [video](./code/converters/4_video_converters.ipynb) converter guides.
+
 ### Do the adversarial model and the scorer have to be the same model as the target?
 
 No. There are up to three roles: the objective target is the system you are testing, the adversarial target generates attack prompts, and the scoring target judges responses. Each can be a different model. With `pyrit_scan` you pick them with `--target`, `--adversarial-target`, and `--scoring-target`. See [Scanner](./scanner/0_scanner.md).
 
 The adversarial target works best without content moderation, so that it does not refuse to write attack prompts. See [Multi-Turn Attacks](./code/executor/2_multi_turn.ipynb), and [Choosing Adversarial Models](./blog/2026_09_03_adversarial_model_selection.md) for how to compare candidates.
 
-### How do I stay within my provider's rate limit?
+### How do I deal with rate limits?
 
-Set `max_requests_per_minute` on the target. See [Rate Limiting](./code/targets/9_rate_limiting.ipynb).
+Set `max_requests_per_minute` on the target to stay under the limit. See [Rate Limiting](./code/targets/9_rate_limiting.ipynb). When a provider still returns a rate limit error, the target retries automatically. You can tune the number of attempts and the wait time with the `RETRY_MAX_NUM_ATTEMPTS`, `RETRY_WAIT_MIN_SECONDS`, and `RETRY_WAIT_MAX_SECONDS` environment variables. See [Resiliency and Retry](./code/setup/2_resiliency.ipynb).
+
+### Can I control how much a reasoning model thinks?
+
+Yes, with `OpenAIResponseTarget`. Set `reasoning_effort`, and set `reasoning_summary` if you want a summary of the model's reasoning in the response. See [OpenAI Responses Target](./code/targets/2_openai_responses_target.ipynb).
 
 ### Can I authenticate to Azure without an API key?
 
-Yes. For Azure resources you can use Entra authentication through the Azure CLI. Run `az login`, and you do not need to set API keys for those resources. See [Configuration File](./getting_started/pyrit_conf.md).
+Yes. For Azure resources you can use Entra authentication through the Azure CLI. Run `az login`, then pass `api_key=get_azure_openai_auth(endpoint)` when you create the target. `get_azure_openai_auth` is in `pyrit.auth`. You do not need an API key for those resources. See [OpenAI Chat Target](./code/targets/1_openai_chat_target.ipynb) for an example and [Configuration File](./getting_started/pyrit_conf.md) for the configuration side.
 
 ## Running Attacks and Reading Results
 
@@ -77,6 +97,10 @@ It depends on how you ran the attack:
 - **Scanner.** `pyrit_scan scenario-history` lists recent runs. `pyrit_scan scenario-results <id>` shows one, and `--format json` or `--format html` with `--output` writes it to a file. See [PyRIT Scan](./scanner/1_pyrit_scan.ipynb).
 - **Framework.** The [output module](./code/output/0_output.ipynb) prints attack results, conversations, and scores, and can write them to a file. You can also [query memory directly](./code/memory/4_manually_working_with_memory.md).
 - **GUI.** The History tab in Attacks or Scanner shows saved results with their conversations and scores. See [GUI](./gui/0_gui.md).
+
+### How do I run attacks in parallel?
+
+With `pyrit_scan`, pass `--max-concurrency`. Scenarios take a `max_concurrency` setting, which defaults to 4. In the framework, `AttackExecutor(max_concurrency=...)` runs several attacks at once. Higher concurrency reaches your provider's rate limit sooner, so set it together with `max_requests_per_minute`. See [PyRIT Scan](./scanner/1_pyrit_scan.ipynb), [Scenarios](./code/scenarios/0_scenarios.ipynb), and [Rate Limiting](./code/targets/9_rate_limiting.ipynb).
 
 ### Why did an attack from the docs not work when I ran it?
 
@@ -97,6 +121,23 @@ Not blindly. Most scorers use a model to judge another model's output, and they 
 ### Can I score without calling a model?
 
 Yes. Scorers such as `SubStringScorer` and `RegexScorer` check the response text directly and need no model. They are fast and deterministic, and they fit objectives with a clear textual success condition, such as a secret appearing in the output. See [True/False Scorers](./code/scoring/1_true_false_scorers.ipynb).
+
+## Troubleshooting
+
+### Something is not working. How do I narrow it down?
+
+Work from the bottom up:
+
+1. **Check your version and how you installed it.** Many problems come from mixing a release from PyPI with docs or examples for `main`, or the other way around. Print `pyrit.__version__` and read the docs for that version.
+2. **Check initialization.** Call `await initialize_pyrit_async(...)` before you create targets, scorers, or attacks.
+3. **Test the target on its own.** Send one simple prompt straight to the target with a `PromptSendingAttack`, with no converters and no scorer. If that fails, the problem is the connection. An authentication error from the provider usually means that the endpoint, key, or model name is not what the provider expects.
+4. **Add one piece at a time.** Add the scorer, then converters, then the multi-turn attack, and see which step breaks.
+
+If it still fails, [open an issue](https://github.com/microsoft/PyRIT/issues) with your version, a minimal example, and the full error. For installation problems, see [Troubleshooting](./getting_started/troubleshooting/README.md).
+
+### I get "Central memory instance has not been set". What is wrong?
+
+PyRIT was not initialized. Call `await initialize_pyrit_async(...)` once, before you create targets, scorers, or attacks. Older examples call `initialize_pyrit`, which no longer exists. See [Memory](./code/memory/0_memory.md) and [Configure PyRIT](./getting_started/configuration.md).
 
 ## Versions and Upgrading
 
