@@ -186,7 +186,7 @@ def test_upgrade_drops_the_finding_check_constraints() -> None:
         engine.dispose()
 
 
-def test_downgrade_restores_the_old_columns_only_without_findings() -> None:
+def test_downgrade_restores_the_old_columns_and_checks() -> None:
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
@@ -198,13 +198,73 @@ def test_downgrade_restores_the_old_columns_only_without_findings() -> None:
             assert sorted(_columns(sa.inspect(connection), "FindingEntries")) == columns
             with pytest.raises(IntegrityError, match="CHECK"):
                 _insert_finding(connection=connection, id=A, severity="urgent", description="")
+    finally:
+        engine.dispose()
 
+
+def test_downgrade_maps_default_field_values_back_to_the_old_columns() -> None:
+    old_rows = {
+        A: ("important", None, None, None, ""),
+        B: ("other", "Sev 2.5", "Other", "Model theft", "Steps to reproduce"),
+        C: ("low", None, "Malware", None, 'Quote " and \\ backslash'),
+    }
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, PREVIOUS_REVISION)
+            _insert_operation(connection)
+            for finding_id, (severity, severity_other, harm_type, harm_type_other, description) in old_rows.items():
+                _insert_finding(
+                    connection=connection,
+                    id=finding_id,
+                    severity=severity,
+                    severity_other=severity_other,
+                    harm_type=harm_type,
+                    harm_type_other=harm_type_other,
+                    description=description,
+                )
+            command.upgrade(config, REVISION)
+            # Saved after the upgrade: Other text that names an old option, and a harm type 1.2 does not list.
+            _insert_finding(connection=connection, id=D, severity="other", field_values='{"harm_type": "Prompt leak"}')
+
+            command.downgrade(config, PREVIOUS_REVISION)
+
+            rows = {
+                row[0]: tuple(row[1:])
+                for row in connection.execute(
+                    sa.text(
+                        "SELECT id, severity, severity_other, harm_type, harm_type_other, description "
+                        "FROM FindingEntries"
+                    )
+                )
+            }
+            assert rows == {**old_rows, D: ("other", "other", "Other", "Prompt leak", "")}
+            command.upgrade(config, REVISION)
+            assert connection.scalar(sa.text("SELECT severity FROM FindingEntries WHERE id = :id"), {"id": B}) == (
+                "Sev 2.5"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_refuses_without_changes_when_findings_use_other_keys() -> None:
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
             command.upgrade(config, REVISION)
             _insert_operation(connection)
-            _insert_finding(connection=connection, id=A, severity="low", field_values="{}")
-            with pytest.raises(ValueError, match="findings"):
+            _insert_finding(connection=connection, id=A, severity="sev1", field_values='{"steps": "1. Open"}')
+            _insert_finding(connection=connection, id=B, severity="low", field_values='{"owner": "Contoso"}')
+            _insert_finding(connection=connection, id=C, severity="low", field_values='{"description": "Notes"}')
+            before = connection.execute(sa.text("SELECT * FROM FindingEntries ORDER BY id")).all()
+
+            with pytest.raises(ValueError, match=r"2 findings .* owner, steps"):
                 command.downgrade(config, PREVIOUS_REVISION)
-            assert connection.scalar(sa.text("SELECT id FROM FindingEntries")) == A
+
+            assert connection.execute(sa.text("SELECT * FROM FindingEntries ORDER BY id")).all() == before
+            assert connection.scalar(sa.text("SELECT version_num FROM pyrit_memory_alembic_version")) == REVISION
     finally:
         engine.dispose()
 

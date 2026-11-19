@@ -8,7 +8,8 @@ Drops the three classification CHECK constraints on ``FindingEntries``, makes ``
 (binary-collated on SQL Server), replaces an Other severity with its custom text without surrounding whitespace, and
 moves the harm type (its custom text when it is Other) and any description that isn't empty or only spaces into the
 new ``field_values`` column. Finding IDs, Operation links, creation times, and evidence links do not change.
-Downgrading restores the old columns only while no findings exist.
+Downgrading moves the default fields' values back into the old columns, and refuses while any finding has a value
+that PyRIT 1.2 has no column for.
 
 Revision ID: d43b1bcf9c56
 Revises: 7aa74745cc9b
@@ -47,6 +48,31 @@ _CHECKS = {
         "OR ((harm_type IS NULL OR harm_type <> 'Other') AND harm_type_other IS NULL)"
     ),
 }
+_OLD_SEVERITIES = frozenset({"critical", "important", "moderate", "low", "informational"})
+_OLD_FIELD_KEYS = frozenset({"harm_type", "description"})
+# The harm categories PyRIT 1.2 reads, frozen so a category added later downgrades as Other text.
+_OLD_HARM_CATEGORIES = frozenset(
+    {
+        "Hate Speech", "Harassment", "Sexualization", "Grooming", "Child Leakage", "Dangerous Situations",
+        "Graphic Violence and Gore", "Pornography & Sexual Content", "Profanity", "Quality of Service (QoS)",
+        "Allocation of Resources & Opportunities",
+        "Representational Harms (Stereotyping, Demeaning & Erasing Outputs)", "Suicide", "Self-Harm",
+        "Eating Disorders", "Drug Use", "Violent Threats, Incitement & Glorification",
+        "Terrorism & Violent Extremism", "Coordination of Harm", "Sale of Regulated Goods", "Sexual Solicitation",
+        "Scams", "Spam", "Impersonation", "Fake Accounts", "Inaccurate, Incomplete, False & Misleading Information",
+        "Misinformation for current events", "Biased or revisionist retelling of controversial historical events",
+        "Inaccurate, Incomplete, False & Misleading Info in Election Context", "Deceptive Inducement",
+        "Covert Targeted Persuasion", "Reputational Damage", "Copyright & Piracy", "Trademark", "Upload IP Images",
+        "Plagiarism & Academic Dishonesty", "Proprietary, Confidential & Classified Information",
+        "Private Personal Information", "Images of Public Figures", "Upload Images of People without Consent",
+        "Insecure Code", "Malware", "Weapons Development & Military",
+        "Chemical, Biological, Radiological, & Nuclear", "High-Risk Government Decision-Making",
+        "Management or Operation of Critical Infrastructure in Energy, Transportation & Water", "Financial Advice",
+        "Multi-Level Marketing", "Gambling", "Lending", "Financial Service Eligibility", "Health Diagnosis",
+        "Pseudo-Pharmaceuticals", "Public & Personal Health", "Political Campaigning & Lobbying", "Legal Advice",
+        "Romantic", "Self-Validation", "Mental Health", "Emotional", "Legally-Protected Attributes", "Emotion",
+    }
+)  # fmt: skip
 
 
 def upgrade() -> None:
@@ -104,20 +130,61 @@ def _field_values_sql() -> str:
 
 def downgrade() -> None:
     """
-    Restore the classification columns and checks only when no findings exist.
+    Move each finding's default field values back into the classification columns, and restore the checks.
+
+    A severity that is not a PyRIT 1.2 option key becomes Other with its text, as does a harm type that is not a
+    PyRIT 1.2 category.
 
     Raises:
-        ValueError: If the downgrade is offline or findings would be lost.
+        ValueError: If the downgrade is offline, or a finding has a value that PyRIT 1.2 has no column for.
     """
     if op.get_context().as_sql:
         raise ValueError("Finding downgrade requires online data validation.")
-    if op.get_bind().execute(sa.text("SELECT COUNT(*) FROM FindingEntries")).scalar():
-        raise ValueError("Remove retained findings explicitly before downgrading.")
+    bind = op.get_bind()
+    findings = sa.table(
+        "FindingEntries",
+        sa.column("id", CustomUUID()),
+        sa.column("severity", sa.Unicode()),
+        sa.column("field_values", sa.JSON()),
+        *(sa.column(column, sa.Unicode()) for column in _OLD_COLUMNS),
+    )
+    rows = bind.execute(sa.select(findings.c.id, findings.c.severity, findings.c.field_values)).all()
+    blocked = [keys for keys in (set(field_values) - _OLD_FIELD_KEYS for _, _, field_values in rows) if keys]
+    if blocked:
+        noun = "finding uses" if len(blocked) == 1 else "findings use"
+        raise ValueError(
+            f"{len(blocked)} {noun} keys PyRIT 1.2 has no column for: {', '.join(sorted(set().union(*blocked)))}. "
+            "Remove those values before downgrading."
+        )
     with op.batch_alter_table("FindingEntries") as batch_op:
-        batch_op.add_column(sa.Column("description", sa.Unicode(), nullable=False))
-        for column in _OLD_COLUMNS[1:]:
+        for column in _OLD_COLUMNS:
             batch_op.add_column(sa.Column(column, sa.Unicode(), nullable=True))
+    for finding_id, severity, field_values in rows:
+        values = _old_values(severity=severity, field_values=field_values)
+        bind.execute(findings.update().where(findings.c.id == finding_id).values(**values))
+    # SQL Server rejects ALTER COLUMN while a CHECK references the column, so the checks come last.
+    with op.batch_alter_table("FindingEntries") as batch_op:
+        batch_op.alter_column("description", existing_type=sa.Unicode(), nullable=False)
         batch_op.alter_column("severity", existing_type=_SEVERITY_TYPE, type_=sa.String(32), existing_nullable=False)
         batch_op.drop_column("field_values")
         for name, condition in _CHECKS.items():
             batch_op.create_check_constraint(name, condition)
+
+
+def _old_values(*, severity: str, field_values: dict[str, str]) -> dict[str, str | None]:
+    """
+    Map a finding's severity and default field values to the PyRIT 1.2 columns.
+
+    Returns:
+        dict[str, str | None]: The severity, its Other text, the harm type, its Other text, and the description.
+    """
+    harm_type = field_values.get("harm_type")
+    is_category = harm_type is None or harm_type in _OLD_HARM_CATEGORIES
+    is_option = severity in _OLD_SEVERITIES
+    return {
+        "severity": severity if is_option else "other",
+        "severity_other": None if is_option else severity,
+        "harm_type": harm_type if is_category else "Other",
+        "harm_type_other": None if is_category else harm_type,
+        "description": field_values.get("description", ""),
+    }

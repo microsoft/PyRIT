@@ -83,7 +83,7 @@ With `allow_custom_initializers: true`, the backend runs every script in that so
 
 ## Upgrading
 
-One database migration moves findings saved before finding fields existed. It stores Other severity text as the `severity` itself, and moves the harm type and description into field values. Finding IDs and evidence don't change. Downgrading that migration refuses while any finding exists.
+One database migration moves findings saved before finding fields existed. It stores Other severity text as the `severity` itself, and moves the harm type and description into field values. Finding IDs and evidence don't change. Downgrading that migration moves those values back: a severity or harm type that PyRIT 1.2 doesn't list becomes Other with its text. It refuses, without changing anything, while any finding has a value under another key, and names those keys so you can remove the values first.
 
 ### Code written for PyRIT 1.2
 
