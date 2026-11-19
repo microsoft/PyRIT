@@ -1496,9 +1496,7 @@ class TestTargetRoutes:
     def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
         self, client: TestClient
     ) -> None:
-        refusal = NotSaveableError(
-            "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
-        )
+        refusal = NotSaveableError("Saved entries can't hold credentials ('api_key').")
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
             mock_get_service.return_value.create_target_async = AsyncMock(side_effect=refusal)
 
@@ -1513,7 +1511,22 @@ class TestTargetRoutes:
             "status": 400,
             "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
             "instance": "/api/targets",
+            "not_saveable_reason": "Saved entries can't hold credentials ('api_key').",
         }
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_target_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "TextTarget", "params": {}}
+        assert client.post("/api/targets", json=body).status_code == status.HTTP_201_CREATED
+
+        response = client.post("/api/targets", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
 
     def test_create_target_leaves_other_bad_requests_unmarked(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -1533,10 +1546,7 @@ class TestTargetRoutes:
         )
 
         assert with_key.status_code == status.HTTP_200_OK
-        assert with_key.json() == {
-            "not_saveable_reason": "Saved entries can't hold credentials ('api_key'). "
-            "It can still be created without saving it."
-        }
+        assert with_key.json() == {"not_saveable_reason": "Saved entries can't hold credentials ('api_key')."}
         assert with_identity.json() == {"not_saveable_reason": None}
 
     @pytest.mark.parametrize(

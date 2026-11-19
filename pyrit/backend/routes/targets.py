@@ -18,7 +18,7 @@ from pyrit.backend.models import (
     TargetListResponse,
     UpdateTargetCredentialsRequest,
 )
-from pyrit.backend.models.common import CursorStr, IdentifierStr, SaveabilityResponse
+from pyrit.backend.models.common import CursorStr, IdentifierStr, NotSaveableProblemDetail, SaveabilityResponse
 from pyrit.backend.models.targets import (
     DetectTargetCapabilitiesRequest,
     TargetSaveabilityRequest,
@@ -30,6 +30,7 @@ from pyrit.backend.services.target_service import CredentialUpdateConflictError
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.registry import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.registry.instance_registry import RegistryNameTakenError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -165,8 +166,11 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
     """
     Say whether a target could be saved as asked, using the checks saving it runs, without building or saving it.
 
+    The target isn't built, so its constructor's own checks don't run: a null reason means the save checks pass,
+    not that creating the target succeeds.
+
     Returns:
-        SaveabilityResponse: Why the target can't be saved, or no reason when it can.
+        SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
     """
     try:
         return await get_target_service().check_saveability_async(
@@ -186,7 +190,7 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
-            "model": ProblemDetail,
+            "model": NotSaveableProblemDetail,
             "description": (
                 f"Invalid target type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a target that can't be "
                 "saved as asked but can be created without saving it"
@@ -199,7 +203,7 @@ async def check_target_saveability(  # pyrit-async-suffix-exempt
         },
         409: {
             "model": ProblemDetail,
-            "description": "A target to save has the name of a registered or saved target",
+            "description": "A registered target has the name, or, for a target to save, a saved target has it",
         },
         503: {"model": ProblemDetail, "description": "Saved targets can't be written right now"},
     },
@@ -236,15 +240,17 @@ async def create_target(
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as e:
-        problem = ProblemDetail(
+        problem = NotSaveableProblemDetail(
             type=NOT_SAVEABLE_PROBLEM_TYPE,
             title="Can't be saved",
             status=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+            not_saveable_reason=e.cause,
             instance=str(request.url.path),
         )
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=problem.model_dump(exclude_none=True))
-    except SavedEntryConflictError as e:
+    except (SavedEntryConflictError, RegistryNameTakenError) as e:
+        # RegistryNameTakenError is a ValueError, and a taken name is a 409 whether or not the target is saved.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SavedEntryStorageError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e

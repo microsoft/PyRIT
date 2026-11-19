@@ -167,6 +167,18 @@ class ProblemDetail(BaseModel):
     errors: list[FieldError] | None = Field(None, description="Field-level errors for validation")
 
 
+class NotSaveableProblemDetail(ProblemDetail):
+    """A problem response that can also say why an entry can't be saved as asked."""
+
+    not_saveable_reason: str | None = Field(
+        None,
+        description=(
+            "With type /errors/not-saveable, why the entry can't be saved, as a saveability answer gives it; the "
+            "detail also says that the entry can still be created without saving it"
+        ),
+    )
+
+
 class SaveabilityResponse(BaseModel):
     """Whether an entry could be saved as asked, decided by the checks saving it runs."""
 

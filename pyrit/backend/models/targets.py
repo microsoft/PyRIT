@@ -87,7 +87,27 @@ class TargetListResponse(BaseModel):
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
-class CreateTargetRequest(RegistrationRequest):
+class TargetParametersRequest(BaseModel):
+    """The target type, constructor parameters, and auth mode that a target is built from."""
+
+    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
+    )
+    auth_mode: AuthMode = Field(
+        "api_key",
+        description=(
+            "Authentication mode. 'api_key' uses the api_key in params (default). "
+            "'identity' omits the key so the target authenticates itself via an ambient "
+            "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
+            "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
+            "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
+            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
+        ),
+    )
+
+
+class CreateTargetRequest(TargetParametersRequest, RegistrationRequest):
     """Request to create a new target instance."""
 
     # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
@@ -107,21 +127,6 @@ class CreateTargetRequest(RegistrationRequest):
         ),
     )
     source: SourceInstanceSpec | None = None
-    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
-    params: dict[IdentifierStr, JSONValue] = Field(
-        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
-    )
-    auth_mode: AuthMode = Field(
-        "api_key",
-        description=(
-            "Authentication mode. 'api_key' uses the api_key in params (default). "
-            "'identity' omits the key so the target authenticates itself via an ambient "
-            "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
-            "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
-            "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
-            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
-        ),
-    )
     private: bool | None = Field(
         None,
         description=(
@@ -172,14 +177,8 @@ class CreateTargetRequest(RegistrationRequest):
         return self
 
 
-class TargetSaveabilityRequest(BaseModel):
+class TargetSaveabilityRequest(TargetParametersRequest):
     """A target to check, as a create request would give it, without building or saving it."""
-
-    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
-    params: dict[IdentifierStr, JSONValue] = Field(
-        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
-    )
-    auth_mode: AuthMode = Field("api_key", description="Authentication mode, as in a create request")
 
 
 class UnregisteredTarget(BaseModel):

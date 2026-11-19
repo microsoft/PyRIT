@@ -34,6 +34,7 @@ from pyrit.backend.models import (
 )
 from pyrit.backend.models.common import SaveabilityResponse
 from pyrit.backend.models.targets import (
+    TargetParametersRequest,
     TargetSaveabilityRequest,
     TargetTypeEntry,
     TargetTypeResponse,
@@ -69,8 +70,8 @@ from pyrit.registry import (
     allows_credential_updates,
     creator_metadata,
     credential_update_metadata,
+    get_class_saveability,
     is_private_entry,
-    launch_script_class_reason,
     prepare_saved_params_async,
     record_private_references,
     save_then_register_async,
@@ -81,7 +82,6 @@ from pyrit.registry.instance_registry import (
     RegistryNameTakenError,
     registry_entry_origin,
 )
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 logger = logging.getLogger(__name__)
 
@@ -452,13 +452,8 @@ class TargetService:
         Returns:
             tuple[list[AuthMode], str | None]: The saveable auth modes, and the reason when there are none.
         """
-        if self._registry.is_temporary_class(target_type):
-            return [], launch_script_class_reason(target_type)
-        try:
-            auth_modes = check_saveable_class(self._registry.get_class(target_type))
-        except SavedEntryRefusedError as error:
-            return [], str(error)
-        return self._get_supported_auth_modes(auth_modes), None
+        auth_modes, reason = get_class_saveability(registry=self._registry, type_name=target_type)
+        return self._get_supported_auth_modes(auth_modes), reason
 
     async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
         """
@@ -633,7 +628,7 @@ class TargetService:
         if request.private and get_caller_principal() is None:
             raise PermissionError("A private target needs a signed-in caller to own it.")
         target_cls, params = await self._requested_params_async(
-            request=request, upload_directory=upload_directory, is_admin=is_admin
+            request=request, source=request.source, upload_directory=upload_directory, is_admin=is_admin
         )
         if request.persist:
             params = await prepare_saved_params_async(
@@ -726,8 +721,9 @@ class TargetService:
         """
         Say whether a target could be saved as asked, without building or saving it.
 
-        The request is checked as creating it would be, then by the library's save checks, so the answer is the one
-        saving it would give.
+        The request is checked as creating it is before the target is built, then by the library's save checks.
+        The target isn't built, so its constructor's own checks don't run: no reason means the save checks pass,
+        not that creating the target succeeds.
 
         Args:
             request: The target to check.
@@ -737,17 +733,14 @@ class TargetService:
                 authenticates with this server's stored credentials.
 
         Returns:
-            SaveabilityResponse: Why the target can't be saved, or no reason when it can.
+            SaveabilityResponse: Why the target can't be saved, or no reason when the save checks pass.
 
         Raises:
-            ValueError: If creating the target would be refused as invalid.
+            ValueError: If creating the target would be refused as invalid before it's built.
             PermissionError: If creating the target needs administrator access the caller doesn't have.
         """
-        create_request = CreateTargetRequest(
-            type=request.type, params=request.params, auth_mode=request.auth_mode, register=False
-        )
         target_cls, params = await self._requested_params_async(
-            request=create_request, upload_directory=upload_directory, is_admin=is_admin
+            request=request, source=None, upload_directory=upload_directory, is_admin=is_admin
         )
         try:
             await prepare_saved_params_async(
@@ -758,11 +751,16 @@ class TargetService:
                 auth_mode=request.auth_mode,
             )
         except NotSaveableError as error:
-            return SaveabilityResponse(not_saveable_reason=str(error))
+            return SaveabilityResponse(not_saveable_reason=error.cause)
         return SaveabilityResponse()
 
     async def _requested_params_async(
-        self, *, request: CreateTargetRequest, upload_directory: str | None, is_admin: bool
+        self,
+        *,
+        request: TargetParametersRequest,
+        source: SourceInstanceSpec | None,
+        upload_directory: str | None,
+        is_admin: bool,
     ) -> tuple[type[PromptTarget], dict[str, Any]]:
         """
         Check a create request as creating it does before the target is built, and return what to build it with.
@@ -831,13 +829,11 @@ class TargetService:
                 )
 
         permission_params = params
-        if request.source is not None:
-            source = self._registry.resolve_source(
-                name=request.source.source_name, identifier_hash=request.source.source_hash
-            )
+        if source is not None:
+            source_target = self._registry.resolve_source(name=source.source_name, identifier_hash=source.source_hash)
             permission_params = {
-                **self._registry.get_reconstruction_parameters(source),
-                **request.source.params,
+                **self._registry.get_reconstruction_parameters(source_target),
+                **source.params,
             }
         metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
         if metadata is not None:

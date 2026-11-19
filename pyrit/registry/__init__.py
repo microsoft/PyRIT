@@ -53,7 +53,7 @@ if TYPE_CHECKING:
         NotSaveableError,
         SavedEntryConflictError,
         SavedEntryStorageError,
-        launch_script_class_reason,
+        get_class_saveability,
         prepare_saved_params_async,
         save_then_register_async,
     )
@@ -85,7 +85,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "NotSaveableError": "pyrit.registry.registry_recipe_save",
     "SavedEntryConflictError": "pyrit.registry.registry_recipe_save",
     "SavedEntryStorageError": "pyrit.registry.registry_recipe_save",
-    "launch_script_class_reason": "pyrit.registry.registry_recipe_save",
+    "get_class_saveability": "pyrit.registry.registry_recipe_save",
     "prepare_saved_params_async": "pyrit.registry.registry_recipe_save",
     "save_then_register_async": "pyrit.registry.registry_recipe_save",
     "SupportsInstances": "pyrit.registry.instance_registry",
