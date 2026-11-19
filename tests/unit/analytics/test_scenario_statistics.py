@@ -30,7 +30,12 @@ from pyrit.models import (
     ScenarioRunPlanSeedGroup,
     config_hash,
 )
-from unit.mocks import make_judged_scenario_result, make_scenario_result, make_sequential_attack_results
+from unit.mocks import (
+    judged_attack_identifier,
+    make_judged_scenario_result,
+    make_scenario_result,
+    make_sequential_attack_results,
+)
 
 _T0 = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -446,3 +451,36 @@ def test_latest_completion_decides_the_judge_of_a_resumed_unit() -> None:
 
     assert [(judge.scorer_hash, judge.overall.completed) for judge in statistics.judges] == [(_JUDGE_B.hash, 1)]
     assert statistics.judge_scope == ScenarioJudgeScope.SINGLE_JUDGE
+
+
+@pytest.mark.parametrize(
+    ("bound", "attribution", "scorer_hash"),
+    [
+        (_JUDGE_B, ScenarioJudgeAttribution.PLANNED, _JUDGE_B.hash),
+        (None, ScenarioJudgeAttribution.UNKNOWN, None),
+    ],
+)
+def test_unrecorded_latest_completion_ignores_an_earlier_execution_judge(bound, attribution, scorer_hash) -> None:
+    [earlier] = make_judged_scenario_result(
+        groups=[("attack", None, _JUDGE_A, [AttackOutcome.FAILURE])]
+    ).attack_results["attack"]
+    result = make_judged_scenario_result(groups=[("attack", bound, None, [AttackOutcome.SUCCESS])])
+    [latest] = result.attack_results["attack"]
+    latest.timestamp = earlier.timestamp + timedelta(seconds=1)
+    result.attack_results["attack"] = [earlier, latest]
+
+    [judge] = compute_scenario_statistics(result).judges
+
+    assert (judge.attribution, judge.scorer_hash) == (attribution, scorer_hash)
+
+
+def test_envelope_takes_the_judge_its_linked_child_recorded() -> None:
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="attack", envelope_outcome=AttackOutcome.SUCCESS, child_outcomes=[AttackOutcome.SUCCESS]
+    )
+    children[0].atomic_attack_identifier = judged_attack_identifier(_JUDGE_A)
+    result = make_scenario_result(attack_results={"attack": [envelope, *children]})
+
+    [judge] = compute_scenario_statistics(result).judges
+
+    assert (judge.attribution, judge.scorer_hash) == (ScenarioJudgeAttribution.RECORDED, _JUDGE_A.hash)

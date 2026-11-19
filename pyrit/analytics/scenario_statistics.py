@@ -741,8 +741,9 @@ def _attribute_unit(
     Attribute one execution unit to the objective scorer that judged it.
 
     The scorer recorded on the unit's effective result (its latest completion) is preferred, then
-    the latest recorded one. A planned pool binding applies when no result records a scorer, and a
-    single-scorer run's identifier applies only when the plan binds no scorers.
+    one recorded by that completion's linked child results. A planned pool binding applies when
+    neither records a scorer, and a single-scorer run's identifier applies only when the plan binds
+    no scorers. Earlier executions of a resumed unit never decide its judge.
 
     Returns:
         tuple[ScenarioJudgeAttribution, str | None, ComponentIdentifier | None]: The attribution,
@@ -751,9 +752,14 @@ def _attribute_unit(
     completions = [attempt for attempt in attempts if attempt.attempt_index is None]
     effective = completions[-1] if completions else (attempts[-1] if attempts else None)
     recorded = effective.objective_scorer if effective is not None else None
-    if recorded is None:
+    if recorded is None and effective is not None and effective.child_attack_result_ids:
+        child_ids = set(effective.child_attack_result_ids)
         recorded = next(
-            (attempt.objective_scorer for attempt in reversed(attempts) if attempt.objective_scorer is not None),
+            (
+                attempt.objective_scorer
+                for attempt in reversed(attempts)
+                if attempt.attempt_id in child_ids and attempt.objective_scorer is not None
+            ),
             None,
         )
 
