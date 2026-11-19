@@ -2196,7 +2196,10 @@ describe('CreateConverterDialog saving', () => {
     const font = screen.getByRole('textbox', { name: 'font_name' })
     fireEvent.drop(font, { dataTransfer: { types: ['Files'], files: [new File(['font'], 'font.ttf')] } })
     expect(await screen.findByText('font.ttf')).toBeVisible()
-    expect(screen.getByRole('status')).toHaveTextContent("Saved converters can't keep uploaded files yet ('font_name').")
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "Saved converters can't keep uploaded files yet ('font_name'). "
+        + 'A Temporary converter is gone after the backend restarts or is reinitialized.',
+    )
 
     await user.click(screen.getByRole('button', { name: 'Remove file for font_name' }))
     await user.click(screen.getByRole('button', { name: 'Save Converter' }))
