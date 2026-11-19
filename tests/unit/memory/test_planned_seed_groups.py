@@ -61,6 +61,34 @@ async def test_planned_seed_groups_restore_already_prepared_conversation_prompts
     assert stored["a"][0].logical_id == group.logical_id
 
 
+async def test_planned_seed_groups_keep_simulated_conversation_sequence(sqlite_instance: MemoryInterface) -> None:
+    system_prompt = SeedPrompt(value="system")
+    conversation = SeedSimulatedConversation(
+        adversarial_chat_system_prompt=system_prompt,
+        simulated_target_system_prompt=system_prompt.model_copy(),
+        next_message_system_prompt=system_prompt.model_copy(),
+        sequence=2,
+    )
+    group = AttackSeedGroup(
+        seeds=[
+            SeedObjective(value="objective"),
+            SeedPrompt(value="first", role="user", sequence=0),
+            SeedPrompt(value="second", role="assistant", sequence=1),
+            conversation,
+        ]
+    )
+    result = make_scenario_result(objective_target_identifier=get_mock_target_identifier(), attack_results={})
+    await sqlite_instance.add_planned_scenario_result_async(
+        scenario_result=result, seed_groups_by_dataset={"a": [group]}
+    )
+
+    stored = (await sqlite_instance.get_planned_seed_groups_async(scenario_result_id=str(result.id)))["a"][0]
+
+    assert stored.simulated_conversation_config is not None
+    assert stored.simulated_conversation_config.sequence == 2
+    assert stored.logical_id == group.logical_id
+
+
 @pytest.mark.parametrize("bulk", [False, True])
 async def test_deleting_scenario_removes_its_planned_groups_with_sqlite_foreign_keys_off(
     sqlite_instance: MemoryInterface, bulk: bool

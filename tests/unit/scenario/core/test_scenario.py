@@ -61,6 +61,12 @@ from pyrit.scenario import (
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, DatasetConstraintError, Scenario, ScenarioTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
+from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
+from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.garak.figstep import FigStep
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
+from pyrit.scenario.scenarios.garak.web_injection import WebInjection
 from pyrit.score import (
     Scorer,
     SubStringScorer,
@@ -2035,6 +2041,20 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         with pytest.raises(ValueError, match=r"dataset\(s\) 'owned' are no longer in memory") as error:
             await resumed.initialize_async()
         assert isinstance(error.value.__cause__, DatasetConstraintError)
+
+    @pytest.mark.parametrize(
+        "scenario_class",
+        [Psychosocial, AdversarialBenchmark, FigStep, WebInjection, SystemPromptExtraction, Exploitation],
+    )
+    async def test_stateless_resolution_is_not_reread_on_resume(self, scenario_class: type[Scenario]) -> None:
+        # These resolvers only select seeds, so resume must rely on the stored population alone.
+        # The hook depends only on the class, so skip each scenario's target and registry setup.
+        scenario = scenario_class.__new__(scenario_class)
+        with patch.object(
+            scenario, "_resolve_seed_groups_by_dataset_async", AsyncMock(side_effect=DatasetConstraintError("gone"))
+        ) as resolve:
+            await scenario._prepare_resume_state_async()
+        resolve.assert_not_awaited()
 
     async def test_resume_reports_only_absent_datasets_as_deleted(self) -> None:
         scenario = self._StrategyScenario(name="Named sources", version=1, scenario_result_id=str(uuid.uuid4()))

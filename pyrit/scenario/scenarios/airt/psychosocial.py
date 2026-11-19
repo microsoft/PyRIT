@@ -566,6 +566,9 @@ class Psychosocial(Scenario):
                 f"{len(self._effective_sub_harms())}, or select one sub-harm."
             )
 
+    async def _prepare_resume_state_async(self) -> None:
+        """Resume from the stored seed groups; seed resolution sets no state the run needs."""
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:

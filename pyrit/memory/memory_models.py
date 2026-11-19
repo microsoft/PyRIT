@@ -2769,7 +2769,7 @@ class ScenarioPlanSeedGroupEntry(Base):
         Returns:
             AttackSeedGroup: The original planned inputs, without reapplying template preparation.
         """
-        seeds = []
+        seeds: list[Any] = []
         for seed in self.seed_group["seeds"]:
             if seed["seed_type"] == "simulated_conversation":
                 seed = dict(seed)
@@ -2781,5 +2781,7 @@ class ScenarioPlanSeedGroupEntry(Base):
                 ):
                     if (prompt := seed.get(field)) is not None:
                         seed[field] = {**prompt, "is_jinja_template": False}
+                # Group validation strips prompt-only keys such as ``sequence`` from dicts, so pass an instance.
+                seed = SeedSimulatedConversation.model_validate(seed)
             seeds.append(seed)
         return AttackSeedGroup.model_validate({**self.seed_group, "seeds": seeds})
