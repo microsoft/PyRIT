@@ -84,6 +84,18 @@ and authentication as any other client. With Entra authentication, the MCP clien
 Microsoft Graph access token as a bearer token, for example with
 `--header "Authorization: Bearer <token>"`.
 
+PyRIT also includes agent skills, task guides that the agent follows when a request matches.
+`pyrit-technique` finds which attack technique best achieves an objective against a target by
+running and comparing one `technique.execute` scan per technique. Add PyRIT's skills to GitHub
+Copilot CLI:
+
+```bash
+copilot skill add "$(python -c "import pathlib, pyrit.backend; print(pathlib.Path(pyrit.backend.__file__).parent / 'skills')")"
+```
+
+Then ask, for example, "/pyrit-technique Which technique best gets my target to reveal its
+system prompt?"
+
 ## Built-in Scenarios
 
 PyRIT ships with scenarios organized into the following families:
