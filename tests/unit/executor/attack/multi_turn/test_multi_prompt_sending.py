@@ -37,6 +37,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    Operation,
     Score,
     ScoringExpectation,
     SeedObjective,
@@ -843,3 +844,24 @@ class TestFromSeedGroup:
         params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
 
         assert params.targeted_harm_categories == ["violence"]
+
+    @pytest.mark.parametrize("saved_operation", [False, True])
+    async def test_executor_seed_groups_propagate_operation_id_async(self, sqlite_instance, saved_operation):
+        operation = await sqlite_instance.add_operation_async(Operation(name="Run")) if saved_operation else None
+        operation_id = operation.id if operation else None
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="turn one", data_type="text", role="user", sequence=0),
+            ]
+        )
+
+        result = await AttackExecutor().execute_attack_from_seed_groups_async(
+            attack=MultiPromptSendingAttack(objective_target=MockPromptTarget()),
+            seed_groups=[seed_group],
+            operation_id=operation_id,
+            return_partial_on_failure=True,
+        )
+
+        assert result.incomplete_objectives == []
+        assert [attack_result.operation_id for attack_result in result.completed_results] == [operation_id]
