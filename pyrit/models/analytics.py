@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
 from enum import Enum
+from functools import lru_cache
 from math import isclose, isfinite, nextafter
 from typing import Annotated, Any, ClassVar, Self
 
@@ -48,6 +49,12 @@ def compute_wilson_ci(*, successes: int, total: int) -> tuple[float | None, floa
     """
     if not total:
         return None, None
+    return _wilson_ci(successes=successes, total=total)
+
+
+# Reports compute and validate the interval for hundreds of cells that share few distinct counts.
+@lru_cache(maxsize=4096)
+def _wilson_ci(*, successes: int, total: int) -> tuple[float, float]:
     with localcontext(_WILSON_DECIMAL_CONTEXT):
         n = Decimal(total)
         p = Decimal(successes) / n

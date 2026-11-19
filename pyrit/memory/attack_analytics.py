@@ -149,7 +149,8 @@ class AttackAnalyticsReader:
     """
 
     # Frequent Python callbacks serialize concurrent SQLite readers on the GIL.
-    SQLITE_PROGRESS_STEPS: ClassVar[int] = 100_000
+    # About one million VM steps still checks the deadline roughly every 100 ms.
+    SQLITE_PROGRESS_STEPS: ClassVar[int] = 1_000_000
     SQLITE_BUSY_RETRY_DELAY: ClassVar[float] = 0.01
     MAX_COMPACT_PROFILES: ClassVar[int] = 4096
     MAX_COMPACT_VALUE_LENGTH: ClassVar[int] = 4096

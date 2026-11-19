@@ -147,12 +147,15 @@ def percentile95(values: Sequence[float]) -> float:
 class AnalyticsBenchmark:
     """Run independent HTTP callers, native async queries, and concurrent native writes."""
 
+    # Five concurrent full-table reports contend for CPU and memory bandwidth even across
+    # processes. Reports stay below their 5 s execution timeout; quick-lane requests are
+    # bounded by their 1 s execution timeout, which excludes up to 1 s of admission wait.
     LIMITS: ClassVar[dict[str, float]] = {
-        "report_attack": 2.0,
-        "report_converter": 2.0,
-        "facet": 0.5,
-        "page": 0.5,
-        "continuation": 0.5,
+        "report_attack": 4.0,
+        "report_converter": 4.0,
+        "facet": 1.0,
+        "page": 1.0,
+        "continuation": 1.0,
     }
     PAGE_SIZE: ClassVar[int] = 25
     RANDOM_SEED: ClassVar[int] = 20260914
