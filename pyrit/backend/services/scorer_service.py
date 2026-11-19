@@ -26,7 +26,13 @@ from pyrit.models.catalog import (
 )
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
-from pyrit.registry import SavedEntryConflictError, ScorerRegistry, prepare_saved_params_async
+from pyrit.registry import (
+    SavedEntryConflictError,
+    ScorerRegistry,
+    creator_metadata,
+    prepare_saved_params_async,
+    record_private_references,
+)
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.score import Scorer, TrueFalseScorer
 
@@ -225,6 +231,8 @@ class ScorerService:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
             if not request.register_instance:
+                if request.private:
+                    raise ValueError("A private scorer must be registered; set register=true.")
                 scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
                 return UnregisteredScorer(
                     identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier())
@@ -236,6 +244,7 @@ class ScorerService:
                 type_name=request.type,
                 params=request.params,
                 external_input=True,
+                private=request.private,
             )
             return self._build_instance(name=request.name, scorer=scorer, origin=RegistryEntryOrigin.TEMPORARY)
 
@@ -275,15 +284,19 @@ class ScorerService:
             registry=self._registry, type_name=request.type, cls=scorer_cls, params=request.params
         )
 
-        def build() -> tuple[Any, ScorerInstance]:
+        def build() -> tuple[Any, ScorerInstance, dict[str, Any]]:
             try:
                 self._registry.instances.validate_name_available(name)
             except RegistryNameTakenError as error:
                 raise SavedEntryConflictError(str(error)) from error
-            scorer = self._registry.create_instance_from_external_input(request.type, params=params)
-            return scorer, self._build_instance(name=name, scorer=scorer, origin=RegistryEntryOrigin.SAVED)
+            with record_private_references() as private_references:
+                scorer = self._registry.create_instance_from_external_input(request.type, params=params)
+            creator = creator_metadata(
+                name=name, requested_private=request.private, private_references=private_references
+            )
+            return scorer, self._build_instance(name=name, scorer=scorer, origin=RegistryEntryOrigin.SAVED), creator
 
-        scorer, instance = await asyncio.to_thread(build)
+        scorer, instance, creator = await asyncio.to_thread(build)
         await save_then_register_locked_async(
             kind=RegistryRecipeKind.SCORERS,
             name=name,
@@ -291,7 +304,9 @@ class ScorerService:
                 class_module=scorer_cls.__module__, class_name=request.type, params=params, owner=owner
             ),
             source=recipes_source,
-            register=lambda metadata: self._registry.instances.register(scorer, name=name, metadata=metadata),
+            register=lambda metadata: self._registry.instances.register(
+                scorer, name=name, metadata={**creator, **metadata}
+            ),
         )
         return instance
 

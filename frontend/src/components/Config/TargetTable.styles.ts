@@ -44,12 +44,6 @@ export const useTargetTableStyles = makeStyles({
   registryNameCell: {
     minWidth: 0,
   },
-  savedBy: {
-    display: 'block',
-    marginTop: tokens.spacingVerticalXXS,
-    color: tokens.colorNeutralForeground2,
-    overflowWrap: 'anywhere',
-  },
   registryNameText: {
     display: 'block',
     maxWidth: '100%',
@@ -110,6 +104,25 @@ export const useTargetTableStyles = makeStyles({
   capabilityIconUnsupported: {
     color: tokens.colorPaletteRedForeground1,
     fontSize: tokens.fontSizeBase500,
+  },
+  accountColumn: {
+    width: '110px',
+  },
+  accountCell: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
+  credentialsAcceptedIcon: {
+    color: tokens.colorStatusSuccessForeground1,
+    fontSize: tokens.fontSizeBase400,
+  },
+  credentialsRejectedIcon: {
+    color: tokens.colorStatusDangerForeground1,
+  },
+  credentialsHelp: {
+    maxWidth: '20rem',
+    overflowWrap: 'anywhere',
   },
   helpHeader: {
     cursor: 'help',

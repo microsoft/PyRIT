@@ -59,12 +59,13 @@ from pyrit.registry import (
     ConverterRegistry,
     NotSaveableError,
     SavedEntryConflictError,
-    launch_script_class_reason,
+    creator_metadata,
+    get_class_saveability,
     prepare_saved_params_async,
+    record_private_references,
 )
 from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry import Reconstructable
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
 _DEFAULT_UPLOAD_EXTENSION = ".bin"
@@ -134,11 +135,12 @@ class ConverterService:
         """Remove this backend's temporary inputs after requests have stopped."""
         owned_entries = [
             entry
-            for entry in self._registry.instances.get_all_instances()
+            for entry in self._registry.instances.get_all_instances_of_every_owner()
             if any(path.is_relative_to(self._upload_path) for path in self._get_owned_artifact_paths(entry.metadata))
         ]
         await asyncio.to_thread(self._upload_directory.cleanup)
         for entry in owned_entries:
+            # Holding the entry removes it whoever owns it.
             self._registry.instances.unregister(entry.name, expected_entry=entry)
 
     async def list_converters_async(self) -> ConverterInstanceListResponse:
@@ -195,13 +197,8 @@ class ConverterService:
         Returns:
             str | None: The reason, or None when a converter of the type can be saved.
         """
-        if self._registry.is_temporary_class(converter_type):
-            return launch_script_class_reason(converter_type)
-        try:
-            check_saveable_class(self._registry.get_class(converter_type))
-        except SavedEntryRefusedError as error:
-            return str(error)
-        return self._required_upload_refusal(converter_type=converter_type)
+        _, reason = get_class_saveability(registry=self._registry, type_name=converter_type)
+        return reason or self._required_upload_refusal(converter_type=converter_type)
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
@@ -247,9 +244,10 @@ class ConverterService:
                 )
 
             owned_paths = self._get_owned_artifact_paths(entry.metadata)
+            # Other callers' private converters can share these files too.
             shared_paths = {
                 path
-                for other in self._registry.instances.get_all_instances()
+                for other in self._registry.instances.get_all_instances_of_every_owner()
                 if other is not entry
                 for path in self._get_owned_artifact_paths(other.metadata)
             }
@@ -269,8 +267,10 @@ class ConverterService:
 
         Instantiates the converter with the given type and params and builds the
         response before registering it, so a request that fails at any step leaves
-        no registered converter and removes its uploaded files. With ``persist``, the
-        converter is saved so it is restored at every start; otherwise it is Temporary.
+        no registered converter and removes its uploaded files. A converter built from
+        the caller's private target or converter is private to the caller too. With
+        ``persist``, the converter is saved so it is restored at every start; otherwise
+        it is Temporary.
 
         Args:
             request: The create converter request with type and params.
@@ -288,11 +288,39 @@ class ConverterService:
             SavedEntryConflictError: If a converter to save has the name of a registered or saved converter.
             SavedEntryStorageError: If a converter to save can't be written to storage.
         """
+        if request.private and not request.register_instance:
+            raise ValueError("A private converter must be registered; set register=true.")
+        with record_private_references() as private_references:
+            return await self._create_converter_recording_private_references_async(
+                request=request, private_references=private_references, owner=owner, recipes_source=recipes_source
+            )
+
+    async def _create_converter_recording_private_references_async(
+        self,
+        *,
+        request: CreateConverterRequest,
+        private_references: dict[str, str],
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+    ) -> ConverterInstance | UnregisteredConverter:
+        """
+        Create a converter while the private entries it uses are recorded in ``private_references``.
+
+        Returns:
+            ConverterInstance | UnregisteredConverter: The new converter's details.
+
+        Raises:
+            ValueError: If the converter type is not found or the registry name is unavailable.
+        """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
         if request.persist and request.name is not None:
             return await self._save_converter_async(
-                name=request.name, request=request, owner=owner, recipes_source=recipes_source
+                name=request.name,
+                request=request,
+                private_references=private_references,
+                owner=owner,
+                recipes_source=recipes_source,
             )
         if request.register_instance:
             if request.name is None:
@@ -361,11 +389,15 @@ class ConverterService:
                         if entry.instance is source
                         for path in self._get_owned_artifact_paths(entry.metadata)
                     ]
+                creator = creator_metadata(
+                    name=request.name, requested_private=request.private, private_references=private_references
+                )
                 self._registry.instances.register(
                     converter_obj,
                     name=request.name,
                     metadata={
-                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)]
+                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)],
+                        **creator,
                     },
                 )
         except (Exception, asyncio.CancelledError):
@@ -383,6 +415,7 @@ class ConverterService:
         *,
         name: str,
         request: CreateConverterRequest,
+        private_references: dict[str, str],
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
     ) -> ConverterInstance:
@@ -403,15 +436,12 @@ class ConverterService:
         """
         refusal = self._required_upload_refusal(converter_type=request.type)
         if refusal is not None:
-            raise NotSaveableError(f"{refusal} It can still be created without saving it.")
+            raise NotSaveableError(refusal)
         uploads = [
             parameter for parameter in self._upload_params(converter_type=request.type) if parameter in request.params
         ]
         if uploads:
-            raise NotSaveableError(
-                f"Saved converters can't keep uploaded files yet, so leave out '{uploads[0]}'. "
-                "It can still be created without saving it."
-            )
+            raise NotSaveableError(f"Saved converters can't keep uploaded files yet, so leave out '{uploads[0]}'.")
         converter_cls = self._registry.get_class(request.type)
         params = await prepare_saved_params_async(
             registry=self._registry, type_name=request.type, cls=converter_cls, params=request.params
@@ -426,6 +456,7 @@ class ConverterService:
         converter = self._build_instance_from_object(
             converter_id=name, converter_obj=converter_obj, origin=RegistryEntryOrigin.SAVED
         )
+        creator = creator_metadata(name=name, requested_private=request.private, private_references=private_references)
         await save_then_register_locked_async(
             kind=RegistryRecipeKind.CONVERTERS,
             name=name,
@@ -433,7 +464,9 @@ class ConverterService:
                 class_module=converter_cls.__module__, class_name=request.type, params=params, owner=owner
             ),
             source=recipes_source,
-            register=lambda metadata: self._registry.instances.register(converter_obj, name=name, metadata=metadata),
+            register=lambda metadata: self._registry.instances.register(
+                converter_obj, name=name, metadata={**creator, **metadata}
+            ),
         )
         return converter
 

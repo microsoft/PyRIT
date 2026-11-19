@@ -66,22 +66,6 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         self._scorer_printer = scorer_printer
         self._sort_groups_by_success_rate = sort_groups_by_success_rate
 
-    def _render_section_header(self, title: str) -> str:
-        """
-        Render a section header with visual separation.
-
-        Args:
-            title (str): The section title to display.
-
-        Returns:
-            str: The rendered section header.
-        """
-        lines: list[str] = []
-        lines.append("\n")
-        lines.append(self._format_colored(f"▼ {title}", Style.BRIGHT, Fore.CYAN))
-        lines.append(self._format_colored("─" * self._width, Fore.CYAN))
-        return "".join(lines)
-
     def _render_header(self, result: ScenarioResult) -> str:
         """
         Render the header with scenario name.
@@ -92,44 +76,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         Returns:
             str: The rendered header.
         """
-        lines: list[str] = []
-        lines.append("\n")
-        lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        header_text = f"📊 SCENARIO RESULTS: {result.scenario_name}"
-        lines.append(self._format_colored(header_text.center(self._width), Style.BRIGHT, Fore.CYAN))
-        lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        return "".join(lines)
-
-    def _render_footer(self) -> str:
-        """
-        Render a footer separator.
-
-        Returns:
-            str: The rendered footer.
-        """
-        lines: list[str] = []
-        lines.append("\n")
-        lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        lines.append("\n")
-        return "".join(lines)
-
-    def _get_rate_color(self, rate: int) -> str:
-        """
-        Get color based on success rate.
-
-        Args:
-            rate (int): Success rate percentage (0-100).
-
-        Returns:
-            str: Colorama color constant.
-        """
-        if rate >= 75:
-            return str(Fore.RED)
-        if rate >= 50:
-            return str(Fore.YELLOW)
-        if rate >= 25:
-            return str(Fore.CYAN)
-        return str(Fore.GREEN)
+        return self._render_boxed_header(f"📊 SCENARIO RESULTS: {result.scenario_name}")
 
     async def render_async(
         self,
@@ -138,6 +85,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a scenario result and return it as a string.
@@ -150,6 +98,8 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 these attack ids. Ignored by the overview. Defaults to None.
             limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
                 to show. Ignored by the overview. Defaults to None.
+            outcome (AttackOutcome | None): For the ``"attacks"`` view, keep only attacks with
+                this outcome before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
@@ -159,7 +109,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
                 is configured.
         """
         if view == "attacks":
-            return self._render_attacks(result, attack_result_ids=attack_result_ids, limit=limit)
+            return self._render_attacks(result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
 
         parts: list[str] = []
 
@@ -256,6 +206,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         *,
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a compact per-attack table for the scenario's results.
@@ -268,11 +219,13 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             attack_result_ids (list[str] | None): When provided, keep only attacks
                 whose id is in this set. Defaults to None (all attacks).
             limit (int | None): Maximum number of attacks to show. Defaults to None.
+            outcome (AttackOutcome | None): Keep only attacks with this outcome before applying
+                ``limit``. Defaults to None.
 
         Returns:
             str: The rendered attacks table.
         """
-        selected = select_attacks(result, attack_result_ids=attack_result_ids)
+        selected = select_attacks(result, attack_result_ids=attack_result_ids, outcome=outcome)
         total = len(selected)
         if limit is not None:
             selected = selected[:limit]
@@ -354,6 +307,7 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render the scenario result and return it as a string.
@@ -366,8 +320,12 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
                 these attack ids. Ignored by the overview. Defaults to None.
             limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
                 to show. Ignored by the overview. Defaults to None.
+            outcome (AttackOutcome | None): For the ``"attacks"`` view, keep only attacks with
+                this outcome before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
         """
-        return await super().render_async(result, view=view, attack_result_ids=attack_result_ids, limit=limit)
+        return await super().render_async(
+            result, view=view, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome
+        )

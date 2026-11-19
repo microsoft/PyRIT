@@ -2001,15 +2001,16 @@ describe('CreateConverterDialog saving', () => {
     })
     renderDialog()
     await selectConverterType('CaesarConverter')
+    jest.mocked(Element.prototype.scrollIntoView).mockClear()
     await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
 
     expect(screen.getByRole('status')).toHaveTextContent(
       "This converter can't be savedIt needs an uploaded file, which saved converters can't keep yet. "
       + 'A Temporary converter is gone after the backend restarts or is reinitialized.',
     )
-    // Once when it appeared, not again for each typed character.
-    expect(jest.mocked(Element.prototype.scrollIntoView).mock.contexts
-      .filter((context) => context === screen.getByRole('status'))).toHaveLength(1)
+    // Outside the scrolling form, so the field the user is filling in stays where it was.
+    expect(screen.getByRole('status').closest('form')).toBeNull()
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'caesar_converter', type: 'CaesarConverter', params: { caesar_offset: 5 }, persist: false,
@@ -2043,12 +2044,20 @@ describe('CreateConverterDialog saving', () => {
 
   it('should offer a Temporary converter for the values a save was refused for', async () => {
     const user = userEvent.setup()
-    const detail = "Saved entries can't hold credentials ('caesar_offset'). It can still be created without saving it."
-    mockedConvertersApi.createConverter.mockRejectedValueOnce(axiosError(400, { type: '/errors/not-saveable', detail }))
+    const reason = "Saved entries can't hold credentials ('caesar_offset')."
+    mockedConvertersApi.createConverter.mockRejectedValueOnce(axiosError(400, {
+      type: '/errors/not-saveable',
+      detail: `${reason} It can still be created without saving it.`,
+      not_saveable_reason: reason,
+    }))
     renderDialog()
     await submitCaesarConverter(user)
 
-    expect(await screen.findByRole('status')).toHaveTextContent(detail)
+    // The cause and the Temporary note, each once.
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      `${reason} A Temporary converter is gone after the backend restarts or is reinitialized.`,
+    )
+    expect(screen.queryByText(/It can still be created without saving it/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create as Temporary' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenLastCalledWith({

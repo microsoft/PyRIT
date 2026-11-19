@@ -71,6 +71,25 @@ class TargetInstance(BaseModel):
         None,
         description="Inner targets for composite targets like RoundRobinTarget (full instances, not just identifiers)",
     )
+    private: bool = Field(
+        False,
+        description="Whether the target is private: only the user who created it can see and use it",
+    )
+    allow_credential_updates: bool = Field(
+        False,
+        description=(
+            "Whether the target's API key and request headers can be updated in place through "
+            "PUT /api/targets/{name}/credentials: by its owner when it is private, by anyone signed in when it is "
+            "shared"
+        ),
+    )
+    credentials_rejected: bool | None = Field(
+        None,
+        description=(
+            "Whether the provider rejected the target's credentials (HTTP 401 or 403) on the last request "
+            "through it; null until a request completes or fails authentication, and after the credentials change"
+        ),
+    )
     origin: RegistryEntryOrigin | None = Field(
         None,
         description=(
@@ -80,11 +99,3 @@ class TargetInstance(BaseModel):
             "an inner target"
         ),
     )
-    saved_by: str | None = Field(
-        None,
-        description=(
-            "Name of the user who saved the target, for display only; None when it isn't saved or was saved with "
-            "sign-in off, and for an inner target"
-        ),
-    )
-    saved_by_me: bool = Field(False, description="Whether the signed-in user asking is the one who saved the target")
