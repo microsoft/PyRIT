@@ -99,7 +99,8 @@ async def list_assert_suites_async() -> AssertSuitePresetListResponse:
 @router.get("/prompt-generations", response_model=PromptGenerationListResponse)
 async def list_prompt_generations_async() -> PromptGenerationListResponse:
     """
-    List generations, newest first. Generations created in one batch share a ``group_id``.
+    List generations, newest first. Generations created in one batch share a ``group_id`` and list in the
+    batch's order.
 
     Returns:
         PromptGenerationListResponse: Generations without their requests.

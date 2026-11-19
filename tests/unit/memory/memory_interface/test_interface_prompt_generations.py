@@ -101,17 +101,17 @@ async def test_list_is_newest_first_then_by_id(sqlite_instance: SQLiteMemory) ->
     assert await sqlite_instance.get_prompt_generations_async(generation_ids=[uuid.uuid4()]) == []
 
 
-async def test_batch_members_list_by_position_last_first(sqlite_instance: SQLiteMemory) -> None:
+async def test_batch_members_list_in_batch_order(sqlite_instance: SQLiteMemory) -> None:
     group_id = uuid.uuid4()
-    # Ascending IDs, so ordering by ID alone would list the first member first.
-    ids = sorted(uuid.uuid4() for _ in range(3))
+    # Descending IDs, so ordering by ID alone would list the last member first.
+    ids = sorted((uuid.uuid4() for _ in range(3)), reverse=True)
     batch = [
         _generation(id=generation_id, dataset_name=f"member_{index}", group_id=group_id, group_index=index)
         for index, generation_id in enumerate(ids)
     ]
     await sqlite_instance.add_prompt_generations_async(generations=batch)
 
-    expected = [generation.id for generation in reversed(batch)]
+    expected = [generation.id for generation in batch]
     assert [generation.id for generation in await sqlite_instance.get_prompt_generations_async()] == expected
     selected = await sqlite_instance.get_prompt_generations_async(generation_ids=ids)
     assert [generation.id for generation in selected] == expected
@@ -123,24 +123,45 @@ async def test_update_compares_status_and_execution(sqlite_instance: SQLiteMemor
     owner = uuid.uuid4()
     running = _changed(generation, status=PromptGenerationStatus.RUNNING, execution_id=owner)
 
+    claim = ["status", "execution_id"]
     assert not await sqlite_instance.try_update_prompt_generation_async(
-        generation=running, expected_statuses=[PromptGenerationStatus.FAILED]
+        generation=running, expected_statuses=[PromptGenerationStatus.FAILED], fields=claim
     )
     assert await sqlite_instance.try_update_prompt_generation_async(
-        generation=running, expected_statuses=[PromptGenerationStatus.QUEUED]
+        generation=running, expected_statuses=[PromptGenerationStatus.QUEUED], fields=claim
     )
     checkpointed = _changed(running, checkpoint={"objectives": []})
     assert not await sqlite_instance.try_update_prompt_generation_async(
         generation=checkpointed,
         expected_statuses=[PromptGenerationStatus.RUNNING],
         expected_execution_id=uuid.uuid4(),
+        fields=["checkpoint"],
     )
     assert await sqlite_instance.try_update_prompt_generation_async(
-        generation=checkpointed, expected_statuses=[PromptGenerationStatus.RUNNING], expected_execution_id=owner
+        generation=checkpointed,
+        expected_statuses=[PromptGenerationStatus.RUNNING],
+        expected_execution_id=owner,
+        fields=["checkpoint"],
     )
     assert await sqlite_instance.get_prompt_generations_async(generation_ids=[generation.id]) == [checkpointed]
-    with pytest.raises(ValueError, match="must not be empty"):
-        await sqlite_instance.try_update_prompt_generation_async(generation=checkpointed, expected_statuses=[])
+
+
+@pytest.mark.parametrize(
+    ("expected_statuses", "fields", "message"),
+    [([], ["status"], "expected_statuses must not be empty"), ([PromptGenerationStatus.QUEUED], [], "fields")],
+)
+async def test_update_rejects_empty_statuses_or_fields(
+    sqlite_instance: SQLiteMemory, expected_statuses: list[PromptGenerationStatus], fields: list[str], message: str
+) -> None:
+    generation = _generation()
+    await sqlite_instance.add_prompt_generations_async(generations=[generation])
+    with pytest.raises(ValueError, match=message):
+        await sqlite_instance.try_update_prompt_generation_async(
+            generation=_changed(generation, status=PromptGenerationStatus.RUNNING),
+            expected_statuses=expected_statuses,
+            fields=fields,
+        )
+    assert await sqlite_instance.get_prompt_generations_async(generation_ids=[generation.id]) == [generation]
 
 
 async def test_update_writes_only_the_given_fields(sqlite_instance: SQLiteMemory) -> None:
@@ -172,12 +193,15 @@ async def test_foreign_cancel_fences_the_previous_owner(sqlite_instance: SQLiteM
     await sqlite_instance.add_prompt_generations_async(generations=[running])
     cancelled = _changed(running, status=PromptGenerationStatus.CANCELLED, execution_id=None)
     assert await sqlite_instance.try_update_prompt_generation_async(
-        generation=cancelled, expected_statuses=[PromptGenerationStatus.RUNNING]
+        generation=cancelled, expected_statuses=[PromptGenerationStatus.RUNNING], fields=["status", "execution_id"]
     )
 
     late_checkpoint = _changed(running, checkpoint={"objectives": ["late"]})
     assert not await sqlite_instance.try_update_prompt_generation_async(
-        generation=late_checkpoint, expected_statuses=[PromptGenerationStatus.RUNNING], expected_execution_id=owner
+        generation=late_checkpoint,
+        expected_statuses=[PromptGenerationStatus.RUNNING],
+        expected_execution_id=owner,
+        fields=["checkpoint"],
     )
     assert (await sqlite_instance.get_prompt_generations_async())[0] == cancelled
 
@@ -256,6 +280,7 @@ async def test_requeue_rechecks_the_name_excluding_its_own_hold(sqlite_instance:
     assert await sqlite_instance.try_update_prompt_generation_async(
         generation=_changed(failed, status=PromptGenerationStatus.QUEUED),
         expected_statuses=[PromptGenerationStatus.FAILED],
+        fields=["status"],
         reserve_dataset_name=True,
     )
 
@@ -266,6 +291,7 @@ async def test_requeue_rechecks_the_name_excluding_its_own_hold(sqlite_instance:
         await sqlite_instance.try_update_prompt_generation_async(
             generation=_changed(cancelled, status=PromptGenerationStatus.QUEUED),
             expected_statuses=[PromptGenerationStatus.CANCELLED],
+            fields=["status"],
             reserve_dataset_name=True,
         )
     assert (await sqlite_instance.get_prompt_generations_async(generation_ids=[cancelled.id]))[0] == cancelled
@@ -281,6 +307,7 @@ async def test_requeue_rejects_a_name_another_generation_took(sqlite_instance: S
         await sqlite_instance.try_update_prompt_generation_async(
             generation=_changed(cancelled, status=PromptGenerationStatus.QUEUED),
             expected_statuses=[PromptGenerationStatus.CANCELLED],
+            fields=["status"],
             reserve_dataset_name=True,
         )
     assert (await sqlite_instance.get_prompt_generations_async(generation_ids=[cancelled.id]))[0] == cancelled
@@ -319,7 +346,7 @@ async def test_commit_after_a_cancel_saves_nothing(sqlite_instance: SQLiteMemory
     await sqlite_instance.add_prompt_generations_async(generations=[saving])
     cancelled = _changed(saving, status=PromptGenerationStatus.CANCELLED, execution_id=None)
     assert await sqlite_instance.try_update_prompt_generation_async(
-        generation=cancelled, expected_statuses=[PromptGenerationStatus.SAVING]
+        generation=cancelled, expected_statuses=[PromptGenerationStatus.SAVING], fields=["status", "execution_id"]
     )
 
     assert not await sqlite_instance.commit_prompt_generation_dataset_async(

@@ -742,7 +742,7 @@ dimensions stage) and `target_objective` (`TargetObjectiveGenerator`).
 | `POST /api/prompt-generations/preflight` | Validation errors, dataset-name availability, and a call/token estimate; no target is called |
 | `POST /api/prompt-generations` | 201 with a queued generation; 409 if the dataset name is taken |
 | `POST /api/prompt-generations/batch` | 201 with several queued generations that share a generator, targets, settings, and a `group_id`, such as an ASSERT suite |
-| `GET /api/prompt-generations` | Generations newest first |
+| `GET /api/prompt-generations` | Generations newest first; the members of one batch in the batch's order |
 | `GET`, `DELETE /api/prompt-generations/{id}` | Read or delete a record; deleting keeps the dataset |
 | `POST /api/prompt-generations/{id}/continue\|retry\|cancel` | Finish a review, resume from the last checkpoint, or cancel |
 | `GET`, `PUT /api/prompt-generations/{id}/review` | Read or save output awaiting review |

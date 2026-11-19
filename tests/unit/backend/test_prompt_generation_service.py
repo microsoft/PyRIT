@@ -226,7 +226,7 @@ async def test_unfinished_generation_reserves_dataset_name_async(
 
     cancelled = failed.model_copy(update={"status": PromptGenerationStatus.CANCELLED})
     assert await sqlite_instance.try_update_prompt_generation_async(
-        generation=cancelled, expected_statuses=[PromptGenerationStatus.FAILED]
+        generation=cancelled, expected_statuses=[PromptGenerationStatus.FAILED], fields=["status"]
     )
     assert (await service.preflight_async(_assert_request())).dataset_name_available
 
@@ -851,7 +851,8 @@ async def test_batch_members_keep_request_order_after_a_restart_async(
     assert len({record.created_at for record in created}) == 1
     assert all(record.updated_at >= record.created_at for record in created)
     restarted = _new_service(sqlite_instance, target)
-    assert [record.dataset_name for record in await restarted.list_async()] == list(reversed(names))
+    # A GUI that groups the newest-first list by group_id shows the suite as it was composed.
+    assert [record.dataset_name for record in await restarted.list_async()] == names
     await restarted.shutdown_async()
 
 

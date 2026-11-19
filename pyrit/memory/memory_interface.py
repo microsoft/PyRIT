@@ -1096,8 +1096,8 @@ class MemoryInterface(abc.ABC):
         """
         Read prompt generations, newest first.
 
-        Generations created at the same time, such as the members of one batch, are ordered by their batch
-        position, last first, and then by ID.
+        Generations created at the same time, such as the members of one batch, keep their batch order:
+        by batch position, first member first, and then by ID.
 
         Args:
             generation_ids (Sequence[uuid.UUID] | None): Only these generations. Defaults to all.
@@ -1106,7 +1106,7 @@ class MemoryInterface(abc.ABC):
             list[PromptGenerationRecord]: The matching generations.
         """
         statement = select(PromptGenerationEntry).order_by(
-            PromptGenerationEntry.created_at.desc(), PromptGenerationEntry.group_index.desc(), PromptGenerationEntry.id
+            PromptGenerationEntry.created_at.desc(), PromptGenerationEntry.group_index, PromptGenerationEntry.id
         )
         async with await self.get_session_async() as session:
             if generation_ids is None:
@@ -1118,8 +1118,9 @@ class MemoryInterface(abc.ABC):
                 for start in range(0, len(requested), 500):
                     chunk = statement.where(PromptGenerationEntry.id.in_(requested[start : start + 500]))
                     entries.extend((await session.scalars(chunk)).all())
-                entries.sort(key=lambda entry: entry.id)
-                entries.sort(key=lambda entry: (entry.created_at, entry.group_index), reverse=True)
+                # Stable sorts: newest first, then batch position and ID ascending, as the query orders them.
+                entries.sort(key=lambda entry: (entry.group_index, entry.id))
+                entries.sort(key=lambda entry: entry.created_at, reverse=True)
             return [entry.get_prompt_generation() for entry in entries]
 
     async def get_unavailable_dataset_names_async(
@@ -1151,8 +1152,8 @@ class MemoryInterface(abc.ABC):
         generation: PromptGenerationRecord,
         expected_statuses: Collection[PromptGenerationStatus],
         expected_execution_id: uuid.UUID | None = None,
+        fields: Collection[str],
         reserve_dataset_name: bool = False,
-        fields: Collection[str] | None = None,
     ) -> bool:
         """
         Update a stored generation only while it is in one of ``expected_statuses``.
@@ -1165,17 +1166,17 @@ class MemoryInterface(abc.ABC):
             expected_statuses (Collection[PromptGenerationStatus]): Statuses the stored generation may be in.
             expected_execution_id (uuid.UUID | None): When set, the run attempt that must still own the
                 generation.
+            fields (Collection[str]): The record fields to write. Other fields keep their stored values, so a
+                write built from an older read can't revert a concurrent change to them.
             reserve_dataset_name (bool): Whether to recheck, under the dataset lifecycle lock, that no
                 stored dataset, staging upload, or other generation took the name. Use it when a
                 generation that released its name is queued again.
-            fields (Collection[str] | None): The record fields to write, so a write that changes only some
-                fields keeps concurrent changes to the others. Defaults to every changeable field.
 
         Returns:
             bool: True if the generation was updated, False if it is missing or moved on.
 
         Raises:
-            ValueError: If ``expected_statuses`` is empty or a field can't be changed.
+            ValueError: If ``expected_statuses`` or ``fields`` is empty, or a field can't be changed.
             DatasetNameConflictError: If ``reserve_dataset_name`` is set and the name is taken. Nothing changes.
             RuntimeError: If the database does not return a cursor result.
         """
@@ -1183,12 +1184,13 @@ class MemoryInterface(abc.ABC):
 
         if not expected_statuses:
             raise ValueError("expected_statuses must not be empty")
+        if not fields:
+            raise ValueError("fields must not be empty")
         values = PromptGenerationEntry.column_values(generation)
-        if fields is not None:
-            unknown = sorted(set(fields) - set(values))
-            if unknown:
-                raise ValueError(f"Prompt generation fields {unknown} can't be changed.")
-            values = {field: values[field] for field in fields}
+        unknown = sorted(set(fields) - set(values))
+        if unknown:
+            raise ValueError(f"Prompt generation fields {unknown} can't be changed.")
+        values = {field: values[field] for field in fields}
         statement = (
             update(PromptGenerationEntry)
             .where(
