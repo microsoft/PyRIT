@@ -240,9 +240,10 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         so a caller can store it and resume after an interruption.
 
         This returns progress rather than a result, so it runs setup and teardown but not the strategy
-        events or retry collection of ``execute_async``. Resuming requires the same target for each
-        role that already produced work and has a stage left to run, and this is checked before any
-        model call; ``build_result`` attributes work to the recorded targets.
+        events or retry collection of ``execute_async``. Before any model call, it checks the target of
+        each role that has a stage left to run: the target must support the request's web search
+        policy and, if the role already produced work, must be the target that produced it.
+        ``build_result`` attributes work to the recorded targets.
 
         Args:
             checkpoint (AssertGenerationCheckpoint): The progress to continue from.
@@ -256,7 +257,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         checkpoint = AssertGenerationCheckpoint.model_validate(checkpoint)
         context = AssertGeneratorContext(config=checkpoint.config)
         context._used = True
-        self._validate_context(context=context)
+        self._validate_web_search(checkpoint=checkpoint, stop_after=stop_after)
         for stage in _model_stages(checkpoint=checkpoint, stop_after=stop_after):
             self._require_producer(checkpoint=checkpoint, role=self._STAGE_ROLES[stage])
         async with self._execution_context_async(context):
@@ -353,12 +354,17 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             ValueError: If the research target can't require or disable web search as requested,
                 or the generation target can't disable it.
         """
-        self._target.validate_web_search_config(WebSearchConfig(mode=WebSearchMode.DISABLED))
-        stages = _model_stages(checkpoint=AssertGenerationCheckpoint(config=config))
-        if all(self._STAGE_ROLES[stage] != self.RESEARCH_ROLE for stage in stages):
-            return
-        mode = WebSearchMode.REQUIRED if config.web_search else WebSearchMode.DISABLED
-        self._research_target.validate_web_search_config(WebSearchConfig(mode=mode))
+        self._validate_web_search(checkpoint=AssertGenerationCheckpoint(config=config))
+
+    def _validate_web_search(
+        self, *, checkpoint: AssertGenerationCheckpoint, stop_after: AssertGenerationStage | None = None
+    ) -> None:
+        roles = {self._STAGE_ROLES[stage] for stage in _model_stages(checkpoint=checkpoint, stop_after=stop_after)}
+        if self.GENERATION_ROLE in roles:
+            self._target.validate_web_search_config(WebSearchConfig(mode=WebSearchMode.DISABLED))
+        if self.RESEARCH_ROLE in roles:
+            mode = WebSearchMode.REQUIRED if checkpoint.config.web_search else WebSearchMode.DISABLED
+            self._research_target.validate_web_search_config(WebSearchConfig(mode=mode))
 
     def _validate_context(self, *, context: AssertGeneratorContext) -> None:
         context.config = AssertGenerationConfig.model_validate(context.config)

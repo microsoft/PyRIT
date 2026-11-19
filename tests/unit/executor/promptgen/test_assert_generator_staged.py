@@ -498,6 +498,44 @@ class TestValidateConfig:
                 )
         send.assert_not_called()
 
+    async def test_resume_without_research_stages_accepts_a_research_target_without_web_search_async(self) -> None:
+        generation, stopped = await _stop_web_search_generation_async(
+            config=make_assert_config(web_search=True), stop_after=AssertGenerationStage.DIMENSIONS
+        )
+        with patch.object(
+            generation, "_send_prompt_to_target_async", side_effect=assert_generation_response_async
+        ) as send:
+            complete = await AssertGenerator(target=generation).advance_async(checkpoint=stopped)
+        assert set(_sent_stages(send)) == {"seed_groups"}
+        assert complete.next_stage is None
+
+    async def test_resume_with_research_stages_left_rejects_a_research_target_without_web_search_async(
+        self,
+    ) -> None:
+        generation, stopped = await _stop_web_search_generation_async(
+            config=_described_config(web_search=True), stop_after=AssertGenerationStage.TAXONOMY
+        )
+        with (
+            patch.object(generation, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match="supports_web_search"),
+        ):
+            await AssertGenerator(target=generation).advance_async(checkpoint=stopped)
+        send.assert_not_called()
+
+
+async def _stop_web_search_generation_async(
+    *, config: AssertGenerationConfig, stop_after: AssertGenerationStage
+) -> tuple[Any, AssertGenerationCheckpoint]:
+    generation, research = make_assert_generation_target(), make_assert_generation_target(web_search=True)
+    with (
+        patch.object(generation, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+        patch.object(research, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+    ):
+        stopped = await AssertGenerator(target=generation, research_target=research).advance_async(
+            checkpoint=AssertGenerationCheckpoint(config=config), stop_after=stop_after
+        )
+    return generation, stopped
+
 
 def _stage_names(checkpoint: AssertGenerationCheckpoint) -> list[str]:
     return [stage.stage for stage in AssertGenerator.estimate(checkpoint=checkpoint).stages]
