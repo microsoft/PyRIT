@@ -254,10 +254,11 @@ def test_backend_offers_the_selected_operations() -> None:
 
 def _references(node: object) -> list[str]:
     if isinstance(node, dict):
-        own = [node["$ref"]] if isinstance(node.get("$ref"), str) else []
-        return own + [reference for value in node.values() for reference in _references(value)]
+        reference = node.get("$ref")
+        own: list[str] = [reference] if isinstance(reference, str) else []
+        return own + [found for value in node.values() for found in _references(value)]
     if isinstance(node, list):
-        return [reference for value in node for reference in _references(value)]
+        return [found for value in node for found in _references(value)]
     return []
 
 
