@@ -1988,6 +1988,21 @@ class TestConverterRoutes:
         assert response.status_code == status_code
         assert response.json()["detail"] == str(error)
 
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("persist", [False, True])
+    def test_create_converter_answers_a_taken_name_with_an_untyped_conflict(
+        self, client: TestClient, tmp_path: Path, persist: bool
+    ) -> None:
+        name = f"taken_{uuid.uuid4().hex[:8]}"
+        body = {"name": name, "type": "ROT13Converter", "params": {}}
+        assert client.post("/api/converters", json=body).status_code == status.HTTP_201_CREATED
+
+        with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+            response = client.post("/api/converters", json={**body, "persist": persist})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json() == {"detail": f"Instance '{name}' already exists"}
+
     @pytest.mark.parametrize(
         ("path", "entry_type", "message"),
         [
