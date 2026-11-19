@@ -32,6 +32,7 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    RequestGenerationConfig,
     RequestTraceContext,
     construct_response_from_request,
 )
@@ -45,14 +46,24 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-def _is_write_only_response(responses: object) -> bool:
-    """
-    Distinguish a write-only target's empty list from a malformed None response.
+class _TargetInvocationContext:
+    """Track dispatch without changing caller-independent history selection."""
 
-    Returns:
-        bool: Whether the target returned an empty list.
-    """
-    return isinstance(responses, list) and len(responses) == 0
+    def __init__(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+        self.target_invocation_count = 0
+
+    def begin_send(self) -> None:
+        pass
+
+    def select_history(self, *, messages: list[Message]) -> list[Message]:
+        return messages
+
+    def mark_target_invoked(self) -> None:
+        self.target_invocation_count += 1
+
+    def finish_send(self, *, succeeded: bool) -> None:
+        pass
 
 
 class PromptNormalizer:
@@ -125,11 +136,14 @@ class PromptNormalizer:
                 history selection and send lifecycle state.
 
         Returns:
-            Message: The response received from the target.
+            Message: The response received from the target. A target without
+                ``supports_responses`` may return nothing, and then this is the sent request.
 
         Raises:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
+            asyncio.CancelledError: If the send is cancelled. A request the target may have
+                received is persisted first, without a response.
         """
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
@@ -162,14 +176,21 @@ class PromptNormalizer:
         await self._calc_hash_async(request=request)
 
         responses = None
-        target_invocation_count_before_send = send_context.target_invocation_count if send_context else 0
+        target_send_context = send_context if send_context is not None else _TargetInvocationContext(conversation_id)
+        target_invocation_count_before_send = target_send_context.target_invocation_count
         try:
             responses = await target.send_prompt_async(
                 message=request,
                 normalizer_overrides=normalizer_overrides,
-                send_context=send_context,
+                send_context=target_send_context,
             )
             (await self.memory.add_message_to_memory_async(request=request))
+        except asyncio.CancelledError:
+            # Cancelled while the target may have been handling the request: keep the request as the
+            # record of the attempt, but no response, since none was received. Then propagate.
+            if target_send_context.target_invocation_count > target_invocation_count_before_send:
+                await self._persist_cancelled_request_async(request=request)
+            raise
         except EmptyResponseException as ex:
             if send_context and send_context.target_invocation_count == target_invocation_count_before_send:
                 cid = request.message_pieces[0].conversation_id if request.message_pieces else None
@@ -203,6 +224,7 @@ class PromptNormalizer:
             )
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            RequestGenerationConfig.clear_metadata(error_response.get_piece().prompt_metadata)
 
             await self._calc_hash_async(request=error_response)
             (await self.memory.add_message_to_memory_async(request=error_response))
@@ -211,9 +233,9 @@ class PromptNormalizer:
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            # An empty list is valid for write-only targets (e.g., TextTarget)
-            # that don't produce responses. Return the request as-is.
-            if _is_write_only_response(responses):
+            # A target that declares it never replies (e.g., TextTarget) delivered the request, so
+            # return it as-is. Any other target returning nothing gets an empty error response.
+            if not target.configuration.includes(capability=CapabilityName.RESPONSES):
                 return request
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],
@@ -223,6 +245,7 @@ class PromptNormalizer:
             )
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+            RequestGenerationConfig.clear_metadata(empty_response.get_piece().prompt_metadata)
             await self._calc_hash_async(request=empty_response)
             (await self.memory.add_message_to_memory_async(request=empty_response))
             return empty_response
@@ -238,6 +261,7 @@ class PromptNormalizer:
                 piece.conversation_id = conversation_id
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
                 piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
+                RequestGenerationConfig.clear_metadata(piece.prompt_metadata)
             is_last = i == len(responses) - 1
             if is_last:
                 await self.convert_values_async(
@@ -248,6 +272,27 @@ class PromptNormalizer:
 
         # Return the last response for backward compatibility
         return responses[-1]
+
+    async def _persist_cancelled_request_async(self, *, request: Message) -> None:
+        """
+        Persist the request of a send that was cancelled after reaching the target.
+
+        A failure to persist is logged rather than raised, so it never replaces the cancellation.
+
+        Args:
+            request (Message): The converted request that was sent.
+        """
+        write = asyncio.create_task(self.memory.add_message_to_memory_async(request=request))
+        try:
+            while not write.done():
+                try:
+                    await asyncio.shield(write)
+                except asyncio.CancelledError:
+                    continue
+            write.result()
+        except Exception:
+            cid = request.message_pieces[0].conversation_id if request.message_pieces else None
+            logger.warning("Could not persist the request of a cancelled send in conversation %s.", cid, exc_info=True)
 
     async def send_prompt_batch_to_target_async(
         self,

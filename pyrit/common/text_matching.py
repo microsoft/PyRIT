@@ -9,6 +9,7 @@ and n-gram based approximate matching through a unified TextMatching interface.
 """
 
 import math
+from collections import Counter
 from typing import Any, Protocol
 
 
@@ -94,9 +95,20 @@ class ApproximateTextMatching(TextMatching):
     This strategy computes the proportion of character n-grams from the target
     that are present in the text. Useful for detecting partial matches, encoded
     content, or text with variations.
+
+    By default coverage is computed over the *distinct* target n-grams, so a short text that contains
+    every distinct n-gram of a long repeated target scores 1.0. Set ``occurrence_sensitive=True`` to
+    count every n-gram window of the target and credit each one only as often as it occurs in the text.
     """
 
-    def __init__(self, *, threshold: float = 0.5, n: int = 3, case_sensitive: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        threshold: float = 0.5,
+        n: int = 3,
+        case_sensitive: bool = False,
+        occurrence_sensitive: bool = False,
+    ) -> None:
         """
         Initialize the approximate text matching strategy.
 
@@ -105,6 +117,11 @@ class ApproximateTextMatching(TextMatching):
                 Defaults to 0.5 (50% overlap).
             n (int): The length of character n-grams to use. Defaults to 3.
             case_sensitive (bool): Whether to perform case-sensitive matching. Defaults to False.
+            occurrence_sensitive (bool): If True, the score is
+                ``sum(min(target_count[g], text_count[g])) / sum(target_count.values())`` over overlapping
+                n-gram windows, so repeated target n-grams must also be repeated in the text. If False
+                (default), the score is the fraction of distinct target n-grams present in the text.
+                Defaults to False.
 
         Raises:
             ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0], or if ``n`` is
@@ -117,15 +134,22 @@ class ApproximateTextMatching(TextMatching):
         self._threshold = threshold
         self._n = n
         self._case_sensitive = case_sensitive
+        self._occurrence_sensitive = occurrence_sensitive
 
     def get_identifier_params(self) -> dict[str, Any]:
         """
         Return the configuration that determines matching behavior.
 
+        ``occurrence_sensitive`` is only reported when enabled, so identifiers of matchers using the
+        default coverage are unchanged.
+
         Returns:
             dict[str, Any]: Behavioral parameters for scorer identifiers.
         """
-        return {"threshold": self._threshold, "n": self._n, "case_sensitive": self._case_sensitive}
+        params: dict[str, Any] = {"threshold": self._threshold, "n": self._n, "case_sensitive": self._case_sensitive}
+        if self._occurrence_sensitive:
+            params["occurrence_sensitive"] = True
+        return params
 
     def is_match(self, *, target: str, text: str) -> bool:
         """
@@ -166,6 +190,9 @@ class ApproximateTextMatching(TextMatching):
         target_str = target if self._case_sensitive else target.lower()
         text_str = text if self._case_sensitive else text.lower()
 
+        if self._occurrence_sensitive:
+            return self._calculate_occurrence_overlap(target=target_str, text=text_str)
+
         target_ngrams = {target_str[i : i + self._n] for i in range(len(target_str) - (self._n - 1))}
 
         if not target_ngrams:
@@ -173,6 +200,22 @@ class ApproximateTextMatching(TextMatching):
 
         matching_ngrams = sum(int(ngram in text_str) for ngram in target_ngrams)
         return matching_ngrams / len(target_ngrams)
+
+    def _calculate_occurrence_overlap(self, *, target: str, text: str) -> float:
+        """
+        Calculate occurrence-sensitive n-gram coverage of the target by the text.
+
+        Args:
+            target (str): The normalized target string (at least ``n`` characters).
+            text (str): The normalized text to search in.
+
+        Returns:
+            float: ``sum(min(target_count, text_count)) / total target windows``.
+        """
+        target_counts = Counter(target[i : i + self._n] for i in range(len(target) - (self._n - 1)))
+        text_counts = Counter(text[i : i + self._n] for i in range(len(text) - (self._n - 1)))
+        matched = sum(min(count, text_counts[ngram]) for ngram, count in target_counts.items())
+        return matched / sum(target_counts.values())
 
     def get_overlap_score(self, *, target: str, text: str) -> float:
         """

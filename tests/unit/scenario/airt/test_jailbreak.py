@@ -180,7 +180,7 @@ class TestJailbreakInitialization:
     def test_init_with_default_scorer(self, mock_memory_seed_groups):
         with _patch_seed_groups(mock_memory_seed_groups):
             scenario = Jailbreak()
-            assert scenario._objective_scorer_identifier
+            assert scenario._objective_scorer_identifier is None
 
     def test_init_with_custom_scorer(self, mock_objective_scorer, mock_memory_seed_groups):
         with _patch_seed_groups(mock_memory_seed_groups):
@@ -321,7 +321,7 @@ class TestJailbreakInitialization:
             "num_jailbreaks": 1,
             "dataset_config": DatasetAttackConfiguration(
                 seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="one objective")])],
-                max_dataset_size=5,
+                max_total=5,
             ),
         }
         scenario.set_params_from_args(args=args)

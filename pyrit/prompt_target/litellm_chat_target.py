@@ -7,7 +7,8 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
 from contextlib import AsyncExitStack
-from typing import Any, NoReturn, cast
+from types import MappingProxyType
+from typing import Any, ClassVar, NoReturn, cast
 
 import jsonschema
 
@@ -35,6 +36,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    should_skip_audio_piece,
     validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
@@ -222,6 +224,8 @@ class LiteLLMChatTarget(PromptTarget):
             Calls beyond the limit receive error results without execution.
     """
 
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
     _SUPPORTS_TOOL_CALL_HISTORY = True
@@ -230,6 +234,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=True,
             supports_system_prompt=True,
             input_modalities=_TEXT_INPUT,
         )
@@ -396,6 +401,7 @@ class LiteLLMChatTarget(PromptTarget):
             supports_multi_turn=True,
             supports_multi_message_pieces=True,
             supports_editable_history=True,
+            supports_prefill=self._DEFAULT_CONFIGURATION.capabilities.supports_prefill,
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,
@@ -696,6 +702,33 @@ class LiteLLMChatTarget(PromptTarget):
             conversation, prefer_transcript_for_history=prefer_transcript_for_history
         )
 
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the shared Chat Completions builder's historical wire modalities.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted audio.
+        """
+        prefer_transcript_for_history = bool(
+            self._audio_response_config and self._audio_response_config.prefer_transcript_for_history
+        )
+        if should_skip_audio_piece(
+            message_piece=message_piece,
+            is_last_message=False,
+            has_text_piece=has_text_piece,
+            prefer_transcript_for_history=prefer_transcript_for_history,
+        ):
+            return None
+        if message_piece.is_blocked_error():
+            return "text"
+        return message_piece.converted_value_data_type
+
     def _construct_request_body(
         self,
         *,
@@ -900,4 +933,5 @@ class LiteLLMChatTarget(PromptTarget):
         if isinstance(exc, authentication_error):
             raise PyritException(message=f"Authentication failed: {exc}") from exc
 
-        raise PyritException(message=f"LiteLLM error: {exc}") from exc
+        status_code = getattr(exc, "status_code", None) or 500
+        raise PyritException(status_code=status_code, message=f"LiteLLM error: {exc}") from exc

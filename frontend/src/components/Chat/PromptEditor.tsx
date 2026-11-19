@@ -42,7 +42,8 @@ function attachmentIcon(kind: MessageAttachment['type']): string {
 }
 
 export default function PromptEditor({
-  text, attachments, onInputChange, onAttachmentsChange, disabled = false, disabledReason, fileDropEnabled = true, header, setup, warning, actions,
+  text, attachments, onInputChange, onAttachmentsChange, disabled = false, disabledReason, fileDropEnabled = true,
+  header, setup, warning, actions,
   attachmentMenuItems, showTextInput = true, textareaRef: externalTextareaRef, onKeyDown,
   onToggleConverterPanel, isConverterPanelOpen, undoLastSend, convertedValue, onConvertedValueChange,
   mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip,
@@ -110,14 +111,11 @@ export default function PromptEditor({
           <Tooltip content={undoLastSend.disabledReason
             ?? 'Undo last send: restore the prompt and converter stages in a new branch. External target actions are not reversed.'}
             relationship="description">
-            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
-            <span className={styles.undoAction} tabIndex={undoLastSend.disabledReason ? 0 : undefined}
-              aria-label={undoLastSend.disabledReason}>
-              <Button className={styles.iconButton} appearance="subtle"
-                icon={undoLastSend.isUndoing ? <Spinner size="tiny" /> : <ArrowUndoRegular />}
-                disabled={Boolean(undoLastSend.disabledReason) || undoLastSend.isUndoing}
-                onClick={undoLastSend.onUndo} aria-label="Undo last send" data-testid="undo-last-send-btn" />
-            </span>
+            <Button className={mergeClasses(styles.iconButton, styles.undoAction)} appearance="subtle"
+              icon={undoLastSend.isUndoing ? <Spinner size="tiny" /> : <ArrowUndoRegular />}
+              disabled={Boolean(undoLastSend.disabledReason) || undoLastSend.isUndoing}
+              disabledFocusable={Boolean(undoLastSend.disabledReason)}
+              onClick={undoLastSend.onUndo} aria-label="Undo last send" data-testid="undo-last-send-btn" />
           </Tooltip>
         )}
       </div>

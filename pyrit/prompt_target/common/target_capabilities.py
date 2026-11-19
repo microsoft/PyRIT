@@ -64,7 +64,7 @@ class CapabilityHandlingPolicy:
 
         Raises:
             KeyError: If no behavior exists for the capability. This occurs for
-            non-adaptable capabilities (e.g., supports_multi_message_pieces).
+                non-adaptable capabilities (e.g., supports_multi_message_pieces).
         """
         try:
             return self.behaviors[capability]
@@ -102,6 +102,7 @@ class CapabilityHandlingPolicy:
 # Known capability profiles — add new models here.
 # Shared profiles are defined once and referenced by multiple model names.
 # ---------------------------------------------------------------------------
+
 
 _TEXT_IMAGE_INPUT: frozenset[frozenset[PromptDataType]] = cast(
     "frozenset[frozenset[PromptDataType]]",
@@ -197,6 +198,8 @@ _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
 def get_known_capabilities(underlying_model: str) -> TargetCapabilities | None:
     """
     Return the known capabilities for a specific underlying model, or None if unrecognized.
+
+    Runtime generation support is resolved by target instances, not these model profiles.
 
     Args:
         underlying_model (str): The underlying model name (e.g., "gpt-4o").

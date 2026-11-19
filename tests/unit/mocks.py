@@ -7,14 +7,17 @@ import tempfile
 import uuid
 from collections.abc import AsyncGenerator, Callable, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
 
+from pyrit.common.utils import to_sha256
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
     AttackResultRole,
@@ -23,8 +26,18 @@ from pyrit.models import (
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunPlan,
+    ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanSeedGroup,
+    ScenarioRunState,
+    ScenarioSuiteExecutionEntrySummary,
+    ScenarioSuiteExecutionMetadata,
+    ScenarioSuiteExecutionStatus,
+    ScenarioSuiteExecutionSummary,
+    ScenarioSuiteSubmissionState,
     flatten_to_message_pieces,
 )
+from pyrit.models.catalog import ScenarioRunSummary
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 from pyrit.scenario import ScenarioTechnique
@@ -125,6 +138,119 @@ def make_scenario_result(
         pyrit_version=pyrit_version,
     )
     return ScenarioResult(scenario_identifier=identifier, **kwargs)
+
+
+SUITE_TIMESTAMP = datetime(2026, 11, 13, tzinfo=UTC)
+
+
+def make_suite_execution_entry(
+    *,
+    position: int = 1,
+    state: ScenarioRunState | ScenarioSuiteSubmissionState = ScenarioRunState.COMPLETED,
+    preset_name: str = "test_preset",
+    with_run: bool = True,
+) -> ScenarioSuiteExecutionEntrySummary:
+    """Build a suite entry snapshot with a child run summary unless ``with_run`` is False."""
+    return ScenarioSuiteExecutionEntrySummary(
+        entry_id=uuid.uuid4(),
+        entry_position=position,
+        preset_name=preset_name,
+        preset_origin="registered",
+        state=state,
+        run=(
+            ScenarioRunSummary(
+                scenario_result_id=str(uuid.uuid4()),
+                scenario_name="test_scenario",
+                status=state if isinstance(state, ScenarioRunState) else ScenarioRunState.CREATED,
+                created_at=SUITE_TIMESTAMP,
+                updated_at=SUITE_TIMESTAMP,
+            )
+            if with_run
+            else None
+        ),
+    )
+
+
+def make_suite_execution(
+    *,
+    entries: Sequence[ScenarioSuiteExecutionEntrySummary],
+    status: ScenarioSuiteExecutionStatus = ScenarioSuiteExecutionStatus.IN_PROGRESS,
+) -> ScenarioSuiteExecutionSummary:
+    """Build a suite execution snapshot for ``entries``."""
+    return ScenarioSuiteExecutionSummary(
+        suite_execution_id=uuid.uuid4(),
+        suite_name="test_suite",
+        suite_origin="registered",
+        status=status,
+        created_at=SUITE_TIMESTAMP,
+        updated_at=SUITE_TIMESTAMP,
+        entries=list(entries),
+    )
+
+
+def make_suite_scenario_result(
+    *,
+    execution: ScenarioSuiteExecutionSummary,
+    entry: ScenarioSuiteExecutionEntrySummary,
+    outcomes: Sequence[tuple[str, AttackOutcome]] = (),
+    planned_objectives: Sequence[str] | None = None,
+) -> ScenarioResult:
+    """
+    Build the persistable result of a submitted suite entry, attributed to its suite execution.
+
+    Each outcome is an ``(objective, outcome)`` attempt in time order; ``planned_objectives``
+    stores a run plan so statistics report a planned total.
+    """
+    assert entry.run is not None
+    metadata = ScenarioSuiteExecutionMetadata(
+        suite_execution_id=execution.suite_execution_id,
+        suite_name=execution.suite_name,
+        suite_version=execution.suite_version,
+        suite_entry_id=entry.entry_id,
+        entry_position=entry.entry_position,
+        preset_name=entry.preset_name,
+        preset_version=entry.preset_version,
+    ).to_metadata_fields()
+    if planned_objectives is not None:
+        plan = ScenarioRunPlan(
+            atomic_groups=[
+                ScenarioRunPlanAtomicGroup(
+                    id="group",
+                    atomic_attack_name="attack",
+                    display_group="Attack",
+                    technique_eval_hash="eval",
+                    seed_group_ids=[f"seed-{objective}" for objective in planned_objectives],
+                )
+            ],
+            seed_groups=[
+                ScenarioRunPlanSeedGroup(
+                    id=f"seed-{objective}", objective_sha256=to_sha256(objective), objective=objective
+                )
+                for objective in planned_objectives
+            ],
+        )
+        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = plan.model_dump(mode="json")
+    return make_scenario_result(
+        id=entry.run.scenario_result_id,
+        objective_target_identifier=ComponentIdentifier(class_name="MockTarget", class_module="tests"),
+        metadata=metadata,
+        attack_results={
+            "attack": [
+                AttackResult(
+                    conversation_id=str(uuid.uuid4()),
+                    objective=objective,
+                    outcome=outcome,
+                    timestamp=SUITE_TIMESTAMP + timedelta(seconds=index),
+                    attribution_data={
+                        "parent_collection": "attack",
+                        "parent_eval_hash": "eval",
+                        "seed_group_id": f"seed-{objective}",
+                    },
+                )
+                for index, (objective, outcome) in enumerate(outcomes)
+            ]
+        },
+    )
 
 
 def make_sequential_attack_results(

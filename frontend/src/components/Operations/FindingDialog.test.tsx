@@ -35,7 +35,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
     await waitFor(() => { expect(onSave).toHaveBeenCalledWith({
       title: 'Human assessment', severity: 'critical', description: 'Notes',
-      severity_other: null, harm_type: null, harm_type_other: null,
+      severity_other: null, harm_type: null, harm_type_other: null, demonstrated: true,
     }, ATTEMPT) })
   })
 
@@ -115,6 +115,21 @@ describe('FindingDialog', () => {
     expect(requestPageUnload().defaultPrevented).toBe(false)
   })
 
+  it('protects a demonstrated edit and disarms the guard when the original status is restored', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'low', description: 'Details', demonstrated: false }}
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harm-type' })).toBeEnabled())
+    const demonstrated = screen.getByRole('switch', { name: 'Demonstrated' })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.click(demonstrated)
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.click(demonstrated)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
   it('protects evidence changes, disarms the guard when cleared, and removes it on unmount', async () => {
     const user = userEvent.setup()
     const { unmount } = render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField
@@ -167,7 +182,7 @@ describe('FindingDialog', () => {
     expect(screen.getByRole('textbox', { name: 'Other harm-type' })).toHaveValue('  Team harm  ')
     expect(onSave).toHaveBeenCalledWith({
       title: 'Custom', description: '', severity: 'other', severity_other: '  Team severity  ',
-      harm_type: 'Other', harm_type_other: '  Team harm  ',
+      harm_type: 'Other', harm_type_other: '  Team harm  ', demonstrated: true,
     }, ATTEMPT)
     await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'low')
     await user.click(screen.getByRole('combobox', { name: 'Harm-type' }))
@@ -177,6 +192,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
     expect(onSave).toHaveBeenLastCalledWith({
       title: 'Custom', description: '', severity: 'low', severity_other: null, harm_type: null, harm_type_other: null,
+      demonstrated: true,
     }, ATTEMPT)
   })
 
@@ -274,5 +290,98 @@ describe('FindingDialog', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'With evidence' }), {
       id: expect.any(String), attackResultId: 'attack-1',
     })
+  })
+
+  it('shows the parent of a new sub-finding and records whether it was demonstrated', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog parentTitle="Data theft" onSave={onSave}
+      onClose={jest.fn()} /></FluentProvider>)
+    expect(screen.getByRole('heading', { name: 'New sub-finding' })).toBeInTheDocument()
+    expect(screen.getByText('Sub-finding of “Data theft”')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /parent/i })).not.toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Obtain creds')
+    const demonstrated = screen.getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).toBeChecked()
+    expect(demonstrated).toHaveAccessibleDescription(/Paths that use it show as partial/)
+    await user.click(demonstrated)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'Obtain creds', demonstrated: false }), ATTEMPT)
+  })
+
+  it('arms the unsaved changes guard when only the demonstrated status changes', async () => {
+    const user = userEvent.setup()
+    const events: Event[] = []
+    const listener = (event: Event): void => { events.push(event) }
+    window.addEventListener('beforeunload', listener)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+
+    await user.click(screen.getByRole('switch', { name: 'Demonstrated' }))
+    fireEvent(window, new Event('beforeunload', { cancelable: true }))
+    expect(events[0].defaultPrevented).toBe(true)
+
+    window.removeEventListener('beforeunload', listener)
+  })
+
+  it('shows the API field message on the Evidence attack ID and keeps it invalid until edited', async () => {
+    const user = userEvent.setup()
+    const rejection = Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [{ field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' }],
+        },
+      },
+    })
+    const onSave = jest.fn().mockRejectedValueOnce(rejection).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField onSave={onSave} onClose={jest.fn()} />
+    </FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Bad evidence')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'not-a-uuid')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+
+    expect(await screen.findByText(/Input should be a valid UUID/)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
+
+    await user.type(screen.getByRole('textbox', { name: 'Evidence attack ID' }), 'x')
+    expect(screen.queryByText(/Input should be a valid UUID/)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+  })
+
+  it.each([false, true])('preserves mixed validation feedback with evidenceField=%s', async evidenceField => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(Object.assign(new Error('Request failed'), {
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          detail: 'Request validation failed',
+          errors: [
+            { field: 'body.attack_result_id', message: 'Attack is unavailable', code: 'value_error' },
+            { field: 'body.title', message: 'Title is invalid', code: 'value_error' },
+          ],
+        },
+      },
+    }))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField={evidenceField}
+      initialValues={{ title: 'Assessment', severity: 'low', description: '' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const save = screen.getByRole('button', { name: 'Save finding' })
+    await waitFor(() => expect(save).toBeEnabled())
+    await user.click(save)
+    const feedback = await screen.findByText(/title: Title is invalid/)
+    if (evidenceField) {
+      expect(feedback).not.toHaveTextContent('attack_result_id')
+      expect(screen.getByRole('textbox', { name: 'Evidence attack ID' })).toHaveAttribute('aria-invalid', 'true')
+      expect(save).toBeDisabled()
+    } else {
+      expect(feedback).toHaveTextContent('attack_result_id: Attack is unavailable')
+      expect(save).toBeEnabled()
+    }
   })
 })

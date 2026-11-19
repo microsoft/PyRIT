@@ -191,6 +191,30 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
+  it("should place the compact temperature control immediately after Send without losing converter or Undo actions", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Hello"
+      activeTarget={makeTarget({ target_registry_name: "temperature-target", capabilities: buildCapabilities({ supports_temperature: true }) })}
+      generationDraft={{ temperature: "0" }} onGenerationDraftChange={jest.fn()}
+      undoLastSend={{ isUndoing: false, onUndo }} convertedValue="Converted"
+    /></TestWrapper>);
+    const prompt = screen.getByTestId("prompt-editor");
+    const send = within(prompt).getByRole("button", { name: "Send message" });
+    const temperature = within(prompt).getByRole("button", { name: "Adjust temperature: 0" });
+    const clearConversion = within(prompt).getByRole("button", { name: "Clear conversion" });
+    expect(send.compareDocumentPosition(temperature) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(temperature.compareDocumentPosition(clearConversion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(() => send.focus());
+    await user.tab();
+    expect(temperature).toHaveFocus();
+    expect(temperature).toHaveTextContent("0");
+    await user.click(within(prompt).getByRole("button", { name: "Undo last send" }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    await user.click(within(prompt).getByRole("button", { name: "Toggle converter panel" }));
+    expect(defaultProps.onToggleConverterPanel).toHaveBeenCalledTimes(1);
+  });
+
   it("should place Undo directly after the converter button inside the prompt box without opening the panel", async () => {
     const user = userEvent.setup();
     const onUndo = jest.fn();
@@ -225,9 +249,14 @@ describe("ChatInputArea", () => {
     const reason = "The converter state is no longer available.";
     render(<TestWrapper><ChatInputArea {...defaultProps}
       undoLastSend={{ isUndoing: false, disabledReason: reason, onUndo }} /></TestWrapper>);
-    expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
-    await user.hover(screen.getByLabelText(reason));
+    const undo = screen.getByRole("button", { name: "Undo last send" });
+    expect(undo).toHaveAttribute("aria-disabled", "true");
+    undo.focus();
+    expect(undo).toHaveFocus();
+    await user.hover(undo);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(undo).toHaveAccessibleDescription(reason);
+    await user.click(undo);
     expect(onUndo).not.toHaveBeenCalled();
   });
 
@@ -485,9 +514,15 @@ describe("ChatInputArea", () => {
     await user.keyboard("{Escape}");
     rerender(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend}
       convertedValue="Edited output" repeatDisabledReason={reason} /></TestWrapper>);
-    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeDisabled();
-    await user.hover(screen.getByLabelText(reason));
+    const repetitions = screen.getByRole("button", { name: "Repetitions: 1" });
+    expect(repetitions).toHaveAttribute("aria-disabled", "true");
+    repetitions.focus();
+    expect(repetitions).toHaveFocus();
+    await user.hover(repetitions);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(repetitions).toHaveAccessibleDescription(reason);
+    await user.click(repetitions);
+    expect(screen.queryByRole("button", { name: "Increase repetitions" })).not.toBeInTheDocument();
     await user.click(getSendButton());
     expect(onSend).toHaveBeenCalledWith("Source prompt", "Edited output", []);
   });

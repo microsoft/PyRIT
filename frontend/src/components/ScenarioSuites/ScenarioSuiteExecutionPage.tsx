@@ -1,7 +1,6 @@
-import { type ReactElement, useState } from 'react'
+import { useState } from 'react'
 
 import {
-  Badge,
   Button,
   Dialog,
   DialogActions,
@@ -24,14 +23,13 @@ import {
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
-  CheckmarkCircleRegular,
-  DismissCircleRegular,
   ErrorCircleRegular,
   StopRegular,
 } from '@fluentui/react-icons'
 import { Link, useParams } from 'react-router'
 
 import { formatTimestamp } from '@/components/AttackResults/attackAttemptFormatting'
+import ScanStatusBadge from '@/components/ScanStatusBadge'
 import {
   isTerminalSuiteExecutionStatus,
   useScenarioSuiteExecution,
@@ -39,39 +37,11 @@ import {
 import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
-  ScenarioSuiteExecutionEntryState,
   ScenarioSuiteExecutionEntrySummary,
-  ScenarioSuiteExecutionStatus,
 } from '@/types'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 
 import { useScenarioSuiteExecutionPageStyles } from './ScenarioSuiteExecutionPage.styles'
-
-const EXECUTION_BADGE_COLORS: Record<
-  ScenarioSuiteExecutionStatus,
-  'informative' | 'brand' | 'success' | 'danger' | 'warning'
-> = {
-  QUEUING: 'informative',
-  IN_PROGRESS: 'brand',
-  COMPLETED: 'success',
-  FAILED: 'danger',
-  CANCELLED: 'warning',
-}
-
-const ENTRY_BADGE_COLORS: Record<
-  ScenarioSuiteExecutionEntryState,
-  'informative' | 'brand' | 'success' | 'danger' | 'warning'
-> = {
-  PENDING: 'informative',
-  SUBMITTING: 'informative',
-  SUBMISSION_FAILED: 'danger',
-  CREATED: 'informative',
-  QUEUED: 'informative',
-  IN_PROGRESS: 'brand',
-  COMPLETED: 'success',
-  FAILED: 'danger',
-  CANCELLED: 'warning',
-}
 
 const ENTRY_SUBMISSION_FAILURE_MESSAGE = (
   'The scenario run could not be created. Check server logs before retrying.'
@@ -212,14 +182,13 @@ function ScenarioSuiteExecutionPageContent({
               <Text as="h2" size={700} weight="semibold">
                 {execution.suite_name}
               </Text>
-              <Badge
+              <ScanStatusBadge
+                status={execution.status}
                 appearance="filled"
-                color={EXECUTION_BADGE_COLORS[execution.status]}
-                icon={statusIcon(execution.status)}
-                data-testid="suite-execution-state-badge"
-              >
-                {formatState(execution.status)}
-              </Badge>
+                withIcon
+                label={formatState(execution.status)}
+                testId="suite-execution-state-badge"
+              />
             </div>
             <Text size={200} className={styles.executionId}>
               Suite execution ID: <code>{execution.suite_execution_id}</code>
@@ -312,13 +281,7 @@ function ScenarioSuiteExecutionPageContent({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        appearance="tint"
-                        color={ENTRY_BADGE_COLORS[entry.state]}
-                        icon={statusIcon(entry.state)}
-                      >
-                        {formatState(entry.state)}
-                      </Badge>
+                      <ScanStatusBadge status={entry.state} withIcon label={formatState(entry.state)} />
                     </TableCell>
                     <TableCell>
                       {entry.run ? (
@@ -418,21 +381,6 @@ function entryErrorMessage(entry: ScenarioSuiteExecutionEntrySummary): string {
   return entry.state === 'SUBMISSION_FAILED'
     ? ENTRY_SUBMISSION_FAILURE_MESSAGE
     : ENTRY_STATUS_FAILURE_MESSAGE
-}
-
-function statusIcon(
-  status: ScenarioSuiteExecutionStatus | ScenarioSuiteExecutionEntryState,
-): ReactElement | undefined {
-  if (status === 'COMPLETED') {
-    return <CheckmarkCircleRegular />
-  }
-  if (status === 'FAILED' || status === 'SUBMISSION_FAILED') {
-    return <ErrorCircleRegular />
-  }
-  if (status === 'CANCELLED') {
-    return <DismissCircleRegular />
-  }
-  return undefined
 }
 
 function formatState(status: string): string {

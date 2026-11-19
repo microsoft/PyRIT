@@ -136,14 +136,18 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
     # Crescendo relies on native live history for both gradual escalation and
     # backtracking. Squashed or non-editable history changes those semantics.
+    # Each turn's response drives the next escalation step.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
+        native_required=frozenset(
+            {CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN, CapabilityName.RESPONSES}
+        ),
     )
 
     # Default system prompt template path for Crescendo attack
     DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH: Path = (
         Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "crescendo_variant_1.yaml"
     )
+    ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
         system_prompt_parameters=("objective", "max_turns"),
@@ -234,7 +238,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # (The class-level ``TARGET_REQUIREMENTS`` only covers ``objective_target``;
         # this is a separate target.)
         try:
-            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+            type(self).ADVERSARIAL_TARGET_REQUIREMENTS.validate(target=self._adversarial_chat)
         except ValueError as exc:
             raise ValueError(f"CrescendoAttack {exc}") from exc
 

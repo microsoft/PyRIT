@@ -4,7 +4,8 @@
 import json
 import pickle
 import threading
-from contextlib import nullcontext
+from collections.abc import Generator
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -25,7 +26,7 @@ from pyrit.executor.promptgen.gcg import (  # noqa: E402
     GCGAlgorithmConfig,
     GCGModelConfig,
     GCGStrategyConfig,
-    SuffixInitializer,  # noqa: E402
+    SuffixInitializer,
 )
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
     AttackPrompt,
@@ -2086,20 +2087,49 @@ def test_attack_prompt_logits_rejects_non_string_controls() -> None:
         prompt.logits(model, test_controls=123)
 
 
-def test_attack_prompt_logits_builds_attention_mask() -> None:
+@contextmanager
+def _expect_nested_tensor_warning() -> Generator[None, None, None]:
+    # PyTorch normally emits this C++ warning only once per process.
+    warn_always = torch.is_warn_always_enabled()
+    torch.set_warn_always(True)
+    try:
+        with pytest.warns(UserWarning, match=r"^The PyTorch API of nested tensors is in prototype stage"):
+            yield
+    finally:
+        torch.set_warn_always(warn_always)
+
+
+@pytest.mark.parametrize(
+    ("control_tokens", "expected_ids", "expected_mask"),
+    [
+        ([[5, 6]], [[0, 5, 6, 3]], [[1, 1, 1, 1]]),
+        ([[5]], [[0, 5, 4, 3]], [[1, 1, 0, 1]]),
+        ([[5], [6, 7]], [[0, 5, 4, 3], [0, 6, 7, 3]], [[1, 1, 0, 1], [1, 1, 1, 1]]),
+        ([[4], [5, 6, 7]], [[0, 4, 7, 3], [0, 5, 6, 3]], [[1, 1, 0, 1], [1, 1, 1, 1]]),
+    ],
+)
+def test_attack_prompt_logits_builds_attention_mask(
+    *,
+    control_tokens: list[list[int]],
+    expected_ids: list[list[int]],
+    expected_mask: list[list[int]],
+) -> None:
     prompt = object.__new__(AttackPrompt)
     prompt._control_slice = slice(1, 3)
     prompt.input_ids = torch.tensor([0, 1, 2, 3])
     prompt.tokenizer = MagicMock()
-    prompt.tokenizer.return_value.input_ids = [5, 6]
+    prompt.tokenizer.side_effect = [SimpleNamespace(input_ids=tokens) for tokens in control_tokens]
     model = MagicMock()
     model.device = torch.device("cpu")
-    model.return_value.logits = torch.randn(1, 4, 8)
+    model.return_value.logits = torch.randn(len(control_tokens), 4, 8)
 
-    logits = prompt.logits(model, test_controls=["candidate"])
+    with _expect_nested_tensor_warning():
+        logits, ids = prompt.logits(model, test_controls=["candidate"] * len(control_tokens), return_ids=True)
 
-    assert logits.shape == (1, 4, 8)
-    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
+    assert logits is model.return_value.logits
+    assert torch.equal(ids, torch.tensor(expected_ids))
+    assert torch.equal(model.call_args.kwargs["input_ids"], ids)
+    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.tensor(expected_mask))
 
 
 def test_attack_prompt_logits_forwards_selected_positions() -> None:
@@ -2113,7 +2143,8 @@ def test_attack_prompt_logits_forwards_selected_positions() -> None:
     model.return_value.logits = torch.randn(1, 2, 8)
     positions = torch.tensor([0, 2])
 
-    logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
+    with _expect_nested_tensor_warning():
+        logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
 
     assert logits.shape == (1, 2, 8)
     assert torch.equal(model.call_args.kwargs["logits_to_keep"], positions)
@@ -2546,7 +2577,7 @@ class TestRandomSeedDeterminism:
                     barrier=barrier,
                     switches=switches,
                 )
-            except BaseException as exc:  # noqa: BLE001 - release the peer thread, then surface the error
+            except BaseException as exc:  # release the peer thread, then surface the error
                 barrier.abort()
                 outcomes[run_id] = exc
 

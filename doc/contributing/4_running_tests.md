@@ -38,6 +38,12 @@ server, including when the `litellm` or `all` extra is installed. Real adapter
 and outgoing-header checks run separately as
 [loopback integration tests](./6_integration_tests.md#litellm-loopback-integration-tests).
 
+Backend tests that use `sqlite_instance` dispose its async pools on each
+`TestClient` portal's owning event loop before that portal closes. Context-managed
+clients keep their pool throughout the application lifespan. Tests must still
+finish their background work before leaving the client or fixture; this cleanup
+does not suppress worker exceptions or replace production shutdown.
+
 ### CodeQL merge-group uploads
 
 CodeQL still analyzes all three languages on PRs, merge groups, main/release pushes,
@@ -210,6 +216,21 @@ background accessibility.
      ```
 
 ## Running the other test tiers
+
+### SQL Server migration check
+
+The `SQL Server migrations` CI job uses disposable SQL Server 2022 Developer on
+GitHub-hosted Linux, without Azure credentials. On PRs and merge groups, it runs
+migrations on a fresh database to the **checked-out branch's Alembic head**, then
+checks schema agreement with models. It does not test data-dependent backfills.
+
+To run locally, install ODBC Driver 18 and the normal `uv sync` dependencies.
+Set `PYRIT_TEST_SQLSERVER_URL` to a disposable server's `mssql+pyodbc://.../master`
+SQL-authentication URL with permission to create/drop test databases:
+
+```bash
+uv run --frozen python -m build_scripts.check_sqlserver_migrations
+```
 
 ```{note}
 Avoid `pytest tests`. It collects the integration, end-to-end, and partner-integration tiers

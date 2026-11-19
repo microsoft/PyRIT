@@ -65,18 +65,18 @@ class Cyber(Scenario):
     techniques.
     """
 
-    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
-    #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
-    #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
-    VERSION: int = 3
+    #: Bumped from 3 → 4 because the default objective scorer now applies the malware
+    #: question; earlier versions never did. ``use_cached`` only matches prior runs at
+    #: the current ``VERSION``.
+    VERSION: int = 4
 
     @classmethod
-    def get_override_composite_scorer_questions_path(cls) -> list[Path]:
+    def _get_additional_scoring_questions(cls) -> list[Path]:
         """
         Override true/false question paths for cyber objective scoring.
 
         Returns:
-            Sequence[Path]: Paths to true/false question paths for cyber objective scoring.
+            list[Path]: Paths to true/false question paths for cyber objective scoring.
         """
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"]
 
@@ -95,15 +95,11 @@ class Cyber(Scenario):
                 provided, defaults to a composite scorer using malware detection + refusal backstop.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
-
         technique_class = _build_cyber_technique()
 
         super().__init__(
             version=self.VERSION,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["airt_malware"]], max_per_dataset="all", max_total=4

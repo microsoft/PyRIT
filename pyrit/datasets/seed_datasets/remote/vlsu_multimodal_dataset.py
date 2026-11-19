@@ -256,7 +256,13 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         standardized_harm_categories = self._standardize_combined_category(combined_category)
 
         group_id = uuid.uuid4()
-        local_image_path = await self._fetch_and_save_image_async(image_url, str(group_id))
+        # Name the cached image after the row's uuid, so later loads reuse it instead of downloading it again.
+        # A blank or malformed uuid keeps a random name, so it can't share or overwrite another cached image.
+        try:
+            image_id = str(uuid.UUID(example.get("uuid") or ""))
+        except ValueError:
+            image_id = str(group_id)
+        local_image_path = await self._fetch_and_save_image_async(image_url, image_id)
 
         metadata: dict[str, str | int] = {
             "category": combined_category,
@@ -313,13 +319,13 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
         )
 
-    async def _fetch_and_save_image_async(self, image_url: str, group_id: str) -> str:
+    async def _fetch_and_save_image_async(self, image_url: str, image_id: str) -> str:
         """
         Fetch and save an image from the ML-VLSU dataset.
 
         Args:
             image_url: URL to the image.
-            group_id: Group ID for naming the cached file.
+            image_id: ID for naming the cached file, normally the row's uuid.
 
         Returns:
             Local path to the saved image.
@@ -343,7 +349,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         }
 
         return await fetch_and_cache_image_async(
-            filename=f"ml_vlsu_{group_id}.png",
+            filename=f"ml_vlsu_{image_id}.png",
             image_url=image_url,
             log_prefix="ML-VLSU",
             request_headers=headers,
