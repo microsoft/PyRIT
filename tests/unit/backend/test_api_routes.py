@@ -2023,7 +2023,7 @@ class TestConverterRoutes:
     def test_create_converter_marks_a_save_refusal_so_it_can_be_created_without_saving(
         self, client: TestClient
     ) -> None:
-        refusal = NotSaveableError("Saved converters can't keep uploaded files yet, so leave out 'font_name'.")
+        refusal = NotSaveableError("Saved converters can't keep uploaded files yet ('font_name').")
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=refusal)
 
