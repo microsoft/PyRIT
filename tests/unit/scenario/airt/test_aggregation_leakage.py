@@ -16,7 +16,7 @@ from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, Seed
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique  # type: ignore[ty:import-not-found]
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.aggregation_leakage import (
     AGGREGATION_CONTEXT_METADATA_KEY,

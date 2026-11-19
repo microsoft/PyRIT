@@ -38,9 +38,24 @@ if TYPE_CHECKING:
         InstanceRegistry,
         RegistryEntry,
         SupportsInstances,
+        allows_credential_updates,
+        creator_metadata,
+        credential_update_metadata,
+        get_entry_owner,
+        is_private_entry,
+        is_visible_to_caller,
+        owner_metadata,
+        record_private_references,
     )
     from pyrit.registry.registry import InstanceHoldingRegistry, ParamBagRegistry, Registry
     from pyrit.registry.registry_metadata import RegistryMetadata
+    from pyrit.registry.registry_recipe_save import (
+        NotSaveableError,
+        SavedEntryConflictError,
+        SavedEntryStorageError,
+        prepare_saved_params_async,
+        save_then_register_async,
+    )
     from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
     from pyrit.registry.scenario_suite_resolver import (
         ResolvedScenarioSuiteEntry,
@@ -66,6 +81,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ParamBagRegistry": "pyrit.registry.registry",
     "Registry": "pyrit.registry.registry",
     "RegistryMetadata": "pyrit.registry.registry_metadata",
+    "NotSaveableError": "pyrit.registry.registry_recipe_save",
+    "SavedEntryConflictError": "pyrit.registry.registry_recipe_save",
+    "SavedEntryStorageError": "pyrit.registry.registry_recipe_save",
+    "prepare_saved_params_async": "pyrit.registry.registry_recipe_save",
+    "save_then_register_async": "pyrit.registry.registry_recipe_save",
     "SupportsInstances": "pyrit.registry.instance_registry",
     "discover_in_directory": "pyrit.registry.discovery",
     "InitializerMetadata": "pyrit.registry.components",
@@ -97,6 +117,14 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TargetRegistry": "pyrit.registry.components",
     "TargetMetadata": "pyrit.registry.components",
     "TagQuery": "pyrit.registry.tag_query",
+    "allows_credential_updates": "pyrit.registry.instance_registry",
+    "creator_metadata": "pyrit.registry.instance_registry",
+    "credential_update_metadata": "pyrit.registry.instance_registry",
+    "get_entry_owner": "pyrit.registry.instance_registry",
+    "is_private_entry": "pyrit.registry.instance_registry",
+    "is_visible_to_caller": "pyrit.registry.instance_registry",
+    "owner_metadata": "pyrit.registry.instance_registry",
+    "record_private_references": "pyrit.registry.instance_registry",
 }
 
 __all__ = list(_LAZY_EXPORTS)

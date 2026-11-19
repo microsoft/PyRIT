@@ -5,12 +5,10 @@ project:
     - name: Microsoft AI Red Team
   copyright: Copyright 2024, Microsoft AI Red Team
   github: microsoft/PyRIT
+  plugins:
+    - _plugins/notebook_identifiers.mjs
   bibliography:
     - references.bib
-  exports:
-    - format: pdf
-      template: plain_latex_book
-      output: exports/book.pdf
   # MyST copies these to the site root, preserving the videos directory.
   static_files:
     - assets/videos
@@ -20,14 +18,6 @@ project:
   # Rule IDs come from https://github.com/jupyter-book/mystmd
   # (packages/myst-common/src/ruleids.ts).
   error_rules:
-    # mystmd v2.x has no LaTeX renderer for the MyST layout directives we use
-    # extensively in the HTML site (grid, tabSet, details, mermaid). They
-    # render fine in HTML; PDF export emits "Unhandled LaTeX conversion for
-    # node of X" errors per node. Track upstream support and remove this
-    # suppression when those renderers land.
-    - rule: tex-renders
-      severity: ignore
-
     # External APIs that require auth — always return 401/403 from CI workers
     # and public link checkers. The URLs themselves are correct; they just
     # can't be verified without credentials. Every other broken URL in the
@@ -189,6 +179,7 @@ project:
             - file: code/scoring/5_tool_call_scorer.ipynb
             - file: code/scoring/6_file_write_scorer.ipynb
             - file: code/scoring/7_program_execution_scorer.ipynb
+            - file: code/scoring/8_trace_evidence_scoring.ipynb
             - file: code/scoring/multi_label_true_false.md
         - file: code/memory/0_memory.md
           children:
@@ -214,6 +205,7 @@ project:
             - file: code/scenarios/1_common_scenario_parameters.ipynb
             - file: code/scenarios/2_custom_scenario_parameters.ipynb
             - file: code/scenarios/3_adaptive_scenarios.ipynb
+            - file: code/scenarios/4_scenario_suites.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb

@@ -32,12 +32,14 @@ from pyrit.models import (
     Message,
     MessagePiece,
     MessageScorable,
+    ReasoningContentMetadata,
     RequestTraceContext,
     ScoringExpectation,
     ToolCallRequirement,
     ToolsCalled,
     TraceScorable,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
     LiteLLMChatTarget,
     OpenAIChatAudioConfig,
@@ -336,6 +338,27 @@ def test_custom_configuration_overrides_derivation(patch_central_database, litel
     supported = {ty for combo in t.capabilities.input_modalities for ty in combo}
     assert supported == {"text"}
     assert t.capabilities.supports_json_output is False
+    assert t.capabilities.supports_prefill is False
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+def test_prefill_survives_capability_derivation(patch_central_database, litellm_stub, underlying_model):
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", underlying_model=underlying_model)
+    assert target.capabilities.supports_prefill is True
+
+
+@pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+def test_custom_prefill_opt_out_wins_over_model_metadata(patch_central_database, litellm_stub, underlying_model):
+    custom = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True, supports_editable_history=True, supports_prefill=False
+        )
+    )
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", underlying_model=underlying_model, custom_configuration=custom
+    )
+    assert target.configuration is custom
+    assert target.capabilities.supports_prefill is False
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +659,66 @@ async def test_send_prompt_parses_audio_response(patch_central_database, litellm
     assert audio_piece.converted_value == "/path/to/audio.wav"
 
 
+async def test_send_prompt_replays_audio_response_as_transcript_without_audio_input(patch_central_database, tmp_path):
+    """Stored assistant audio must not block the next text turn when the adapter sends only its transcript."""
+    audio_file = tmp_path / "response.wav"
+    audio_file.write_bytes(b"fake audio bytes")
+    litellm, exc_mod = _make_litellm_stub(supports_audio_input=False, supports_audio_output=True)
+    litellm.acompletion = AsyncMock(side_effect=[_mock_audio_response("Spoken response"), _mock_response("Follow-up")])
+    conversation_id = "litellm-audio-history"
+
+    with (
+        patch.dict(sys.modules, {"litellm": litellm, "litellm.exceptions": exc_mod}),
+        patch("pyrit.prompt_target.common.chat_completions_response_parser.data_serializer_factory") as mock_factory,
+    ):
+        mock_serializer = MagicMock()
+        mock_serializer.value = str(audio_file)
+        mock_serializer.save_data_async = AsyncMock()
+        mock_factory.return_value = mock_serializer
+
+        target = LiteLLMChatTarget(
+            model_name="openai/gpt-4o-audio-preview",
+            audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+        )
+        assert not any("audio_path" in combo for combo in target.capabilities.input_modalities)
+
+        normalizer = PromptNormalizer()
+        first = await normalizer.send_prompt_async(
+            message=_user_message("Hi", conversation_id=conversation_id), target=target, conversation_id=conversation_id
+        )
+        assert [piece.converted_value_data_type for piece in first.message_pieces] == ["text", "audio_path"]
+
+        second = await normalizer.send_prompt_async(
+            message=_user_message("Continue", conversation_id=conversation_id),
+            target=target,
+            conversation_id=conversation_id,
+        )
+
+    assert second.get_value() == "Follow-up"
+    assert litellm.acompletion.await_count == 2
+    second_messages = litellm.acompletion.await_args_list[1].kwargs["messages"]
+    assert [message["role"] for message in second_messages] == ["user", "assistant", "user"]
+    assert second_messages[1]["content"] == [{"type": "text", "text": "Spoken response"}]
+    assert second_messages[-1]["content"] == [{"type": "text", "text": "Continue"}]
+    assert not any(part.get("type") == "input_audio" for message in second_messages for part in message["content"])
+
+
+def test_audio_history_validation_still_rejects_current_user_audio(patch_central_database, litellm_stub):
+    """Assistant-audio history support must not enable unsupported live audio input."""
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o-audio-preview",
+        audio_response_config=OpenAIChatAudioConfig(voice="alloy", audio_format="wav"),
+    )
+    audio_request = MessagePiece(
+        role="user",
+        original_value="/path/to/input.wav",
+        original_value_data_type="audio_path",
+    ).to_message()
+
+    with pytest.raises(ValueError, match="Received: audio_path"):
+        target._validate_request(normalized_conversation=[audio_request])
+
+
 # ---------------------------------------------------------------------------
 # JSON output
 # ---------------------------------------------------------------------------
@@ -758,6 +841,63 @@ async def test_token_limit_truncation_with_no_content_does_not_raise(target, lit
     assert piece.response_error == "empty"
     assert piece.is_truncated is True
     assert piece.prompt_metadata["finish_reason"] == "length"
+
+
+# ---------------------------------------------------------------------------
+# Reasoning text (``message.reasoning_content``)
+# ---------------------------------------------------------------------------
+
+
+async def test_reasoning_content_is_stored_in_response_metadata(target, litellm_stub):
+    response = _mock_response("The answer is 4.")
+    response.choices[0].message.reasoning_content = "2 + 2 is 4."
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    pieces = result[0].message_pieces
+    assert [piece.converted_value for piece in pieces] == ["The answer is 4."]
+    assert ReasoningContentMetadata.from_metadata(metadata=pieces[0].prompt_metadata) == ReasoningContentMetadata(
+        content="2 + 2 is 4."
+    )
+
+
+async def test_reasoning_content_absent_when_model_returns_none(target, litellm_stub):
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("The answer is 4."))
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    assert ReasoningContentMetadata.from_metadata(metadata=result[0].message_pieces[0].prompt_metadata) is None
+
+
+async def test_reasoning_content_kept_when_token_limit_leaves_no_answer(target, litellm_stub):
+    """The whole budget went to reasoning: the answer is empty, but the reasoning is still recorded."""
+    response = _mock_response(content=None, finish_reason="length")
+    response.choices[0].message.reasoning_content = "Let me think about this step by step"
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    piece = result[0].message_pieces[0]
+    assert piece.response_error == "empty"
+    assert piece.is_truncated is True
+    assert ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) == ReasoningContentMetadata(
+        content="Let me think about this step by step"
+    )
+
+
+async def test_reasoning_content_kept_when_response_is_content_filtered(target, litellm_stub):
+    response = _mock_response(content="partial answer", finish_reason="content_filter")
+    response.choices[0].message.reasoning_content = "The user is asking for"
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message("bad prompt"))
+
+    piece = result[0].message_pieces[0]
+    assert piece.converted_value_data_type == "error"
+    assert ReasoningContentMetadata.from_metadata(metadata=piece.prompt_metadata) == ReasoningContentMetadata(
+        content="The user is asking for"
+    )
 
 
 # ---------------------------------------------------------------------------

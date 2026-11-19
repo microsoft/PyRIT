@@ -175,7 +175,8 @@ print(df.to_string(index=False))
 # Media observation capture remains deferred until its evidence can be snapshotted.
 # Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb), and file-system
 # observations in [File-write scoring](6_file_write_scorer.ipynb), and sandboxed program runs in
-# [Program-execution scoring](7_program_execution_scorer.ipynb).
+# [Program-execution scoring](7_program_execution_scorer.ipynb). Execution traces with model calls,
+# tool arguments, and results are covered in [Judging with execution traces](8_trace_evidence_scoring.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation
@@ -256,8 +257,8 @@ print(f"'Have a nice day.' -> {clean.get_value()}")
 #
 # Most of the time a scorer is handed to an attack as the **objective scorer** that decides
 # whether the objective was met. Here a `SubStringScorer` and a local `TextTarget` keep the
-# example offline. `TextTarget` just records the prompt and returns no assistant content, so
-# there is nothing substantive for the scorer to flag — swap in an LLM-backed
+# example offline. `TextTarget` only records the prompt and never replies, so there is no response
+# for the scorer to judge and the outcome is `UNDETERMINED` — swap in an LLM-backed
 # [target](../targets/0_prompt_targets.md) (and any scorer) to score a real model response.
 # %%
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -273,6 +274,7 @@ result = await attack.execute_async(objective="Say something hateful")  # type: 
 await output_attack_async(result)
 
 # %% [markdown]
+# (batch-scoring)=
 # ## Batch scoring
 #
 # `BatchScorer` scores responses already in memory — for example everything an attack sent.

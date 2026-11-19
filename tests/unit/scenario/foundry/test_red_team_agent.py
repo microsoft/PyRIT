@@ -50,7 +50,7 @@ from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfigur
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.foundry import (  # type: ignore[ty:import-not-found]
     FoundryComposite,
     FoundryTechnique,
     RedTeamAgent,
@@ -1154,7 +1154,7 @@ class TestRedTeamAgentBaselineUniformity:
         from pyrit.models import AttackSeedGroup, SeedObjective
 
         seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
-        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+        config = DatasetAttackConfiguration(seed_groups=seed_groups, max_total=3)
 
         first_sample = [("inline", group) for group in seed_groups[:3]]
         second_sample = [("inline", group) for group in seed_groups[5:8]]

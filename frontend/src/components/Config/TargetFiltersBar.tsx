@@ -21,6 +21,7 @@ interface FilterField {
 /** The filters in display order. */
 const FILTER_FIELDS: readonly FilterField[] = [
   { key: 'types', label: 'Filter by type:', name: 'Type', placeholder: 'All types', testId: 'target-type-filter' },
+  { key: 'accounts', label: 'Filter by account:', name: 'Account', placeholder: 'All accounts', testId: 'target-account-filter' },
   { key: 'inputs', label: 'Filter by input:', name: 'Inputs', placeholder: 'All inputs', testId: 'target-input-filter' },
   { key: 'outputs', label: 'Filter by output:', name: 'Outputs', placeholder: 'All outputs', testId: 'target-output-filter' },
   { key: 'capabilities', label: 'Filter by capability:', name: 'Capabilities', placeholder: 'All capabilities', testId: 'target-capability-filter' },

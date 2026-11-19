@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.common.async_compatibility import run_legacy_sync_async
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import CompatibleScorers, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +65,20 @@ class Cyber(Scenario):
     techniques.
     """
 
-    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
-    #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
-    #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
-    VERSION: int = 3
+    SUPPORTS_OBJECTIVE_SCORER_POOL: ClassVar[bool] = True
+
+    #: Bumped from 3 → 4 because the default objective scorer now applies the malware
+    #: question; earlier versions never did. ``use_cached`` only matches prior runs at
+    #: the current ``VERSION``.
+    VERSION: int = 4
 
     @classmethod
-    def get_override_composite_scorer_questions_path(cls) -> list[Path]:
+    def _get_additional_scoring_questions(cls) -> list[Path]:
         """
         Override true/false question paths for cyber objective scoring.
 
         Returns:
-            Sequence[Path]: Paths to true/false question paths for cyber objective scoring.
+            list[Path]: Paths to true/false question paths for cyber objective scoring.
         """
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"]
 
@@ -84,15 +86,17 @@ class Cyber(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: TrueFalseScorer | None = None,
+        objective_scorer: TrueFalseScorer | CompatibleScorers | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
         """
         Initialize the cyber harms scenario.
 
         Args:
-            objective_scorer (TrueFalseScorer | None): Objective scorer for malware detection. If not
-                provided, defaults to a composite scorer using malware detection + refusal backstop.
+            objective_scorer (TrueFalseScorer | CompatibleScorers | None): Objective scorer for malware
+                detection. If not provided, defaults to a composite scorer using malware detection + refusal
+                backstop. Or a ``CompatibleScorers`` pool, from which each dataset selects the first candidate
+                that meets its ``DatasetSource.scorer_requirements`` and accepts its objectives.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         technique_class = _build_cyber_technique()
@@ -123,5 +127,6 @@ class Cyber(Scenario):
         return await run_legacy_sync_async(
             build_matrix_atomic_attacks,
             context=context,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=self._objective_scorer_input,
+            scorer_requirements=self._get_objective_scorer_requirements(),
         )
