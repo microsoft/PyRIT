@@ -47,16 +47,6 @@ describe('LabelsBar', () => {
     expect(screen.getByTestId('edit-label-operation')).toHaveValue('op_saved')
   })
 
-  it('should show warning icon for dummy values', () => {
-    render(
-      <TestWrapper>
-        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={jest.fn()} />
-      </TestWrapper>
-    )
-
-    expect(screen.getByTestId('labels-warning')).toBeInTheDocument()
-  })
-
   it.each([
     ['a placeholder', { operator: 'roakey' }, false, 'Placeholder value — type to change'],
     ['the signed-in account', { operator: 'alice' }, true, 'Derived from your signed-in account'],
@@ -105,10 +95,13 @@ describe('LabelsBar', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('should not show warning when values are customized', () => {
+  it.each([
+    { operator: 'alice', operatorReadOnly: false },
+    { operator: 'roakey', operatorReadOnly: true },
+  ])('should not warn for operator $operator when read-only is $operatorReadOnly', ({ operator, operatorReadOnly }) => {
     render(
       <TestWrapper>
-        <LabelsBar labels={{ operator: 'alice', operation: 'my_test' }} onLabelsChange={jest.fn()}
+        <LabelsBar labels={{ operator }} operatorReadOnly={operatorReadOnly} onLabelsChange={jest.fn()}
           operation={{ status: 'resolved', operation: SAVED_OPERATION }} />
       </TestWrapper>
     )
@@ -121,6 +114,7 @@ describe('LabelsBar', () => {
       labels: { ...DEFAULT_GLOBAL_LABELS },
       message: 'Set operator in the bar. The current value is a placeholder.',
     },
+    { labels: {}, message: 'Set operator in the bar. No operator is set.' },
   ])('should explain the warning: $message', async ({ labels, message }: {
     labels: Record<string, string>
     message: string
@@ -1320,7 +1314,7 @@ describe('LabelsBar', () => {
       const chip = screen.getByTestId('edit-label-operation')
       expect(chip).toHaveAttribute('role', 'combobox')
       expect(chip).toHaveValue('op_2026_08_probe')
-      chip.focus()
+      act(() => { chip.focus() })
       expect(chip).toHaveFocus()
       await user.keyboard('{ArrowDown}')
 
@@ -1359,14 +1353,14 @@ describe('LabelsBar', () => {
 
       fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
-      input.focus()
+      act(() => { input.focus() })
       await waitFor(() => expect(input).toHaveFocus())
       const nextButton = screen.getByRole('button', { name: 'after' })
 
       // jsdom cannot complete Fluent's Tabster focus-guard navigation, so
       // dispatch Tab and drive its browser focus destination explicitly.
       fireEvent.keyDown(input, { key: 'Tab' })
-      nextButton.focus()
+      act(() => { nextButton.focus() })
 
       await waitFor(() => expect(input).toHaveAttribute('aria-expanded', 'false'))
       expect(onChange).not.toHaveBeenCalled()

@@ -11,17 +11,18 @@ accessors, and the filter wiring. These tests drive a minimal subclass that keep
 every base default.
 """
 
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Event
-from types import ModuleType
-from typing import Any
+from types import ModuleType, SimpleNamespace
+from typing import Any, assert_type
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.registry.registry import ParamBagRegistry, Registry, SupportsParamBag, _get_metadata_value, _matches_filters
-from pyrit.registry.registry_metadata import RegistryMetadata
+from pyrit.registry import ParamBagRegistry, Registry, RegistryMetadata
+from pyrit.registry.registry import SupportsParamBag, _get_metadata_value, _matches_filters
 
 
 class SampleWidget:
@@ -335,7 +336,11 @@ def test_get_registry_singleton_converges_for_same_class() -> None:
             second = executor.submit(SlowConstructingRegistry.get_registry_singleton)
             SlowConstructingRegistry.construction_release.set()
 
-            assert first.result(timeout=5) is second.result(timeout=5)
+            first_registry = first.result(timeout=5)
+            second_registry = second.result(timeout=5)
+            assert_type(first_registry, SlowConstructingRegistry)
+            assert_type(second_registry, SlowConstructingRegistry)
+            assert first_registry is second_registry
     finally:
         SlowConstructingRegistry.reset_registry_singleton()
 
@@ -355,10 +360,14 @@ def test_get_registry_singleton_does_not_block_unrelated_registry_class() -> Non
             # Must complete promptly: different registry classes must not share a
             # construction lock.
             other = executor.submit(OtherSlowConstructingRegistry.get_registry_singleton)
-            assert isinstance(other.result(timeout=1), OtherSlowConstructingRegistry)
+            other_registry = other.result(timeout=1)
+            assert_type(other_registry, OtherSlowConstructingRegistry)
+            assert isinstance(other_registry, OtherSlowConstructingRegistry)
 
             SlowConstructingRegistry.construction_release.set()
-            assert isinstance(slow.result(timeout=5), SlowConstructingRegistry)
+            slow_registry = slow.result(timeout=5)
+            assert_type(slow_registry, SlowConstructingRegistry)
+            assert isinstance(slow_registry, SlowConstructingRegistry)
     finally:
         SlowConstructingRegistry.reset_registry_singleton()
         OtherSlowConstructingRegistry.reset_registry_singleton()
@@ -394,18 +403,39 @@ def test_matches_filters_unknown_include_key_fails():
     assert not _matches_filters(meta, include_filters={"nope": "x"})
 
 
+def test_matches_filters_falls_back_to_params() -> None:
+    metadata = SimpleNamespace(params={"mode": "slow"})
+
+    assert _matches_filters(metadata, include_filters={"mode": "slow"})
+    assert not _matches_filters(metadata, include_filters={"mode": "fast"})
+    assert not _matches_filters(metadata, exclude_filters={"mode": "slow"})
+    assert _matches_filters(metadata, exclude_filters={"mode": "fast"})
+
+
 def test_get_metadata_value_falls_back_to_params():
     class HasParams:
         def __init__(self) -> None:
             self.params = {"k": "v"}
 
-    found, value = _get_metadata_value(HasParams(), "k")
+    found, value = _get_metadata_value(HasParams(), key="k")
     assert found is True
     assert value == "v"
 
-    missing_found, missing_value = _get_metadata_value(HasParams(), "missing")
+    missing_found, missing_value = _get_metadata_value(HasParams(), key="missing")
     assert missing_found is False
     assert missing_value is None
+
+
+@pytest.mark.parametrize("value", ["attribute", None])
+def test_get_metadata_value_prefers_attributes_over_params(value: str | None) -> None:
+    metadata = SimpleNamespace(k=value, params={"k": "param"})
+
+    assert _get_metadata_value(metadata, key="k") == (True, value)
+
+
+def test_get_metadata_value_key_is_keyword_only() -> None:
+    parameter = inspect.signature(_get_metadata_value).parameters["key"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 class _WidgetBase:

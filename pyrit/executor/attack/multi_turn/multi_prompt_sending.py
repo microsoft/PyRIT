@@ -7,8 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.utils import get_kwarg_param
+from pyrit.common import REQUIRED_VALUE, apply_defaults, get_kwarg_param
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
@@ -33,8 +32,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -134,9 +132,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
     # conversation state between them. History-squash adaptation would collapse
     # them into one message and silently break the attack's sequencing
     # semantics. Declare MULTI_TURN as ``native_required`` so adaptation is
-    # rejected at construction time.
+    # rejected at construction time. The final response is what gets scored.
     TARGET_REQUIREMENTS = TargetRequirements(
-        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.RESPONSES}),
     )
 
     FIXED_PARAMS_TYPE = MultiPromptSendingAttackParameters

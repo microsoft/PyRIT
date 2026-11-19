@@ -141,6 +141,7 @@ class ProgramExecutionScorer(TrueFalseScorer):
     """
 
     CONDITION_TYPE = ProgramBehaves
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable, ContentScorable, ContentEntryScorable, ProgramExecutionScorable)
 
     def __init__(self, *, source: ObservationSource[ProgramExecutionScorable]) -> None:
         """

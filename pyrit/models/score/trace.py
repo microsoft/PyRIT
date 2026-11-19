@@ -51,12 +51,25 @@ class _TraceInterval(BaseModel):
         return self
 
 
+class TraceSpanEvent(BaseModel):
+    """A transient timestamped event recorded on a span, such as a GenAI message or an exception."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    timestamp: AwareDatetime | None = None
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class TraceSpan(_TraceInterval):
     """Transient backend-neutral span; raw attributes are not durable scoring evidence."""
 
     parent_span_id: SpanId | None = None
+    name: str | None = None
     attributes: dict[str, JsonValue] = Field(default_factory=dict)
+    events: tuple[TraceSpanEvent, ...] = ()
     status: TraceSpanStatus = TraceSpanStatus.UNSET
+    status_message: str | None = None
     sampled: bool = True
 
 
@@ -133,3 +146,42 @@ class ToolExecution(_TraceInterval):
     parent_span_id: SpanId | None = None
     call_id: str | None = Field(default=None, min_length=1)
     status: TraceSpanStatus = TraceSpanStatus.UNSET
+
+
+class ExecutionStepKind(str, Enum):
+    """The role an execution span played, normalized across tracing conventions."""
+
+    LLM = "llm"
+    TOOL = "tool"
+    AGENT = "agent"
+    CHAIN = "chain"
+    RETRIEVER = "retriever"
+    EMBEDDING = "embedding"
+    RERANKER = "reranker"
+    GUARDRAIL = "guardrail"
+    EVALUATOR = "evaluator"
+    OTHER = "other"
+
+
+class ExecutionStep(_TraceInterval):
+    """
+    One normalized execution span: a model call, tool call, agent step, or other operation.
+
+    ``index`` is the step's stable position within its observation, used to cite it. Names,
+    labels, inputs, outputs, and errors are kept complete and exactly as observed.
+    """
+
+    index: int = Field(ge=0, strict=True)
+    parent_span_id: SpanId | None = None
+    kind: ExecutionStepKind
+    name: str = Field(min_length=1)
+    status: TraceSpanStatus = TraceSpanStatus.UNSET
+    error_content: str | None = None
+    model: str | None = None
+    tool_name: ToolName | None = None
+    call_id: str | None = Field(default=None, min_length=1)
+    node_name: str | None = None
+    input_content: str | None = None
+    output_content: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)

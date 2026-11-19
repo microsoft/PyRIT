@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import re
+from unittest.mock import patch
 
 import pytest
 
@@ -78,3 +79,31 @@ async def test_punctuation_list_rejects_substrings_of_string_punctuation(punctua
     converter = InsertPunctuationConverter(seed=1)
     with pytest.raises(ValueError, match="Invalid punctuations"):
         await converter.convert_async(prompt="hello big world", punctuation_list=punctuation_list)
+
+
+@pytest.mark.parametrize(
+    ("prompt", "offset"),
+    [("a", 0), ("a", 1), ("abc", 0), ("abc", 1), ("abc", 2), ("abc", 3)],
+)
+async def test_insert_within_words_reaches_every_insertion_position_async(*, prompt: str, offset: int) -> None:
+    converter = InsertPunctuationConverter(between_words=False, word_swap_ratio=1.0, seed=1)
+    with patch.object(converter, "_get_random_generator") as get_rng:
+        rng = get_rng.return_value
+        rng.sample.return_value = [offset]
+        rng.choice.return_value = "!"
+        result = await converter.convert_async(prompt=prompt, punctuation_list=["!"])
+
+    population, count = rng.sample.call_args.args
+    assert list(population) == list(range(len(prompt) + 1))
+    assert count == 1
+    assert result.output_text == f"{prompt[:offset]}!{prompt[offset:]}"
+    assert result.output_type == "text"
+
+
+@pytest.mark.parametrize("prompt", ["", "...", " \t\n"])
+async def test_insert_within_words_without_words_async(prompt: str) -> None:
+    converter = InsertPunctuationConverter(between_words=False, word_swap_ratio=1.0, seed=1)
+    result = await converter.convert_async(prompt=prompt, punctuation_list=["!"])
+
+    assert result.output_text == f"!{prompt}"
+    assert result.output_type == "text"

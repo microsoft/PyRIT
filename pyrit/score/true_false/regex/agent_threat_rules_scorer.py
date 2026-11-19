@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
@@ -161,7 +161,10 @@ class AgentThreatRulesScorer(RegexScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        objective = expectation.objective if expectation else None
         values = self._extract_fields(message_piece)
         fields = self._patterns_by_field.keys() & values.keys()
         if not fields:
@@ -324,7 +327,7 @@ def _load_digest(*, ref: str, cache: bool) -> dict[str, Any]:
 
     url = _DIGEST_URL_TEMPLATE.format(ref=ref)
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310 - fixed https host
+        with urllib.request.urlopen(url, timeout=30) as response:  # fixed https host
             raw = response.read().decode("utf-8")
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"Could not fetch the ATR digest from {url}: {exc}") from exc

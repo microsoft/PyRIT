@@ -72,9 +72,9 @@
 #
 # PyRITInitializers are how you can configure the CLI scanner. PyRIT includes several built-in initializers you can use with the `--initializers` flag.
 #
-# The `--list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`) regardless of which subdirectory they're in.
+# The `list-initializers` command shows all available initializers. Initializers are referenced by their filename (e.g., `target`, `scorer`) regardless of which subdirectory they're in.
 #
-# List the available initializers using the --list-initializers flag.
+# List the available initializers using the `list-initializers` command.
 
 # %%
 # !pyrit_scan list-initializers
@@ -86,7 +86,7 @@
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
 # 2. Initializers (which can be supplied via the `--initializers` flag on `run`, or the `initializers` / `initialization_scripts` sections of a config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
-# 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
+# 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `list-scenarios`
 #
 # Basic usage will look something like:
 #
@@ -216,7 +216,7 @@
 # my_custom_scenarios.py
 
 from pyrit.common import apply_defaults
-from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioTechnique
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
@@ -311,6 +311,27 @@ MyCustomScenario()
 # pyrit_scan scenario-results <id> --view conversations --attack-result-ids <attack_id> <attack_id>
 # pyrit_scan scenario-results <id> --view conversations --limit 3
 # ```
+
+# %% [markdown]
+# ## Updating a Target's Key
+#
+# A target you create through the API with `"private": true` is private: only you can see and use it, and `list-targets` shows it as `Account: Yours`. A private target allows credential updates, so when its key expires or changes, replace it with `set-target-credential`. A shared target allows them only when whoever created it, or the server's configuration, said so; then anyone signed in can update it, and everyone's requests use the new value. `list-targets` shows `Credential updates: allowed` for the targets you can update, and notes when the provider rejected a target's credentials on its last request. The value comes from a hidden prompt (`--prompt`), an environment variable (`--from-env VAR`), or the Anthropic `ant` CLI (`--from-ant`); it is never a command-line value. Add `--header NAME` to set it as a request header instead of the API key, such as a team gateway's own header, `Authorization`, or `Cookie`.
+#
+# ```shell
+# # One-time sign-in to the Claude Console for a workspace
+# ant auth login --profile copyrit --workspace-id <workspace_id>
+#
+# # Replace the key with your token, and re-send a fresh one every 15 minutes until Ctrl+C
+# pyrit_scan set-target-credential claude --from-ant --ant-profile copyrit --keep-fresh
+#
+# # Or replace it with an API key from an environment variable
+# pyrit_scan set-target-credential claude --from-env ANTHROPIC_API_KEY
+#
+# # Or set a request header, such as a gateway token, from a hidden prompt
+# pyrit_scan set-target-credential team-model --prompt --header X-Team-Token
+# ```
+#
+# `--keep-fresh` only replaces expiring `ant` tokens, and it stops when the target is gone or another target took its name, for example after the backend restarts.
 
 # %% [markdown]
 # ## Stopping the Backend Server

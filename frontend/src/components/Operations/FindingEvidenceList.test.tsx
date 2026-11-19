@@ -43,7 +43,7 @@ it('loads only on expansion and opens the conversation holding the score', async
   await user.click(screen.getByRole('button', { name: 'Evidence (1)' }))
   expect(await screen.findByText('Get the recipe')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Open attack' })).toHaveAttribute('href',
-    `/attacks/attack%2F1/conversations/source%2F1?scenarioResultId=${ID}&findingEvidenceId=${ID}`)
+    `/attack/chat/attack%2F1/conversations/source%2F1?scenarioResultId=${ID}&findingEvidenceId=${ID}`)
 })
 
 it("shows each attack's objective, outcome, and current score", async () => {

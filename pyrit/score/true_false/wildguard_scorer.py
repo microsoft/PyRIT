@@ -35,10 +35,10 @@ _PROMPT_PARAMETERS = ("user_prompt", "response")
 
 # The user prompt belongs to the conversation, not to an individual piece, so it is resolved
 # once per scored message and handed to the pieces through this. Resolving inside
-# _score_piece_async instead would repeat the same lookup for every piece of the message. A
-# ContextVar rather than an attribute because pieces are scored under asyncio.gather, which
-# copies the context into each child task, so this stays correct if one scorer instance is
-# used for several messages at once.
+# _score_piece_with_expectation_async instead would repeat the same lookup for every piece of
+# the message. A ContextVar rather than an attribute because pieces are scored under
+# asyncio.gather, which copies the context into each child task, so this stays correct if one
+# scorer instance is used for several messages at once.
 _RESOLVED_USER_PROMPT: ContextVar[str | None] = ContextVar("wildguard_resolved_user_prompt", default=None)
 
 _MISSING_USER_PROMPT_MESSAGE = (

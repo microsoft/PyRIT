@@ -46,10 +46,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
     rendered per-piece from ``system_prompt_format_string``.
     """
 
-    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
-        supported_data_types=["text"],
-        is_objective_required=False,
-    )
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(

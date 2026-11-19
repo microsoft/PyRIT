@@ -14,13 +14,9 @@ composite ``inner_targets`` (full instances, not bare identifiers), and a curate
 
 from typing import Any
 
-from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models import CapabilityName, TargetIdentifier
+from pyrit.models.catalog import RegistryEntryOrigin, TargetInstance
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.registry import TargetRegistry
-from pyrit.registry.registry import Reconstructable
-from pyrit.registry.resolution import derive_parameters
 
 # Capability flag names that should never be surfaced as identifier-level params:
 # they are sourced from `target_obj.capabilities` instead.
@@ -56,7 +52,14 @@ def _target_specific_params(target_identifier: TargetIdentifier) -> dict[str, An
     return {**extra, **explicit_specific} or None
 
 
-def target_object_to_instance(target_registry_name: str, target_obj: PromptTarget) -> TargetInstance:
+def target_object_to_instance(
+    target_registry_name: str,
+    target_obj: PromptTarget,
+    *,
+    private: bool = False,
+    allow_credential_updates: bool = False,
+    origin: RegistryEntryOrigin | None = None,
+) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.
 
@@ -67,19 +70,14 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     Args:
         target_registry_name: The human-friendly target registry name.
         target_obj: The domain PromptTarget object from the registry.
+        private: Whether only the target's creator can see and use it. Defaults to False.
+        allow_credential_updates: Whether the target's credentials can be updated through the API. Defaults to False.
+        origin: Where the registered target comes from, or None for an inner target.
 
     Returns:
         TargetInstance DTO with metadata derived from the object.
     """
     target_identifier = TargetIdentifier.from_component_identifier(target_obj.get_identifier())
-    reconstructable = isinstance(target_obj, Reconstructable)
-    reconstruction_error = None
-    if reconstructable:
-        try:
-            TargetRegistry.get_registry_singleton().get_reconstruction_parameters(target_obj)
-        except ValueError as exc:
-            reconstructable = False
-            reconstruction_error = str(exc)
     try:
         target_obj.validate_history_replay()
     except ValueError:
@@ -89,18 +87,16 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
 
     return TargetInstance(
         target_registry_name=target_registry_name,
-        reconstructable=reconstructable,
-        reconstruction_error=reconstruction_error,
-        supports_temperature_override=reconstructable
-        and any(
-            parameter.name == "temperature"
-            for parameter in derive_parameters(cls=type(target_obj), identifier_type=TargetIdentifier)
-        ),
         identifier=target_identifier,
         capabilities=target_obj.capabilities,
+        generation_ranges=target_obj.generation_ranges,
         supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),
+        private=private,
+        allow_credential_updates=allow_credential_updates,
+        credentials_rejected=target_obj.credentials_rejected,
+        origin=origin,
     )
 
 

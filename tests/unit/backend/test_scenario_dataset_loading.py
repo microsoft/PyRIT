@@ -9,17 +9,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.services.scenario_service import ScenarioService
-from pyrit.datasets import SeedDatasetProvider
+from pyrit.backend.services import ScenarioService
+from pyrit.datasets import SeedDatasetDescriptor, SeedDatasetProvider
 from pyrit.memory import CentralMemory
-from pyrit.models import SeedDataset, SeedObjective
-from pyrit.models.catalog import ScenarioRunSizeEstimateRequest
-from pyrit.models.scenario_dataset import DatasetFetchPolicy, ScenarioDatasetRequest
+from pyrit.models import (
+    DatasetFetchPolicy,
+    ScenarioDatasetRequest,
+    ScenarioRunSizeEstimateRequest,
+    SeedDataset,
+    SeedObjective,
+)
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario
-from pyrit.scenario.core.atomic_attack import AtomicAttack
+from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import SubStringScorer
 
 
@@ -86,6 +88,11 @@ async def test_load_action_uses_registry_and_returns_full_stored_metadata() -> N
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"manual_load": provider}),
         patch.object(SeedDatasetProvider, "get_all_dataset_names_async", return_value=["manual_load"]),
+        patch.object(
+            SeedDatasetProvider,
+            "get_all_dataset_descriptors_async",
+            return_value={"manual_load": SeedDatasetDescriptor(name="manual_load")},
+        ),
     ):
         result = await ScenarioService().load_datasets_async(
             scenario_name="test.load",
@@ -95,6 +102,7 @@ async def test_load_action_uses_registry_and_returns_full_stored_metadata() -> N
     assert result.settings.max_total == 1
     assert result.items[0].name == "manual_load"
     assert result.items[0].loaded is True
+    assert result.items[0].provider_available is True
     assert result.items[0].logical_examples == 2
     assert result.settings.sources[0].fetch is DatasetFetchPolicy.NEVER
     assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []

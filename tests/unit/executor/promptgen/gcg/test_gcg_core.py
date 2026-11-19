@@ -4,6 +4,8 @@
 import json
 import pickle
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -20,6 +22,12 @@ attack_manager_mod = pytest.importorskip(
 )
 torch = pytest.importorskip("torch", reason="torch not installed")
 
+from pyrit.executor.promptgen.gcg import (  # noqa: E402
+    GCGAlgorithmConfig,
+    GCGModelConfig,
+    GCGStrategyConfig,
+    SuffixInitializer,
+)
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
     AttackPrompt,
     EvaluateAttack,
@@ -34,8 +42,9 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E
     get_embedding_matrix,
     get_embeddings,
 )
-from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig, GCGModelConfig, GCGStrategyConfig  # noqa: E402
-from pyrit.executor.promptgen.gcg.extension_protocols import SuffixInitializer  # noqa: E402
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import (  # noqa: E402
+    _hf_vocabulary_identity,
+)
 
 gcg_attack_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack",
@@ -62,6 +71,7 @@ generator_mod = pytest.importorskip(
 GCGGenerator = generator_mod.GCGGenerator
 
 from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
+    IntTokenizer,
     RecordingGCGAttack,
     TrajectoryPromptManager,
     TrajectoryWorker,
@@ -370,7 +380,18 @@ class TestSampleControl:
 # The first three predate this generic path and must keep returning float16 from
 # get_embeddings; the rest were previously rejected outright.
 _HALF_PRECISION_ARCHITECTURES = ["gpt2", "gptj", "gpt_neox"]
-_OTHER_ARCHITECTURES = ["llama", "mistral", "mixtral", "phi3", "qwen3", "starcoder2"]
+_OTHER_ARCHITECTURES = [
+    "gemma2",
+    "gemma3_text",
+    "llama",
+    "mistral",
+    "mixtral",
+    "phi3",
+    "qwen2",
+    "qwen3",
+    "smollm3",
+    "starcoder2",
+]
 
 _TINY_CONFIG = {
     "hidden_size": 32,
@@ -386,6 +407,7 @@ _EXTRA_CONFIG = {
         "original_max_position_embeddings": 64,
         "pad_token_id": 0,
     },
+    "smollm3": {"pad_token_id": 0},
 }
 
 
@@ -787,6 +809,18 @@ class TestUpdateIdsErrorPaths:
         assert prompt.target_toks.tolist() == control_ids
         assert prompt._control_slice.stop <= prompt._target_slice.start
 
+    def test_decoded_candidate_with_the_separator_space_renders_like_the_original(self) -> None:
+        tokenizer = _fast_tokenizer(byte_level=True)
+        original = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+        # Gemma and byte-level BPE tokenizers decode the control tokens with the separator space in front.
+        prompt.control_str = " ! !"
+
+        assert prompt.control == "! !"
+        assert prompt.input_ids.tolist() == original.input_ids.tolist()
+        assert prompt._control_slice == original._control_slice
+
     def test_template_without_a_separator_uses_content_positions(self) -> None:
         tokenizer = _fast_tokenizer(chat_template="{{ messages[0]['content'] }}{{ messages[1]['content'] }}")
         prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="!")
@@ -1163,11 +1197,137 @@ class TestGetWorkersChatTemplateValidation:
         worker.start.assert_not_called()
 
 
+class TestVocabularyIdentity:
+    @pytest.mark.parametrize(
+        ("added_token", "num_embeddings", "same_identity"),
+        [
+            (None, 27, True),
+            # new_domain_term gets id 27, so it is only sampleable with a 28th embedding row.
+            ("new_domain_term", 27, True),
+            ("new_domain_term", 28, False),
+        ],
+    )
+    def test_vocabulary_identity_covers_only_sampleable_ids(
+        self, *, added_token: str | None, num_embeddings: int, same_identity: bool
+    ) -> None:
+        other = _fast_tokenizer()
+        if added_token is not None:
+            other.add_tokens([added_token])
+
+        identity = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(), num_embeddings=num_embeddings)
+        other_identity = _hf_vocabulary_identity(tokenizer=other, num_embeddings=num_embeddings)
+
+        assert (identity == other_identity) is same_identity
+
+    def test_vocabulary_identity_differs_for_a_different_vocabulary(self) -> None:
+        words = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(), num_embeddings=27)
+        bytes_ = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(byte_level=True), num_embeddings=27)
+
+        assert words != bytes_
+
+    def test_vocabulary_identity_ignores_dictionary_order(self) -> None:
+        tokenizer = _fast_tokenizer()
+        identity = _hf_vocabulary_identity(tokenizer=tokenizer, num_embeddings=27)
+        with patch.object(tokenizer, "get_vocab", return_value=dict(reversed(list(tokenizer.get_vocab().items())))):
+            assert _hf_vocabulary_identity(tokenizer=tokenizer, num_embeddings=27) == identity
+
+
 class TestCheckGcgCapabilities:
+    def test_round_trip_render_failure_restores_prompt_and_identifies_model(self) -> None:
+        tokenizer = _fast_tokenizer()
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="unknown_control")
+        control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+
+        with pytest.raises(ValueError, match="'fake/model'.*cannot be rendered") as error:
+            attack_manager_mod._check_gcg_capabilities(
+                model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            )
+
+        assert isinstance(error.value.__cause__, ValueError)
+        assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
+            control,
+            input_ids,
+            control_slice,
+        )
+
+    def test_rejects_control_that_does_not_round_trip(self) -> None:
+        from tokenizers import decoders
+
+        tokenizer = _fast_tokenizer()
+        # Decoding without spaces turns the control "hello world" into the unknown word "helloworld".
+        tokenizer.backend_tokenizer.decoder = decoders.Fuse()
+        prompt = AttackPrompt(goal="Say it", target="Sure", tokenizer=tokenizer, control_init="hello world")
+
+        with pytest.raises(ValueError, match="'hello world' does not survive .* comes back as 'helloworld'"):
+            attack_manager_mod._check_gcg_capabilities(
+                model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            )
+        assert prompt.control == "hello world"
+        assert prompt.control_toks.tolist() == tokenizer("hello world", add_special_tokens=False).input_ids
+
     def test_accepts_tiny_model_with_fast_tokenizer(self) -> None:
         attack_manager_mod._check_gcg_capabilities(
             model=_tiny_model("llama"), tokenizer=_fast_tokenizer(), model_path="fake/model"
         )
+
+    @pytest.mark.parametrize("byte_level", [False, True])
+    @pytest.mark.parametrize("control_init", ["! !", "  hello", "hello  world"])
+    def test_round_trip_check_leaves_the_prompt_unchanged(self, *, byte_level: bool, control_init: str) -> None:
+        tokenizer = _fast_tokenizer(byte_level=byte_level)
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init=control_init)
+        control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+        model = _tiny_model("llama")
+        model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
+
+        expectation = (
+            pytest.raises(ValueError, match="does not survive")
+            if byte_level and control_init == "  hello"
+            else nullcontext()
+        )
+        with expectation:
+            attack_manager_mod._check_gcg_capabilities(
+                model=model,
+                tokenizer=tokenizer,
+                model_path="fake/model",
+                prompts=[prompt],
+            )
+
+        assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
+            control,
+            input_ids,
+            control_slice,
+        )
+
+    @pytest.mark.parametrize("control", ["unknown_control", "hello world"])
+    def test_round_trip_failure_prevents_all_workers_from_starting(
+        self, *, control: str, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+    ) -> None:
+        from tokenizers import decoders
+
+        preflight_params.control_init = control
+        preflight_workers[0].tokenizer.add_tokens(["unknown_control"])
+        preflight_workers[-1].tokenizer = _fast_tokenizer()
+        preflight_workers[-1].tokenizer.backend_tokenizer.decoder = decoders.Fuse()
+
+        with pytest.raises(ValueError, match="'fake/held-out-model'"):
+            attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
+
+        for worker in preflight_workers:
+            worker.start.assert_not_called()
+
+    def test_rejects_shared_control_that_changes_another_workers_tokens(
+        self, *, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+    ) -> None:
+        preflight_params.control_init = "hello  world"
+        worker = preflight_workers[-1]
+        worker.tokenizer = _fast_tokenizer(byte_level=True)
+        worker.model.resize_token_embeddings(len(worker.tokenizer), mean_resizing=False)
+
+        with pytest.raises(ValueError, match="'fake/held-out-model'.*shared control"):
+            attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
+
+        for worker in preflight_workers:
+            worker.start.assert_not_called()
 
     def test_accepts_unused_added_tokens_beyond_embeddings(self) -> None:
         # <start_of_turn> and <end_of_turn> (ids 25 and 26) are added tokens the ChatML
@@ -1443,6 +1603,7 @@ class _WorkerStub:
         self.model = MagicMock()
         self.model.device = "cpu"
         self.tokenizer = tokenizer
+        self._vocabulary_identities: dict[int, str] = {}
         self.results = _Queue([])
         self._gradient = gradient
         self._logits = logits
@@ -1926,20 +2087,49 @@ def test_attack_prompt_logits_rejects_non_string_controls() -> None:
         prompt.logits(model, test_controls=123)
 
 
-def test_attack_prompt_logits_builds_attention_mask() -> None:
+@contextmanager
+def _expect_nested_tensor_warning() -> Generator[None, None, None]:
+    # PyTorch normally emits this C++ warning only once per process.
+    warn_always = torch.is_warn_always_enabled()
+    torch.set_warn_always(True)
+    try:
+        with pytest.warns(UserWarning, match=r"^The PyTorch API of nested tensors is in prototype stage"):
+            yield
+    finally:
+        torch.set_warn_always(warn_always)
+
+
+@pytest.mark.parametrize(
+    ("control_tokens", "expected_ids", "expected_mask"),
+    [
+        ([[5, 6]], [[0, 5, 6, 3]], [[1, 1, 1, 1]]),
+        ([[5]], [[0, 5, 4, 3]], [[1, 1, 0, 1]]),
+        ([[5], [6, 7]], [[0, 5, 4, 3], [0, 6, 7, 3]], [[1, 1, 0, 1], [1, 1, 1, 1]]),
+        ([[4], [5, 6, 7]], [[0, 4, 7, 3], [0, 5, 6, 3]], [[1, 1, 0, 1], [1, 1, 1, 1]]),
+    ],
+)
+def test_attack_prompt_logits_builds_attention_mask(
+    *,
+    control_tokens: list[list[int]],
+    expected_ids: list[list[int]],
+    expected_mask: list[list[int]],
+) -> None:
     prompt = object.__new__(AttackPrompt)
     prompt._control_slice = slice(1, 3)
     prompt.input_ids = torch.tensor([0, 1, 2, 3])
     prompt.tokenizer = MagicMock()
-    prompt.tokenizer.return_value.input_ids = [5, 6]
+    prompt.tokenizer.side_effect = [SimpleNamespace(input_ids=tokens) for tokens in control_tokens]
     model = MagicMock()
     model.device = torch.device("cpu")
-    model.return_value.logits = torch.randn(1, 4, 8)
+    model.return_value.logits = torch.randn(len(control_tokens), 4, 8)
 
-    logits = prompt.logits(model, test_controls=["candidate"])
+    with _expect_nested_tensor_warning():
+        logits, ids = prompt.logits(model, test_controls=["candidate"] * len(control_tokens), return_ids=True)
 
-    assert logits.shape == (1, 4, 8)
-    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
+    assert logits is model.return_value.logits
+    assert torch.equal(ids, torch.tensor(expected_ids))
+    assert torch.equal(model.call_args.kwargs["input_ids"], ids)
+    assert torch.equal(model.call_args.kwargs["attention_mask"], torch.tensor(expected_mask))
 
 
 def test_attack_prompt_logits_forwards_selected_positions() -> None:
@@ -1953,7 +2143,8 @@ def test_attack_prompt_logits_forwards_selected_positions() -> None:
     model.return_value.logits = torch.randn(1, 2, 8)
     positions = torch.tensor([0, 2])
 
-    logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
+    with _expect_nested_tensor_warning():
+        logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
 
     assert logits.shape == (1, 2, 8)
     assert torch.equal(model.call_args.kwargs["logits_to_keep"], positions)
@@ -2192,6 +2383,15 @@ def _run_trajectory(
     }
 
 
+def test_vocabulary_cache_survives_real_steps_and_progressive_phases(tmp_path: Path) -> None:
+    get_vocab = IntTokenizer.get_vocab
+    with patch.object(IntTokenizer, "get_vocab", autospec=True, side_effect=get_vocab) as read_vocab:
+        result = _run_trajectory("progressive-goals-models-2w-2g", seed=42, logfile=tmp_path / "vocabulary-cache.json")
+
+    assert len([event for event in result["events"] if event[0] == "attack"]) > 1
+    assert read_vocab.call_count == 2
+
+
 class TestRandomSeedDeterminism:
     """Verify that random_seed produces reproducible results across runs."""
 
@@ -2377,7 +2577,7 @@ class TestRandomSeedDeterminism:
                     barrier=barrier,
                     switches=switches,
                 )
-            except BaseException as exc:  # noqa: BLE001 - release the peer thread, then surface the error
+            except BaseException as exc:  # release the peer thread, then surface the error
                 barrier.abort()
                 outcomes[run_id] = exc
 

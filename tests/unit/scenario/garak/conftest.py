@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedDataset
 
 

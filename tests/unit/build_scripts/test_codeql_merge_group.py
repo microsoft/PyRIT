@@ -15,7 +15,7 @@ import yaml
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-CODEQL_PIN = "24c54180a607b1449ed407dd24f251e4e9147c8d"
+CODEQL_PIN = "33d7b85da1a04171e211befe2c739303b9a4c066"
 
 
 @pytest.fixture(scope="module")

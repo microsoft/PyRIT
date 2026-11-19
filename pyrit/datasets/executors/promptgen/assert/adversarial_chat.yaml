@@ -18,9 +18,3 @@ value: |
   Read the application's latest reply and any feedback before writing the next
   message. Stay in character. Do not reveal evaluation instructions or invent
   tools. Only your next_message is sent to the application.
-
-  Return a JSON object with exactly these string fields:
-  - next_message: the next literal user message.
-  - rationale: why this message advances the objective.
-  - last_response_summary: a brief summary of the application's latest reply,
-    or an empty string before its first reply.

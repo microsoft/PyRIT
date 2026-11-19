@@ -35,8 +35,8 @@ export const useLabelsBarStyles = makeStyles({
   },
   metadata: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalM, minWidth: 0 },
   metadataField: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, minWidth: 0 },
-  metadataPlaceholder: {
-    backgroundColor: tokens.colorPaletteYellowBackground2,
+  metadataWarning: {
+    backgroundColor: tokens.colorPaletteYellowBackground1,
     border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
   },
   srOnly: {
@@ -199,6 +199,8 @@ export const useLabelsBarStyles = makeStyles({
   },
   warningIcon: {
     color: tokens.colorPaletteYellowForeground2,
+    backgroundColor: tokens.colorPaletteYellowBackground1,
+    border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
     display: 'flex',
     alignItems: 'center',
     flexShrink: 0,

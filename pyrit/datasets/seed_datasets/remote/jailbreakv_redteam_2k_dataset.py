@@ -50,6 +50,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "JailbreakV-28K/JailBreakV-28k"
+    source_url = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
     harm_categories: list[str] = [
         "unethical behavior",
         "economic harm",

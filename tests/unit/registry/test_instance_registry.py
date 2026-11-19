@@ -7,20 +7,34 @@ registry exposes as its ``.instances`` property, plus the ``InstanceRegistry`` a
 ``SupportsInstances`` protocols.
 """
 
+import contextlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
+from typing import assert_type
 from unittest.mock import patch
 
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.registry.instance_registry import (
+from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.registry import (
     DefaultInstanceRegistry,
     InstanceRegistry,
     RegistryEntry,
     SupportsInstances,
+    TagQuery,
 )
-from pyrit.registry.tag_query import TagQuery
+from pyrit.registry.instance_registry import (
+    CONFIGURATION_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_METADATA_KEY,
+    RegistryNameTakenError,
+    SavedEntryReplacementError,
+    current_registration_origin,
+    record_saved_entry_refusals,
+    registration_origin,
+    registry_entry_origin,
+    saved_entry_registration,
+)
 
 
 class _TestItem(Identifiable):
@@ -88,16 +102,123 @@ class TestRegistration:
     def test_register_rejects_existing_name(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
 
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(RegistryNameTakenError, match="already exists"):
             registry.register(_item("updated"), name="name")
 
         assert registry.get("name") == "original"
+
+    def test_a_reserved_name_is_refused_but_not_as_taken(self):
+        registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
+
+        for check in (
+            lambda: registry.register(_item("x"), name="types"),
+            lambda: registry.validate_name_available("types"),
+        ):
+            with pytest.raises(ValueError, match="reserved") as refusal:
+                check()
+            assert not isinstance(refusal.value, RegistryNameTakenError)
 
     def test_register_can_explicitly_replace_existing(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
         registry.register(_item("updated"), name="name", replace=True)
 
         assert registry.get("name") == "updated"
+
+    def test_register_refuses_to_replace_a_saved_entry(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        revision = registry.revision
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved target 'name'"):
+            registry.register(_item("updated"), name="name", replace=True)
+
+        assert registry.get("name") == "saved"
+        assert registry.revision == revision
+
+    def test_refused_replacements_are_recorded_even_when_caught(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+        with record_saved_entry_refusals() as refusals:
+            with contextlib.suppress(SavedEntryReplacementError):
+                registry.register(_item("updated"), name="name", replace=True)
+            registry.register(_item("other"), name="other", replace=True)
+
+        assert refusals == [("converters", "name")]
+        assert registry.get("other") == "other"
+
+    def test_marks_entries_registered_while_the_startup_scripts_run(self, registry: DefaultInstanceRegistry[_TestItem]):
+        startup_metadata = {"supports_tool_calls": True}
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            registry.register(_item("startup"), name="startup", metadata=startup_metadata)
+            registry.register(_item("replaced"), name="replaced")
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register(_item("launched"), name="launched")
+        registry.register(_item("swapped in"), name="replaced", replace=True)
+        registry.register(_item("created"), name="created")
+
+        origins = {entry.name: registry_entry_origin(entry.metadata) for entry in registry.get_all_instances()}
+        assert origins == {
+            "created": RegistryEntryOrigin.TEMPORARY,
+            "launched": RegistryEntryOrigin.TEMPORARY,
+            "replaced": RegistryEntryOrigin.TEMPORARY,
+            "startup": RegistryEntryOrigin.CONFIGURATION,
+        }
+        assert startup_metadata == {"supports_tool_calls": True}
+
+    def test_the_registration_origin_ends_with_its_block_even_when_a_script_fails(self):
+        with pytest.raises(RuntimeError, match="script failed"), registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            with registration_origin(RegistryEntryOrigin.TEMPORARY):
+                assert current_registration_origin() is RegistryEntryOrigin.TEMPORARY
+            assert current_registration_origin() is RegistryEntryOrigin.CONFIGURATION
+            raise RuntimeError("script failed")
+
+        assert current_registration_origin() is None
+
+    @pytest.mark.parametrize(
+        ("metadata", "origin"),
+        [
+            ({SAVED_ENTRY_METADATA_KEY: "targets"}, RegistryEntryOrigin.SAVED),
+            ({SAVED_ENTRY_METADATA_KEY: "targets", CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.SAVED),
+            ({CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.CONFIGURATION),
+            ({}, RegistryEntryOrigin.TEMPORARY),
+            ({"supports_tool_calls": True}, RegistryEntryOrigin.TEMPORARY),
+        ],
+    )
+    def test_tells_where_an_entry_comes_from(self, metadata: dict[str, object], origin: RegistryEntryOrigin):
+        assert registry_entry_origin(metadata) is origin
+
+    def test_a_restore_scope_marks_only_the_entry_it_names(self, registry: DefaultInstanceRegistry[_TestItem]):
+        with saved_entry_registration(kind="targets", name="saved"):
+            registry.register(_item("saved"), name="saved", metadata={"owner": "admin"})
+            registry.register(_item("helper"), name="helper")
+        registry.register(_item("later"), name="later")
+
+        assert registry.get_entry("saved").metadata == {"owner": "admin", SAVED_ENTRY_METADATA_KEY: "targets"}
+        assert SAVED_ENTRY_METADATA_KEY not in registry.get_entry("helper").metadata
+        assert SAVED_ENTRY_METADATA_KEY not in registry.get_entry("later").metadata
+
+    def test_a_caught_duplicate_name_for_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        registry.register(_item("startup"), name="startup")
+
+        with record_saved_entry_refusals() as refusals:
+            for name in ("name", "startup"):
+                with pytest.raises(ValueError, match="already exists"):
+                    registry.register(_item("updated"), name=name)
+
+        assert refusals == [("targets", "name")]
+        assert registry.get("name") == "saved"
+
+    def test_a_caught_name_check_against_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+        registry.register(_item("startup"), name="startup")
+
+        with record_saved_entry_refusals() as refusals:
+            for name in ("name", "startup"):
+                with pytest.raises(ValueError, match="already exists"):
+                    registry.validate_name_available(name)
+            registry.validate_name_available("free")
+
+        assert refusals == [("converters", "name")]
 
     def test_register_rejects_reserved_name(self):
         registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
@@ -263,6 +384,27 @@ class TestGet:
     def test_get_entry_nonexistent_returns_none(self, registry: DefaultInstanceRegistry[_TestItem]):
         assert registry.get_entry("missing") is None
 
+    def test_get_and_get_entry_preserve_return_types(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        item = _item("value1")
+        registry.register(item, name="name1")
+
+        retrieved = registry.get("name1")
+        assert_type(retrieved, _TestItem | None)
+        assert retrieved is item
+
+        missing = registry.get("missing")
+        assert_type(missing, _TestItem | None)
+        assert missing is None
+
+        entry = registry.get_entry("name1")
+        assert_type(entry, RegistryEntry[_TestItem] | None)
+        assert entry is not None
+        assert entry.instance is item
+
+        missing_entry = registry.get_entry("missing")
+        assert_type(missing_entry, RegistryEntry[_TestItem] | None)
+        assert missing_entry is None
+
 
 class TestUnregister:
     """Tests for unregistering instances."""
@@ -324,6 +466,14 @@ class TestGetNamesAndAllInstances:
 
     def test_get_all_instances_empty_registry(self, registry: DefaultInstanceRegistry[_TestItem]):
         assert registry.get_all_instances() == []
+
+    def test_get_all_instances_preserves_return_type(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        registry.register(_item("v1"), name="zeta")
+        registry.register(_item("v2"), name="alpha")
+
+        all_instances = registry.get_all_instances()
+        assert_type(all_instances, list[RegistryEntry[_TestItem]])
+        assert [e.name for e in all_instances] == ["alpha", "zeta"]
 
 
 class TestListMetadata:
@@ -598,6 +748,34 @@ class TestProtocolConformance:
         holder: SupportsInstances[_TestItem] = _Holder(registry)
         holder.instances.register(_item("v1"), name="n1")
         assert holder.instances.get("n1") == "v1"
+
+    def test_instance_registry_consumer_preserves_types(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        def check_consumer(consumer: InstanceRegistry[_TestItem]) -> None:
+            item = _item("v1")
+            consumer.register(item, name="n1")
+
+            retrieved = consumer.get("n1")
+            assert_type(retrieved, _TestItem | None)
+            assert retrieved is item
+
+            missing = consumer.get("missing")
+            assert_type(missing, _TestItem | None)
+            assert missing is None
+
+            entry = consumer.get_entry("n1")
+            assert_type(entry, RegistryEntry[_TestItem] | None)
+            assert entry is not None
+            assert entry.instance is item
+
+            missing_entry = consumer.get_entry("missing")
+            assert_type(missing_entry, RegistryEntry[_TestItem] | None)
+            assert missing_entry is None
+
+            all_instances = consumer.get_all_instances()
+            assert_type(all_instances, list[RegistryEntry[_TestItem]])
+            assert [e.name for e in all_instances] == ["n1"]
+
+        check_consumer(registry)
 
 
 class TestNoBackendDependency:

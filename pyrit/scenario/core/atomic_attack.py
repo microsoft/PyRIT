@@ -26,7 +26,9 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
     AttackSeedGroup,
+    ObjectiveTargetEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
+    ScenarioRunPlanScorerBinding,
     config_hash,
 )
 from pyrit.scenario.core.technique_requirements import PreparedSeedGroup, prepare_seed_group
@@ -37,6 +39,40 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
+
+
+def compute_atomic_group_id(
+    *,
+    atomic_attack_name: str,
+    technique_eval_hash: str,
+    objective_scorer_binding: ScenarioRunPlanScorerBinding | None,
+) -> str:
+    """
+    Compute the stable ID of an atomic group from its name, technique, and scorer selection.
+
+    Pool runs also key the group by its selected objective scorer and evaluation, so a
+    different selection is a different unit of work. Single-scorer runs keep their IDs.
+
+    Args:
+        atomic_attack_name (str): The group's name.
+        technique_eval_hash (str): The technique's evaluation hash.
+        objective_scorer_binding (ScenarioRunPlanScorerBinding | None): The pool selection, or
+            None for single-scorer runs.
+
+    Returns:
+        str: The atomic-group ID.
+    """
+    key: dict[str, Any] = {
+        "atomic_attack_name": atomic_attack_name,
+        "technique_eval_hash": str(technique_eval_hash),
+    }
+    if objective_scorer_binding is not None:
+        key["objective_scorer"] = {
+            "candidate_index": objective_scorer_binding.candidate_index,
+            "evaluation": objective_scorer_binding.evaluation,
+            "scorer_hash": objective_scorer_binding.scorer_hash,
+        }
+    return config_hash(key)
 
 
 class AtomicAttack:
@@ -67,6 +103,7 @@ class AtomicAttack:
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
         group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
+        objective_scorer_binding: ScenarioRunPlanScorerBinding | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -94,6 +131,8 @@ class AtomicAttack:
                 ``build_baseline_atomic_attack`` passes ``BASELINE`` and Adaptive
                 scenarios pass ``ADAPTIVE``. It describes the group and does not
                 change its identity or what it executes.
+            objective_scorer_binding: The candidate a scorer pool selected for this group.
+                ``None`` for single-scorer runs.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -138,7 +177,18 @@ class AtomicAttack:
             for group in seed_groups
         }
         self._adversarial_chat = adversarial_chat
+        # The executor only uses this chat to generate simulated conversations, so it is part of
+        # this attack's identity only then. The objective-target projection is the standard
+        # behavioral projection for any target: operational settings such as endpoints and rate
+        # limits do not change the hash.
+        self._simulated_conversation_adversarial_chat_eval_hash = (
+            ObjectiveTargetEvaluationIdentifier(adversarial_chat.get_identifier()).eval_hash
+            if adversarial_chat is not None
+            and any(prepared.seed_group.has_simulated_conversation for prepared in self._prepared_seed_groups.values())
+            else None
+        )
         self._objective_scorer = objective_scorer
+        self._objective_scorer_binding = objective_scorer_binding
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
         # Set via set_scenario_result_id() by Scenario._execute_scenario_async
@@ -215,6 +265,11 @@ class AtomicAttack:
         return self._group_kind
 
     @property
+    def objective_scorer_binding(self) -> ScenarioRunPlanScorerBinding | None:
+        """The pool selection behind this group's objective scorer, or None for single-scorer runs."""
+        return self._objective_scorer_binding
+
+    @property
     def technique_eval_hash(self) -> str:
         """
         Behavioral evaluation hash for this atomic attack's technique configuration.
@@ -225,22 +280,51 @@ class AtomicAttack:
         noise is stripped per the standard atomic-attack eval rules. The
         result is stable across resume runs and across different seed groups,
         which is what makes it usable as the resume disambiguator alongside
-        ``atomic_attack_name``.
+        ``atomic_attack_name``. The adversarial chat that generates simulated
+        conversations is included through
+        ``simulated_conversation_adversarial_chat_eval_hash``.
         """
-        composite = AtomicAttackIdentifier.build(
+        return AtomicAttackEvaluationIdentifier(self._build_identifier(seed_group=None)).eval_hash
+
+    @property
+    def simulated_conversation_adversarial_chat_eval_hash(self) -> str | None:
+        """
+        Behavioral eval hash of the adversarial chat that generates simulated conversations.
+
+        ``None`` unless a prepared execution group has a simulated conversation and an
+        adversarial chat was supplied. An adversarial chat configured on the attack strategy itself is part
+        of the strategy's identifier instead.
+        """
+        return self._simulated_conversation_adversarial_chat_eval_hash
+
+    def _build_identifier(self, *, seed_group: AttackSeedGroup | None) -> AtomicAttackIdentifier:
+        """
+        Build this attack's composite identifier for a source seed group.
+
+        Args:
+            seed_group (AttackSeedGroup | None): The source seed group, or ``None`` for
+                the seed-independent technique identity.
+
+        Returns:
+            AtomicAttackIdentifier: The composite identifier.
+        """
+        return AtomicAttackIdentifier.build(
             technique_identifier=self._attack_technique.get_identifier(),
-            seed_group=None,
+            seed_group=seed_group,
+            simulated_conversation_adversarial_chat_eval_hash=self._simulated_conversation_adversarial_chat_eval_hash,
         )
-        return AtomicAttackEvaluationIdentifier(composite).eval_hash
 
     @property
     def logical_group_id(self) -> str:
-        """The stable identity of this planned atomic-attack group."""
-        return config_hash(
-            {
-                "atomic_attack_name": self.atomic_attack_name,
-                "technique_eval_hash": self.technique_eval_hash,
-            }
+        """
+        The stable identity of this planned atomic-attack group.
+
+        The run plan, the workers' active-group tracking, and adaptation metadata all use this ID.
+        """
+        return compute_atomic_group_id(
+            atomic_attack_name=self.atomic_attack_name,
+            technique_eval_hash=self.technique_eval_hash,
+            objective_scorer_binding=self._objective_scorer_binding,
         )
 
     @property
@@ -393,7 +477,6 @@ class AtomicAttack:
 
         try:
             technique = self._attack_technique
-            technique_identifier = technique.get_identifier()
             technique_eval_hash = self.technique_eval_hash
             execution_seed_groups = [
                 self._prepared_seed_groups[group.logical_id].seed_group.model_copy(deep=True)
@@ -402,10 +485,7 @@ class AtomicAttack:
             result_identifiers: list[AtomicAttackIdentifier] = []
             result_metadata: list[dict[str, Any]] = []
             for source_group in self._seed_groups:
-                identifier = AtomicAttackIdentifier.build(
-                    technique_identifier=technique_identifier,
-                    seed_group=source_group,
-                )
+                identifier = self._build_identifier(seed_group=source_group)
                 result_identifiers.append(
                     AtomicAttackIdentifier.from_component_identifier(identifier.with_eval_hash(technique_eval_hash))
                 )

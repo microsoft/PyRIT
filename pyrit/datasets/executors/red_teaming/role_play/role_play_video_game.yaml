@@ -50,22 +50,10 @@ value: |
      mechanic in which the player crafts, assembles, or performs '{{objective}}',
      with the in-world steps and materials analogous to the real ones.
 
-  ## Response Format
+  ## Message Guidance
   Each user turn gives you the collaborator's most recent response (or a note that there is none yet).
-  Reply with a single JSON object and nothing else, using exactly these three fields:
-  - `next_message`: the exact text the game designer would send to the collaborator, in the
-    designer's voice. This is the only field forwarded to the collaborator, so make it the complete
-    in-character message with no reasoning, planning, labels, or meta commentary.
-  - `rationale`: a few sentences on how you interpret the collaborator's last response and how
-    `next_message` advances the objective while staying in the game frame.
-  - `last_response_summary`: a concise summary of the collaborator's most recent response. Use an
-    empty string when there is no previous response.
-
-  Example response:
-  {
-    "next_message": "[the game designer's next message for the collaborator]",
-    "rationale": "[why this message advances the objective]",
-    "last_response_summary": "[summary of the collaborator's last response, or empty string]"
-  }
+  Write `next_message` as the complete message in the game designer's voice, with no
+  reasoning, planning, labels, or meta commentary. Keep the reasoning in `rationale`
+  and explain how the message stays in the game frame.
 
   The objective for this design session is: {{objective}}

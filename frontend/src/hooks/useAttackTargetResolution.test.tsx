@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react'
 
 import { targetsApi } from '@/services/api'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInfo, TargetInstance } from '@/types'
 
 import { useAttackTargetResolution } from './useAttackTargetResolution'
@@ -21,14 +22,14 @@ jest.mock('@/services/targetRegistry', () => ({
 
 const createdTarget: TargetInstance = {
   target_registry_name: 'target',
-  identifier: { class_name: 'TextTarget', hash: 'target-hash' },
+  identifier: { class_name: 'OpenAIChatTarget', hash: 'target-hash' },
 }
 const replacementTarget: TargetInstance = {
   target_registry_name: 'target',
-  identifier: { class_name: 'TextTarget', hash: 'target-hash' },
+  identifier: { class_name: 'OpenAIChatTarget', hash: 'target-hash' },
 }
 const targetInfo: TargetInfo = {
-  target_type: 'TextTarget',
+  target_type: 'OpenAIChatTarget',
   target_registry_name: 'target',
   identifier_hash: 'target-hash',
 }
@@ -40,13 +41,56 @@ describe('useAttackTargetResolution', () => {
     jest.mocked(targetsApi.getTarget).mockResolvedValue(replacementTarget)
   })
 
+  it('keeps a saved TextTarget chat unavailable without looking up or rebuilding its target', () => {
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: { ...targetInfo, target_type: 'TextTarget' },
+      attackTargetSource: 'persisted',
+    }))
+    expect(result.current.resolutionStatus).toBe('unavailable')
+    expect(result.current.activeTarget).toBeNull()
+    expect(targetsApi.getTarget).not.toHaveBeenCalled()
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled()
+    expect(listRegisteredTargets).not.toHaveBeenCalled()
+  })
+
+  it('does not activate a TextTarget returned by a named lookup', async () => {
+    jest.mocked(targetsApi.getTarget).mockResolvedValue({
+      ...replacementTarget, identifier: { ...replacementTarget.identifier, class_name: 'TextTarget' },
+    })
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: targetInfo, attackTargetSource: 'persisted',
+    }))
+    await waitFor(() => expect(result.current.resolutionStatus).toBe('unavailable'))
+    expect(result.current.activeTarget).toBeNull()
+  })
+
+  it('does not activate an SDK-only created target', () => {
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'created', attackLoadSequence: 1,
+      attackTarget: targetInfo, attackTargetSource: 'created',
+      createdTarget: { ...createdTarget, identifier: { ...createdTarget.identifier, class_name: 'TextTarget' } },
+      createdTargetGeneration: 'generation-1',
+    }))
+    expect(result.current.resolutionStatus).toBe('unavailable')
+    expect(result.current.activeTarget).toBeNull()
+  })
+
   it('reconstructs a saved temperature without selecting the registered default', async () => {
+    const capabilities = {
+      supports_multi_turn: true, supports_system_prompt: true,
+      supports_json_output: false, supports_json_schema: false,
+      supported_input_modalities: ['text'], supported_output_modalities: ['text'],
+    }
     const binding = {
       version: 1 as const, source_name: 'target', source_hash: 'source-hash',
       temperature: 0.8, effective_hash: 'effective-hash',
+      capabilities,
     }
     jest.mocked(targetsApi.buildTarget).mockResolvedValue({
       identifier: { class_name: 'OpenAIChatTarget', hash: 'effective-hash', temperature: 0.8 },
+      capabilities: { ...capabilities, supports_multi_turn: false },
     })
     const savedTarget: TargetInfo = {
       ...targetInfo, target_type: 'OpenAIChatTarget', identifier_hash: 'effective-hash', binding,
@@ -57,6 +101,7 @@ describe('useAttackTargetResolution', () => {
       attackTargetSource: 'persisted',
     }))
     await waitFor(() => expect(result.current.activeTarget?.binding).toEqual(binding))
+    expect(result.current.activeTarget?.capabilities).toEqual(capabilities)
     expect(targetsApi.getTarget).not.toHaveBeenCalled()
     expect(targetsApi.buildTarget).toHaveBeenCalledWith('OpenAIChatTarget', {
       source_name: 'target', source_hash: 'source-hash', params: { temperature: 0.8 },
@@ -68,6 +113,36 @@ describe('useAttackTargetResolution', () => {
     expect(result.current.activeTarget).toBeNull()
     await waitFor(() => expect(result.current.resolutionStatus).toBe('error'))
     expect(result.current.activeTarget).toBeNull()
+  })
+
+  it.each(['named', 'hash'])('keeps saved default chat capabilities after a %s lookup', async (lookup: string) => {
+    const savedCapabilities = {
+      supports_multi_turn: true, supports_system_prompt: true,
+      supports_json_output: false, supports_json_schema: false,
+      supported_input_modalities: ['text'], supported_output_modalities: ['text'],
+    }
+    const detected = {
+      ...replacementTarget,
+      capabilities: { ...savedCapabilities, supports_multi_turn: false },
+      supports_history_replay: false,
+    }
+    jest.mocked(targetsApi.getTarget).mockResolvedValue(detected)
+    jest.mocked(listRegisteredTargets).mockResolvedValue([detected])
+    const savedTarget: TargetInfo = {
+      ...targetInfo, target_registry_name: lookup === 'named' ? 'target' : undefined,
+      capabilities: savedCapabilities, supports_history_replay: true,
+    }
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: savedTarget,
+      attackTargetSource: 'persisted',
+    }))
+    await waitFor(() => expect(result.current.resolutionStatus).toBe('resolved'))
+    expect(result.current.activeTarget?.capabilities).toEqual(savedCapabilities)
+    expect(result.current.activeTarget?.supports_history_replay).toBe(true)
+    expect(detected.capabilities.supports_multi_turn).toBe(false)
+    expect(detected.supports_history_replay).toBe(false)
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled()
   })
 
   it('resolves a created attack from the new registry after the runtime generation changes', async () => {

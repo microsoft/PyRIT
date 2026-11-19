@@ -6,6 +6,7 @@ import { makeScenario } from '@/test-utils/scenarioFixtures'
 import type { Parameter, ScenarioPreset } from '@/types'
 
 import {
+  buildPresetScenarioConfig,
   configToPreset,
   presetToConfigState,
   uneditableScenarioParams,
@@ -193,6 +194,139 @@ describe('presetToConfigState', () => {
     )
 
     expect(state.scenarioParamValues.max_turns).toBe('9')
+  })
+})
+
+describe('buildPresetScenarioConfig', () => {
+  const goalsParameter: Parameter = {
+    name: 'goals',
+    type_name: 'list[str]',
+    is_list: true,
+    required: false,
+    default: ['Default goal'],
+  }
+  const scenario = makeScenario({ supported_parameters: [goalsParameter] })
+
+  it.each([
+    ['commas', ['Hello, world!', 'Second goal']],
+    ['only commas', [',']],
+    ['an empty list', []],
+    ['empty entries', ['', 'Second goal']],
+    ['whitespace', [' padded ', 'Second goal']],
+    ['duplicates and order', ['third', 'first', 'first']],
+  ])('should preserve %s in an untouched list', (_label, goals) => {
+    const previous = makePreset({ scenario_params: { goals } })
+    const result = buildPresetScenarioConfig(scenario, presetToConfigState(scenario, previous), previous)
+
+    expect(result).toEqual({
+      ok: true,
+      config: expect.objectContaining({ scenario_params: { goals } }),
+    })
+  })
+
+  it('should honor an edit even when the parsed value matches the parsed original', () => {
+    const previous = makePreset({ scenario_params: { goals: [' padded ', 'Second goal'] } })
+    const state = presetToConfigState(scenario, previous)
+    state.scenarioParamValues.goals = 'padded, Second goal'
+
+    expect(buildPresetScenarioConfig(scenario, state, previous)).toEqual({
+      ok: true,
+      config: expect.objectContaining({ scenario_params: { goals: ['padded', 'Second goal'] } }),
+    })
+  })
+
+  it('should omit a stored list that the operator clears', () => {
+    const previous = makePreset({ scenario_params: { goals: ['Hello, world!'] } })
+    const state = presetToConfigState(scenario, previous)
+    state.scenarioParamValues.goals = ''
+    const result = buildPresetScenarioConfig(scenario, state, previous)
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+
+    expect(configToPreset(IDENTITY, result.config, { scenario, previous })).not.toHaveProperty('scenario_params')
+  })
+
+  it('should not let an omitted required parameter disable preservation for other fields', () => {
+    const requiredScenario = makeScenario({
+      supported_parameters: [
+        { name: 'objective', type_name: 'str', required: true },
+        goalsParameter,
+      ],
+    })
+    const previous = makePreset({ scenario_params: { goals: ['Hello, world!'] } })
+    const state = presetToConfigState(requiredScenario, previous)
+
+    expect(buildPresetScenarioConfig(requiredScenario, state, previous)).toEqual({
+      ok: false,
+      error: 'objective is required.',
+    })
+
+    state.scenarioParamValues.objective = 'New objective'
+
+    expect(buildPresetScenarioConfig(requiredScenario, state, previous)).toEqual({
+      ok: true,
+      config: expect.objectContaining({
+        scenario_params: { objective: 'New objective', goals: ['Hello, world!'] },
+      }),
+    })
+  })
+
+  it('should preserve an untouched required empty list without parsing its blank display text', () => {
+    const requiredScenario = makeScenario({
+      supported_parameters: [{ ...goalsParameter, required: true }],
+    })
+    const previous = makePreset({ scenario_params: { goals: [] } })
+    const state = presetToConfigState(requiredScenario, previous)
+
+    expect(buildPresetScenarioConfig(requiredScenario, state, previous)).toEqual({
+      ok: true,
+      config: expect.objectContaining({ scenario_params: { goals: [] } }),
+    })
+  })
+
+  it('should still validate a required list that the operator clears', () => {
+    const requiredScenario = makeScenario({
+      supported_parameters: [{ ...goalsParameter, required: true }],
+    })
+    const previous = makePreset({ scenario_params: { goals: ['original'] } })
+    const state = presetToConfigState(requiredScenario, previous)
+    state.scenarioParamValues.goals = ''
+
+    expect(buildPresetScenarioConfig(requiredScenario, state, previous)).toEqual({
+      ok: false,
+      error: 'goals is required.',
+    })
+  })
+
+  it('should keep an untouched list while parsing and validating another parameter', () => {
+    const parameterScenario = makeScenario({
+      supported_parameters: [goalsParameter, ITERATION_PARAMETER],
+    })
+    const previous = makePreset({ scenario_params: { goals: ['Hello, world!'] } })
+    const state = presetToConfigState(parameterScenario, previous)
+    state.scenarioParamValues.max_turns = '9'
+
+    expect(buildPresetScenarioConfig(parameterScenario, state, previous)).toEqual({
+      ok: true,
+      config: expect.objectContaining({ scenario_params: { goals: ['Hello, world!'], max_turns: 9 } }),
+    })
+
+    state.scenarioParamValues.max_turns = 'not a number'
+
+    expect(buildPresetScenarioConfig(parameterScenario, state, previous)).toEqual({
+      ok: false,
+      error: 'max_turns must be a number.',
+    })
+  })
+
+  it('should keep scenario defaults unpinned when creating a preset', () => {
+    const result = buildPresetScenarioConfig(scenario, initialScenarioConfigState(scenario), null)
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+
+    expect(configToPreset(IDENTITY, result.config, { scenario, previous: null })).not.toHaveProperty('scenario_params')
   })
 })
 
@@ -430,6 +564,31 @@ describe('configToPreset', () => {
     )
 
     expect(roundTripped.scenario_params).toEqual({ max_turns: 5, retired_knob: 'x', max_concurrency: 4 })
+  })
+
+  it('keeps a stored list whose elements contain commas when it is not edited', () => {
+    const goals: Parameter = { name: 'goals', type_name: 'list[str]', is_list: true, required: false }
+    const scenario = makeScenario({ supported_parameters: [goals] })
+    const original = makePreset({ scenario_params: { goals: ['Hello, world!', 'Second goal'] } })
+    const state = presetToConfigState(scenario, original)
+
+    const built = buildPresetScenarioConfig(scenario, state, original)
+    if (!built.ok) {
+      throw new Error(built.error)
+    }
+    const roundTripped = configToPreset(
+      { ...IDENTITY, description: 'new description' },
+      built.config,
+      { scenario, previous: original },
+    )
+    expect(roundTripped.scenario_params).toEqual({ goals: ['Hello, world!', 'Second goal'] })
+
+    const edited = configToPreset(
+      IDENTITY,
+      buildConfig({ dynamicParameters: [goals], scenarioParamValues: { goals: 'a, b' } }),
+      { scenario, previous: original },
+    )
+    expect(edited.scenario_params).toEqual({ goals: ['a', 'b'] })
   })
 
   it('round-trips a fully populated preset back through the form state', () => {

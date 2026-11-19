@@ -13,9 +13,8 @@ from itertools import permutations
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable, Score, ScorerEvaluationIdentifier, compute_eval_hash
-from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score import SubStringScorer, TrueFalseAggregatorFunc, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 
 class TestScorerEvaluationIdentifierConstants:
@@ -37,7 +36,9 @@ class TestScorerEvaluationIdentifierConstants:
     def test_prompt_target_rule(self):
         """Test that prompt_target has the expected included params and fallbacks."""
         rule = ScorerEvaluationIdentifier.CHILD_EVAL_RULES["prompt_target"]
-        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
 
 

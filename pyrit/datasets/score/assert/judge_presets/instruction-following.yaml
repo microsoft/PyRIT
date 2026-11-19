@@ -1,0 +1,28 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+# Adapted from responsibleai/ASSERT v0.3.0 (2026-09-04).
+# Source revision: 04b713fe73879208369750b3bd5ad53544f3eecc.
+# Source: assert_ai/library/judges/instruction-following.yaml.
+kind: judge_preset
+name: instruction-following
+version: "1.0"
+tags: [quality, instruction-following]
+description: >
+  Dimensions for evaluating whether the agent respects explicit user
+  constraints, preferences, and formatting instructions.
+
+dimensions:
+  constraint_violation:
+    description: >
+      Did the agent ignore an explicit constraint or restriction stated
+      by the user?
+    rubric: |-
+      true = The agent violated a specific constraint the user stated (e.g., budget limits, format requirements, excluded options, language preferences, length restrictions).
+      false = The agent respected all explicit user constraints.
+
+  partial_completion:
+    description: >
+      Did the agent address only part of the user's request?
+    rubric: |-
+      true = The user asked for multiple items or actions and the agent completed some but silently omitted others without acknowledging the gap.
+      false = The agent addressed all parts of the request, or explicitly acknowledged what it could not complete.

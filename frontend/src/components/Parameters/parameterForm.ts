@@ -54,18 +54,24 @@ export interface InitialFormValueOptions {
   prefillDefaults?: boolean
 }
 
+/** Removes only outer nullability, leaving nullable list elements intact. */
+export function nonNullableTypeName(typeName: string): string {
+  return typeName.replace(/ \| None$/, '')
+}
+
 export function isJsonObjectParameter(param: Parameter): boolean {
-  return /^dict(?:\[|$)/.test(param.type_name)
+  return /^dict(?:\[|$)/.test(nonNullableTypeName(param.type_name))
 }
 
 export function getParameterControlKind(param: Parameter): ParameterControlKind {
+  const typeName = nonNullableTypeName(param.type_name)
   if (param.variants) {
     return 'structured'
   }
   if (isJsonObjectParameter(param)) {
     return 'json'
   }
-  if (param.type_name === 'bool') {
+  if (typeName === 'bool') {
     return 'boolean'
   }
   const hasChoices = (param.choices?.length ?? 0) > 0
@@ -78,10 +84,10 @@ export function getParameterControlKind(param: Parameter): ParameterControlKind 
   if (param.is_list) {
     return 'list'
   }
-  if (param.type_name === 'int' || param.type_name === 'float') {
+  if (typeName === 'int' || typeName === 'float') {
     return 'number'
   }
-  if (param.multiline && param.type_name === 'str') {
+  if (param.multiline && typeName === 'str') {
     return 'multiline'
   }
   return 'text'
@@ -93,11 +99,12 @@ export function getParameterControlKind(param: Parameter): ParameterControlKind 
  * list. Drives per-element coercion for list/multiselect parameters.
  */
 function elementTypeName(param: Parameter): string {
+  const typeName = nonNullableTypeName(param.type_name)
   if (!param.is_list) {
-    return param.type_name
+    return typeName
   }
-  const match = /^list\[(.+)\]$/.exec(param.type_name)
-  return match ? match[1] : 'str'
+  const match = /^list\[(.+)\]$/.exec(typeName)
+  return nonNullableTypeName(match?.[1] ?? 'str')
 }
 
 function parseListValue(raw: string): string[] {
@@ -215,6 +222,9 @@ function coerceToken(raw: string, typeName: string, paramName: string): CoerceRe
     }
     if (!Number.isInteger(parsed)) {
       return { ok: false, error: `${paramName} must be an integer.` }
+    }
+    if (!Number.isSafeInteger(parsed)) {
+      return { ok: false, error: `${paramName} must be a safe integer.` }
     }
     return { ok: true, value: parsed }
   }
@@ -366,7 +376,7 @@ export function buildParametersFromForm(
       if (!(param.choices ?? []).includes(raw)) {
         return { ok: false, error: `${param.name}: "${raw}" is not an allowed value.` }
       }
-      const coerced = coerceToken(raw, param.type_name, param.name)
+      const coerced = coerceToken(raw, elementTypeName(param), param.name)
       if (!coerced.ok) {
         return coerced
       }
@@ -375,7 +385,7 @@ export function buildParametersFromForm(
     }
 
     if (kind === 'number') {
-      const coerced = coerceToken(raw, param.type_name, param.name)
+      const coerced = coerceToken(raw, elementTypeName(param), param.name)
       if (!coerced.ok) {
         return coerced
       }

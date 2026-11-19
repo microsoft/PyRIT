@@ -9,9 +9,8 @@ from uuid import uuid4
 import pytest
 from unit.mocks import get_mock_target_identifier, store_message_async
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.exceptions import InvalidJsonException
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     COMMON_JSON_SCHEMAS,
     JSON_SCHEMA_METADATA_KEY,

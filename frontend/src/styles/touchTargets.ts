@@ -1,6 +1,7 @@
 // Screen width only - for layout/reflow decisions (wrapping, stacking,
 // hiding columns).
-export const NARROW_VIEWPORT_QUERY = '@media (max-width: 600px)'
+export const NARROW_SCREEN_QUERY = '(max-width: 600px)'
+export const NARROW_VIEWPORT_QUERY = `@media ${NARROW_SCREEN_QUERY}`
 
 // Input mechanism only - for sizing hit areas for a finger vs. a cursor.
 export const TOUCH_INPUT_QUERY = '@media (pointer: coarse)'

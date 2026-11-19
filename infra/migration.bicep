@@ -42,7 +42,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
     environmentId: acaEnvironment.id
     configuration: {
       triggerType: 'Manual'
-      replicaTimeout: 1800
+      replicaTimeout: 7200
       replicaRetryLimit: 0
       manualTriggerConfig: {
         parallelism: 1

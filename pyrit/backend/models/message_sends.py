@@ -68,6 +68,7 @@ class MessageSendConversation(BaseModel):
 
     conversation_id: str
     request_turn_number: int | None = Field(None, description="This send's request turn, assigned during preparation")
+    target_invoked: bool = Field(False, description="Target-specific execution began, retained after interruption")
     state: MessageSendState = MessageSendState.QUEUED
     error: str | None = None
     failure_stage: MessageSendFailureStage | None = None

@@ -4,7 +4,6 @@
 import asyncio
 import logging
 import mimetypes
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -13,7 +12,7 @@ from urllib.parse import urlencode
 import aiofiles
 import httpx
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -55,51 +54,6 @@ class HTTPXAPITarget(HTTPTarget):
             ),
         )
     )
-    _CREDENTIAL_QUERY_NAME_TOKENS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "key",
-            "keys",
-            "token",
-            "tokens",
-            "secret",
-            "secrets",
-            "password",
-            "passwords",
-            "passwd",
-            "pwd",
-            "auth",
-            "authorization",
-            "credential",
-            "credentials",
-            "sig",
-            "signature",
-            "signatures",
-            "jwt",
-            "assertion",
-            "assertions",
-            "bearer",
-            "apikey",
-            "oauth",
-        }
-    )
-
-    @classmethod
-    def _is_sensitive_query_param(cls, key: str) -> bool:
-        # Match credential parameter names by word, not by substring: `design`
-        # contains "sig" and `author` contains "auth", but neither is a
-        # credential, and stripping them collapses distinct URLs into one
-        # identifier. Splitting on non-alphanumeric separators and on camelCase
-        # word boundaries keeps compound credential names (`api_key`,
-        # `client_secret`, `access_token`, `accessToken`, `clientSecret`)
-        # sensitive while leaving unrelated names intact.
-        tokens = {
-            token.lower()
-            for token in re.split(r"[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", key)
-            if token
-        }
-        if tokens & cls._CREDENTIAL_QUERY_NAME_TOKENS:
-            return True
-        return key.lower() in {"code", "pass"}
 
     @classmethod
     def _redact_url_for_identifier(cls, url: httpx.URL | str) -> str:
@@ -159,7 +113,7 @@ class HTTPXAPITarget(HTTPTarget):
             http_url (str): The URL to send the HTTP request to.
             method (str): The HTTP method to use (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS). Defaults to "POST".
             file_path (str, Optional): Path to a file to upload. If not provided, we attempt to pull it from the
-            prompt's `converted_value`.
+                prompt's `converted_value`.
             allowed_upload_directory (str | Path | None): Directory containing files this target may upload.
                 Required when uploading files. Defaults to None.
             json_data (dict, Optional): JSON data to send in the request body (for POST/PUT/PATCH).
@@ -172,8 +126,7 @@ class HTTPXAPITarget(HTTPTarget):
             callback_function (Callable, Optional): Function to parse the HTTP response.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
-            instance.
-            Defaults to None.
+                instance. Defaults to None.
             trace_config: Request tracing configuration. Tracing is disabled by default because an
                 arbitrary HTTP endpoint is not known to support W3C trace context. Pass
                 ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint.

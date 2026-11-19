@@ -30,16 +30,16 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.common import target_requirements as target_requirements_module
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
     JsonSchemaResponseHandler,
+    LegacyScorerHookError,
     MessageFloatScaleScorer,
     MessageScorable,
+    MessageScorableResolver,
     MessageScorer,
     MessageTrueFalseScorer,
     Scorer,
@@ -51,7 +51,6 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 from pyrit.score.observation.target_judge import JudgmentRequest
 
@@ -1070,7 +1069,8 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
         user_req = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
         assistant_resp = MessagePiece(role="assistant", original_value="Hello from assistant", sequence=2).to_message()
 
-        results = await scorer.score_prompts_batch_async(messages=[user_req, assistant_resp], batch_size=10)
+        with pytest.warns(DeprecationWarning, match=r"score_prompts_batch_async.*removed in 1\.3\.0"):
+            results = await scorer.score_prompts_batch_async(messages=[user_req, assistant_resp], batch_size=10)
 
         assert mock_score_async.call_count == 2
 
@@ -1101,7 +1101,10 @@ async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
     scorer = MockScorer()
     message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
 
-    with pytest.raises(ValueError, match="objectives"):
+    with (
+        pytest.warns(DeprecationWarning, match="score_prompts_batch_async"),
+        pytest.raises(ValueError, match="objectives"),
+    ):
         await scorer.score_prompts_batch_async(messages=[message], objectives=[])
 
 
@@ -1121,7 +1124,8 @@ async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_cen
         mock_score_async.return_value = [MagicMock()]
         message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
 
-        await scorer.score_prompts_batch_async(messages=[message])
+        with pytest.warns(DeprecationWarning, match="score_prompts_batch_async"):
+            await scorer.score_prompts_batch_async(messages=[message])
 
         _, call_kwargs = mock_score_async.call_args
         assert call_kwargs["expectation"] == ScoringExpectation(objective="")
@@ -1878,7 +1882,7 @@ async def test_score_response_multiple_scorers_failure_cancels_and_drains_siblin
         await MessageScorer.score_response_multiple_scorers_async(
             response=response,
             scorers=[slow_scorer, failing_scorer],
-            objective="test task",
+            expectation=ScoringExpectation(objective="test task"),
         )
 
     assert events == ["slow_started", "failing_raised", "slow_cancelled", "slow_finalized"]
@@ -1930,7 +1934,7 @@ async def test_score_response_multiple_scorers_outer_cancellation_during_drain_w
         MessageScorer.score_response_multiple_scorers_async(
             response=response,
             scorers=[slow_scorer, failing_scorer],
-            objective="test task",
+            expectation=ScoringExpectation(objective="test task"),
         )
     )
     await slow_cleanup_started.wait()
@@ -1994,7 +1998,7 @@ async def test_score_response_async_parent_cancellation_drains_all_scorers():
             response=response,
             auxiliary_scorers=[auxiliary_scorer],
             objective_scorer=objective_scorer,
-            objective="test task",
+            expectation=ScoringExpectation(objective="test task"),
         )
     )
     await all_started.wait()
@@ -2308,7 +2312,7 @@ class TestLegacyDirectScorerSubclass:
         with (
             patch.object(legacy_class, "CONDITION_TYPE", AnswerMatches),
             pytest.warns(DeprecationWarning, match="_score_async"),
-            pytest.raises(RuntimeError, match="matched typed conditions"),
+            pytest.raises(LegacyScorerHookError, match="matched typed conditions"),
         ):
             await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
         assert scorer.scored_messages == []
@@ -2429,7 +2433,8 @@ class TestLegacyDirectScorerSubclass:
             MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-nested").to_message()
         )
 
-        scores = await composite.score_async(scorable=MessageScorable.from_message(message))
+        with pytest.warns(DeprecationWarning, match="_score_async"):
+            scores = await composite.score_async(scorable=MessageScorable.from_message(message))
 
         assert scores[0].get_value() is True
 
@@ -2450,12 +2455,13 @@ class TestLegacyDirectScorerSubclass:
             MessagePiece(role="assistant", original_value="response", conversation_id="legacy-role").to_message()
         )
 
-        with pytest.warns(DeprecationWarning, match="role_filter"):
+        with pytest.warns(DeprecationWarning, match="Scorer.score_response_async|role_filter") as recorded:
             results = await Scorer.score_response_async(
                 response=message,
                 objective_scorer=scorer,
                 role_filter="user",
             )
+        assert len(recorded) == 2
 
         assert results["objective_scores"] == []
 
@@ -2740,7 +2746,7 @@ class TestFloatScaleScorerEmptyResults:
     @pytest.fixture
     def float_scale_scorer_returns_empty(self, no_valid_pieces_validator):
         """Create a FloatScaleScorer whose _score_piece_async returns an empty list."""
-        from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+        from pyrit.score import MessageFloatScaleScorer
 
         class _TestFloatScaleScorer(MessageFloatScaleScorer):
             def __init__(self, *, validator):

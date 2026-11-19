@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, Literal, overload
 
 from pyrit.analytics.outcome_statistics import compute_outcome_statistics
 from pyrit.analytics.result_analysis import _as_attack_stats
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackStats as AttackStats  # noqa: TC001 - preserve the existing module export
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.memory.memory_interface import MemoryInterface
+    from pyrit.memory import MemoryInterface
     from pyrit.models import AttackOutcome, AttackResult, OutcomeStatistics
 
 

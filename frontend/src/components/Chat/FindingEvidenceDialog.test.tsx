@@ -19,6 +19,7 @@ jest.mock('@/services/api', () => ({
 const FINDING: FindingListItem = {
   id: 'finding', operation_id: 'saved', title: 'Proof', severity: 'low', description: '',
   created_at: '2026-10-08T12:00:00Z', evidence_count: 0,
+  parent_finding_id: null, demonstrated: true, paths: [], child_count: 0,
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const SAVED = { id: 'saved', name: 'Exact', created_at: '2026-10-08T12:00:00Z' }
@@ -54,6 +55,32 @@ beforeEach(() => {
   ;(operationsApi.attachFindingEvidence as jest.Mock).mockResolvedValue({ item: { id: 'stable' }, created: true })
   jest.mocked(operationsApi.createFinding).mockResolvedValue(FINDING)
   jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Malware', 'Other'] })
+})
+
+it('does not fetch attack or Operation metadata while closed, including across saved-conversation changes', async () => {
+  const user = userEvent.setup()
+  const rendered = render(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="initial" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  rendered.rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="selected" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  expect(attacksApi.getAttack).not.toHaveBeenCalled()
+  expect(operationsApi.get).not.toHaveBeenCalled()
+  expect(operationsApi.list).not.toHaveBeenCalled()
+  expect(operationsApi.listFindings).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  expect(jest.mocked(attacksApi.getAttack).mock.calls).toEqual([['selected']])
+  expect(operationsApi.get).toHaveBeenCalledWith('saved')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  rendered.rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="next" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  expect(jest.mocked(attacksApi.getAttack).mock.calls).toEqual([['selected']])
+  expect(operationsApi.get).toHaveBeenCalledTimes(1)
 })
 
 it('defaults to the attack\'s own Operation and attaches the viewed attack', async () => {
@@ -136,6 +163,20 @@ it('searches literally, resets pagination, and ignores superseded results', asyn
   expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
 })
 
+it('caps the title search at the API limit', async () => {
+  const user = userEvent.setup()
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  const search = screen.getByRole('textbox', { name: 'Search findings by title' })
+  await user.click(search)
+  await user.paste('x'.repeat(1001))
+  expect(search).toHaveValue('x'.repeat(1000))
+  await waitFor(() => expect(operationsApi.listFindings)
+    .toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: 'x'.repeat(1000) }))
+})
+
 it('preserves search and selection on failure, reports already attached, and restores focus on cancel', async () => {
   const user = userEvent.setup()
   ;(operationsApi.attachFindingEvidence as jest.Mock).mockRejectedValueOnce(new Error('failed'))
@@ -191,7 +232,7 @@ it('creates the finding with the viewed attack as evidence in one request and cl
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
     id: expect.any(String), title: '  New assessment', severity: 'important', description: 'Optional notes',
-    severity_other: null, harm_type: null, harm_type_other: null,
+    severity_other: null, harm_type: null, harm_type_other: null, demonstrated: true,
     attack_result_id: 'viewed',
   })
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
@@ -220,7 +261,7 @@ it('creates and attaches custom classifications from the same shared form and sh
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
     id: expect.any(String), title: 'Custom', description: '', severity: 'other', severity_other: 'Team severity',
-    harm_type: 'Other', harm_type_other: 'Team harm', attack_result_id: 'viewed',
+    harm_type: 'Other', harm_type_other: 'Team harm', demonstrated: true, attack_result_id: 'viewed',
   })
 })
 
@@ -252,6 +293,33 @@ it('retains the draft when creation fails, and a retry reuses the same finding I
   expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
   const [first, retry] = jest.mocked(operationsApi.createFinding).mock.calls
   expect(retry[1].id).toBe(first[1].id)
+  expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
+})
+
+it('shows caller-owned attack validation errors and permits retry without an evidence input', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.createFinding).mockRejectedValueOnce(Object.assign(new Error('Request failed'), {
+    isAxiosError: true,
+    response: {
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [{ field: 'body.attack_result_id', message: 'Attack is unavailable', code: 'value_error' }],
+      },
+    },
+  }))
+  renderDialog()
+  await openCreation(user)
+  await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Retain assessment')
+  await user.click(screen.getByRole('button', { name: 'Save finding' }))
+  expect(await screen.findByText('attack_result_id: Attack is unavailable')).toBeInTheDocument()
+  expect(screen.queryByRole('textbox', { name: 'Evidence attack ID' })).not.toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Retain assessment')
+  expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Save finding' }))
+  expect(await screen.findByText(/Finding created and attack attached/)).toBeInTheDocument()
+  const [first, retry] = jest.mocked(operationsApi.createFinding).mock.calls
+  expect(retry).toEqual(first)
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
 })
 
@@ -363,6 +431,62 @@ it('does not keep a cancelled selection when the picker reopens', async () => {
   await user.click(action)
   expect(await screen.findByRole('radio', { name: /Proof/ })).not.toBeChecked()
   expect(screen.getByRole('button', { name: 'Attach attack' })).toBeDisabled()
+})
+
+it('restarts pagination and search when the picker reopens', async () => {
+  const user = userEvent.setup()
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValue({
+    items: [FINDING], has_more: true, next_offset: 20,
+  })
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  await user.click(screen.getByRole('button', { name: 'Next findings' }))
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
+  })
+
+  await user.type(screen.getByRole('textbox'), 'Proof')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: 'Proof' })
+  })
+  await user.click(screen.getByRole('button', { name: 'Next findings' }))
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: 'Proof' })
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  expect(screen.getByRole('textbox')).toHaveValue('')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '' })
+  })
+})
+
+it('restarts pagination when the picker reopens without a search', async () => {
+  const user = userEvent.setup()
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValue({
+    items: [FINDING], has_more: true, next_offset: 20,
+  })
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  await user.click(screen.getByRole('button', { name: 'Next findings' }))
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '' })
+  })
 })
 
 it('drops the selection when the viewed attack changes while the picker is open', async () => {

@@ -8,17 +8,17 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable  # noqa: TC003 - registry annotation resolution
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping  # registry annotation resolution
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from weakref import WeakValueDictionary
 
 import httpx
 
 from pyrit.common.net_utility import get_httpx_client
-from pyrit.exceptions import EmptyResponseException, RateLimitException, pyrit_target_retry
-from pyrit.exceptions.exception_classes import CONTENT_FILTER_MARKERS
+from pyrit.exceptions import CONTENT_FILTER_MARKERS, EmptyResponseException, RateLimitException, pyrit_target_retry
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -80,6 +80,10 @@ class A2ATarget(PromptTarget):
     `input-required` tasks are extracted from the task status message.
     """
 
+    # The endpoint has no server setting to fall back to, and the card path has a fixed default.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType(
+        {"endpoint": False, "agent_card_path": False}
+    )
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -211,7 +215,9 @@ class A2ATarget(PromptTarget):
             if modalities != frozenset({frozenset({"text"})}):
                 raise ValueError(f"A2ATarget only supports text {name} modality.")
         for capability in CapabilityName:
-            if capability != CapabilityName.MULTI_TURN and capabilities.includes(capability=capability):
+            if capability not in (CapabilityName.MULTI_TURN, CapabilityName.RESPONSES) and capabilities.includes(
+                capability=capability
+            ):
                 raise ValueError(f"A2ATarget does not support {capability.value}.")
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:

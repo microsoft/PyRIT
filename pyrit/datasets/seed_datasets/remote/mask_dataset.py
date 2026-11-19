@@ -13,9 +13,8 @@ from typing_extensions import override
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt, SeedUnion
+from pyrit.models import ChatMessageRole, Modality, SeedDataset, SeedObjective, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
-from pyrit.models.literals import ChatMessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +123,8 @@ class _MaskDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "cais/MASK"
+    required_environment_variables = ("HUGGINGFACE_TOKEN",)
+    access_url = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
     HF_REVISION: str = "4602b84dd9e2ca05c6e1eafbc14e556e908ac1bb"
     HF_SPLIT: str = "test"
     should_register = True

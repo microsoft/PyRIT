@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.benchmark.fairness_bias import (
+from pyrit.executor.benchmark import (
     FairnessBiasBenchmark,
     FairnessBiasBenchmarkContext,
+    fairness_bias,
 )
 from pyrit.models import (
     AttackOutcome,
@@ -21,7 +23,7 @@ from pyrit.prompt_target import PromptTarget
 
 def is_spacy_installed():
     try:
-        import spacy  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import spacy  # type: ignore[ty:import-not-found]  # noqa: F401
 
         return True
     except Exception:
@@ -216,6 +218,58 @@ class TestFairnessBiasBenchmark:
         assert ".G" not in formatted_prompt
         assert "textand" not in formatted_prompt
 
+    async def test_format_experiment_results_uses_last_assistant_message(
+        self,
+        mock_prompt_target: MagicMock,
+        sample_benchmark_context: FairnessBiasBenchmarkContext,
+        sample_attack_result: AttackResult,
+    ) -> None:
+        """The response is the target's reply, not a prepended message stored in the same conversation."""
+        story = "Sarah Johnson is a skilled physician. She works at the local hospital."
+        prepended_assistant = Message(message_pieces=[MessagePiece(role="assistant", original_value="Hello!")])
+        prepended_assistant.set_simulated_role()
+        conversation = [
+            Message.from_system_prompt("You are a creative writing assistant."),
+            Message(message_pieces=[MessagePiece(role="user", original_value="Hi")]),
+            prepended_assistant,
+            Message(message_pieces=[MessagePiece(role="user", original_value="Write a story about a doctor.")]),
+            Message(message_pieces=[MessagePiece(role="assistant", original_value=story)]),
+        ]
+
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        benchmark.memory = MagicMock()
+        benchmark.memory.get_conversation_messages_async = AsyncMock(return_value=conversation)
+
+        result = await benchmark._format_experiment_results_async(
+            sample_benchmark_context, sample_attack_result, experiment_num=0
+        )
+
+        assert result["generated_content"] == story
+        assert result["generated_name"] == "Sarah Johnson"
+
+    async def test_format_experiment_results_without_response(
+        self,
+        mock_prompt_target: MagicMock,
+        sample_benchmark_context: FairnessBiasBenchmarkContext,
+        sample_attack_result: AttackResult,
+    ) -> None:
+        """Without an assistant message, the response is empty and no name is extracted."""
+        conversation = [
+            Message.from_system_prompt("You are a creative writing assistant."),
+            Message(message_pieces=[MessagePiece(role="user", original_value="Write a story about a doctor.")]),
+        ]
+
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        benchmark.memory = MagicMock()
+        benchmark.memory.get_conversation_messages_async = AsyncMock(return_value=conversation)
+
+        result = await benchmark._format_experiment_results_async(
+            sample_benchmark_context, sample_attack_result, experiment_num=0
+        )
+
+        assert result["generated_content"] == ""
+        assert result["generated_name"] == "Not found"
+
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
     async def test_extract_name_successful(self, mock_prompt_target: MagicMock) -> None:
         """Test successful name extraction."""
@@ -235,6 +289,40 @@ class TestFairnessBiasBenchmark:
         extracted_name = benchmark._extract_name(response_without_name)
 
         assert extracted_name is None
+
+    async def test_extract_name_loads_spacy_model_once(
+        self, mock_prompt_target: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The spaCy pipeline is loaded on first use and reused for later responses and benchmarks."""
+        monkeypatch.setattr(fairness_bias, "_nlp", None)
+        monkeypatch.setattr(fairness_bias, "_nlp_loaded", False)
+        person = MagicMock(label_="PERSON", text="Sarah Johnson")
+        fake_spacy = MagicMock()
+        fake_spacy.load.return_value = MagicMock(return_value=MagicMock(ents=[person]))
+        monkeypatch.setitem(sys.modules, "spacy", fake_spacy)
+
+        first = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        second = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        names = [benchmark._extract_name("Sarah Johnson is a physician.") for benchmark in (first, first, second)]
+
+        assert names == ["Sarah Johnson"] * 3
+        fake_spacy.load.assert_called_once_with("en_core_web_sm")
+
+    async def test_extract_name_tries_unavailable_spacy_model_once(
+        self, mock_prompt_target: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing model is not reloaded for every response; the regex fallback is used instead."""
+        monkeypatch.setattr(fairness_bias, "_nlp", None)
+        monkeypatch.setattr(fairness_bias, "_nlp_loaded", False)
+        fake_spacy = MagicMock()
+        fake_spacy.load.side_effect = OSError("Can't find model 'en_core_web_sm'")
+        monkeypatch.setitem(sys.modules, "spacy", fake_spacy)
+
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        names = [benchmark._extract_name("Sarah Johnson is a physician.") for _ in range(2)]
+
+        assert names == ["Sarah Johnson"] * 2
+        fake_spacy.load.assert_called_once_with("en_core_web_sm")
 
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
     async def test_setup_creates_message(
@@ -334,6 +422,25 @@ class TestFairnessBiasBenchmark:
         assert summary["score_distribution"] == {"biased": 1, "unbiased": 1}
         assert summary["score_proportions"]["biased"] == "50.00%"
         assert summary["score_proportions"]["unbiased"] == "50.00%"
+        assert summary["names_extracted"] == ["Maria Garcia"]
+
+    async def test_get_experiment_summary_counts_list_score_categories(self, mock_prompt_target: MagicMock) -> None:
+        """Test that the summary counts each category of a score, whose score_category is a list."""
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+
+        context = FairnessBiasBenchmarkContext(subject="nurse", story_type="story", num_experiments=4)
+        context.experiment_results = [
+            {"generated_name": "Maria Garcia", "score_category": ["She/Her"]},
+            {"generated_name": "Not found", "score_category": ["She/Her", "They/Them"]},
+            {"generated_name": "Not found", "score_category": []},
+            {"generated_name": "Not found", "score_category": "unknown"},
+        ]
+
+        summary = benchmark.get_experiment_summary(context=context)
+
+        assert summary["total_experiments"] == 4
+        assert summary["score_distribution"] == {"She/Her": 2, "They/Them": 1, "unknown": 2}
+        assert summary["score_proportions"] == {"She/Her": "50.00%", "They/Them": "25.00%", "unknown": "50.00%"}
         assert summary["names_extracted"] == ["Maria Garcia"]
 
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")

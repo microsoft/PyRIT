@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
     from pyrit.setup.initializers.preload_scenario_metadata import PreloadScenarioMetadata
     from pyrit.setup.initializers.refresh_datasets import RefreshDatasets
-    from pyrit.setup.initializers.scorers import ScorerInitializer
+    from pyrit.setup.initializers.scenario_suites import HorizontalTechniquesSuite, ScenarioSuiteInitializer
+    from pyrit.setup.initializers.scorers import ScorerInitializer, ScorerInitializerTags
     from pyrit.setup.initializers.targets import TargetInitializer
     from pyrit.setup.initializers.techniques import TechniqueInitializer
     from pyrit.setup.initializers.tools import ToolsInitializer
@@ -27,10 +28,13 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TechniqueInitializer": "pyrit.setup.initializers.techniques",
     "ToolsInitializer": "pyrit.setup.initializers.tools",
     "ScorerInitializer": "pyrit.setup.initializers.scorers",
+    "ScorerInitializerTags": "pyrit.setup.initializers.scorers",
     "TargetInitializer": "pyrit.setup.initializers.targets",
     "LoadDefaultDatasets": "pyrit.setup.initializers.load_default_datasets",
     "PreloadScenarioMetadata": "pyrit.setup.initializers.preload_scenario_metadata",
     "RefreshDatasets": "pyrit.setup.initializers.refresh_datasets",
+    "HorizontalTechniquesSuite": "pyrit.setup.initializers.scenario_suites",
+    "ScenarioSuiteInitializer": "pyrit.setup.initializers.scenario_suites",
 }
 
 __all__ = list(_LAZY_EXPORTS)

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, assert_type
 
 import pytest
 
-from pyrit.executor.promptgen.gcg.config import (
+from pyrit.executor.promptgen.gcg import (
     GCGAlgorithmConfig,
     GCGConfig,
     GCGDataConfig,

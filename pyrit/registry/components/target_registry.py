@@ -26,11 +26,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.models.identifiers import TargetIdentifier
+from pyrit.models import TargetIdentifier
 from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
+from pyrit.registry.resolution import resolve_constructor_args
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from types import ModuleType
 
     from pyrit.prompt_target import PromptTarget
@@ -103,3 +105,63 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
     def _metadata_class(self) -> type[TargetMetadata]:
         """Return ``TargetMetadata``; the base populates it from the common fields."""
         return TargetMetadata
+
+    def get_credential_parameter_names(self, name: str) -> frozenset[str]:
+        """
+        Return the names of a target class's credential parameters.
+
+        A target's credentials are the parameters its class marks ``sensitive``, such as ``api_key``,
+        ``sas_token``, or ``github_token``.
+
+        Args:
+            name (str): The catalog name of the target class.
+
+        Returns:
+            frozenset[str]: The credential parameter names, or none for an unknown class.
+        """
+        metadata = self.get_registered_class_metadata(name)
+        return (
+            frozenset(parameter.name for parameter in metadata.parameters if parameter.sensitive)
+            if metadata
+            else frozenset()
+        )
+
+    async def create_instance_async(
+        self,
+        *,
+        name: str,
+        params: Mapping[str, object],
+        external_input: bool = False,
+        allowed_path_params: frozenset[str] = frozenset(),
+    ) -> PromptTarget:
+        """
+        Build a target through its ``create_async``, so slow setup it needs runs off the calling event loop.
+
+        The arguments are resolved as ``create_instance`` resolves them or, with ``external_input``, as
+        ``create_instance_from_external_input`` does, so the target gets the values its constructor will.
+
+        Args:
+            name (str): The catalog name to build.
+            params (Mapping[str, object]): The constructor arguments.
+            external_input (bool): Whether ``params`` come from an external caller such as a REST request.
+                Defaults to False.
+            allowed_path_params (frozenset[str]): External parameters that can name a server file or folder but
+                that the caller has made safe. Defaults to none.
+
+        Returns:
+            PromptTarget: The new target, not registered.
+
+        Raises:
+            KeyError: If the name is not registered.
+            ValueError: If an argument can't be resolved or coerced for the target's constructor.
+        """
+        cls = self.get_class(name)
+        resolved = resolve_constructor_args(
+            cls=cls,
+            raw_args=dict(params),
+            identifier_type=self._identifier_type(),
+            external_input=external_input,
+            seam_base_type=self._seam_base_type(),
+            allowed_path_params=allowed_path_params,
+        )
+        return await cls.create_async(**resolved)

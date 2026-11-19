@@ -43,10 +43,12 @@ from pyrit.models import (
     AttackSeedGroup,
     ScoringExpectation,
 )
+from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
@@ -213,7 +215,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     DELEGATES_SCORING: ClassVar[bool] = True
     FIXED_PARAMS_TYPE = AttackParameters.excluding("next_message", "prepended_conversation")
 
+    # Each child attack validates its own target, so the compound adds no requirement.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+    IS_COMPOUND: ClassVar[bool] = True
 
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""
@@ -258,6 +264,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         self._completion_policy = completion_policy
         self._executor = AttackExecutor(max_concurrency=1)
         self._memory = CentralMemory.get_memory_instance()
+
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Expose active child attempts through the executor that owns them."""
+        return self._executor.active_executions
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

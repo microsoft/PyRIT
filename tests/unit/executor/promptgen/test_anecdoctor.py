@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_prompt_normalizer
 
-from pyrit.executor.core.config import StrategyConverterConfig
-from pyrit.executor.promptgen.anecdoctor import (
+from pyrit.executor.core import StrategyConverterConfig
+from pyrit.executor.promptgen import (
     AnecdoctorContext,
     AnecdoctorGenerator,
     AnecdoctorResult,

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003  (runtime-required by Pydantic field annotations)
 from abc import ABC
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, get_args
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
@@ -15,13 +15,13 @@ from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Py
 )
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
-from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # runtime-required by Pydantic
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
 
 
-class Scorable(BaseModel, ABC):  # noqa: B024  root type; each scorer family declares its own contract
+class Scorable(BaseModel, ABC):  # root type; each scorer family declares its own contract
     """
     What a scorer looks at.
 
@@ -35,6 +35,22 @@ class Scorable(BaseModel, ABC):  # noqa: B024  root type; each scorer family dec
 
     # Pydantic Baseclass overrride: we want frozen models and to forbid extras.
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: Whether this evidence records what the target did (written files, invoked tools) rather
+    #: than what it said. Only such evidence can judge a target that never replies.
+    RECORDS_SIDE_EFFECTS: ClassVar[bool] = False
+
+    def names_same_evidence(self, other: Scorable | None) -> bool:
+        """
+        Check whether ``other`` names the same evidence.
+
+        Args:
+            other (Scorable | None): The scorable to compare.
+
+        Returns:
+            bool: True when both scorables identify the same evidence.
+        """
+        return self == other
 
 
 class MessageScorable(Scorable):
@@ -65,6 +81,18 @@ class MessageScorable(Scorable):
         if len(set(seen)) != len(seen):
             raise ValueError(f"A MessageScorable must name each message piece once, got {seen}.")
         return self
+
+    def names_same_evidence(self, other: Scorable | None) -> bool:
+        """
+        Check whether ``other`` names the same message pieces, in any order.
+
+        Args:
+            other (Scorable | None): The scorable to compare.
+
+        Returns:
+            bool: True when both scorables name the same set of pieces.
+        """
+        return isinstance(other, MessageScorable) and set(self.message_piece_ids) == set(other.message_piece_ids)
 
     @classmethod
     def from_message(
@@ -140,6 +168,8 @@ class ConversationScorable(Scorable):
 class TraceScorable(Scorable):
     """An exact trace scope supplied by the caller."""
 
+    RECORDS_SIDE_EFFECTS: ClassVar[bool] = True
+
     scorable_type: Literal["trace"] = "trace"
     trace_ids: tuple[TraceId, ...]
 
@@ -169,6 +199,8 @@ class SurfaceScorable(Scorable):
     covers. A location names a place, not a write: it does not identify the run that put
     the content there.
     """
+
+    RECORDS_SIDE_EFFECTS: ClassVar[bool] = True
 
     scorable_type: Literal["surface"] = "surface"
     uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")

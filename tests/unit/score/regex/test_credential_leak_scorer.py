@@ -8,18 +8,28 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece
-from pyrit.score import CredentialLeakScorer
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.models import MessagePiece, ScoringExpectation
+from pyrit.score import CredentialLeakScorer, RegexScorer
 
 _RSA_KEY_HEADER = "-----BEGIN " + "RSA PRIVATE KEY-----"
+_ENCRYPTED_KEY_HEADER = "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----"
+_EC_KEY_HEADER = "-----BEGIN " + "EC PRIVATE KEY-----"
+_DSA_KEY_HEADER = "-----BEGIN " + "DSA PRIVATE KEY-----"
+_OPENSSH_KEY_HEADER = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
+_PKCS8_KEY_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
+_PGP_KEY_HEADER = "-----BEGIN " + "PGP PRIVATE KEY BLOCK-----"
 _AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 _GH_TOKEN = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh1234"
 _GH_PAT_TOKEN = "github_pat_" + "11AAAAAAA_" + "b" * 72
+_GITLAB_PAT_TOKEN = "glpat-" + "aB1cDef2GhIjKlMnOpQr" + "1234567890"
+_GITLAB_DEPLOY_TOKEN = "gldt-" + "aB1cDef2GhIjKlMnOpQr" + "1234567890"
+_GITLAB_RUNNER_TOKEN = "glrt-" + "aB1cDef2GhIjKlMnOpQr" + "1234567890"
+_GITLAB_TRIGGER_TOKEN = "glptt-" + "aB1cDef2GhIjKlMnOpQr" + "1234567890"
 _GOOGLE_KEY = "AIza" + "SyC3R4v5X6T7U8W9Y0Z1A2B3C4D5E6F7G8H"
 _SLACK_TOKEN = "xoxb" + "-0000000000000-0000000000000-aaaaaaaaaaaaaaaaaabbbbbb"
+_SLACK_USER_TOKEN = "xoxp" + "-00000000000-0000000000-0000000000000-" + "0a" * 16
+_SLACK_LEGACY_BOT_TOKEN = "xoxb" + "-000000000000-" + "0a" * 12
 _SLACK_WEBHOOK = "https://hooks.slack.com" + "/services/TXXXXXXXX/BXXXXXXXX/xxxxxxxxxxxxxxxxxxxxxxxx"
 _OPENAI_CLASSIC_KEY = "sk-" + "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKL"
 _OPENAI_PROJ_KEY = "sk-proj-" + "aB1_" * 30
@@ -102,7 +112,9 @@ def _synthetic_garak_values_by_pattern() -> dict[str, str]:
         f"Here's the key: {_AWS_KEY}",
         f"Use this token: {_GH_TOKEN}",
         f"Fine-grained token: {_GH_PAT_TOKEN}",
+        f"GitLab token: {_GITLAB_PAT_TOKEN}",
         f"{_RSA_KEY_HEADER}\nMIIEpAIBAAKCAQ...",
+        f"{_ENCRYPTED_KEY_HEADER}\nMIIFDjBABgkqhkiG9w0BBQ0wMzAbBgkqhkiG9w0BBQwwDgQI...",
         f"api_key = '{_GOOGLE_KEY}'",
         "The JWT is eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456_ghi789-jkl",
         "Connect via mongodb://admin:password123@prod-db.internal:27017/myapp",
@@ -136,6 +148,13 @@ async def test_credential_detected(text: str, patch_central_database):
         "The function returns an integer value between 0 and 100.",
         "Please contact support@example.com for help.",
         "Discussion about github_pat format in docs.",
+        "Discussion about glpat token prefix in gitlab documentation.",
+        "glpat-short",
+        "myglpat-" + "a" * 25,
+        "-----BEGIN PUBLIC KEY-----",
+        "-----BEGIN CERTIFICATE-----",
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----",
+        "-----BEGIN " + "PGP PRIVATE KEY-----",  # OpenPGP armor requires the BLOCK suffix.
         "sk-shortkey",
         "sk-proj-short",
         "sk-admin-short",
@@ -179,6 +198,60 @@ async def test_credential_scorer_garak_patterns_detects_fine_grained_github_toke
     assert "GitHub Token" in score.score_rationale
 
 
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    ("header", "expected_pattern"),
+    [
+        (_RSA_KEY_HEADER, "Private Key Header"),
+        (_ENCRYPTED_KEY_HEADER, "Private Key Header"),
+        (_EC_KEY_HEADER, "Private Key Header"),
+        (_DSA_KEY_HEADER, "Private Key Header"),
+        (_OPENSSH_KEY_HEADER, "Private Key Header"),
+        (_PKCS8_KEY_HEADER, "Private Key Header"),
+        (_PGP_KEY_HEADER, "Private Key Header"),
+    ],
+)
+async def test_credential_scorer_detects_private_key_headers(
+    header: str, expected_pattern: str, use_garak: bool, patch_central_database
+):
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    text = f"{header}\nMIIFDjBABgkqhkiG9w0BBQ0wMzAbBgkqhkiG9w0BBQwwDgQI..."
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert expected_pattern in score.score_rationale
+
+    if use_garak:
+        excluded_scorer = CredentialLeakScorer.from_excluded_values([header], patterns=scorer._patterns)
+        assert (await excluded_scorer.score_text_async(header))[0].get_value() is False
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        _GITLAB_PAT_TOKEN,
+        _GITLAB_DEPLOY_TOKEN,
+        _GITLAB_RUNNER_TOKEN,
+        _GITLAB_TRIGGER_TOKEN,
+    ],
+    ids=["pat", "deploy", "runner", "trigger"],
+)
+async def test_credential_scorer_detects_gitlab_tokens(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    text = f"gl_token = '{token}'"
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert "GitLab Token" in score.score_rationale
+
+    if use_garak:
+        excluded_scorer = CredentialLeakScorer.from_excluded_values([token], patterns=scorer._patterns)
+        assert (await excluded_scorer.score_text_async(text))[0].get_value() is False
+        changed_token = token[:-1] + ("a" if token[-1] != "a" else "b")
+        assert (await excluded_scorer.score_text_async(f"gl_token = '{changed_token}'"))[0].get_value() is True
+
+
 async def test_credential_scorer_detects_openai_keys(patch_central_database):
     scorer = CredentialLeakScorer()
     for key in (_OPENAI_CLASSIC_KEY, _OPENAI_PROJ_KEY, _OPENAI_ADMIN_KEY, _OPENAI_SVCACCT_KEY):
@@ -202,6 +275,98 @@ async def test_credential_scorer_detects_hugging_face_token(patch_central_databa
         score = (await scorer.score_text_async(f"token = '{token}'"))[0]
         assert score.get_value() is True
         assert "Hugging Face Token" in score.score_rationale
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize("in_code", [False, True], ids=["bare", "code"])
+@pytest.mark.parametrize("token", [_SLACK_USER_TOKEN, _SLACK_LEGACY_BOT_TOKEN], ids=["user", "legacy-bot"])
+async def test_slack_token_detected_and_exactly_excluded_async(
+    *, token: str, in_code: bool, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    text = f'client = WebClient("{token}")' if in_code else token
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    score = (await scorer.score_text_async(text))[0]
+    assert score.get_value() is True
+    assert "Slack Token" in score.score_rationale
+
+    excluded_scorer = CredentialLeakScorer.from_excluded_values([token], patterns=scorer._patterns)
+    assert (await excluded_scorer.score_text_async(text))[0].get_value() is False
+    changed_token = token[:-1] + "b"
+    assert (await excluded_scorer.score_text_async(changed_token))[0].get_value() is True
+    assert (await excluded_scorer.score_text_async(token + "c"))[0].get_value() is True
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "xoxp-000000000-0000000000-0000000000-" + "0a" * 16,
+        "xoxp-0000000000-0000000000-00000000000000-" + "0a" * 16,
+        "xoxp-0000000000-0000000000-0000000000-" + "a" * 23,
+        "xoxp-0000000000-0000000000-00000x0000-" + "0a" * 16,
+        "xoxb-0000000000-0000000000-0000000000-" + "0a" * 16,
+    ],
+    ids=["short-segment", "long-segment", "short-suffix", "non-digit-segment", "bot-with-three-segments"],
+)
+async def test_slack_user_token_invalid_shapes_not_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    assert (await scorer.score_text_async(token))[0].get_value() is False
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "xoxb" + "-00000000-" + "0a" * 9,
+        "xoxb" + "-00000000-" + "0a" * 9 + "b",
+        "xoxb" + "-00000000000000-" + "0a" * 13,
+    ],
+    ids=["short-bounds", "short-id-odd-tail", "long-bounds"],
+)
+async def test_slack_legacy_bot_token_bounds_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    score = (await scorer.score_text_async(f'client = WebClient("{token}")'))[0]
+    assert score.get_value() is True
+    assert "Slack Token" in score.score_rationale
+
+
+@pytest.mark.parametrize("use_garak", [False, True], ids=["default", "garak"])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "xoxb" + "-0000000-" + "0a" * 12,
+        "xoxb" + "-000000000000000-" + "0a" * 12,
+        "xoxb" + "-000000000000-" + "0a" * 8 + "b",
+        "xoxb" + "-000000000000-" + "0a" * 13 + "b",
+        "xoxb" + "-0000000x0000-" + "0a" * 12,
+        "xoxb" + "-000000000000-" + "0a" * 6 + "." + "0a" * 6,
+        "xoxb" + "-000000000000-" + "0a" * 12 + "_suffix",
+        "xoxb" + "-000000000000-" + "0a" * 12 + "-suffix",
+        "xoxb" + "-xxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
+        "xoxp" + "-000000000000-" + "0a" * 12,
+    ],
+    ids=[
+        "short-id",
+        "long-id",
+        "short-tail",
+        "long-tail",
+        "non-digit-id",
+        "dot-in-tail",
+        "underscore-continuation",
+        "dash-continuation",
+        "placeholder",
+        "user-prefix",
+    ],
+)
+async def test_slack_legacy_bot_token_invalid_shapes_not_detected_async(
+    *, token: str, use_garak: bool, patch_central_database: MagicMock
+) -> None:
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS if use_garak else None)
+    assert (await scorer.score_text_async(f'client = WebClient("{token}")'))[0].get_value() is False
 
 
 async def test_ai_credentials_exclusion_with_garak_patterns(patch_central_database):
@@ -389,8 +554,8 @@ def test_garak_patterns_are_opt_in() -> None:
     default = CredentialLeakScorer()
     expanded = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
 
-    assert len(default._patterns) == 18
-    assert len(expanded._patterns) == 62
+    assert len(default._patterns) == 19
+    assert len(expanded._patterns) == 63
     assert default._patterns.keys() <= expanded._patterns.keys()
     assert all(not pattern.groupindex for pattern in default._compiled.values())
     assert all("credential" in pattern.groupindex for pattern in expanded._compiled.values())
@@ -408,8 +573,9 @@ async def test_default_scores_use_original_regex_scorer_behavior(
 ) -> None:
     scorer = CredentialLeakScorer()
     piece = MessagePiece(role="assistant", original_value=text)
-    actual = (await scorer._score_piece_async(piece, objective="Detect credentials"))[0]
-    expected = (await RegexScorer._score_piece_async(scorer, piece, objective="Detect credentials"))[0]
+    expectation = ScoringExpectation(objective="Detect credentials")
+    actual = (await scorer._score_piece_with_expectation_async(piece, expectation=expectation))[0]
+    expected = (await RegexScorer._score_piece_with_expectation_async(scorer, piece, expectation=expectation))[0]
     assert actual.score_value == expected.score_value
     assert actual.score_value_description == expected.score_value_description
     assert actual.score_rationale == expected.score_rationale
@@ -693,6 +859,53 @@ async def test_connection_string_with_credentials_detected(patch_central_databas
     scorer = CredentialLeakScorer()
     score = (await scorer.score_text_async("postgres://admin:secretpass@prod-db:5432/mydb"))[0]
     assert score.get_value() is True
+
+
+_SCHEME_VARIANT_CONNECTION_STRINGS = [
+    "postgresql://admin:secretpass@prod-db:5432/mydb",
+    "rediss://default:secretpass@cache.example.test:6380",
+    "amqps://user:secretpass@mq.example.test:5671",
+    # Password-only form: Redis AUTH without ACL users takes no username.
+    "redis://:secretpass@cache.example.test:6379/0",
+    "rediss://:secretpass@cache.example.test:6380",
+    "postgresql://:secretpass@prod-db:5432/mydb",
+]
+
+
+@pytest.mark.parametrize(
+    "text", [*_SCHEME_VARIANT_CONNECTION_STRINGS, "mongodb+srv://admin:secretpass@cluster0.example.test/app"]
+)
+async def test_connection_string_scheme_variants_detected(text: str, patch_central_database):
+    scorer = CredentialLeakScorer()
+
+    assert scorer._get_matching_pattern_names(text=text, objective=None) == ["Connection String"]
+    assert (await scorer.score_text_async(text))[0].get_value() is True
+
+
+@pytest.mark.parametrize("text", _SCHEME_VARIANT_CONNECTION_STRINGS)
+async def test_garak_connection_string_scheme_variants_detected(text: str, patch_central_database):
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
+
+    assert "Connection String" in scorer._get_matching_pattern_names(text=text, objective=None)
+
+
+def test_garak_mongodb_srv_reported_once():
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
+    text = "mongodb+srv://admin:secretpass@cluster0.example.test/app"
+
+    assert scorer._get_matching_pattern_names(text=text, objective=None) == ["MongoDB Cloud Connection String"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "postgresql://localhost:5432/mydb",
+        "rediss://cache.example.test:6380",
+        "redis://:@cache.example.test:6379",
+    ],
+)
+async def test_connection_string_scheme_variant_without_credentials_not_detected(text: str, patch_central_database):
+    assert (await CredentialLeakScorer().score_text_async(text))[0].get_value() is False
 
 
 async def test_credential_scorer_adds_to_memory():

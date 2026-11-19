@@ -29,9 +29,15 @@ def test_default_server_url_constant():
 
 
 def test_read_server_url_returns_none_when_no_files(tmp_path):
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
+        assert read_server_url(config_file=None) is None
+
+
+def test_read_server_url_missing_explicit_config_raises(tmp_path):
     nonexistent = tmp_path / "missing.yaml"
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
-        assert read_server_url(config_file=nonexistent) is None
+        with pytest.raises(ConfigError, match="does not exist"):
+            read_server_url(config_file=nonexistent)
 
 
 def test_read_server_url_reads_from_default_when_no_overlay(tmp_path):
@@ -114,12 +120,20 @@ def test_read_server_url_empty_string_treated_as_missing(tmp_path):
 
 
 def test_read_server_settings_returns_defaults_when_no_files(tmp_path):
-    nonexistent = tmp_path / "missing.yaml"
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
-        assert read_server_settings(config_file=nonexistent) == ServerSettings(
+        assert read_server_settings(config_file=None) == ServerSettings(
             url=None,
             startup_timeout=120.0,
         )
+
+
+def test_read_server_settings_missing_explicit_config_raises_even_with_default(tmp_path):
+    default = tmp_path / "default.yaml"
+    default.write_text("server:\n  url: http://default:8000\n", encoding="utf-8")
+    nonexistent = tmp_path / "missing.yaml"
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default):
+        with pytest.raises(ConfigError, match="does not exist"):
+            read_server_settings(config_file=nonexistent)
 
 
 def test_read_server_settings_overlay_overrides_startup_timeout(tmp_path):
@@ -223,6 +237,17 @@ def test_validate_client_config_rejects_removed_scenario_block(tmp_path):
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
         with pytest.raises(ConfigError, match="'scenario' is no longer supported"):
             validate_client_config(config_file=cfg)
+
+
+def test_validate_client_config_raises_on_missing_explicit_config(tmp_path):
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
+        with pytest.raises(ConfigError, match="does not exist"):
+            validate_client_config(config_file=tmp_path / "missing.yaml")
+
+
+def test_validate_client_config_allows_missing_default_config(tmp_path):
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing_default.yaml"):
+        validate_client_config(config_file=None)
 
 
 def test_validate_client_config_raises_on_malformed_yaml(tmp_path):

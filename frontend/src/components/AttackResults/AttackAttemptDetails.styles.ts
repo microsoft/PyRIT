@@ -1,82 +1,83 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import { NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
+import { MINIMUM_TOUCH_TARGET_SIZE, NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '@/styles/touchTargets'
 
 export const useAttackAttemptDetailsStyles = makeStyles({
   content: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalXL,
+    minWidth: 0,
     overflowWrap: 'anywhere',
   },
-  summary: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(5, minmax(8rem, 1fr))',
-    gap: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+  framed: {
+    padding: `${tokens.spacingVerticalXL} ${tokens.spacingHorizontalXL}`,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
     [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalL}`,
     },
   },
-  section: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
+  divided: {
+    paddingTop: tokens.spacingVerticalXL,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
-  sectionLabel: {
-    color: tokens.colorNeutralForeground3,
+  components: {
+    rowGap: tokens.spacingVerticalM,
   },
-  surface: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-    padding: tokens.spacingVerticalL,
-    borderLeft: `3px solid ${tokens.colorBrandStroke1}`,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorNeutralBackground2,
-  },
-  bodyText: {
-    margin: 0,
+  objective: {
+    display: 'block',
+    maxWidth: '75ch',
     whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
   },
-  collapsedSeedText: {
-    display: '-webkit-box',
-    overflow: 'hidden',
-    WebkitBoxOrient: 'vertical',
-    WebkitLineClamp: 5,
+  rationale: {
+    maxWidth: '75ch',
+    whiteSpace: 'pre-wrap',
+    color: tokens.colorNeutralForeground2,
   },
-  badgeList: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalXS,
+  meta: {
+    color: tokens.colorNeutralForeground3,
+    fontVariantNumeric: 'tabular-nums',
   },
-  seed: {
+  error: {
+    alignSelf: 'stretch',
+  },
+  retry: { ...mobileTouchTarget },
+  findings: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
+    margin: 0,
+    padding: 0,
+    listStyleType: 'none',
   },
-  seedImage: {
-    display: 'block',
-    width: 'auto',
-    maxWidth: '100%',
-    maxHeight: '24rem',
-    borderRadius: tokens.borderRadiusMedium,
-    objectFit: 'contain',
+  finding: {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr)',
+    alignItems: 'baseline',
+    gap: tokens.spacingHorizontalS,
   },
-  seedMedia: {
-    width: 'min(36rem, 100%)',
-  },
-  seedToggle: {
-    alignSelf: 'flex-start',
-    minWidth: 0,
-    paddingInline: 0,
-    color: tokens.colorBrandForegroundLink,
-  },
-  fileLink: {
-    color: tokens.colorBrandForegroundLink,
+  actions: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    [NARROW_VIEWPORT_QUERY]: { flexDirection: 'column', alignItems: 'stretch' },
   },
   conversationLink: {
-    alignSelf: 'flex-start',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    minHeight: MINIMUM_TOUCH_TARGET_SIZE,
+    boxSizing: 'border-box',
     color: tokens.colorBrandForegroundLink,
+    backgroundColor: tokens.colorBrandBackground2,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    fontWeight: tokens.fontWeightSemibold,
+    textDecorationLine: 'none',
+    ':hover': { backgroundColor: tokens.colorBrandBackground2Hover },
+    [NARROW_VIEWPORT_QUERY]: { justifyContent: 'center' },
   },
 })

@@ -35,7 +35,7 @@ describe('presetEditorRoutePath', () => {
 describe('presetScannerRoutePath', () => {
   it('opens the scenario launch form with the preset named in the query string', () => {
     expect(presetScannerRoutePath('garak.encoding', 'nightly_probe')).toBe(
-      '/scanner/garak.encoding?preset=nightly_probe',
+      '/scanner/launch/garak.encoding?preset=nightly_probe',
     )
   })
 
@@ -43,7 +43,7 @@ describe('presetScannerRoutePath', () => {
     const path = presetScannerRoutePath('a/b', 'c&d')
     const url = new URL(path, 'http://localhost')
 
-    expect(url.pathname).toBe('/scanner/a%2Fb')
+    expect(url.pathname).toBe('/scanner/launch/a%2Fb')
     expect(url.searchParams.get(PRESET_QUERY_PARAM)).toBe('c&d')
   })
 

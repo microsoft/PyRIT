@@ -4,7 +4,11 @@
 import logging
 from dataclasses import dataclass, fields
 from enum import Enum
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Self
+
+from pydantic import Field, model_validator
+
+from pyrit.models import DatasetProviderInfo
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +172,24 @@ class SeedDatasetMetadata:
                 )
 
 
+class SeedDatasetDescriptor(DatasetProviderInfo):
+    """Local facts about a provider's default configuration, independent of stored seeds."""
+
+    name: str
+    metadata: SeedDatasetMetadata | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _project_metadata(self) -> Self:
+        if self.metadata is not None:
+            self.modalities = sorted(self.metadata.modalities or [])
+            self.harm_categories = sorted(self.metadata.harm_categories or [])
+            self.size = sorted(self.metadata.size or [])
+            self.load_time = sorted(
+                value.value for value in self.metadata.load_time or [] if value != SeedDatasetLoadTime.UNINITIALIZED
+            )
+        return self
+
+
 class SeedDatasetFilter:
     """
     Filter for discovering datasets by metadata criteria.
@@ -241,10 +263,11 @@ class SeedDatasetFilter:
         else:
             self.criteria = [SeedDatasetMetadata()]
 
-        # Normalize tags: strip whitespace and lowercase so "ALL", " All ", etc. work
+        # Normalize string values the way _coerce_metadata_values normalizes dataset metadata,
+        # so "ALL", " All ", "Violence" or "Text" match the lowercased values datasets declare
         def _normalize_criterion(c: SeedDatasetMetadata) -> SeedDatasetMetadata:
             normalized = {
-                f.name: ({t.strip().lower() for t in vals} if f.name == "tags" and vals is not None else vals)
+                f.name: ({v.strip().lower() if isinstance(v, str) else v for v in vals} if vals is not None else vals)
                 for f, vals in zip(fields(c), (getattr(c, f.name) for f in fields(c)), strict=True)
             }
             return SeedDatasetMetadata(**normalized)

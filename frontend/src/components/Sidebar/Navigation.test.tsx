@@ -3,6 +3,8 @@
  * Licensed under the MIT license.
  */
 
+import { useState } from "react";
+
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
@@ -10,7 +12,7 @@ import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 import { readUserPreferences } from "@/utils/userPreferences";
 import { THEME_PRESETS } from "@/themes/themePresets";
 import type { ThemePreset } from "@/types";
-import Navigation from "./Navigation";
+import Navigation, { type ViewName } from "./Navigation";
 
 const STORAGE_KEY = "pyrit.themeMode";
 
@@ -23,6 +25,8 @@ describe("Navigation", () => {
     onNavigate: jest.fn(),
     onOpenFeedback: jest.fn(),
     canManageConfiguration: true,
+    expanded: false,
+    onToggleExpanded: jest.fn(),
   };
 
   beforeEach(() => {
@@ -30,83 +34,6 @@ describe("Navigation", () => {
     window.localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.style.removeProperty("color-scheme");
-  });
-
-  it("renders the home button", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-    expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
-  });
-
-  it("exposes one primary navigation landmark and marks the current view", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-
-    expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Technique.execute" })).toHaveAttribute(
-      "aria-current",
-      "page"
-    );
-    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute(
-      "aria-current"
-    );
-  });
-
-  it("calls onNavigate with 'home' when home button is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Home" }));
-    expect(onNavigate).toHaveBeenCalledWith("home");
-  });
-
-  it("renders the Technique.execute button for chat", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-    expect(screen.getByRole("button", { name: "Technique.execute" })).toHaveAttribute(
-      "title",
-      "Technique.execute"
-    );
-  });
-
-  it("renders the registry button", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-    expect(
-      screen.getByRole("button", { name: "Registry" })
-    ).toBeInTheDocument();
-  });
-
-  it("calls onNavigate with 'chat' when chat button is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Technique.execute" }));
-    expect(onNavigate).toHaveBeenCalledWith("chat");
-  });
-
-  it("calls onNavigate with 'registry' when registry button is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Registry" }));
-    expect(onNavigate).toHaveBeenCalledWith("registry");
-  });
-
-  it("navigates to configuration", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Configuration" }));
-    expect(onNavigate).toHaveBeenCalledWith("configuration");
   });
 
   it("hides configuration from users without administrator access", () => {
@@ -119,125 +46,81 @@ describe("Navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the history button", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-    expect(
-      screen.getByRole("button", { name: "History" })
-    ).toBeInTheDocument();
-  });
-
-  it("renders the Scanner button", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-    expect(
-      screen.getByRole("button", { name: "Scanner" })
-    ).toBeInTheDocument();
-  });
-
-  it("renders the final primary navigation order", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
+  it.each([false, true])("shows the ordered destinations with expanded=%s", (expanded: boolean) => {
+    renderWithProvider(<Navigation {...defaultProps} expanded={expanded} />);
     const navigation = screen.getByRole("navigation", { name: "Primary" });
-    const labels = within(navigation)
-      .getAllByRole("button")
-      .map((button) => button.getAttribute("aria-label"));
+    const buttons = within(navigation).getAllByRole("button");
+    const labels = buttons.map((button: HTMLElement) => button.getAttribute("aria-label"));
 
     expect(labels).toEqual([
       "Home",
-      "Technique.execute",
-      "History",
+      "Attacks",
+      "Scanner",
       "Analytics",
       "Operations",
-      "Scanner",
       "Datasets",
       "Registry",
       "Configuration",
     ]);
-  });
-
-  it("marks Operations current and navigates to its view", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} currentView="operations" onNavigate={onNavigate} />,
-    );
-
-    const button = screen.getByRole("button", { name: "Operations" });
-    expect(button).toHaveAttribute("aria-current", "page");
-    await user.click(button);
-    expect(onNavigate).toHaveBeenCalledWith("operations");
-  });
-
-  it("marks History current and navigates to its tabbed view", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation
-        {...defaultProps}
-        currentView="history"
-        onNavigate={onNavigate}
-      />,
-    );
-
-    const button = screen.getByRole("button", { name: "History" });
-    expect(button).toHaveAttribute("aria-current", "page");
-    await user.click(button);
-    expect(onNavigate).toHaveBeenCalledWith("history");
-  });
-
-  it("marks Analytics current and opens the explorer", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(<Navigation {...defaultProps} currentView="analytics" onNavigate={onNavigate} />);
-    const button = screen.getByRole("button", { name: "Analytics" });
-    expect(button).toHaveAttribute("aria-current", "page");
-    await user.click(button);
-    expect(onNavigate).toHaveBeenCalledWith("analytics");
-  });
-
-  it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Scanner" }));
-    expect(onNavigate).toHaveBeenCalledWith("scenarios");
-  });
-
-  it("marks the scenarios button current when it is the active view", () => {
-    renderWithProvider(
-      <Navigation {...defaultProps} currentView="scenarios" />
-    );
-    expect(screen.getByRole("button", { name: "Scanner" })).toHaveAttribute(
+    for (const button of buttons) {
+      expect(button.textContent).toBe(expanded ? button.getAttribute("aria-label") : "");
+    }
+    expect(screen.getByRole("button", { name: "Attacks" })).toHaveAttribute(
       "aria-current",
       "page"
     );
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute("aria-current");
+    const toggle = screen.getByRole("button", { name: expanded ? "Collapse sidebar" : "Expand sidebar" });
+    expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+    expect(toggle.textContent).toBe("");
+    expect(toggle).toHaveAttribute("title", expanded ? "Collapse sidebar" : "Expand sidebar");
   });
 
-  it("renders the Datasets button", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-    expect(screen.getByRole("button", { name: "Datasets" })).toBeInTheDocument();
-  });
-
-  it("calls onNavigate with 'datasets' when the datasets button is clicked", async () => {
+  it("navigates to the matching view for each destination", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Datasets" }));
-    expect(onNavigate).toHaveBeenCalledWith("datasets");
+    renderWithProvider(<Navigation {...defaultProps} onNavigate={onNavigate} />);
+    const destinations: Array<[string, ViewName]> = [
+      ["Home", "home"], ["Attacks", "chat"], ["Scanner", "scenarios"],
+      ["Analytics", "analytics"], ["Operations", "operations"],
+      ["Datasets", "datasets"], ["Registry", "registry"], ["Configuration", "configuration"],
+    ];
+    for (const [label, view] of destinations) {
+      await user.click(screen.getByRole("button", { name: label }));
+      expect(onNavigate).toHaveBeenLastCalledWith(view);
+    }
   });
 
-  it("marks the datasets button current when it is the active view", () => {
-    renderWithProvider(
-      <Navigation {...defaultProps} currentView="datasets" />
-    );
-    expect(screen.getByRole("button", { name: "Datasets" })).toHaveAttribute(
-      "aria-current",
-      "page"
-    );
+  it("shows a single icon label after expanding and collapsing in place", async () => {
+    const user = userEvent.setup();
+    function ToggleNavigation() {
+      const [expanded, setExpanded] = useState(true);
+      return (
+        <Navigation
+          {...defaultProps}
+          expanded={expanded}
+          onToggleExpanded={() => { setExpanded((current: boolean) => !current); }}
+        />
+      );
+    }
+
+    renderWithProvider(<ToggleNavigation />);
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    await user.hover(screen.getByRole("button", { name: "Attacks" }));
+    expect(await screen.findByRole("tooltip", { name: "Attacks" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Attacks" })).not.toHaveAttribute("title");
+
+    await user.unhover(screen.getByRole("button", { name: "Attacks" }));
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    await user.hover(screen.getByRole("button", { name: "Attacks" }));
+    expect(screen.queryByRole("tooltip", { name: "Attacks" })).not.toBeInTheDocument();
+
+    await user.unhover(screen.getByRole("button", { name: "Attacks" }));
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Attacks" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip", { name: "Attacks" })).toBeVisible();
   });
 
   it("renders one feedback button and forwards clicks to onOpenFeedback", async () => {
@@ -251,25 +134,6 @@ describe("Navigation", () => {
     expect(feedbackButtons).toHaveLength(1);
     await user.click(feedbackButtons[0]);
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not render a direct security link", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-
-    expect(
-      screen.queryByRole("link", { name: "Security" })
-    ).not.toBeInTheDocument();
-  });
-
-  it("calls onNavigate with 'history' when history button is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "History" }));
-    expect(onNavigate).toHaveBeenCalledWith("history");
   });
 
   it("renders the theme picker labelled with the current mode", () => {

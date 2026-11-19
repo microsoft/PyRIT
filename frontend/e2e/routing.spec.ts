@@ -1,4 +1,7 @@
 import { test, expect, type Page } from "./_fixtures";
+import { makeAttackMetadata } from "./_attacks";
+import { READY_RUNTIME } from "./_runtime";
+import type { AttackSummary } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so URL-driven navigation can be
@@ -33,12 +36,13 @@ const ROUTING_TARGET = {
   inner_targets: null,
 };
 
-/** Build an attack summary for the single-attack (getAttack) endpoint. */
-function makeAttackSummary(attackResultId: string, outcome: "success" | "failure") {
+/** Build attack details for compact metadata and full-detail reads. */
+function makeAttackSummary(attackResultId: string, outcome: "success" | "failure"): AttackSummary {
   return {
     attack_result_id: attackResultId,
     conversation_id: `conv-${attackResultId}`,
     attack_type: "SingleTurnAttack",
+    objective: "",
     target: {
       target_type: "OpenAIChatTarget",
       target_registry_name: ROUTING_TARGET.target_registry_name,
@@ -103,6 +107,10 @@ const PREFERENCES_STORAGE_KEY = "pyrit.userPreferences.v1.local";
 
 /** Register every API mock the routing tests rely on. */
 async function mockRoutingAPIs(page: Page) {
+  await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: READY_RUNTIME });
+  });
+
   await page.route(/\/api\/targets/, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const body = pathname.endsWith(`/${ROUTING_TARGET.target_registry_name}`)
@@ -174,13 +182,14 @@ async function mockRoutingAPIs(page: Page) {
     });
   });
 
-  // Single attack (getAttack). Unknown ids 404 to drive the not-found UX.
-  await page.route(/\/api\/attacks\/[^/]+$/, async (route) => {
+  // Unknown ids return 404 from both attack read endpoints.
+  await page.route(/\/api\/attacks\/[^/?]+(?:\/metadata)?(?:\?.*)?$/, async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
     }
-    const attackResultId = new URL(route.request().url()).pathname.split("/")[3] ?? "";
+    const url = new URL(route.request().url());
+    const attackResultId = url.pathname.split("/")[3] ?? "";
     const known = KNOWN_ATTACKS[attackResultId];
     if (!known) {
       await route.fulfill({
@@ -190,10 +199,13 @@ async function mockRoutingAPIs(page: Page) {
       });
       return;
     }
+    const attack = makeAttackSummary(attackResultId, known.outcome);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(makeAttackSummary(attackResultId, known.outcome)),
+      body: JSON.stringify(url.pathname.endsWith("/metadata")
+        ? makeAttackMetadata(attack, url.searchParams.get("conversation_id") ?? undefined)
+        : attack),
     });
   });
 
@@ -226,7 +238,7 @@ test.describe("URL-driven routing", () => {
   });
 
   test("history filters round-trip through the URL and survive a reload", async ({ page }) => {
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 
     // Select the "Success" outcome filter.
@@ -246,11 +258,11 @@ test.describe("URL-driven routing", () => {
   });
 
   test("deep-links into an attack and restores its target after reload", async ({ page }) => {
-    await page.goto("/attacks/atk-1");
+    await page.goto("/attack/chat/atk-1");
 
     // The router keeps the deep link, and the attack named by the URL – not
     // some default/empty conversation – drives the chat window.
-    await expect(page).toHaveURL(/\/attacks\/atk-1$/);
+    await expect(page).toHaveURL(/\/attack\/chat\/atk-1$/);
     await expect(page.getByText("Loaded from atk-1")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("chat-input")).toBeEnabled();
     await expect(page.getByTestId("no-target-banner")).not.toBeVisible();
@@ -263,25 +275,25 @@ test.describe("URL-driven routing", () => {
   });
 
   test("shows the not-found screen for an unknown attack id", async ({ page }) => {
-    await page.goto("/attacks/bogus-id-12345");
+    await page.goto("/attack/chat/bogus-id-12345");
 
     await expect(page.getByTestId("attack-not-found")).toBeVisible({ timeout: 10_000 });
   });
 
   test("browser back returns from an opened attack to history", async ({ page }) => {
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId("attack-row-atk-success").click();
-    await expect(page).toHaveURL(/\/attacks\/atk-success$/);
+    await expect(page).toHaveURL(/\/attack\/chat\/atk-success$/);
 
     await page.goBack();
-    await expect(page).toHaveURL(/\/history\/attacks$/);
+    await expect(page).toHaveURL(/\/attack\/history$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
   });
 
   test("Markdown preference survives route remount and reload", async ({ page }) => {
-    await page.goto("/chat");
+    await page.goto("/attack/chat");
 
     const markdownToggle = page.getByRole("switch", { name: "Markdown" });
     await expect(markdownToggle).not.toBeChecked();
@@ -296,12 +308,12 @@ test.describe("URL-driven routing", () => {
       )
       .toBe(true);
 
-    await page.getByTitle("History").click();
-    await expect(page).toHaveURL(/\/history\/attacks$/);
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(page).toHaveURL(/\/attack\/history$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
 
-    await page.getByTitle("Technique.execute").click();
-    await expect(page).toHaveURL(/\/chat$/);
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
 
     await page.reload();

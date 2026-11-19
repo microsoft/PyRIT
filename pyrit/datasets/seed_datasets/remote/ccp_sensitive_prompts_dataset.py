@@ -13,7 +13,7 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 from pyrit.models.harm_category import HarmCategory, standardize_harm_categories
 
 if TYPE_CHECKING:
-    from pyrit.models.seeds.seed_group import SeedUnion
+    from pyrit.models import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,8 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "large"  # 1360 censorship-sensitive prompts (single-language Mandarin)
     tags: frozenset[str] = frozenset({"safety", "multilingual"})
+
+    source_url = "https://huggingface.co/datasets/promptfoo/CCP-sensitive-prompts"
 
     def __init__(
         self,

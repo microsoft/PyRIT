@@ -5,15 +5,18 @@
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
-from pyrit.backend.models.scorers import (
+from pyrit.backend.models import (
     CreateScorerRequest,
+    ProblemDetail,
     ScorerListResponse,
     ScorerTypeResponse,
+)
+from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.scorers import (
     UnregisteredScorer,
 )
 from pyrit.backend.services.scorer_service import get_scorer_service
-from pyrit.models.catalog.scorer import ScorerInstance
+from pyrit.models.catalog import ScorerInstance
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 
@@ -60,6 +63,8 @@ async def create_scorer(
     """
     try:
         return await get_scorer_service().create_scorer_async(request=request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:

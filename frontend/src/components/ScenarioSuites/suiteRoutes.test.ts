@@ -39,11 +39,11 @@ describe('suiteEditorRoutePath', () => {
 
 describe('suiteExecutionRoutePath', () => {
   it('opens suite progress under the Scanner, where suites launch', () => {
-    expect(SUITE_EXECUTIONS_ROUTE).toBe('/scanner/suites/executions')
-    expect(suiteExecutionRoutePath('execution-1')).toBe('/scanner/suites/executions/execution-1')
+    expect(SUITE_EXECUTIONS_ROUTE).toBe('/scanner/history/suites/executions')
+    expect(suiteExecutionRoutePath('execution-1')).toBe('/scanner/history/suites/executions/execution-1')
   })
 
   it('escapes an execution ID so it stays inside one path segment', () => {
-    expect(suiteExecutionRoutePath('a/b?c')).toBe('/scanner/suites/executions/a%2Fb%3Fc')
+    expect(suiteExecutionRoutePath('a/b?c')).toBe('/scanner/history/suites/executions/a%2Fb%3Fc')
   })
 })

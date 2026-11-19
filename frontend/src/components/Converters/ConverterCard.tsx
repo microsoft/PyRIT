@@ -20,6 +20,7 @@ interface ConverterCardProps {
   onRemove: () => void
   onSettings?: () => void
   onReset?: () => void
+  onSave?: () => void
   onMove: (delta: number) => void
   onDragStart?: DragEventHandler<HTMLDivElement>
   onDragEnd?: DragEventHandler<HTMLDivElement>
@@ -31,7 +32,7 @@ interface ConverterCardProps {
 /** Converter stage shared by single-message, bulk conversation, and technique editing. */
 export default function ConverterCard({
   name, converter, temporary, disabled = false, context = '', testId, dragTestId,
-  onRemove, onSettings, onReset, onMove, onDragStart, onDragEnd, onDragOver, onDrop, children,
+  onRemove, onSettings, onReset, onSave, onMove, onDragStart, onDragEnd, onDragOver, onDrop, children,
 }: ConverterCardProps) {
   const styles = useConverterCardStyles()
   return <div className={styles.root} data-testid={testId} onDragOver={onDragOver} onDrop={onDrop}>
@@ -78,6 +79,7 @@ export default function ConverterCard({
             : converter?.reconstruction_error ?? 'This converter does not support separate settings.'}
           onClick={onSettings}>Settings</MenuItem>
         {temporary && onReset && <MenuItem onClick={onReset}>Reset to registered converter</MenuItem>}
+        {temporary && onSave && <MenuItem onClick={onSave}>Save to registry</MenuItem>}
       </MenuList></MenuPopover>
     </Menu></div>}
   </div>

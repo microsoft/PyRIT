@@ -8,7 +8,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
-from pyrit.models import Parameter
+from pyrit.models import ComponentIdentifier, Parameter
 from pyrit.models.request_limits import MAX_ITEMS
 from pyrit.models.technique_edit import TechniqueOverride, TechniqueSettings
 
@@ -24,6 +24,7 @@ class TechniqueInstance(BaseModel):
     tags: list[str] = Field(default_factory=list)
     uses_adversarial: bool
     uses_default_adversarial_target: bool
+    identifier: ComponentIdentifier
     creation_statement: str
 
 
@@ -88,6 +89,13 @@ class CreateTechniqueRequest(BaseModel):
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused."
+        ),
+    )
 
     @field_validator("name")
     @classmethod

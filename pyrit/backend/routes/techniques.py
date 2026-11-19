@@ -7,7 +7,8 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
+from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueConfiguration,
@@ -105,5 +106,7 @@ async def create_technique_async(request: CreateTechniqueRequest) -> TechniqueIn
     """
     try:
         return await get_technique_service().create_async(request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

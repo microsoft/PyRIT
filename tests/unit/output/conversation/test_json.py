@@ -169,3 +169,23 @@ async def test_build_async_omits_partial_content_when_not_blocked():
     structured = await JsonConversationPrinter(source=_StubSource()).build_async([_message(piece)])
 
     assert "partial_content" not in structured[0]["pieces"][0]
+
+
+async def test_build_async_exports_original_and_converted_data_types():
+    piece = MessagePiece(
+        role="user",
+        original_value="draw a cat",
+        original_value_data_type="text",
+        converted_value="media/cat.png",
+        converted_value_data_type="image_path",
+        conversation_id="c1",
+        sequence=0,
+    )
+    structured = await JsonConversationPrinter(source=_StubSource()).build_async([_message(piece)])
+
+    exported = structured[0]["pieces"][0]
+    assert exported["data_type"] == "text"
+    assert exported["original_value_data_type"] == "text"
+    assert exported["converted_value_data_type"] == "image_path"
+    assert exported["original_value"] == "draw a cat"
+    assert exported["converted_value"] == "media/cat.png"

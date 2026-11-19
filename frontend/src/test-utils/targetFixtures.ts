@@ -13,6 +13,7 @@ export interface FlatTargetInput {
   model_name?: string | null
   underlying_model_name?: string | null
   temperature?: number | null
+  generation_ranges?: TargetInstance['generation_ranges']
   top_p?: number | null
   max_requests_per_minute?: number | null
   identifier_hash?: string | null
@@ -21,11 +22,14 @@ export interface FlatTargetInput {
   supports_history_replay?: boolean
   target_specific_params?: Record<string, unknown> | null
   inner_targets?: FlatTargetInput[] | null
+  private?: boolean
+  allow_credential_updates?: boolean
+  credentials_rejected?: boolean | null
 }
 
 export function makeTarget(flat: FlatTargetInput): TargetInstance {
   const identifier: TargetIdentifier = {
-    class_name: flat.target_type ?? 'TextTarget',
+    class_name: flat.target_type ?? 'OpenAIChatTarget',
     hash: flat.identifier_hash ?? `${flat.target_registry_name}-hash`,
     endpoint: flat.endpoint ?? null,
     model_name: flat.model_name ?? null,
@@ -39,8 +43,14 @@ export function makeTarget(flat: FlatTargetInput): TargetInstance {
     target_registry_name: flat.target_registry_name,
     identifier,
     capabilities: flat.capabilities ?? null,
+    generation_ranges: flat.generation_ranges ?? {},
     ...(flat.supports_history_replay !== undefined ? { supports_history_replay: flat.supports_history_replay } : {}),
     target_specific_params: flat.target_specific_params ?? null,
     inner_targets: flat.inner_targets ? flat.inner_targets.map(makeTarget) : null,
+    ...(flat.private !== undefined ? { private: flat.private } : {}),
+    ...(flat.allow_credential_updates !== undefined
+      ? { allow_credential_updates: flat.allow_credential_updates }
+      : {}),
+    ...(flat.credentials_rejected !== undefined ? { credentials_rejected: flat.credentials_rejected } : {}),
   }
 }

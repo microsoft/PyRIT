@@ -3,6 +3,7 @@ import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger,
   Field, Input, MessageBar, MessageBarBody, Textarea,
 } from '@fluentui/react-components'
+import { EditRegular } from '@fluentui/react-icons'
 
 import { operationsApi } from '@/services/api'
 import { conflictingOperation, toApiError } from '@/services/errors'
@@ -19,6 +20,8 @@ export default function OperationEditDialog({ operation, onSaved }: OperationEdi
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [initialName, setInitialName] = useState('')
+  const [initialDescription, setInitialDescription] = useState('')
   const [error, setError] = useState('')
   const [existing, setExisting] = useState<Operation | null>(null)
   const [saving, setSaving] = useState(false)
@@ -33,8 +36,8 @@ export default function OperationEditDialog({ operation, onSaved }: OperationEdi
     try {
       // Sending only edited fields keeps a stale page from undoing someone else's change to the other field.
       const changes: OperationUpdate = {
-        ...(name !== operation.name ? { name } : {}),
-        ...(description !== (operation.description ?? '') ? { description } : {}),
+        ...(name !== initialName ? { name } : {}),
+        ...(description !== initialDescription ? { description } : {}),
       }
       onSaved(await operationsApi.update(operation.id, changes))
       setOpen(false)
@@ -54,13 +57,18 @@ export default function OperationEditDialog({ operation, onSaved }: OperationEdi
       if (data.open) {
         setName(operation.name)
         setDescription(operation.description ?? '')
+        // Diff baseline is what the dialog opened with: the operation prop can
+        // refresh while the dialog is open, and diffing against the fresh prop
+        // would send every untouched field and revert concurrent changes.
+        setInitialName(operation.name)
+        setInitialDescription(operation.description ?? '')
         setError('')
         setExisting(null)
       }
       setOpen(data.open)
     }}>
       <DialogTrigger disableButtonEnhancement>
-        <Button className={styles.button}>Edit</Button>
+        <Button className={styles.button} icon={<EditRegular />}>Edit</Button>
       </DialogTrigger>
       <DialogSurface>
         <DialogBody>

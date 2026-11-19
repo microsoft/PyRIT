@@ -5,12 +5,15 @@
 import pytest
 
 from pyrit.models import ComponentIdentifier, Score, ScorerEvaluationIdentifier, ScoreStatus
-from pyrit.score import AzureContentFilterScorer, FloatScaleThresholdScorer
-from pyrit.score.float_scale.float_scale_score_aggregator import (
-    FloatScaleAggregatorFunc,
+from pyrit.score import (
+    AzureContentFilterScorer,
     FloatScaleScoreAggregator,
     FloatScaleScorerAllCategories,
     FloatScaleScorerByCategory,
+    FloatScaleThresholdScorer,
+)
+from pyrit.score.float_scale.float_scale_score_aggregator import (
+    FloatScaleAggregatorFunc,
 )
 
 # Reusable ComponentIdentifier for tests

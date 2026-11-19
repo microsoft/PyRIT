@@ -13,8 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_target
 
-from pyrit.executor.promptgen.gcg.config import GCGDataConfig
-from pyrit.executor.promptgen.gcg.data import create_gcg_data_config_async, load_goals_and_targets
+from pyrit.executor.promptgen.gcg import GCGDataConfig, create_gcg_data_config_async, load_goals_and_targets
 from pyrit.models import GCGSeedMetadata, Message, MessagePiece, Score, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.score import TrueFalseScorer
 

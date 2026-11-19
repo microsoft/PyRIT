@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1060" viewBox="0 0 1800 1060" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title description">
+  <title id="title">Decomposed objectives: one goal, several ordered paths</title>
+  <desc id="description">A SeedDataset, whether loaded from YAML, a remote dataset provider, or generation, can hold decomposed objectives: each child names its parent, and the parent lists paths, each an ordered list of direct-child IDs. Here the root objective has four children and two paths, Recon then Obtain credentials then Pull records, or Recon then Phish an admin then Pull records; Phish an admin has its own two children and path. Memory stores one row per objective with a parent column and a paths column, and stores and deduplicates each tree as one unit. A stored subtree can be read back and walked.</desc>
+  <defs>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1f5fbf"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1e8a4c"/></marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b3fb3"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b8742a"/></marker>
+    <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4a5568"/></marker>
+  </defs>
+  <rect width="1800" height="1060" fill="#ffffff"/>
+  <text x="24" y="48" font-size="30" font-weight="700" fill="#1d2733">Decomposed objectives: one goal, several ordered paths</text>
+
+  <!-- STEPS -->
+  <rect x="16" y="78" width="360" height="966" rx="14" fill="#f3f5f8" stroke="#c9d1dc" stroke-width="2"/>
+  <text x="36" y="108" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">STEPS</text>
+  <g font-size="16.5" fill="#3c4a5c">
+    <text x="36" y="152" font-size="19" font-weight="700" fill="#4a5568">A · Decompose</text>
+    <text x="36" y="184">A1  a child names its parent</text>
+    <text x="68" y="208" font-size="14.5" font-family="Consolas, 'Courier New', monospace">parent_objective_id</text>
+    <text x="36" y="238">A2  the parent lists its paths, each</text>
+    <text x="68" y="262">an ordered list of its direct</text>
+    <text x="68" y="286">children</text>
+    <text x="36" y="316">A3  a child can be a step of</text>
+    <text x="68" y="340">several paths</text>
+    <text x="36" y="370">A4  any child can be decomposed</text>
+    <text x="68" y="394">again, to any depth</text>
+
+    <text x="36" y="454" font-size="19" font-weight="700" fill="#6b3fb3">B · Store</text>
+    <text x="36" y="486">B1  memory compares the whole</text>
+    <text x="68" y="510">tree with stored trees</text>
+    <text x="36" y="540">B2  same tree: reuse the stored</text>
+    <text x="68" y="564">rows and their IDs</text>
+    <text x="36" y="594">B3  new tree: insert every row</text>
+    <text x="36" y="624">B4  the same text standalone or in</text>
+    <text x="68" y="648">another tree stays separate</text>
+
+    <text x="36" y="708" font-size="19" font-weight="700" fill="#b8742a">C · Read</text>
+    <text x="36" y="740">C1  read a stored objective and</text>
+    <text x="68" y="764">everything beneath it</text>
+    <text x="36" y="794">C2  build the tree and walk it,</text>
+    <text x="68" y="818">parents before children</text>
+
+    <text x="36" y="1012" font-size="15" font-style="italic">Running the paths is an attack's job</text>
+  </g>
+
+  <!-- PYRIT -->
+  <rect x="396" y="78" width="800" height="966" rx="14" fill="#eef4fb" stroke="#b9cde6" stroke-width="2"/>
+  <text x="416" y="108" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">PYRIT</text>
+  <text x="1176" y="108" font-size="14" font-style="italic" fill="#5b6675" text-anchor="end">pyrit.models · pyrit.memory</text>
+
+  <rect x="416" y="124" width="760" height="84" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="436" y="158" font-size="21" font-weight="700" fill="#1d2733">SeedDataset</text>
+  <text x="1156" y="158" font-size="15" fill="#3c4a5c" font-family="Consolas, 'Courier New', monospace" text-anchor="end">get_decomposition_tree()</text>
+  <text x="436" y="188" font-size="15.5" fill="#3c4a5c"><tspan font-family="Consolas, 'Courier New', monospace" font-size="15">from_yaml_file</tspan> · remote dataset providers · generated datasets</text>
+
+  <!-- the tree -->
+  <rect x="416" y="250" width="760" height="580" rx="12" fill="#fdf6e3" stroke="#d4b25a" stroke-width="2.5"/>
+  <text x="438" y="288" font-size="23" font-weight="700" fill="#1d2733">The tree: a parent, its children, and their paths</text>
+
+  <rect x="596" y="306" width="400" height="74" rx="10" fill="#ffffff" stroke="#2b2f36" stroke-width="2"/>
+  <text x="616" y="338" font-size="19" font-weight="700" fill="#1d2733">Exfiltrate customer data</text>
+  <text x="616" y="364" font-size="15" fill="#3c4a5c">root objective · 4 children · 2 paths</text>
+
+  <g stroke="#8a99ad" stroke-width="2" fill="none">
+    <path d="M796,380 V408"/>
+    <path d="M511,408 H1081"/>
+    <path d="M511,408 V430"/>
+    <path d="M701,408 V430"/>
+    <path d="M891,408 V430"/>
+    <path d="M1081,408 V430"/>
+  </g>
+  <text x="806" y="400" font-size="13" font-style="italic" fill="#5b6675">each child names its parent</text>
+
+  <g>
+    <rect x="426" y="430" width="170" height="74" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="442" y="460" font-size="17" font-weight="700" fill="#1d2733">Recon</text>
+    <text x="442" y="486" font-size="14" fill="#3c4a5c">in paths 1 and 2</text>
+    <rect x="616" y="430" width="170" height="74" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="632" y="460" font-size="17" font-weight="700" fill="#1d2733">Obtain creds</text>
+    <text x="632" y="486" font-size="14" fill="#3c4a5c">in path 1</text>
+    <rect x="806" y="430" width="170" height="74" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="822" y="460" font-size="17" font-weight="700" fill="#1d2733">Phish an admin</text>
+    <text x="822" y="486" font-size="14" fill="#3c4a5c">in path 2</text>
+    <rect x="996" y="430" width="170" height="74" rx="10" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+    <text x="1012" y="460" font-size="17" font-weight="700" fill="#1d2733">Pull records</text>
+    <text x="1012" y="486" font-size="14" fill="#3c4a5c">in paths 1 and 2</text>
+  </g>
+
+  <path d="M891,504 V522" stroke="#8a99ad" stroke-width="2" fill="none"/>
+  <rect x="806" y="522" width="170" height="70" rx="10" fill="#fffdf6" stroke="#d4b25a" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="822" y="550" font-size="14.5" fill="#1d2733">Write lure → Send lure</text>
+  <text x="822" y="575" font-size="13.5" font-style="italic" fill="#5b6675">its own children + path</text>
+
+  <text x="438" y="630" font-size="17" font-weight="700" fill="#1d2733">Paths: ordered lists of direct children</text>
+
+  <rect x="426" y="644" width="740" height="66" rx="12" fill="#edf3fc" stroke="#1f5fbf" stroke-width="2"/>
+  <text x="444" y="683" font-size="16" font-weight="700" fill="#1f5fbf">1 · Credential theft</text>
+  <g font-size="15.5" fill="#1d2733">
+    <rect x="636" y="658" width="130" height="38" rx="19" fill="#ffffff" stroke="#1f5fbf"/><text x="701" y="683" text-anchor="middle">Recon</text>
+    <rect x="814" y="658" width="150" height="38" rx="19" fill="#ffffff" stroke="#1f5fbf"/><text x="889" y="683" text-anchor="middle">Obtain creds</text>
+    <rect x="1012" y="658" width="140" height="38" rx="19" fill="#ffffff" stroke="#1f5fbf"/><text x="1082" y="683" text-anchor="middle">Pull records</text>
+  </g>
+  <path d="M770,677 H808" stroke="#1f5fbf" stroke-width="2.5" fill="none" marker-end="url(#ab)"/>
+  <path d="M968,677 H1006" stroke="#1f5fbf" stroke-width="2.5" fill="none" marker-end="url(#ab)"/>
+
+  <rect x="426" y="724" width="740" height="66" rx="12" fill="#eef8f1" stroke="#1e8a4c" stroke-width="2"/>
+  <text x="444" y="763" font-size="16" font-weight="700" fill="#1e8a4c">2 · Phishing</text>
+  <g font-size="15.5" fill="#1d2733">
+    <rect x="636" y="738" width="130" height="38" rx="19" fill="#ffffff" stroke="#1e8a4c"/><text x="701" y="763" text-anchor="middle">Recon</text>
+    <rect x="814" y="738" width="150" height="38" rx="19" fill="#ffffff" stroke="#1e8a4c"/><text x="889" y="763" text-anchor="middle">Phish an admin</text>
+    <rect x="1012" y="738" width="140" height="38" rx="19" fill="#ffffff" stroke="#1e8a4c"/><text x="1082" y="763" text-anchor="middle">Pull records</text>
+  </g>
+  <path d="M770,757 H808" stroke="#1e8a4c" stroke-width="2.5" fill="none" marker-end="url(#ag)"/>
+  <path d="M968,757 H1006" stroke="#1e8a4c" stroke-width="2.5" fill="none" marker-end="url(#ag)"/>
+  <text x="438" y="816" font-size="14.5" font-style="italic" fill="#5b6675">A child can be a step of several paths. A path stores its steps as child IDs, in order.</text>
+
+  <!-- shared shape -->
+  <rect x="416" y="852" width="760" height="176" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="438" y="888" font-size="19" font-weight="700" fill="#1d2733">The shape lives in <tspan font-family="Consolas, 'Courier New', monospace" font-weight="400">pyrit.models.decomposition</tspan></text>
+  <g font-size="14.5" font-family="Consolas, 'Courier New', monospace" fill="#1d2733">
+    <rect x="438" y="904" width="170" height="34" rx="17" fill="#fdf6e3" stroke="#d4b25a"/><text x="523" y="927" text-anchor="middle">DecompositionPath</text>
+    <rect x="620" y="904" width="170" height="34" rx="17" fill="#fdf6e3" stroke="#d4b25a"/><text x="705" y="927" text-anchor="middle">DecompositionNode</text>
+    <rect x="802" y="904" width="170" height="34" rx="17" fill="#fdf6e3" stroke="#d4b25a"/><text x="887" y="927" text-anchor="middle">DecompositionTree</text>
+  </g>
+  <text x="438" y="968" font-size="15" fill="#3c4a5c">A path has an ID, an optional name and description, and its ordered steps.</text>
+  <text x="438" y="994" font-size="15" fill="#3c4a5c">Every tree is checked: steps are direct children, no cycles, no missing parents.</text>
+
+  <!-- THE IDEA -->
+  <rect x="1216" y="78" width="568" height="176" rx="14" fill="#fffdf6" stroke="#d4b25a" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="1236" y="108" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">THE IDEA</text>
+  <text x="1236" y="146" font-size="18.5" fill="#1d2733">A parent is achieved <tspan font-weight="700">through its children</tspan>.</text>
+  <text x="1236" y="174" font-size="18.5" fill="#1d2733">Each <tspan font-weight="700">path</tspan> is one ordered way to get there;</text>
+  <text x="1236" y="202" font-size="18.5" fill="#1d2733">alternatives are separate paths.</text>
+  <text x="1236" y="230" font-size="18.5" fill="#1d2733">Any child can be <tspan font-weight="700">decomposed again</tspan>.</text>
+
+  <!-- MEMORY -->
+  <rect x="1216" y="274" width="568" height="770" rx="14" fill="#f6f2fb" stroke="#d6c8ea" stroke-width="2"/>
+  <text x="1236" y="302" font-size="15" font-weight="700" fill="#5b6675" letter-spacing="1">MEMORY</text>
+
+  <rect x="1234" y="318" width="532" height="382" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="1252" y="350" font-size="19" font-weight="700" fill="#1d2733" font-family="Consolas, 'Courier New', monospace">SeedPromptEntries</text>
+  <text x="1252" y="374" font-size="14" fill="#3c4a5c">one row per objective, plus two new columns</text>
+  <rect x="1462" y="388" width="294" height="300" rx="6" fill="#f4effb"/>
+  <g font-size="13.5" font-weight="700" fill="#5b6675">
+    <text x="1252" y="410">value</text>
+    <text x="1472" y="410" font-family="Consolas, 'Courier New', monospace">parent_objective_id</text>
+    <text x="1666" y="410" font-family="Consolas, 'Courier New', monospace">paths</text>
+  </g>
+  <path d="M1252,420 H1748" stroke="#c9d1dc" stroke-width="1.5"/>
+  <g font-size="15" fill="#1d2733">
+    <text x="1252" y="448" font-weight="700">Exfiltrate customer data</text><text x="1472" y="448" fill="#5b6675">—</text><text x="1666" y="448">2 paths</text>
+    <text x="1252" y="484">Recon</text><text x="1472" y="484">root</text><text x="1666" y="484" fill="#5b6675">—</text>
+    <text x="1252" y="520">Obtain creds</text><text x="1472" y="520">root</text><text x="1666" y="520" fill="#5b6675">—</text>
+    <text x="1252" y="556">Phish an admin</text><text x="1472" y="556">root</text><text x="1666" y="556">1 path</text>
+    <text x="1272" y="592">Write lure</text><text x="1472" y="592">Phish an admin</text><text x="1666" y="592" fill="#5b6675">—</text>
+    <text x="1272" y="628">Send lure</text><text x="1472" y="628">Phish an admin</text><text x="1666" y="628" fill="#5b6675">—</text>
+    <text x="1252" y="664">Pull records</text><text x="1472" y="664">root</text><text x="1666" y="664" fill="#5b6675">—</text>
+  </g>
+
+  <rect x="1234" y="720" width="532" height="198" rx="12" fill="#f4effb" stroke="#6b3fb3" stroke-width="2.5"/>
+  <text x="1252" y="754" font-size="19" font-weight="700" fill="#1d2733">Stored and deduplicated as one unit</text>
+  <g font-size="15.5" fill="#3c4a5c">
+    <text x="1252" y="788">• the same tree reloaded: the stored rows are reused</text>
+    <text x="1252" y="816">• the same text standalone or in another tree</text>
+    <text x="1266" y="838">stays a separate row</text>
+    <text x="1252" y="866">• a tree is added whole, with every parent present</text>
+    <text x="1252" y="894">• prompts grouped with its objectives go with it</text>
+  </g>
+
+  <rect x="1234" y="938" width="532" height="92" rx="12" fill="#ffffff" stroke="#8a99ad" stroke-width="1.5"/>
+  <text x="1252" y="968" font-size="17" font-weight="700" fill="#1d2733">Read a stored subtree</text>
+  <g font-size="14" font-family="Consolas, 'Courier New', monospace" fill="#1d2733">
+    <text x="1252" y="994">get_seed_decomposition_async(objective_id=…)</text>
+    <text x="1252" y="1016">→ build_objective_decomposition_tree(…)</text>
+  </g>
+
+  <!-- flows -->
+  <path d="M796,208 V244" stroke="#4a5568" stroke-width="3" fill="none" marker-end="url(#ak)"/>
+  <circle cx="796" cy="226" r="15" fill="#4a5568"/><text x="796" y="231.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">A</text>
+  <path d="M1176,470 H1228" stroke="#6b3fb3" stroke-width="3" fill="none" marker-end="url(#ap)"/>
+  <circle cx="1202" cy="470" r="15" fill="#6b3fb3"/><text x="1202" y="475.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">B</text>
+  <path d="M1234,984 H1202 V790 H1182" stroke="#b8742a" stroke-width="3" fill="none" marker-end="url(#ao)"/>
+  <circle cx="1202" cy="890" r="15" fill="#b8742a"/><text x="1202" y="895.5" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">C</text>
+</svg>

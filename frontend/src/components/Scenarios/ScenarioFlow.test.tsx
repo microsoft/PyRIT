@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
@@ -10,7 +11,7 @@ import type {
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
-import type { ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
+import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
 import ScenarioCatalog from './ScenarioCatalog'
 import ScenarioDetail from './ScenarioDetail'
@@ -24,6 +25,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     cancelRun: jest.fn(),
     estimateRun: jest.fn(),
+    getRunHierarchy: jest.fn(() => new Promise(() => {})),
     getScenario: jest.fn(),
     listCatalog: jest.fn(),
     startRun: jest.fn(),
@@ -111,6 +113,7 @@ const ESTIMATE: ScenarioRunSizeEstimateResponse = {
 }
 
 const RUN_STATE: ScenarioRunProgressState = {
+  ...INITIAL_SCENARIO_RUN_PROGRESS_STATE,
   loadStatus: 'ready',
   run: {
     scenario_result_id: RUN_ID,
@@ -153,12 +156,12 @@ function LocationProbe() {
 
 function renderFlow(): void {
   render(
-    <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/scanner']}>
+    <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <MemoryRouter initialEntries={['/scanner/launch']}>
         <LocationProbe />
         <Routes>
           <Route
-            path="/scanner"
+            path="/scanner/launch"
             element={(
               <ScenarioCatalog
                 targets={[TARGET]}
@@ -171,7 +174,7 @@ function renderFlow(): void {
             )}
           />
           <Route
-            path="/scanner/:scenarioName"
+            path="/scanner/launch/:scenarioName"
             element={(
               <ScenarioDetail
                 targets={[TARGET]}
@@ -183,10 +186,10 @@ function renderFlow(): void {
               />
             )}
           />
-          <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPage />} />
+          <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
         </Routes>
       </MemoryRouter>
-    </FluentProvider>,
+    </UserPreferencesProvider></FluentProvider>,
   )
 }
 
@@ -214,7 +217,7 @@ describe('Scenario catalog-to-run integration', () => {
     renderFlow()
 
     await user.click(await screen.findByRole('link', { name: SCENARIO_NAME }))
-    expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: SCENARIO_NAME })).toBeInTheDocument()
 
     const expectedEstimateRequest = {
       target_name: TARGET.target_registry_name,
@@ -227,7 +230,8 @@ describe('Scenario catalog-to-run integration', () => {
       expect.any(AbortSignal),
     ))
     const estimate = screen.getByRole('region', { name: 'Run estimate' })
-    expect(within(estimate).getByText('Total atomic attacks').parentElement).toHaveTextContent('2')
+    expect(within(estimate).getAllByRole('term')[0]).toHaveTextContent('Total atomic attacks')
+    expect(within(estimate).getAllByRole('definition')[0]).toHaveTextContent(/^2$/)
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
@@ -244,7 +248,7 @@ describe('Scenario catalog-to-run integration', () => {
     }))
     expect(await screen.findByTestId('scenario-run-page')).toBeInTheDocument()
     expect(screen.getByLabelText('Current route')).toHaveTextContent(
-      `/scanner-history/${RUN_ID}`,
+      `/scanner/history/${RUN_ID}`,
     )
     expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
     expect(mockListTargets).not.toHaveBeenCalled()

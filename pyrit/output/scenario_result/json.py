@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import TypeAdapter
 
-from pyrit.models import AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
+from pyrit.models import AttackOutcome, AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
 from pyrit.output._derivation import (
     attack_score_display,
     attack_technique_label,
@@ -67,6 +67,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> str:
         """
         Render a scenario result's ``overview`` or ``attacks`` view as JSON.
@@ -80,11 +81,13 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             view (ScenarioView): ``"overview"`` or ``"attacks"``. Defaults to ``"overview"``.
             attack_result_ids (list[str] | None): For ``"attacks"``, restrict to these ids.
             limit (int | None): For ``"attacks"``, the maximum number of attacks.
+            outcome (AttackOutcome | None): For ``"attacks"``, keep only attacks with this outcome
+                before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered JSON document.
         """
-        payload = self.build(result, view=view, attack_result_ids=attack_result_ids, limit=limit)
+        payload = self.build(result, view=view, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
         return self._dumps(payload)
 
     def build(
@@ -94,6 +97,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         view: ScenarioView = "overview",
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> dict[str, Any]:
         """
         Build the structured (dict) payload for a scenario ``view``.
@@ -105,12 +109,14 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             view (ScenarioView): ``"overview"`` or ``"attacks"``. Defaults to ``"overview"``.
             attack_result_ids (list[str] | None): For ``"attacks"``, restrict to these ids.
             limit (int | None): For ``"attacks"``, the maximum number of attacks.
+            outcome (AttackOutcome | None): For ``"attacks"``, keep only attacks with this outcome
+                before applying ``limit``. Ignored by the overview. Defaults to None.
 
         Returns:
             dict[str, Any]: The view-shaped payload.
         """
         if view == "attacks":
-            return self._build_attacks(result, attack_result_ids=attack_result_ids, limit=limit)
+            return self._build_attacks(result, attack_result_ids=attack_result_ids, limit=limit, outcome=outcome)
         return self._build_overview(result)
 
     def _build_overview(self, result: ScenarioResult) -> dict[str, Any]:
@@ -182,19 +188,21 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         *,
         attack_result_ids: list[str] | None = None,
         limit: int | None = None,
+        outcome: AttackOutcome | None = None,
     ) -> dict[str, Any]:
         """
-        Build the ``attacks`` payload, honoring the id filter and limit.
+        Build the ``attacks`` payload, honoring the id and outcome filters before the limit.
 
         Args:
             result (ScenarioResult): The scenario result.
             attack_result_ids (list[str] | None): Restrict to these attack ids.
             limit (int | None): Maximum number of attacks to include.
+            outcome (AttackOutcome | None): Keep only attacks with this outcome. Defaults to None.
 
         Returns:
             dict[str, Any]: The attacks envelope with ``shown`` / ``total`` counts.
         """
-        selected = select_attacks(result, attack_result_ids=attack_result_ids)
+        selected = select_attacks(result, attack_result_ids=attack_result_ids, outcome=outcome)
         total = len(selected)
         if limit is not None:
             selected = selected[:limit]

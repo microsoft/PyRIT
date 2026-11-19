@@ -12,17 +12,25 @@ from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
 
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.models.catalog.scenario import (
-    RegisteredScenario,
+from pyrit.models import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
 )
-from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.models.catalog import (
+    RegisteredScenario,
+)
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioRegistry,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.resolution import reject_non_external_params
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
 
@@ -33,10 +41,27 @@ _CONFIGURED_ESTIMATE_CONCURRENCY = 4
 _DEFAULT_ESTIMATE_TIMEOUT_SECONDS = 3.0
 _ESTIMATE_INFLIGHT_SIZE = 256
 _UNAVAILABLE_CACHE_TTL_SECONDS = 30.0
-_EstimateCacheKey = tuple[str, int, tuple[object, int]]
+_RegistryView = tuple[str | None, ...]
+_EstimateCacheKey = tuple[str, int, tuple[object, int, str | None], _RegistryView]
 _EstimateCacheValue = tuple[ScenarioRunSizeEstimate, float | None]
 _EstimateTask = asyncio.Task[ScenarioRunSizeEstimate]
-_ConfiguredEstimateKey = tuple[str, type[Scenario], str, tuple[object, int]]
+_ConfiguredEstimateKey = tuple[str, type[Scenario], str, tuple[object, int, str | None], _RegistryView]
+
+
+def _registry_view() -> _RegistryView:
+    """
+    Describe which private entries the caller in scope sees in the registries a scenario resolves.
+
+    Callers who see the same entries get the same view, so they share estimates; callers who see
+    different entries never do. Private techniques are part of the technique ``catalog_revision``.
+
+    Returns:
+        _RegistryView: The visibility key of the target, scorer, and converter registries.
+    """
+    return tuple(
+        registry.get_registry_singleton().instances.visibility_key
+        for registry in (TargetRegistry, ScorerRegistry, ConverterRegistry)
+    )
 
 
 def _metadata_to_registered_scenario(
@@ -225,6 +250,8 @@ class ScenarioService:
                 self._configured_estimate_tasks = tasks
             task = tasks.get(estimate_key)
             if task is None:
+                # The estimate runs as the requesting caller. Its key holds what that caller can see, so it is
+                # shared only with callers who see the same entries.
                 task = asyncio.create_task(
                     self._run_configured_estimate_with_capacity_async(
                         scenario_name=scenario_name,
@@ -273,6 +300,7 @@ class ScenarioService:
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 include_baseline=request.include_baseline,
             )
             constructor_kwargs = resolver.resolve_constructor_kwargs(
@@ -288,11 +316,12 @@ class ScenarioService:
         )
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
-        """Return a cached, cancellation-safe scenario-owned estimate."""
+        """Return a cached, cancellation-safe scenario-owned estimate for the requesting caller."""
         cache_key = (
             metadata.registry_name,
             metadata.scenario_version,
             AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            _registry_view(),
         )
         cache = getattr(self, "_estimate_cache", None)
         if cache is None:
@@ -553,6 +582,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
@@ -601,7 +631,7 @@ class ScenarioService:
         Build a stable key for semantically identical configured estimate requests.
 
         Returns:
-            _ConfiguredEstimateKey: Scenario identity and canonical request JSON.
+            _ConfiguredEstimateKey: Scenario identity, canonical request JSON, and the caller's view of the registries.
         """
         request_json = json.dumps(
             request.model_dump(mode="json"),
@@ -613,6 +643,7 @@ class ScenarioService:
             scenario_class,
             request_json,
             AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            _registry_view(),
         )
 
 

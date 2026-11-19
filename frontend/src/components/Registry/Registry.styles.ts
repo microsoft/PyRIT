@@ -4,6 +4,7 @@ import {
   MINIMUM_TOUCH_TARGET_SIZE,
   NARROW_VIEWPORT_QUERY,
   TOUCH_INPUT_QUERY,
+  mobileTouchTargetHeight,
 } from '@/styles/touchTargets'
 
 export const useRegistryLayoutStyles = makeStyles({
@@ -92,21 +93,10 @@ export const useConverterRegistryStyles = makeStyles({
     minWidth: '780px',
     backgroundColor: tokens.colorNeutralBackground1,
   },
-  nameCell: {
-    fontFamily: tokens.fontFamilyMonospace,
-    overflowWrap: 'anywhere',
-  },
-  parameters: {
-    whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
-  },
   typeList: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalXS,
-  },
-  deleteButton: {
-    color: tokens.colorPaletteRedForeground1,
   },
 })
 
@@ -189,10 +179,54 @@ export const useCreateConverterDialogStyles = makeStyles({
   },
   fileRow: {
     display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: tokens.spacingHorizontalS,
   },
   fileInput: {
     flex: 1,
+    minWidth: 0,
+  },
+  filePreview: {
+    display: 'flex',
+    alignItems: 'center',
+    flex: '1 1 180px',
+    gap: tokens.spacingHorizontalS,
+    minWidth: 0,
+  },
+  fileDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
+  },
+  fileName: {
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  fileThumbnailContainer: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '80px',
+    height: '64px',
+    flexShrink: 0,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    overflow: 'hidden',
+  },
+  fileThumbnail: {
+    display: 'block',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    objectFit: 'contain',
+  },
+  fileButton: {
+    ...mobileTouchTargetHeight,
   },
   errorText: {
     color: tokens.colorPaletteRedForeground1,

@@ -91,7 +91,12 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
                 the complete reference list rely on this. A small value is used
                 by the integration tests to keep the multi-million-row package
                 registries fast.
+
+        Raises:
+            ValueError: If max_examples is less than 1.
         """
+        if max_examples is not None and max_examples < 1:
+            raise ValueError(f"max_examples must be at least 1 or None, got {max_examples}")
         self._max_examples = max_examples
 
     @property

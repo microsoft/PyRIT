@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget, store_message_async
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     ComponentIdentifier,

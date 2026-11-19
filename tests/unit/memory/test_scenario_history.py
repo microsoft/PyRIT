@@ -18,9 +18,8 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, ScenarioHistoryRunRecord
 from pyrit.memory._scenario_history import _ScenarioHistoryQueries
-from pyrit.memory.memory_interface import ScenarioHistoryKeysetCursor, ScenarioHistoryRunRecord
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import ScenarioRunState
 from unit.mocks import get_mock_target_identifier, make_scenario_result
@@ -79,7 +78,10 @@ def _record(*, planned: bool) -> ScenarioHistoryRunRecord:
     )
 
 
-async def test_get_scenario_run_history_page_delegates_to_component_async(sqlite_instance: MemoryInterface) -> None:
+@pytest.mark.parametrize("reference_id", [None, uuid.UUID("00000000-0000-0000-0000-000000000001")])
+async def test_get_scenario_run_history_page_delegates_to_component_async(
+    *, sqlite_instance: MemoryInterface, reference_id: uuid.UUID | None
+) -> None:
     """Public method forwards the component's records and has_more, then derives aggregate IDs itself."""
     planned, unplanned = _record(planned=True), _record(planned=False)
     records = [planned, unplanned]
@@ -88,10 +90,19 @@ async def test_get_scenario_run_history_page_delegates_to_component_async(sqlite
         patch.object(_ScenarioHistoryQueries, "get_page", return_value=(records, True)) as mock_get_page,
         patch.object(sqlite_instance, "_execute_get_scenario_history_aggregates", return_value={}) as mock_aggregates,
     ):
-        result = await sqlite_instance.get_scenario_run_history_page_async(scenario_names=["Test"], limit=50)
+        result = await sqlite_instance.get_scenario_run_history_page_async(
+            scenario_names=["Test"], reference_id=reference_id, limit=50
+        )
 
     mock_get_page.assert_called_once_with(
-        scenario_names=["Test"], statuses=None, labels=None, operation_ids=None, cursor=None, limit=50
+        scenario_names=["Test"],
+        statuses=None,
+        labels=None,
+        operation_ids=None,
+        reference_id=reference_id,
+        cursor=None,
+        limit=50,
+        sort_by="created_at",
     )
     assert result[0] == records
     assert result[2] is True
@@ -267,3 +278,34 @@ async def test_get_page_single_query_execution_async(sqlite_instance: MemoryInte
 
     assert spy.call_count == 1
     assert len(records) == 2 and has_more is True  # the query really ran and used limit + 1
+
+
+def _seed_summary_row(**overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": "attack-1",
+        "objective": "objective",
+        "objective_sha256": "abc",
+        "atomic_attack_identifier": None,
+        "outcome": "success",
+        "timestamp": datetime(2026, 1, 1, tzinfo=UTC),
+        "total_retries": 0,
+        "attribution_data": {},
+        "attack_metadata": None,
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.parametrize(
+    ("raw_metadata", "expected_attempt_index"),
+    [
+        ('{"attempt_index": 3}', 3),
+        ("not valid json", None),
+    ],
+)
+def test_row_to_scenario_attempt_seed_summary_parses_or_ignores_string_metadata(
+    *, raw_metadata: str, expected_attempt_index: int | None
+) -> None:
+    summary = MemoryInterface._row_to_scenario_attempt_seed_summary(_seed_summary_row(attack_metadata=raw_metadata))
+
+    assert summary.attribution_data.get("attempt_index") == expected_attempt_index

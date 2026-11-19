@@ -4,6 +4,7 @@ import {
   Button,
   Field,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Spinner,
   Tab,
@@ -11,11 +12,12 @@ import {
   Text,
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
-import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
+import { DismissRegular, SaveRegular } from '@fluentui/react-icons'
 import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
@@ -30,6 +32,7 @@ import Reinitialize from './Reinitialize'
 interface StatusMessage {
   intent: 'success' | 'error' | 'warning'
   text: string
+  saveConflict?: boolean
 }
 
 type ConfigurationTab = 'configuration' | 'environment' | 'initializers' | 'custom-initializers'
@@ -57,11 +60,17 @@ export default function Configuration() {
   const [liveReinitializationEnabled, setLiveReinitializationEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [confirmRecovery, setConfirmRecovery] = useState(false)
+  const recoveryPending = useRef(false)
+  const recoveryEpoch = useRef(0)
   const [reloadCount, setReloadCount] = useState(0)
   const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [readError, setReadError] = useState<string | null>(null)
   const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
-  const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null)
+  const pending = useRef(false)
+  const editRevision = useRef(0)
   const selectedTab = configurationTabFromSearchParams(searchParams)
   const configurationHasUnsavedChanges = content !== savedContent
   const hasUnsavedChanges = selectedTab === 'configuration'
@@ -76,18 +85,21 @@ export default function Configuration() {
     }
   }, [hasUnsavedChanges]))
 
+  useEffect(() => () => { recoveryEpoch.current++ }, [generation])
+
   useEffect(() => {
-    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
-    if (((configurationHasUnsavedChanges || environmentHasUnsavedChanges) && !manualReload) || saving) return
+    if (configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving || recovering) return
     if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
+    pending.current = true
+    const revision = editRevision.current
 
     const loadContentAsync = async (): Promise<void> => {
-      setStatusMessage(null)
       try {
         const response = await configurationApi.getContent()
-        if (!cancelled) {
+        if (!cancelled && editRevision.current === revision) {
           loadedSnapshot.current = { generation, reloadCount }
+          setReadError(null)
           setContent(response.content)
           setSavedContent(response.content)
           setSource(response.source)
@@ -96,11 +108,12 @@ export default function Configuration() {
         }
       } catch (error) {
         if (!cancelled) {
-          setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+          setReadError(toApiError(error).detail)
         }
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -108,23 +121,17 @@ export default function Configuration() {
     void loadContentAsync()
     return () => {
       cancelled = true
+      pending.current = false
     }
-  }, [reloadCount, generation, configurationHasUnsavedChanges, environmentHasUnsavedChanges, saving])
+  }, [reloadCount, generation, configurationHasUnsavedChanges, environmentHasUnsavedChanges, saving, recovering])
 
-  const handleReload = (): void => {
-    const reload = (): void => {
-      setLoading(true)
-      setReloadCount((currentCount: number) => currentCount + 1)
-    }
-
-    if (configurationHasUnsavedChanges) {
-      setPendingDiscardAction(() => reload)
-      return
-    }
-    reload()
-  }
+  useAutoRefresh(() => {
+    if (!pending.current) setReloadCount((count: number) => count + 1)
+  }, selectedTab === 'configuration' && !loading && !saving && !recovering
+    && !configurationHasUnsavedChanges && !environmentHasUnsavedChanges)
 
   const handleSave = async (): Promise<void> => {
+    editRevision.current++
     setSaving(true)
     setStatusMessage(null)
     try {
@@ -139,9 +146,38 @@ export default function Configuration() {
         text: 'Configuration saved. Reinitialize PyRIT to apply these changes.',
       })
     } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+      const failure = toApiError(error)
+      setStatusMessage({ intent: 'error', text: failure.detail, saveConflict: failure.status === 409 })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleRecovery = async (): Promise<void> => {
+    if (!statusMessage?.saveConflict || recoveryPending.current) return
+    recoveryPending.current = true
+    setConfirmRecovery(false)
+    setRecovering(true)
+    const revision = ++editRevision.current
+    const epoch = recoveryEpoch.current
+    try {
+      const response = await configurationApi.getContent()
+      if (epoch !== recoveryEpoch.current || revision !== editRevision.current) return
+      loadedSnapshot.current = { generation, reloadCount }
+      setContent(response.content)
+      setSavedContent(response.content)
+      setSource(response.source)
+      setVersion(response.version)
+      setLiveReinitializationEnabled(response.live_reinitialization_enabled)
+      setStatusMessage(null)
+      setReadError(null)
+    } catch (error) {
+      if (epoch === recoveryEpoch.current && revision === editRevision.current) {
+        setStatusMessage({ intent: 'error', text: toApiError(error).detail, saveConflict: true })
+      }
+    } finally {
+      recoveryPending.current = false
+      setRecovering(false)
     }
   }
 
@@ -160,18 +196,13 @@ export default function Configuration() {
   }
 
   const handleDiscardChanges = (): void => {
-    const discardAction = pendingDiscardAction
-    setPendingDiscardAction(null)
     setContent(savedContent)
     if (blocker.state === 'blocked') {
       blocker.proceed()
-    } else {
-      discardAction?.()
     }
   }
 
   const handleKeepEditing = (): void => {
-    setPendingDiscardAction(null)
     if (blocker.state === 'blocked') {
       blocker.reset()
     }
@@ -184,11 +215,11 @@ export default function Configuration() {
       </div>
       <Reinitialize
         version={version}
-        hasUnsavedChanges={configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving}
+        hasUnsavedChanges={configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving || recovering}
         liveReinitializationEnabled={liveReinitializationEnabled}
       />
 
-      <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
+      <TabList className={styles.tabs} selectedValue={selectedTab} onTabSelect={handleTabSelect}>
         <Tab value="configuration">PyRIT Configuration</Tab>
         <Tab value="environment">Environment &amp; Secrets</Tab>
         <Tab value="initializers">Initializers</Tab>
@@ -198,6 +229,19 @@ export default function Configuration() {
       {selectedTab === 'configuration' && statusMessage && (
         <MessageBar intent={statusMessage.intent} className={styles.message}>
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
+          <MessageBarActions>
+            {statusMessage.saveConflict && (
+              <Button className={styles.action} disabled={saving || recovering}
+                onClick={() => setConfirmRecovery(true)}>Reload from disk</Button>
+            )}
+            <Button appearance="subtle" className={styles.noticeDismiss} icon={<DismissRegular />}
+              aria-label="Dismiss notification" disabled={recovering} onClick={() => setStatusMessage(null)} />
+          </MessageBarActions>
+        </MessageBar>
+      )}
+      {selectedTab === 'configuration' && readError && (
+        <MessageBar intent="error" className={styles.message}>
+          <MessageBarBody>{readError}</MessageBarBody>
         </MessageBar>
       )}
 
@@ -208,9 +252,6 @@ export default function Configuration() {
       ) : selectedTab === 'environment' ? (
         <EnvironmentFiles
           onUnsavedChangesChange={setEnvironmentHasUnsavedChanges}
-          onRequestDiscardChanges={(discardChanges: () => void): void => {
-            setPendingDiscardAction(() => discardChanges)
-          }}
         />
       ) : loading ? (
         <div className={styles.loadingState}>
@@ -226,19 +267,10 @@ export default function Configuration() {
           actions={(
             <div className={styles.actions}>
               <Button
-                appearance="subtle"
-                className={styles.action}
-                icon={<ArrowSyncRegular />}
-                disabled={loading || saving}
-                onClick={handleReload}
-              >
-                Reload file
-              </Button>
-              <Button
                 appearance="primary"
                 className={styles.action}
                 icon={<SaveRegular />}
-                disabled={loading || saving || !configurationHasUnsavedChanges}
+                disabled={loading || saving || recovering || !configurationHasUnsavedChanges}
                 onClick={() => void handleSave()}
               >
                 {saving ? 'Saving...' : 'Save'}
@@ -253,14 +285,14 @@ export default function Configuration() {
           >
             <YamlEditor
               value={content}
-              disabled={saving}
-              onChange={setContent}
+              disabled={saving || recovering}
+              onChange={(next: string) => { editRevision.current++; setContent(next) }}
             />
           </Field>
         </EditorWorkspace>
       )}
       <ConfirmDialog
-        open={blocker.state === 'blocked' || pendingDiscardAction !== null}
+        open={blocker.state === 'blocked'}
         title="Discard unsaved changes?"
         confirmLabel="Discard changes"
         cancelLabel="Keep editing"
@@ -268,6 +300,16 @@ export default function Configuration() {
         onCancel={handleKeepEditing}
       >
         Your unsaved configuration changes will be lost if you continue.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={confirmRecovery}
+        title="Reload from disk?"
+        confirmLabel="Discard and reload"
+        cancelLabel="Keep editing"
+        onConfirm={() => { void handleRecovery() }}
+        onCancel={() => setConfirmRecovery(false)}
+      >
+        Discard unsaved changes in this file and load its current content from disk.
       </ConfirmDialog>
     </div>
   )

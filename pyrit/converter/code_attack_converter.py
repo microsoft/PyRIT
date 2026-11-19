@@ -5,7 +5,7 @@ import hashlib
 import pathlib
 import re
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from jinja2 import meta
 from jinja2.sandbox import SandboxedEnvironment
@@ -268,6 +268,8 @@ class CodeAttackConverter(Converter):
             case CodeAttackConverter.Encoding.GO:
                 return self._encode_go(prompt)
             case _:
+                if TYPE_CHECKING:
+                    assert_never(self._encoding)
                 raise ValueError(f"Unsupported encoding: {self._encoding!r}")
 
     def _encode_python_stack(self, prompt: str) -> str:

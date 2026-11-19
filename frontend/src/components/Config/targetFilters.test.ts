@@ -2,9 +2,7 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TargetCapabilities, TargetInstance } from '../../types'
 import {
   DEFAULT_TARGET_FILTERS,
-  activeTargetFilters,
   getTargetFilterOptions,
-  isSameTargetFilters,
   targetMatchesFilters,
 } from './targetFilters'
 
@@ -41,6 +39,12 @@ const audioChat = target('audio_chat', 'RealtimeTarget', makeCapabilities(['text
 }))
 const speech = target('speech', 'OpenAITTSTarget', makeCapabilities(['text'], ['audio_path']))
 const bare = target('bare', 'TextTarget', null)
+const privateChat = makeTarget({
+  target_registry_name: 'private_chat',
+  target_type: 'OpenAIChatTarget',
+  capabilities: makeCapabilities(['text'], ['text']),
+  private: true,
+})
 
 describe('getTargetFilterOptions', () => {
   it('should list each filter in display order with display names', () => {
@@ -87,24 +91,30 @@ describe('getTargetFilterOptions', () => {
 
     expect(options.capabilities.map((option) => option.value)).toEqual(['supports_json_schema', 'supports_system_prompt'])
   })
-})
 
-describe('activeTargetFilters', () => {
-  it('should drop selections the options no longer offer', () => {
-    const options = getTargetFilterOptions([imageChat, speech])
-    const filters = { ...DEFAULT_TARGET_FILTERS, inputs: ['image_path', 'audio_path'], types: ['RealtimeTarget'] }
-
-    expect(activeTargetFilters(filters, options)).toEqual({ ...DEFAULT_TARGET_FILTERS, inputs: ['image_path'] })
+  it('should offer Shared and Yours only when targets use both', () => {
+    expect(getTargetFilterOptions([imageChat, speech]).accounts).toEqual([])
+    expect(getTargetFilterOptions([privateChat]).accounts).toEqual([])
+    expect(getTargetFilterOptions([imageChat, privateChat]).accounts).toEqual([
+      { value: 'shared', label: 'Shared' },
+      { value: 'yours', label: 'Yours' },
+    ])
   })
 })
 
-describe('isSameTargetFilters', () => {
-  it('should compare every filter value in order', () => {
-    const filters = { ...DEFAULT_TARGET_FILTERS, inputs: ['text', 'image_path'] }
-
-    expect(isSameTargetFilters(filters, { ...filters, inputs: ['text', 'image_path'] })).toBe(true)
-    expect(isSameTargetFilters(filters, { ...filters, inputs: ['text'] })).toBe(false)
-    expect(isSameTargetFilters(filters, { ...filters, inputs: ['image_path', 'text'] })).toBe(false)
+describe('retained target selections', () => {
+  it('should keep unavailable selected choices readable and removable even with no targets', () => {
+    const options = getTargetFilterOptions([], {
+      types: ['RealtimeTarget'], accounts: ['yours'], inputs: ['image_path'], outputs: ['audio_path'],
+      capabilities: ['supports_system_prompt'],
+    })
+    expect(options).toEqual({
+      types: [{ value: 'RealtimeTarget', label: 'RealtimeTarget' }],
+      accounts: [{ value: 'yours', label: 'Yours' }],
+      inputs: [{ value: 'image_path', label: 'Image' }],
+      outputs: [{ value: 'audio_path', label: 'Audio' }],
+      capabilities: [{ value: 'supports_system_prompt', label: 'System Prompt' }],
+    })
   })
 })
 
@@ -132,5 +142,15 @@ describe('targetMatchesFilters', () => {
   it('should combine filters', () => {
     expect(matching({ inputs: ['text'], outputs: ['audio_path'], capabilities: ['supports_system_prompt'] }))
       .toEqual(['audio_chat'])
+  })
+
+  it('should match the selected accounts', () => {
+    const accountMatches = (accounts: string[]): string[] => [imageChat, privateChat]
+      .filter((candidate) => targetMatchesFilters(candidate, { ...DEFAULT_TARGET_FILTERS, accounts }))
+      .map((candidate) => candidate.target_registry_name)
+
+    expect(accountMatches(['shared'])).toEqual(['image_chat'])
+    expect(accountMatches(['yours'])).toEqual(['private_chat'])
+    expect(accountMatches(['shared', 'yours'])).toEqual(['image_chat', 'private_chat'])
   })
 })

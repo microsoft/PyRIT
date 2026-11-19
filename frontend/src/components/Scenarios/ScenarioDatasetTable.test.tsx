@@ -313,9 +313,17 @@ describe('ScenarioDatasetTable', () => {
     expect(onLoad).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps metadata refresh status outside responsive table columns and clears it after checking', () => {
+    const view = render(<Harness loading />)
+    expect(screen.getByRole('status')).toHaveTextContent('Checking dataset details...')
+    expect(within(screen.getByRole('table', { name: 'Selected datasets' })).queryByRole('status')).not.toBeInTheDocument()
+    view.rerender(<Harness />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
   it.each([true, false])('announces loading while reading metadata or importing data (metadata: %s)', (loading) => {
     render(<Harness initialRequest={{ sources: [{ name: 'remote' }] }} loading={loading} preparing={!loading} />)
-    expect(screen.getByRole('status')).toHaveTextContent('Loading...')
+    expect(screen.getByRole('status')).toHaveTextContent(loading ? 'Checking dataset details...' : 'Loading datasets...')
     expect(screen.queryByText('Not stored in memory')).not.toBeInTheDocument()
   })
 

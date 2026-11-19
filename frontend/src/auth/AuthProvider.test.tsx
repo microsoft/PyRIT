@@ -342,7 +342,7 @@ describe("AuthProvider", () => {
   // Test 20: the originally requested path is passed as MSAL state on login,
   // so it can be restored after the redirect round-trip.
   it("passes the requested path as state to loginRedirect", async () => {
-    window.history.replaceState(null, "", "/attacks/atk-7?tab=related");
+    window.history.replaceState(null, "", "/attack/chat/atk-7?tab=related");
     mockFetchAuthConfig.mockResolvedValue({
       clientId: "test-client",
       tenantId: "test-tenant",
@@ -357,7 +357,7 @@ describe("AuthProvider", () => {
 
     await waitFor(() => {
       expect(mockLoginRedirect).toHaveBeenCalledWith(
-        expect.objectContaining({ state: "/attacks/atk-7?tab=related" })
+        expect.objectContaining({ state: "/attack/chat/atk-7?tab=related" })
       );
     });
   });
@@ -372,7 +372,7 @@ describe("AuthProvider", () => {
     });
     mockHandleRedirectPromise.mockResolvedValue({
       account: { username: "user@test.com" },
-      state: "/attacks/atk-7",
+      state: "/attack/chat/atk-7",
     });
 
     render(
@@ -382,7 +382,7 @@ describe("AuthProvider", () => {
     );
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/attacks/atk-7");
+      expect(window.location.pathname).toBe("/attack/chat/atk-7");
     });
   });
 

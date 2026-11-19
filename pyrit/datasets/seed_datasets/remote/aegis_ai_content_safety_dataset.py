@@ -12,15 +12,14 @@ from typing_extensions import override
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Message, MessagePiece, Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models import HarmDefinition, Message, MessagePiece, Modality, SeedDataset, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
-from pyrit.models.harm_definition import HarmDefinition
-from pyrit.score.scorer_evaluation.human_labeled_dataset import (
+from pyrit.score import (
     HarmHumanLabeledEntry,
     HumanLabeledDataset,
     HumanLabeledEntry,
+    MetricsType,
 )
-from pyrit.score.scorer_evaluation.metrics_type import MetricsType
 
 logger = logging.getLogger(__name__)
 

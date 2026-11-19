@@ -13,8 +13,20 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
+    from pyrit.score.assert_judge_presets import (
+        list_assert_judge_presets,
+        load_assert_judge_preset,
+        load_assert_judge_preset_file,
+    )
     from pyrit.score.batch_scorer import BatchScorer
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
+    from pyrit.score.evidence.conversation_trace_evidence import TraceEvidenceRequirement
+    from pyrit.score.expectation_errors import (
+        AmbiguousConditionError,
+        ExpectationMismatchError,
+        MissingConditionError,
+        UnsupportedConditionError,
+    )
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
     from pyrit.score.float_scale.decision_scorer import DecisionScorer
@@ -31,6 +43,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
     from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
+    from pyrit.score.float_scale.secret_disclosure_scorer import SecretDisclosureScorer, SecretDisclosureView
     from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
     from pyrit.score.float_scale.self_ask_likert_scorer import (
         LikertScaleEvalFiles,
@@ -46,9 +59,12 @@ if TYPE_CHECKING:
     from pyrit.score.observation.execution import NonReplayableObservationError
     from pyrit.score.observation.lifecycle import AttemptObserver, SurfaceLifecycleSource
     from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
+    from pyrit.score.observation.local_trace_capture import LocalTraceCapture
     from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.otel_execution_trace_source import OtelExecutionTraceSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.otlp_json_trace_client import OtlpJsonTraceClient
     from pyrit.score.observation.program_execution_source import ProgramExecutionSource
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
@@ -58,7 +74,7 @@ if TYPE_CHECKING:
         ResponseHandler,
     )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
-    from pyrit.score.scorer import Scorer
+    from pyrit.score.scorer import LegacyScorerHookError, Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
         HarmHumanLabeledEntry,
         HumanLabeledDataset,
@@ -85,6 +101,23 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.scorer_selection import (
+        CompatibleScorers,
+        ConflictingScorerRequirementsError,
+        NoCompatibleScorerError,
+        ScorerCandidate,
+        ScorerMismatch,
+        ScorerMismatchKind,
+        ScorerRequirements,
+        ScorerSelection,
+    )
+    from pyrit.score.true_false.assert_judge_scorer import AssertJudgeScorer
+    from pyrit.score.true_false.assert_policy_scorer import (
+        AssertJudgmentMode,
+        AssertScoringDimension,
+        build_assert_policy_scorer,
+        get_assert_failure_criterion,
+    )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
@@ -100,8 +133,13 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.local_refusal_classifier_scorer import LocalRefusalClassifierScorer
     from pyrit.score.true_false.manual_scorer import ManualScorer
     from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
-    from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
+    from pyrit.score.true_false.multi_label_true_false_scorer import (
+        MessageMultiLabelTrueFalseScorer,
+        MultiLabelTrueFalseScorer,
+    )
+    from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallOrderScorer, OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
+    from pyrit.score.true_false.physics_consistency_scorer import PhysicsConsistencyScorer
     from pyrit.score.true_false.program_execution_scorer import ProgramExecutionScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
@@ -157,12 +195,25 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.true_false_fallback_scorer import TrueFalseFallbackScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
+    from pyrit.score.true_false.true_false_score_selector import TrueFalseScoreSelector
     from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
     from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertJudgeScorer": "pyrit.score.true_false.assert_judge_scorer",
+    "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
+    "list_assert_judge_presets": "pyrit.score.assert_judge_presets",
+    "load_assert_judge_preset": "pyrit.score.assert_judge_presets",
+    "load_assert_judge_preset_file": "pyrit.score.assert_judge_presets",
+    "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
+    "LocalTraceCapture": "pyrit.score.observation.local_trace_capture",
+    "OtelExecutionTraceSource": "pyrit.score.observation.otel_execution_trace_source",
+    "TraceEvidenceRequirement": "pyrit.score.evidence.conversation_trace_evidence",
+    "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
+    "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
+    "PhysicsConsistencyScorer": "pyrit.score.true_false.physics_consistency_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
@@ -194,6 +245,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
+    "MultiLabelTrueFalseScorer": "pyrit.score.true_false.multi_label_true_false_scorer",
+    "MessageMultiLabelTrueFalseScorer": "pyrit.score.true_false.multi_label_true_false_scorer",
+    "TrueFalseScoreSelector": "pyrit.score.true_false.true_false_score_selector",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GarakExploitationDetector": "pyrit.score.true_false.garak_exploitation_scorer",
     "GarakExploitationScorer": "pyrit.score.true_false.garak_exploitation_scorer",
@@ -211,7 +265,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SurfaceLifecycleSource": "pyrit.score.observation.lifecycle",
     "ObservationSource": "pyrit.score.observation.observation_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
+    "OtlpJsonTraceClient": "pyrit.score.observation.otlp_json_trace_client",
     "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",
+    "OtelToolCallOrderScorer": "pyrit.score.true_false.otel_tool_call_scorer",
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",
     "TraceClient": "pyrit.score.observation.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
@@ -224,6 +280,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LikertScalePaths": "pyrit.score.float_scale.self_ask_likert_scorer",
     "LLAMAGUARD_3_CATEGORY_CODES": "pyrit.score.true_false.llamaguard_parser",
     "LlamaGuardCategory": "pyrit.score.true_false.llamaguard_policy",
+    "LegacyScorerHookError": "pyrit.score.scorer",
     "LlamaGuardMessageRole": "pyrit.score.true_false.llamaguard_scorer",
     "LlamaGuardPolicy": "pyrit.score.true_false.llamaguard_policy",
     "LlamaGuardScorer": "pyrit.score.true_false.llamaguard_scorer",
@@ -267,6 +324,20 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
     "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
     "Scorer": "pyrit.score.scorer",
+    "CompatibleScorers": "pyrit.score.scorer_selection",
+    "ConflictingScorerRequirementsError": "pyrit.score.scorer_selection",
+    "NoCompatibleScorerError": "pyrit.score.scorer_selection",
+    "ScorerCandidate": "pyrit.score.scorer_selection",
+    "ScorerMismatch": "pyrit.score.scorer_selection",
+    "ScorerMismatchKind": "pyrit.score.scorer_selection",
+    "ScorerRequirements": "pyrit.score.scorer_selection",
+    "ScorerSelection": "pyrit.score.scorer_selection",
+    "AmbiguousConditionError": "pyrit.score.expectation_errors",
+    "ExpectationMismatchError": "pyrit.score.expectation_errors",
+    "MissingConditionError": "pyrit.score.expectation_errors",
+    "UnsupportedConditionError": "pyrit.score.expectation_errors",
+    "SecretDisclosureScorer": "pyrit.score.float_scale.secret_disclosure_scorer",
+    "SecretDisclosureView": "pyrit.score.float_scale.secret_disclosure_scorer",
     "Scorable": "pyrit.score.scorable",
     "ScorerEvalDatasetFiles": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "ScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",

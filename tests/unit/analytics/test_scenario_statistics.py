@@ -6,11 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from pyrit.analytics import compute_outcome_statistics
+from pyrit.analytics import (
+    compute_outcome_statistics,
+    compute_scenario_statistics,
+)
 from pyrit.analytics.scenario_statistics import (
     ScenarioPlanLookup,
     combine_execution_counts,
-    compute_scenario_statistics,
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
@@ -140,6 +142,13 @@ def test_combining_count_only_legacy_payloads_does_not_infer_failures_from_histo
     assert combined.success_percentage == 50
     assert combined.errors == 5
     assert "without an outcome breakdown" in caplog.text
+
+
+def test_combining_an_empty_group_reports_no_planned_count() -> None:
+    """An empty display group never learned a plan, so planned is unknown, not 0."""
+    combined = combine_execution_counts([])
+    assert combined.planned is None
+    assert combined.completed == 0
 
 
 def test_combining_unequal_scenario_groups_recomputes_both_denominators() -> None:

@@ -11,7 +11,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.protocol import State
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
@@ -206,7 +206,7 @@ class WebsocketTarget(PromptTarget):
                 return
             try:
                 await websocket.close()
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            except Exception as error:  # cleanup must not replace the attack outcome
                 logger.warning("Error closing WebSocket conversation %s: %s", conversation_id, error)
                 return
             logger.info("Disconnected WebSocket conversation: %s", conversation_id)

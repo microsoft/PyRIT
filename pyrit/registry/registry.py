@@ -32,7 +32,15 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
+from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    InstanceRegistry,
+    SupportsIdentifier,
+    creator_metadata,
+    current_registration_origin,
+    record_private_references,
+)
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -44,9 +52,7 @@ if TYPE_CHECKING:
     from types import ModuleType
     from typing import Self
 
-    from pyrit.models import Identifiable
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.parameter import ComponentType, Parameter
+    from pyrit.models import ComponentIdentifier, ComponentType, Parameter
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +76,12 @@ class ReconstructionContext(Protocol):
 
 
 T = TypeVar("T")
-InstanceT = TypeVar("InstanceT", bound="Identifiable")
+InstanceT = TypeVar("InstanceT", bound=SupportsIdentifier)
 MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
-def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
+def _get_metadata_value(metadata: Any, *, key: str) -> tuple[bool, Any]:
     """
     Get a value from a metadata object by key.
 
@@ -127,7 +133,7 @@ def _matches_filters(
     """
     if include_filters:
         for key, filter_value in include_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 return False
             if isinstance(actual_value, (list, tuple)):
@@ -138,7 +144,7 @@ def _matches_filters(
 
     if exclude_filters:
         for key, filter_value in exclude_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 continue
             if isinstance(actual_value, (list, tuple)):
@@ -214,16 +220,17 @@ class Registry(ABC, Generic[T, MetadataT]):
         # so catalog reads (__contains__, get_class, ...) are never parked behind a build.
         self._metadata_build_lock = threading.RLock()
         self._classes: dict[str, type[T]] = {}
+        self._temporary_class_names: set[str] = set()
         self._metadata_cache: dict[str, MetadataT] | None = None
         # Bumped on every catalog mutation so an in-flight metadata build can detect a
         # registration that landed mid-build and retry instead of caching a stale snapshot.
         self._catalog_version = 0
         self._discovered = False
+        self._discovering = False
         self._lazy_discovery = lazy_discovery
 
         if not lazy_discovery:
-            self._discover()
-            self._discovered = True
+            self._ensure_discovered()
 
     @classmethod
     def get_registry_singleton(cls) -> Self:
@@ -283,7 +290,11 @@ class Registry(ABC, Generic[T, MetadataT]):
         """Ensure discovery has been performed. Runs discovery on first access."""
         with self._catalog_lock:
             if not self._discovered:
-                self._discover()
+                self._discovering = True
+                try:
+                    self._discover()
+                finally:
+                    self._discovering = False
                 self._discovered = True
 
     def _base_type(self) -> type[T]:
@@ -600,9 +611,28 @@ class Registry(ABC, Generic[T, MetadataT]):
             if name is None:
                 name = self._get_registry_name(cls)
             self._validate_class(cls)
+            if current_registration_origin() is RegistryEntryOrigin.TEMPORARY and not self._discovering:
+                # A class a scan's launch scripts add, or put in place of another, is gone after a restart.
+                # The classes discovery finds come back, so they are found first.
+                self._ensure_discovered()
+                if self._classes.get(name) is not cls:
+                    self._temporary_class_names.add(name)
             self._classes[name] = cls
             self._metadata_cache = None
             self._catalog_version += 1
+
+    def is_temporary_class(self, name: str) -> bool:
+        """
+        Return whether a scan's launch scripts added the class under this name, so it's gone after a restart.
+
+        Args:
+            name (str): The catalog name.
+
+        Returns:
+            bool: True for a class a scan's launch scripts added, or put in place of another one.
+        """
+        with self._catalog_lock:
+            return name in self._temporary_class_names
 
     def get_class(self, name: str) -> type[T]:
         """
@@ -763,18 +793,24 @@ class Registry(ABC, Generic[T, MetadataT]):
         )
         return cls(**resolved)
 
-    def create_instance_from_external_input(self, name: str, *, params: Mapping[str, object]) -> T:
+    def create_instance_from_external_input(
+        self, name: str, *, params: Mapping[str, object], allowed_path_params: frozenset[str] = frozenset()
+    ) -> T:
         """
         Build a configured instance from external input such as a REST or CLI request.
 
         Unlike ``create_instance``, which serves in-process callers that may pass any
         Python object, this accepts only parameters with ``Parameter.is_external_input``
-        and registry references given by name. Anything else is rejected before
-        construction; the constructor still validates the values it receives.
+        and registry references given by name. A parameter that can name a server file
+        or folder is accepted only when the caller lists it in ``allowed_path_params``
+        after making it safe. Anything else is rejected before construction; the
+        constructor still validates the values it receives.
 
         Args:
             name (str): The catalog name to build.
             params (Mapping[str, object]): Constructor arguments from the external caller.
+            allowed_path_params (frozenset[str]): Parameters that can name a server file
+                or folder but that the caller has made safe. Defaults to none.
 
         Returns:
             T: The constructed instance.
@@ -782,8 +818,8 @@ class Registry(ABC, Generic[T, MetadataT]):
         Raises:
             KeyError: If the name is not registered.
             ValueError: If an argument is not a valid constructor parameter or not an
-                external input, a registry reference cannot be resolved, or a value
-                cannot be coerced.
+                external input, names a server file or folder without being allowed, a
+                registry reference cannot be resolved, or a value cannot be coerced.
         """
         cls = self.get_class(name)
         resolved = resolve_constructor_args(
@@ -792,6 +828,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             identifier_type=self._identifier_type(),
             external_input=True,
             seam_base_type=self._seam_base_type(),
+            allowed_path_params=allowed_path_params,
         )
         return cls(**resolved)
 
@@ -857,9 +894,12 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 cannot be used for stored instances.
         """
         super().__init__(lazy_discovery=lazy_discovery)
+        identifier_type = self._identifier_type()
+        component_type = identifier_type.component_type if identifier_type is not None else None
         self.instances: InstanceRegistry[InstanceT] = DefaultInstanceRegistry(
             instance_type=self._base_type,
             reserved_names=reserved_instance_names,
+            entry_kind=component_type.value if component_type is not None else "entry",
         )
 
     def create_named_instance(
@@ -870,9 +910,14 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         params: Mapping[str, object] | None = None,
         registry_metadata: dict[str, Any] | None = None,
         external_input: bool = False,
+        allowed_path_params: frozenset[str] = frozenset(),
+        private: bool | None = None,
     ) -> InstanceT:
         """
-        Build and store a configured instance under an explicit name.
+        Build and store a configured instance under an explicit name, recording the caller in scope as its creator.
+
+        An instance built from the caller's private entries is private too, so a shared component never
+        uses a private one.
 
         Args:
             name (str): The unique instance name.
@@ -883,23 +928,41 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             external_input (bool): Whether ``params`` come from an external caller, in which
                 case the instance is built with ``create_instance_from_external_input``.
                 Defaults to False.
+            allowed_path_params (frozenset[str]): External parameters that can name a
+                server file or folder but that the caller has made safe. Defaults to none.
+            private (bool | None): Whether only the caller can see and use the instance, or None to make it
+                private only when it is built on the caller's private entries. Defaults to None.
 
         Returns:
             InstanceT: The constructed and registered instance.
+
+        Raises:
+            ValueError: If ``private`` is False but the instance is built on the caller's private entries.
+            PermissionError: If ``private`` is True and no caller is in scope.
         """
         self.instances.validate_name_available(name)
         args = dict(params) if params is not None else {}
-        instance = (
-            self.create_instance_from_external_input(type_name, params=args)
-            if external_input
-            else self.create_instance(type_name, **args)
-        )
-        self.instances.register(instance, name=name, metadata=registry_metadata)
+        with record_private_references() as references:
+            instance = (
+                self.create_instance_from_external_input(
+                    type_name, params=args, allowed_path_params=allowed_path_params
+                )
+                if external_input
+                else self.create_instance(type_name, **args)
+            )
+        metadata = {
+            **(registry_metadata or {}),
+            **creator_metadata(name=name, requested_private=private, private_references=references),
+        }
+        self.instances.register(instance, name=name, metadata=metadata)
         return instance
 
     def resolve_source(self, *, name: str, identifier_hash: str) -> InstanceT:
         """
         Resolve an unchanged source, allowing only an unambiguous rename.
+
+        Only sources the caller in scope may see are found, and each is looked up by name, so a
+        build that uses a private source records it.
 
         Returns:
             InstanceT: The matching registered source.
@@ -913,13 +976,14 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 raise ValueError(f"Source instance '{name}' has changed")
             return source
         matches = [
-            entry.instance
+            entry.name
             for entry in self.instances.get_all_instances()
             if entry.instance.get_identifier().hash == identifier_hash
         ]
-        if len(matches) != 1:
+        renamed = self.instances.get(matches[0]) if len(matches) == 1 else None
+        if renamed is None or renamed.get_identifier().hash != identifier_hash:
             raise ValueError(f"Source instance '{name}' is missing or ambiguous")
-        return matches[0]
+        return renamed
 
     def get_reconstruction_parameters(self, source: InstanceT) -> dict[str, object]:
         """
@@ -952,16 +1016,30 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         }
 
     def recreate_instance(
-        self, *, source: InstanceT, params: Mapping[str, object], external_input: bool = False
+        self,
+        *,
+        source: InstanceT,
+        params: Mapping[str, object],
+        external_input: bool = False,
+        allowed_path_params: frozenset[str] = frozenset(),
     ) -> InstanceT:
         """
         Build an independent component; never change or register the source.
+
+        Args:
+            source (InstanceT): The registered component to copy.
+            params (Mapping[str, object]): Constructor overrides.
+            external_input (bool): Whether ``params`` come from an external caller.
+                Defaults to False.
+            allowed_path_params (frozenset[str]): External overrides that can name a
+                server file or folder but that the caller has made safe. Defaults to none.
 
         Returns:
             InstanceT: The new component, owned by the caller.
 
         Raises:
-            ValueError: If overrides are unknown or the source class is unavailable.
+            ValueError: If overrides are unknown, external overrides set a connection setting the
+                source's class keeps for copies, or the source class is unavailable.
         """
         inputs = self.get_reconstruction_parameters(source)
         raw_params = dict(params)
@@ -988,7 +1066,16 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 identifier_type=self._identifier_type(),
                 external_input=True,
                 seam_base_type=self._seam_base_type(),
+                allowed_path_params=allowed_path_params,
             )
+            # A copy keeps where its source sends requests and how it signs in, so a credential
+            # can't be pointed at a different endpoint. Any value is refused, even the source's own.
+            locked = sorted(name for name in params if by_name[name].copy_locked)
+            if locked:
+                raise ValueError(
+                    f"A copy keeps its source's connection settings, so it can't set {', '.join(locked)}. "
+                    "Create a new one to use different settings."
+                )
             from pyrit.models import SeedPrompt
 
             for name, value in raw_params.items():

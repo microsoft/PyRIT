@@ -2,6 +2,7 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 
 import {
   MINIMUM_TOUCH_TARGET_SIZE,
+  mobileTouchTarget,
   NARROW_VIEWPORT_QUERY,
   TOUCH_INPUT_QUERY,
 } from '@/styles/touchTargets'
@@ -30,6 +31,12 @@ export const useConfigurationStyles = makeStyles({
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: tokens.spacingVerticalM,
+  },
+  tabs: {
+    [NARROW_VIEWPORT_QUERY]: {
+      flexWrap: 'wrap',
+      flexShrink: 0,
+    },
   },
   actions: {
     display: 'flex',
@@ -138,6 +145,9 @@ export const useConfigurationStyles = makeStyles({
   },
   message: {
     width: '100%',
+  },
+  noticeDismiss: {
+    ...mobileTouchTarget,
   },
   environmentSection: {
     display: 'flex',

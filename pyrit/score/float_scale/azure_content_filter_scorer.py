@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Awaitable, Callable  # noqa: TC003 - registry annotation resolution
 from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
@@ -21,7 +22,7 @@ from azure.core.credentials import AzureKeyCredential
 from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.models.harm_category import HarmCategory
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
@@ -31,8 +32,6 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
@@ -163,6 +162,9 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
             raise ValueError("Please provide the Azure Content Safety endpoint")
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        # A single-category scorer has one metrics registry, so get_scorer_metrics can find it before any evaluation.
+        if len(self._harm_categories) == 1:
+            self.evaluation_file_mapping = self._get_eval_files_for_category(self._harm_categories[0])
 
     @property
     def _category_values(self) -> list[str]:
@@ -221,13 +223,6 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                 "Create separate scorer instances for each category to evaluate them individually."
             )
 
-        # Set evaluation_file_mapping from the category mapping if not provided
-        if file_mapping is None:
-            category = self._harm_categories[0]
-            eval_files = self._get_eval_files_for_category(category)
-            if eval_files:
-                self.evaluation_file_mapping = eval_files
-
         return await super().evaluate_async(
             file_mapping=file_mapping,
             num_scorer_trials=num_scorer_trials,
@@ -235,7 +230,9 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
             max_concurrency=max_concurrency,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Evaluate the input text or image using the Azure Content Filter API.
 
@@ -245,8 +242,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                 In case of an image, the image size must be less than 2048 x 2048 pixels,
                 but more than 50x50 pixels. The data size should not exceed 4 MB. Image must be
                 of type JPEG, PNG, GIF, BMP, TIFF, or WEBP.
-            objective (str | None): The objective for scoring context. Currently not supported for this scorer.
-                Defaults to None.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A list of Score objects with score values mapping to severity utilizing the
@@ -259,6 +255,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
         Raises:
             ValueError: If converted_value_data_type is not "text" or "image_path" or image isn't in supported format.
         """
+        objective = expectation.objective if expectation else None
         filter_results: list[tuple[AnalyzeTextResult | AnalyzeImageResult, float]] = []
 
         if message_piece.converted_value_data_type == "text":

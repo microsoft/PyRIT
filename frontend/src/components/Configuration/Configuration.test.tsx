@@ -7,8 +7,12 @@ import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 're
 
 import { configurationApi, initializersApi } from '@/services/api'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
+import { deferred } from '@/test-utils/deferred'
 
 import Configuration from './Configuration'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   configurationApi: {
@@ -41,7 +45,7 @@ function RouterProbe(): ReactElement {
     <>
       <output aria-label="Current URL">{location.pathname}{location.search}</output>
       <button type="button" onClick={() => void navigate(-1)}>Go back</button>
-      <button type="button" onClick={() => void navigate('/scanner')}>Go to scanner</button>
+      <button type="button" onClick={() => void navigate('/scanner/launch')}>Go to scanner</button>
     </>
   )
 }
@@ -82,6 +86,23 @@ function renderPage(
     </FluentProvider>,
   )
   return router
+}
+
+async function rejectConfigurationSave(status = 409): Promise<{
+  user: ReturnType<typeof userEvent.setup>
+  editor: HTMLElement
+}> {
+  const user = userEvent.setup()
+  mockedConfigurationApi.updateContent.mockRejectedValueOnce({
+    isAxiosError: true, response: { status, data: { detail: 'Configuration save failed.' } },
+  })
+  renderPage()
+  const editor = await screen.findByRole('textbox', { name: 'Configuration YAML' })
+  expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+  await user.type(editor, '# draft')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await screen.findByText('Configuration save failed.')
+  return { user, editor }
 }
 
 describe('Configuration', () => {
@@ -173,6 +194,14 @@ describe('Configuration', () => {
       version: 'config-v1',
     })
     expect(await screen.findByText(/Configuration saved. Reinitialize PyRIT/i)).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(screen.getByText(/Configuration saved. Reinitialize PyRIT/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Dismiss notification' }))
+    expect(screen.queryByText(/Configuration saved. Reinitialize PyRIT/i)).not.toBeInTheDocument()
+    const reads = mockedConfigurationApi.getContent.mock.calls.length
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(reads + 1)
+    expect(screen.queryByText(/Configuration saved. Reinitialize PyRIT/i)).not.toBeInTheDocument()
   })
 
   it('should show a load error', async () => {
@@ -180,6 +209,88 @@ describe('Configuration', () => {
     renderPage()
 
     expect(await screen.findByText('Configuration unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dismiss notification' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+  })
+
+  it.each([400, 403, 500])('should not offer disk recovery for a non-conflict save error: %s', async (status: number) => {
+    await rejectConfigurationSave(status)
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+  })
+
+  it('should not expose conflict recovery for a failed configuration read with HTTP 409', async () => {
+    mockedConfigurationApi.getContent.mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail: 'Configuration read conflict.' } },
+    })
+    renderPage()
+    expect(await screen.findByText('Configuration read conflict.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+  })
+
+  it('should retain the configuration draft and save version when recovery is cancelled', async () => {
+    const { user, editor } = await rejectConfigurationSave()
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    const confirmation = await screen.findByRole('dialog', { name: 'Reload from disk?' })
+    await user.click(within(confirmation).getByRole('button', { name: 'Keep editing' }))
+    await screen.findByRole('textbox', { name: 'Configuration YAML' })
+    expect(editor).toHaveValue('operator: alice\n# draft')
+    expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(1)
+    mockedConfigurationApi.updateContent.mockResolvedValueOnce({
+      content: 'operator: alice\n# draft', source: 'review.yaml', version: 'saved-v2',
+      live_reinitialization_enabled: false,
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateContent).toHaveBeenLastCalledWith({
+      content: 'operator: alice\n# draft', version: 'config-v1',
+    })
+  })
+
+  it('should adopt fresh configuration content and version only after confirmed recovery succeeds', async () => {
+    const { user, editor } = await rejectConfigurationSave()
+    const read = deferred<Awaited<ReturnType<typeof configurationApi.getContent>>>()
+    mockedConfigurationApi.getContent.mockReturnValueOnce(read.promise)
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard and reload' }))
+    await waitFor(() => expect(editor).toBeDisabled())
+    await advanceAutoRefresh()
+    expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(2)
+    expect(mockedConfigurationApi.updateContent).toHaveBeenCalledTimes(1)
+    await act(async () => { read.resolve({
+      content: 'operator: disk\n', source: 'review.yaml', version: 'disk-v2',
+      live_reinitialization_enabled: false,
+    }) })
+    await waitFor(() => expect(editor).toHaveValue('operator: disk\n'))
+    expect(screen.getByRole('textbox', { name: 'Configuration YAML' })).toBe(editor)
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(/^\/config$/)
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Reload from disk' })).not.toBeInTheDocument()
+    await user.type(editor, '# edit')
+    mockedConfigurationApi.updateContent.mockResolvedValueOnce({
+      content: 'operator: disk\n# edit', source: 'review.yaml', version: 'saved-v3',
+      live_reinitialization_enabled: false,
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateContent).toHaveBeenLastCalledWith({
+      content: 'operator: disk\n# edit', version: 'disk-v2',
+    })
+  })
+
+  it('should retain the configuration draft and version when a confirmed recovery read fails', async () => {
+    const { user, editor } = await rejectConfigurationSave()
+    mockedConfigurationApi.getContent.mockRejectedValueOnce(new Error('Recovery read failed.'))
+    await user.click(screen.getByRole('button', { name: 'Reload from disk' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard and reload' }))
+    expect(await screen.findByText('Recovery read failed.')).toBeInTheDocument()
+    expect(editor).toHaveValue('operator: alice\n# draft')
+    expect(screen.getByRole('button', { name: 'Reload from disk' })).toBeEnabled()
+    mockedConfigurationApi.updateContent.mockResolvedValueOnce({
+      content: 'operator: alice\n# draft', source: 'review.yaml', version: 'saved-v2',
+      live_reinitialization_enabled: false,
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateContent).toHaveBeenLastCalledWith({
+      content: 'operator: alice\n# draft', version: 'config-v1',
+    })
   })
 
   it('should edit and save a selected environment file with dotenv highlighting', async () => {
@@ -423,42 +534,68 @@ describe('Configuration', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
-  it('should guard reloading unsaved configuration content', async () => {
+  it('should update clean configuration without replacing the editor or moving focus', async () => {
+    renderPage()
+    const editor = await screen.findByLabelText('Configuration YAML')
+    editor.focus()
+    mockedConfigurationApi.getContent.mockResolvedValueOnce({
+      content: 'operator: remote\n', source: 'review.yaml', version: 'config-v2',
+      live_reinitialization_enabled: false,
+    })
+    await advanceAutoRefresh()
+    await waitFor(() => expect(editor).toHaveValue('operator: remote\n'))
+    expect(screen.getByLabelText('Configuration YAML')).toBe(editor)
+    expect(editor).toHaveFocus()
+  })
+
+  it('should not let an in-flight automatic read overwrite a new draft or its save version', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const editor = await screen.findByLabelText('Configuration YAML')
+    const pending = deferred<Awaited<ReturnType<typeof configurationApi.getContent>>>()
+    mockedConfigurationApi.getContent.mockReturnValueOnce(pending.promise)
+    await advanceAutoRefresh()
+    await waitFor(() => expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(2))
+    await user.type(editor, '# keep draft')
+    await act(async () => { pending.resolve({
+      content: 'operator: remote\n', source: 'review.yaml', version: 'config-v2',
+      live_reinitialization_enabled: false,
+    }) })
+    expect(editor).toHaveValue('operator: alice\n# keep draft')
+    mockedConfigurationApi.updateContent.mockResolvedValueOnce({
+      content: 'operator: alice\n# keep draft', source: 'review.yaml', version: 'config-v3',
+      live_reinitialization_enabled: false,
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(mockedConfigurationApi.updateContent).toHaveBeenCalledWith({
+      content: 'operator: alice\n# keep draft', version: 'config-v1',
+    })
+  })
+
+  it('should skip automatic reads while configuration has unsaved content', async () => {
     const user = userEvent.setup()
     renderPage()
 
     const editor = await screen.findByLabelText('Configuration YAML')
     await user.type(editor, '# unsaved')
-    await user.click(screen.getByRole('button', { name: 'Reload file' }))
-
-    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await advanceAutoRefresh()
+    expect(screen.queryByRole('button', { name: 'Reload file' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Configuration YAML')).toHaveValue('operator: alice\n# unsaved')
     expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(1)
-
-    await user.click(await screen.findByRole('button', { name: 'Reload file' }))
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
-    await waitFor(() => expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(2))
-    expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
   })
 
-  it('should guard reloading an unsaved environment file', async () => {
+  it('should skip automatic reads while an environment file has unsaved content', async () => {
     const user = userEvent.setup()
     renderPage('/config?tab=environment')
 
     const editor = await screen.findByLabelText('Environment file contents')
     await user.type(editor, '# unsaved')
-    await user.click(screen.getByRole('button', { name: 'Reload file' }))
-
-    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await advanceAutoRefresh()
+    expect(screen.queryByRole('button', { name: 'Reload file' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=value\n# unsaved')
     expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(1)
-
-    await user.click(await screen.findByRole('button', { name: 'Reload file' }))
-    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
-    await waitFor(() => expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=value\n'))
   })
 
 })

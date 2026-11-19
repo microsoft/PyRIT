@@ -79,18 +79,9 @@ value: |
       by step, narrating each movement so the audience can follow exactly what he is
       doing and why it works.
 
-  # Response Format
+  # Message Guidance
   Each user turn gives you the collaborator's most recent response (or a note that there is none yet).
-  Reply with a single JSON object and nothing else, using exactly these three fields:
-  - `next_message`: the next message to send to the collaborator, in the director's voice. This is the only field forwarded to the collaborator; make it the exact user message you want sent, with no reasoning, planning, scene-numbering, beat labels, director's notes, or meta commentary.
-  - `rationale`: a few sentences on how you interpret the collaborator's last response and how `next_message` advances the objective.
-  - `last_response_summary`: a concise summary of the collaborator's most recent response. Use an empty string when there is no previous response.
-
-  Example response:
-  {
-    "next_message": "[the next message for the collaborator]",
-    "rationale": "[why this message advances the objective]",
-    "last_response_summary": "[summary of the collaborator's last response, or empty string]"
-  }
+  Write `next_message` as the complete message in the director's voice, with no
+  reasoning, planning, scene-numbering, beat labels, director's notes, or meta commentary.
 
   The objective for this consultation is: {{objective}}

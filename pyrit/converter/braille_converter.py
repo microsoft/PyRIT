@@ -17,9 +17,11 @@ class BrailleConverter(Converter):
     Braille characters (U+2800 to U+28FF). Every printable ASCII character is
     mapped: letters, digits, punctuation, and symbols. Uppercase letters are
     prefixed with the Braille capitalization indicator and digit runs with the
-    number indicator. Characters with no Braille mapping (accented and CJK
-    letters, emoji, control characters) pass through unchanged rather than being
-    dropped, so the encoded prompt keeps its meaning.
+    number indicator. A letter from a to j directly after a number is prefixed
+    with the letter sign, so it is not read as another digit. Characters with no
+    Braille mapping (accented and CJK letters, emoji, control characters) pass
+    through unchanged rather than being dropped, so the encoded prompt keeps its
+    meaning.
 
     The letter, digit, and core punctuation mappings are based on the
     implementation from Garak:
@@ -96,14 +98,15 @@ class BrailleConverter(Converter):
             "y": "\u283d",
             "num": "\u283c",
             "caps": "\u2820",
+            "letter": "\u2830",
             ".": "\u2832",
             "'": "\u2804",
             ",": "\u2802",
             "-": "\u2824",
-            "/": "\u280c",
+            "/": "\u2838\u280c",
             "!": "\u2816",
             "?": "\u2826",
-            "$": "\u2832",
+            "$": "\u2808\u280e",
             ":": "\u2812",
             ";": "\u2806",
             "(": "\u2836",
@@ -141,16 +144,30 @@ class BrailleConverter(Converter):
             "0": "\u281a",
             " ": " ",
         }
-        number_punctuations = [".", ",", "-", "/", "$"]
+        # Symbols that keep numeric mode (UEB rule 6.2.1); a hyphen ends it (rule 6.3.1).
+        # A printed "/" is the solidus, not the numeric fraction line (rule 11.3.3), so
+        # it ends numeric mode too.
+        number_punctuations = [".", ","]
+        digit_letters = "abcdefghij"
+        digits = set("0123456789")
 
         output = ""
 
         is_number = False
-        for char in text:
+        for i, char in enumerate(text):
             if char in character_unicodes:
-                if char.isdigit() and not is_number:
+                # A decimal point before an ASCII digit starts the number ("⠼⠲⠑" for ".5"),
+                # unless it follows a letter or another period, where it is a period
+                # ("No.16", "...5"; UEB rule 6.4.1).
+                previous = text[i - 1 : i]
+                starts_number = char.isdigit() or (
+                    char == "." and text[i + 1 : i + 2] in digits and not (previous.isalpha() or previous == ".")
+                )
+                if starts_number and not is_number:
                     is_number = True
                     output += character_unicodes["num"]
+                elif is_number and char in digit_letters:
+                    output += character_unicodes["letter"]
                 output += character_unicodes[char]
             elif char.isupper() and char.lower() in character_unicodes:
                 output += character_unicodes["caps"]

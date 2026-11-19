@@ -1,5 +1,6 @@
 import type {
-  ChatDraftContent, ChatDraftContextState, ConverterPipelineStage, MessageAttachment, PendingImportPayload,
+  BackendMessage, BackendMessagePiece, ChatDraftContent, ChatDraftContextState, ConverterPipelineStage,
+  MessageAttachment, PendingImportPayload,
 } from '@/types'
 
 export type { ChatDraftContent, ChatDraftContextState, ChatDraftHandoffContextValue, PendingImportPayload } from '@/types'
@@ -22,13 +23,14 @@ export function releaseSupersededUrls(
   revokeAttachmentUrls(previousAttachments?.filter((attachment: MessageAttachment) => !activeUrls.has(attachment.url)))
 }
 
-/** Determines if draft content contains user-entered text, attachments, system prompt, or converters. */
+/** Determines if draft content contains user-entered text, attachments, system prompt, converters, or conversation draft. */
 export function isChatDraftDirty(draft?: Partial<ChatDraftContent> | null): boolean {
   if (!draft) return false
   if (typeof draft.text === 'string' && draft.text.trim().length > 0) return true
   if (Array.isArray(draft.attachments) && draft.attachments.length > 0) return true
   if (typeof draft.systemPrompt === 'string' && draft.systemPrompt.trim().length > 0) return true
   if (draft.converters?.applied && Object.keys(draft.converters.applied).length > 0) return true
+  if (draft.conversation?.messages && draft.conversation.messages.length > 0) return true
   return false
 }
 
@@ -37,8 +39,44 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
   return Boolean(draft && (
     isChatDraftDirty(draft)
     || draft.target !== undefined
+    || Boolean(draft.objective?.trim())
+    || draft.generationDraft !== undefined
+    || 'chatScorer' in draft
     || Object.values(draft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+    || Boolean(draft.conversation)
   ))
+}
+
+/** True when the confirmed send turn is present in history and agrees with the captured position. */
+export function historyContainsAcceptedDraft(
+  draft: Pick<ChatDraftContent, 'acceptedSendId' | 'acceptedSendHistory'>,
+  messages?: readonly BackendMessage[] | null,
+  requestTurnNumber?: number | null,
+): boolean {
+  const position = draft.acceptedSendHistory
+  if (!draft.acceptedSendId || !position || !messages || requestTurnNumber == null) return false
+  if (position.requestTurnNumber != null && position.requestTurnNumber !== requestTurnNumber) return false
+  return messages.some((message: BackendMessage) => (
+    message.role === 'user' && message.turn_number === requestTurnNumber
+  ))
+}
+
+/**
+ * A position match is only a reason to check the exact send status; it is not proof that this send was saved.
+ */
+export function historyMayContainAcceptedDraft(
+  draft: Pick<ChatDraftContent, 'acceptedSendId' | 'acceptedSendHistory'>,
+  messages?: readonly BackendMessage[] | null,
+): boolean {
+  const position = draft.acceptedSendHistory
+  if (!draft.acceptedSendId || !position || !messages) return false
+  const userMessages = messages.filter((message: BackendMessage) => message.role === 'user')
+  if (position.requestTurnNumber !== undefined) {
+    return userMessages.some((message: BackendMessage) => message.turn_number === position.requestTurnNumber)
+  }
+  const prior = new Set(position.priorUserPieceIds)
+  return userMessages.some((message: BackendMessage) => message.message_pieces
+    .some((piece: BackendMessagePiece) => !prior.has(piece.id)))
 }
 
 /**
@@ -70,6 +108,38 @@ export function canApplyPendingImport(
   if (pending.destinationType === 'new_attack') {
     return attackId === null && conversationId == null
   }
+  if (pending.destinationType === 'new_conversation') {
+    if (pending.targetConversationId) {
+      return Boolean(pending.targetAttackId && attackId === pending.targetAttackId && conversationId === pending.targetConversationId)
+    }
+    return Boolean(pending.targetAttackId && attackId === pending.targetAttackId && conversationId == null)
+  }
   return Boolean(pending.targetAttackId && pending.targetConversationId
     && attackId === pending.targetAttackId && conversationId === pending.targetConversationId)
+}
+
+export function stableMetadataString(metadata?: Record<string, unknown>): string {
+  if (!metadata || typeof metadata !== 'object') return ''
+  const sortObject = (obj: unknown): unknown => {
+    if (obj === null || typeof obj !== 'object') return obj
+    if (Array.isArray(obj)) return obj.map(sortObject)
+    return Object.keys(obj as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = sortObject((obj as Record<string, unknown>)[key])
+        return acc
+      }, {})
+  }
+  try {
+    return JSON.stringify(sortObject(metadata))
+  } catch {
+    return ''
+  }
+}
+
+export function computeAttachmentSignature(attachments?: readonly MessageAttachment[]): string {
+  if (!attachments || attachments.length === 0) return ''
+  return attachments.map((att) => (
+    `${att.draftId ?? ''}:${att.url ?? ''}:${att.name ?? ''}:${att.mimeType ?? ''}:${att.type ?? ''}:${att.size ?? ''}:${att.sourceValue ?? ''}:${att.sourceDataType ?? ''}:${att.pieceId ?? ''}:${stableMetadataString(att.metadata as Record<string, unknown> | undefined)}`
+  )).join('|')
 }

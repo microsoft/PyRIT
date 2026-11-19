@@ -106,6 +106,14 @@ async def test_prompt_shield_document_parsing_keeps_text_between_documents(promp
     assert result["documents"] == [" d1 ", " d2 "]
 
 
+def test_prompt_shield_unknown_entry_field_preserves_runtime_fallback(promptshield_target: PromptShieldTarget):
+    object.__setattr__(promptshield_target, "_force_entry_field", "future-field")
+
+    result = promptshield_target._input_parser("prompt <document> document </document> tail")
+
+    assert result == {"userPrompt": "prompt  tail", "documents": [" document "]}
+
+
 async def test_prompt_shield_response_validation(promptshield_target: PromptShieldTarget):
     # This tests handling both an empty request and an empty response
     promptshield_target._validate_response(request_body={}, response_body={})

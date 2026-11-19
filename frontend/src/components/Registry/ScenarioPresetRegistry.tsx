@@ -28,7 +28,7 @@ export default function ScenarioPresetRegistry() {
         </Text>
         <Text size={300} className={styles.subtitle}>
           Define reusable scenario configurations here, then launch them from
-          the <Link to="/scanner">Scanner</Link>.
+          the <Link to="/scanner/launch">Scanner</Link>.
         </Text>
       </header>
       <ScenarioSuiteLibrary presetsRevision={presetsRevision} />

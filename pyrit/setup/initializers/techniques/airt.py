@@ -21,8 +21,7 @@ from pyrit.converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TargetRequirements
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
+from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:

@@ -23,35 +23,131 @@ For other setup options, see [Docker](../getting_started/install_docker.md) or t
 
 ## Home
 
-Home shows your default objective target and recent attacks grouped by operation.
-Open an attack to return to its conversation, or go to Registry to configure a
-target. The shared labels bar sets the operator, operation, and custom labels
-for new work; it does not change saved results.
+Home puts **Attacks**, **Scans**, **Recent work**, and **Operations** first.
+Select **New attack** to start a fresh chat, or **Configure scan** to open scanner
+setup. These actions do not send prompts or start a scan. The sidebar's
+**Attacks** entry returns to your last conversation or unsent draft.
+Each workflow has its own history link. Recent work shows up to five saved
+attacks and scans; filter by type. The visible page checks for updates each minute.
+Open a saved operation to review its work and findings. Registry remains
+available below these sections for setup. Operation links put the selected saved
+operation first, then the newest-created records, not the most recently active
+records. When the complete registry confirms that no targets are registered, the
+secondary setup action offers **Register a target**.
+The shared labels bar applies the selected operator, operation, and custom labels
+to new work; changes do not alter saved results.
 
-![Home page with default target and recent work](images/home.png)
+![Home page with workflows and recent work](images/home.png)
 
 ## Chat
 
-Chat (`/chat`) is the manual conversation workspace. Select a target and write
-the messages yourself. You can attach media, transform content with converters,
-and branch or edit conversations to try another approach. Add an objective and
+Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
+workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
+and branch or edit conversations to try another approach. In an empty new chat, use **Need inspiration? Browse seed prompts**
+to find examples already loaded in memory. The **Seed prompts** action below the composer stays available
+when sending is disabled, including for a saved conversation. Browsing does not download providers, create an attack, or send a prompt.
+When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation,
+including unsaved edits, media, and converter work. Unsaved edits still require saving or confirming discard.
+Filters, pagination, and the selected example survive the round trip; paging history stays with its dataset.
+Opening Datasets from another workspace does not select an unrelated Chat destination.
+Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
-The same conversation viewer opens saved attacks from History. Automated results
+To score a saved response, open the objective outcome, expand **Automated scorer**,
+and select a scorer. **Apply scorer** evaluates only the latest saved assistant
+response in the open conversation. It keeps an existing complete result for the
+same response, scorer configuration, and objective criteria without another
+evaluation. **Off** hides the action. Earlier responses, other conversations, and
+human scores do not change; future responses keep the selected chat scorer.
+
+New chats and scans start with the last objective target you used. New chats also
+reuse the last chat scorer, including **Off**, unless a Registry default is set.
+These choices are saved in the current browser profile after use. Opening saved
+activity or editing an unsent draft does not change them.
+Chat use is recorded only after a request turn is confirmed, not after preparation
+fails, and stays with the initiating account even if you navigate away. A chat
+with a temperature override remembers its registered source target, without
+changing that chat's execution binding. While a remembered scorer is loading,
+wait for its catalog. Explicit scorer selections, including **Off**, take
+precedence; an unavailable remembered scorer is not saved as **Off**.
+
+The **Chat** tab returns to your retained draft, or your last chat if there is no draft.
+Selecting **Chat** while a chat is open keeps that chat open.
+Use **New attack** to start a blank draft. The **History** tab
+(`/attack/history`) opens saved attacks in the same conversation viewer. Automated results
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
 
+Drop files onto the chat or an editable conversation prompt to attach them.
+Converter file fields also accept drops, including **New converter** in the
+chat pane. File drops use the existing attachment or **Upload** handling;
+the click controls and typed path fields remain available.
+The attachment chooser's file-type filter is browser guidance, not an
+application-enforced allowlist. Both entry paths keep the existing read and
+configured-component checks. A file in the draft is not a guarantee that the
+selected target can use it.
+
+A drop outside these writable surfaces, including on a dialog that has no
+file input, does not attach a file or replace the page. A file drag shows one
+drop target for the chat. Read-only and disabled inputs remain locked.
+During a blocked file drag, Chat shows the same reason as its disabled prompt.
+Newly selected converter files show their name and size with **Replace** and
+**Remove**, instead of an encoded value. Supported image previews also show a
+thumbnail. Existing encoded values without file details use a generic label;
+unknown names and sizes are not guessed. Typed and pasted paths or values stay
+editable. **Remove** restores path entry. If a converter file
+cannot be read, the dialog reports the error and keeps the previous value.
+Converter file fields still use only the first selected file. If a selection
+contains extra files, the dialog reports how many were ignored.
+
+Older `/attacks/{attackId}` and
+`/attacks/{attackId}/conversations/{conversationId}` links redirect to the
+corresponding Chat route while retaining query parameters and fragments.
+
 ![Chat workspace with a prompt and target response](images/chat.png)
+
+### Temperature
+
+On supported targets, use the thermometer below **Send** to adjust temperature
+for subsequent messages. **Use target default** clears the override; shared
+defaults and saved messages are unchanged. Select a message's temperature footer
+to inspect its saved settings.
+
+See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
+for SDK usage.
 
 ## Scanner
 
-Scanner (`/scanner`) is the catalog and launch point for automated scenarios.
+Scanner has **Launch** (`/scanner/launch`) and **History** (`/scanner/history`) tabs.
+Launch is the catalog and launch point for automated scenarios.
 Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+Use the chevron on the right of a technique to inspect its identity JSON.
+This does not change the checkbox selection on the left.
+
 Review the run estimate, then launch the scan. Its run page shows progress,
-errors, and results, with links to individual attacks. See the
+errors, and results, with links to individual attacks and conversations.
+Expand an attack group or objective to inspect its attempts. Technique, scorer,
+dataset/seed provenance, and scenario settings use inline identity JSON.
+Decided attack outcomes use **True** and **False**; execution errors remain separate.
+Groups and objectives show success rates and completion counts separately.
+Completed scans offer an optional **Compare baseline and attack** disclosure
+below the objective results. It stays collapsed while you review individual attacks.
+
+**Watch live conversation** opens a running attack in Chat. While the scan runs it,
+Chat is read-only, shows **Attack in progress** in place of the prompt bar, and
+refreshes its messages and conversations; when the attack finishes, Chat shows its
+saved result on the same page. **Cancel** stops remaining scan work and keeps saved
+results; saved messages remain available in the read-only chat. Opening these
+conversations does not add attack outcomes or change success rates.
+
+**Rerun with changes** opens the scenario launch page with saved settings filled in. It does
+not start work or change the original run. Review or edit the settings before
+launching. Recorded target/scorer identities and the scenario version are checked.
+Settings that cannot be restored, including older records without a required identity,
+produce an error instead of silently using current defaults. See the
 [scanner guide](../scanner/0_scanner.md) for the scenario model.
 
 ![Scanner page with available scenarios](images/scanner.png)
@@ -61,7 +157,7 @@ errors, and results, with links to individual attacks. See the
 Select **technique.execute** in Scanner to run one attack technique against
 one free-text objective. This is not Chat: the selected technique controls
 the attack, rather than you writing each turn. You can adjust its configuration
-for this run and add a baseline comparison.
+for this run and include a baseline attack for reference.
 
 For techniques that support conversation history, start with a stored or edited
 conversation. **Use in scan** in Chat copies a conversation into this setup
@@ -71,21 +167,67 @@ page; it does not start the scan.
 
 ![technique.execute objective and per-run technique settings](images/technique_execute_objective.png)
 
+### Paired outcomes
+
+On a completed scan, expand **Compare baseline and attack**, select the saved
+baseline and attack groups, then choose **Compare outcomes**. The comparison shows
+how often the baseline and attack succeeded on the same objective, and how many
+pairs changed from failure to success or from success to failure. Only pairs
+with a success or failure on both sides are counted, using the most recent
+top-level attempt, so retries and child attempts never add pairs.
+
+Expand a transition row to see the objectives behind its count. Each pair shows
+the baseline and attack outcomes side by side, with links to both saved
+conversations. When a compound result has no conversation of its own, the link
+opens one of its child conversations and labels that child's outcome
+separately. Pairs load in pages: use **Load more** for additional pairs, and
+retry from the row if a request fails. Selecting a different group clears the
+expanded details.
+
+![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](images/paired-outcomes-desktop.png)
+
+![Expanded paired outcomes at a mobile viewport width](images/paired-outcomes-mobile.png)
+
 ## Registry
 
 Registry prepares reusable components; it does not execute attacks. Create
 targets to connect to model endpoints, converters to transform content, and
 named techniques that configure existing attacks. Browse configured scorers
 and select a default chat scorer; scorer setup uses initializers, not an editor
-on this page. Target defaults apply to new chats and scans.
+on this page. An explicit scan choice takes precedence. Otherwise, the current
+adversarial-target order is a saved Registry default, the registered
+`adversarial_chat` target, then last use. Objective targets do not have a Registry
+default. Existing chats and runs keep their settings.
+
+Expand a target, scorer, technique, or converter name to inspect its identity
+JSON. Target identity inspection is independent of expanding composite target
+members; defaults, visibility, and the target's configuration columns remain
+available. Converter inputs and outputs stay visible in the table. Use the small
+red X to remove a converter from the live registry; confirmation is required.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
+Suite launch dialogs apply arriving target defaults only to untouched selections.
+An explicit target choice, including clearing an optional adversarial target to
+use the server default, is retained when the registry refreshes.
+
+Editing a preset preserves unchanged parameter values exactly, including commas
+and whitespace inside list entries, empty lists, duplicates, and their order.
+Editing a list field uses the comma-separated format shown in the editor.
 
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
+
+Use **Auto-detect capabilities** to select targets and run live checks. Results
+apply automatically for the current backend session. Checks can incur provider
+charges. Existing manual chats retain their saved capabilities, including chats
+using the default temperature. Legacy chats without a snapshot retain the source's
+pre-detection capabilities for this backend session. New chats use the detected
+capabilities.
+See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
+for shared behavior.
 
 ![Registry page with registered targets and component tabs](images/registry.png)
 
@@ -95,25 +237,50 @@ Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
 previewed on request.
 
-Load data through PyRIT before refreshing this catalog. See
+Use **Import into Chat** to stage an example directly into Chat without copying
+text or reattaching files:
+- **Single prompt or multimodal message**: loads the text and attachments into the
+  editable composer.
+- **Multi-turn conversation**: opens the conversation editor with all turns intact,
+  mapping assistant and tool messages to simulated roles. If the conversation ends
+  in a user turn, that turn is also visible and editable in the editor. Saving
+  stores the preceding history and restores the edited final turn in the prompt box,
+  ready for an explicit send.
+- **Import destinations**: choose between starting a new attack, continuing the
+  current conversation, or creating a new conversation within the current attack.
+- **Preserve evidence**: multi-turn imports can extend an unsent conversation in
+  place. For a conversation containing sent responses or request traces, choose a
+  new conversation or new attack instead. Conflicting system or developer instructions
+  require an explicit choice; they are never silently combined.
+- **Keep setup**: replacing a prompt retains the destination's system prompt and
+  configured converter pipelines, but clears generated conversion results.
+- **No automatic sending**: importing and saving do not make model calls or execute
+  tools; edits remain under your control until you explicitly send or save.
+
+Load data through PyRIT; the visible catalog checks for changes each minute. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
 
 ## History
 
-Find saved attacks and scanner runs. Filter the list, open results, and inspect
-the conversations and scores. Supported failed scanner runs can be resumed.
+History is next to the feature that produced the results, not a separate sidebar
+item. Use the History tab in Attacks or Scanner to filter saved results and inspect
+their conversations and scores.
 
-The **Attacks** tab opens individual conversations. The **Scanner** tab opens
-run-level progress and results, including runs from `technique.execute`.
+Scanner history opens run-level progress and results, including runs from
+`technique.execute`. Its **ID** field accepts a complete conversation, attack,
+finding, or scenario result ID and searches all stored runs. Hover over the field
+to see the supported ID types. **Back to scan**, beside Markdown in a scan-owned
+chat, returns to its run.
+
+Supported failed or cancelled scanner runs can be resumed.
 Resume retries unfinished objectives or objectives with execution errors when
 the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
 is a separate setting in `technique.execute`.
 
-Compound-attack hierarchy browsing is a separate GUI follow-up. The
-[backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
+The [backend hierarchy API](../../pyrit/backend/README.md#scenario-result-hierarchy)
 provides paged roots and ordered child expansion without clipping run statistics.
 Conversation reads expose main and pruned conversations only; adversarial and
 preparation contexts remain internal. Transcript bodies load only for a selected
@@ -142,6 +309,34 @@ Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
 
+A finding can be broken into sub-findings, at any depth, to record a
+decomposition such as a multi-step attack. Use **Add sub-finding** on a
+finding, and expand **Sub-findings** to see them, oldest first in the order
+they were added. Findings are numbered the way an export of all the findings
+numbers them, so sub-finding *1.2* is the second sub-finding of finding *1*, and
+paths refer to their steps by those numbers. Each finding keeps its own severity, and turning off
+**Demonstrated** marks a step that was attempted but not achieved. **Edit
+paths** records the ordered ways a finding's direct sub-findings demonstrate
+it, for example *recon → obtain credentials → pull records* and *recon →
+phish an admin → pull records*. A saved path shows as **Complete** when every
+step was demonstrated and **Partial** otherwise. Deleting a finding also deletes its
+sub-findings; a sub-finding that a path uses can't be deleted or moved until
+you remove it from that path.
+
+:::{div}
+:class: col-page-right
+
+![A finding with four sub-findings, numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the direct sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. The exported report numbers and nests the sub-findings and marks each path complete or partial.](../assets/finding-decomposition.svg)
+
+:::
+
+**Export findings** on the operation page downloads the findings you select as
+one Word or Markdown document to paste into a report. Selecting a finding
+includes its sub-findings, numbered under it in the order they were added (1,
+1.1, 1.2, …), with its paths, their saved descriptions, and any steps that were not
+demonstrated. Evidence appears as links to the attacks in PyRIT, without transcripts or media. Nothing
+is redacted, so store and share exported files with care.
+
 ![Operations page with a test operation](images/operations.png)
 
 ## Configuration
@@ -149,6 +344,10 @@ together.
 Configuration is for backend administration, not per-chat settings. Administrators
 edit the PyRIT configuration and environment sources, inspect the initializer
 sequence, and manage trusted custom initializer scripts.
+
+After a save-version conflict, select **Reload from disk** and confirm
+**Discard and reload** to load the current file. Canceling or a failed read keeps
+your draft.
 
 Saving a change does not apply it to the running backend. Reinitialize PyRIT,
 when supported, or restart the backend to apply saved setup changes. This affects
@@ -158,6 +357,10 @@ for requirements and limits.
 ![Configuration page with backend setup controls](images/configuration.png)
 
 ## Preferences
+
+Use the icon at the top of the sidebar to show or hide navigation labels. This
+choice is saved for your account in this browser. On narrow screens, the same
+icon opens a navigation panel without reducing the workspace width.
 
 Use the sidebar's **Theme** menu to change the appearance. User preferences,
 such as default targets, are saved in this browser for the current account.

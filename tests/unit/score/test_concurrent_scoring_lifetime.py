@@ -25,7 +25,7 @@ async def test_scoring_failure_drains_nested_work_before_returning(
     late_completions: list[str] = []
     slow = SubStringScorer(substring="slow")
     failing = SubStringScorer(substring="fail")
-    original_piece_async = slow._score_piece_async
+    original_piece_async = slow._score_piece_with_expectation_async
     original_scorable_async = slow._score_scorable_async
 
     async def store_message_async(values: list[str]) -> MessageScorable:
@@ -43,7 +43,7 @@ async def test_scoring_failure_drains_nested_work_before_returning(
         await slow_started.wait()
         raise failure_type("judge failed")
 
-    async def score_piece_async(message_piece, *, objective=None):
+    async def score_piece_async(message_piece, *, expectation):
         if message_piece.original_value == "fail":
             return await fail_async()
         task = asyncio.current_task()
@@ -53,7 +53,7 @@ async def test_scoring_failure_drains_nested_work_before_returning(
         try:
             await allow_completion.wait()
             late_completions.append(message_piece.original_value)
-            return await original_piece_async(message_piece, objective=objective)
+            return await original_piece_async(message_piece, expectation=expectation)
         finally:
             await asyncio.sleep(0)
             finalized.set()
@@ -79,9 +79,9 @@ async def test_scoring_failure_drains_nested_work_before_returning(
         )
 
     with (
-        patch.object(slow, "_score_piece_async", new=score_piece_async),
+        patch.object(slow, "_score_piece_with_expectation_async", new=score_piece_async),
         patch.object(slow, "_score_scorable_async", new=track_scorable_async),
-        patch.object(failing, "_score_piece_async", new=fail_async),
+        patch.object(failing, "_score_piece_with_expectation_async", new=fail_async),
     ):
         scoring_task = asyncio.create_task(invoke_async())
         try:

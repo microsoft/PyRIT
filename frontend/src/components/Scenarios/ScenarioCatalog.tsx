@@ -7,6 +7,7 @@ import {
   Link as FluentLink,
   mergeClasses,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Spinner,
   Table,
@@ -18,17 +19,18 @@ import {
   Text,
 } from '@fluentui/react-components'
 import {
-  ArrowSyncRegular,
   ChevronDownRegular,
   ChevronUpRegular,
+  DismissRegular,
   SearchRegular,
 } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import { presetScannerRoutePath } from '@/components/ScenarioPresets/presetRoutes'
-import { estimatePresetRunSizes } from '@/components/ScenarioPresets/presetRunSizes'
+import { estimatePresetRunSizes, retainPresetRunSizes } from '@/components/ScenarioPresets/presetRunSizes'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { scenarioPresetsApi, scenariosApi, scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -412,7 +414,7 @@ function ScenarioScannerRow({ scenario, estimatesLoading }: ScenarioScannerRowPr
     <ScannerRow
       testId={`scenario-card-${scenario.scenario_name}`}
       name={scenario.scenario_name}
-      path={`/scanner/${encodeURIComponent(scenario.scenario_name)}`}
+      path={`/scanner/launch/${encodeURIComponent(scenario.scenario_name)}`}
       description={(
         <MarkdownContent
           content={descriptionMarkdown}
@@ -536,10 +538,12 @@ export default function ScenarioCatalog({
   const [suiteNotice, setSuiteNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [refetchCount, setRefetchCount] = useState(0)
+  const pending = useRef(false)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
 
     const loadScenarioEstimates = async (): Promise<void> => {
       try {
@@ -587,9 +591,6 @@ export default function ScenarioCatalog({
       if (cancelled) return
 
       if (catalogResult.status === 'rejected') {
-        setScenarios([])
-        setSuites([])
-        setPresets([])
         setError(toApiError(catalogResult.reason).detail)
         setLoading(false)
         setEstimatesLoading(false)
@@ -601,9 +602,17 @@ export default function ScenarioCatalog({
       const listedPresets = presetsResult.status === 'fulfilled'
         ? presetsResult.value.items.filter(isListedInScanner)
         : []
-      setScenarios(items)
-      setSuites(suitesResult.status === 'fulfilled' ? suitesResult.value.items : [])
-      setPresets(presetsResult.status === 'fulfilled' ? presetsResult.value.items : [])
+      setScenarios((current) => items.map((item) => {
+        const previous = current.find((candidate) => candidate.scenario_name === item.scenario_name)
+        return previous
+          && JSON.stringify({ ...previous, default_run_size: null }) === JSON.stringify({ ...item, default_run_size: null })
+          ? { ...item, default_run_size: previous.default_run_size }
+          : item
+      }))
+      if (suitesResult.status === 'fulfilled') setSuites(suitesResult.value.items)
+      if (presetsResult.status === 'fulfilled') {
+        setPresets((current) => retainPresetRunSizes(presetsResult.value.items, current))
+      }
       setSuitesError(
         suitesResult.status === 'rejected' ? toApiError(suitesResult.reason).detail : null,
       )
@@ -628,26 +637,19 @@ export default function ScenarioCatalog({
       ])
     }
 
-    void loadCatalog()
+    void loadCatalog().finally(() => { if (!cancelled) pending.current = false })
 
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
   }, [refetchCount, generation])
 
   const handleRetry = useCallback(() => {
-    setLoading(true)
-    setEstimatesLoading(true)
-    setPresetEstimatesLoading(true)
-    setError(null)
-    setEstimateError(null)
-    setPresetEstimateError(null)
-    setSuitesError(null)
-    setPresetsError(null)
-    setSuiteNotice(null)
     setRefetchCount((count) => count + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) handleRetry() }, !loading)
 
   const handleSuiteChanged = useCallback((name: string) => {
     handleRetry()
@@ -703,17 +705,17 @@ export default function ScenarioCatalog({
     >
       <div className={styles.header} data-tour="scanner-catalog">
         <div className={styles.headerText}>
-          <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
+          <Text id="scenario-catalog-title" as="h2" size={600} weight="semibold">
             <FluentLink
               href="https://microsoft.github.io/PyRIT/latest/scanner/scanner/"
               target="_blank"
               rel="noopener noreferrer"
             >
-              Scanner
+              Launch a scan
             </FluentLink>
           </Text>
           <Text size={300} className={styles.subtitle}>
-            Launch comprehensive testing campaigns with multiple attack techniques against a target.
+            Select a scenario to configure a scan.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -725,15 +727,6 @@ export default function ScenarioCatalog({
             onChange={(_, data) => setQuery(data.value)}
             aria-label="Search scenarios"
           />
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={handleRetry}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 
@@ -742,51 +735,42 @@ export default function ScenarioCatalog({
           {suiteNotice && (
             <MessageBar intent="warning" data-testid="suite-changed-notice">
               <MessageBarBody>{suiteNotice}</MessageBarBody>
+              <MessageBarActions>
+                <Button appearance="subtle" className={styles.touchTarget} icon={<DismissRegular />}
+                  aria-label="Dismiss notification" onClick={() => setSuiteNotice(null)} />
+              </MessageBarActions>
             </MessageBar>
           )}
           {suitesError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Scenario suites could not be loaded: {suitesError}</MessageBarBody>
+              <MessageBarBody>{suitesError}</MessageBarBody>
             </MessageBar>
           )}
           {presetsError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Scenario presets could not be loaded: {presetsError}</MessageBarBody>
+              <MessageBarBody>{presetsError}</MessageBarBody>
             </MessageBar>
           )}
           {estimateError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Default run sizes could not be calculated: {estimateError}</MessageBarBody>
+              <MessageBarBody>{estimateError}</MessageBarBody>
             </MessageBar>
           )}
           {presetEstimateError && (
             <MessageBar intent="warning">
-              <MessageBarBody>Preset run sizes could not be calculated: {presetEstimateError}</MessageBarBody>
+              <MessageBarBody>{presetEstimateError}</MessageBarBody>
             </MessageBar>
           )}
         </div>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading scenarios..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={handleRetry}
-            data-testid="retry-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : scenarios.length === 0 ? (
+      ) : error && scenarios.length === 0 ? null
+      : scenarios.length === 0 ? (
         <div className={styles.centeredState} data-testid="empty-state">
           <Text size={400}>No scenarios are registered</Text>
           <Text size={200}>Register a scenario via your PyRIT initializers to see it here.</Text>

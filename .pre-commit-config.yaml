@@ -3,7 +3,7 @@ repos:
     rev: 34071b78c181af3bf5af955c1426466e096fc3db #0.9.1
     hooks:
       - id: nbstripout
-        args: [--keep-output, '--extra-keys=metadata.kernelspec']
+        args: [--keep-output, --keep-id, '--extra-keys=metadata.kernelspec']
         files: ^doc/.*\.ipynb$
 
   - repo: local
@@ -47,6 +47,18 @@ repos:
         language: python
         files: ^pyrit/.*\.py$
         pass_filenames: false
+      - id: check-keyword-only-params
+        name: Enforce keyword-only parameters
+        entry: python -m build_scripts.check_keyword_only_params
+        language: python
+        files: ^(pyrit/.*\.py|build_scripts/(check_keyword_only_params\.py|keyword_only_baseline\.txt))$
+        pass_filenames: false
+      - id: check-public-imports
+        name: Prefer public PyRIT package imports
+        entry: python -m build_scripts.check_public_imports
+        language: python
+        additional_dependencies: ['ipython']
+        files: \.(py|ipynb)$
       - id: memory-migrations-check
         name: Check Memory Migrations
         entry: python -m build_scripts.memory_migrations check
@@ -67,14 +79,14 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.1
+    rev: v0.17.4
     hooks:
       - id: ruff-format
       - id: ruff-check
         args: [--fix]
 
   - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.9.1
+    rev: 1.10.0
     hooks:
     - id: nbqa-ruff
       name: Ruff (Jupyter Notebooks)
