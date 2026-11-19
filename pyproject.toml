@@ -296,6 +296,9 @@ invalid-argument-type = "ignore"
 invalid-method-override = "ignore"
 no-matching-overload = "ignore"
 unresolved-attribute = "ignore"
+# Enabled for pyrit/ (clean) but still relaxed here: tests/unit has 318 bare
+# generics (mostly `dict` and the attack context/strategy classes) across ~70 files.
+missing-type-argument = "ignore"
 
 [tool.uv]
 constraint-dependencies = [
