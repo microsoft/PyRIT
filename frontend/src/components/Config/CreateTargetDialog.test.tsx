@@ -2975,12 +2975,14 @@ describe("CreateTargetDialog", () => {
       });
     }
 
+    const SHARED_ONLY = "Saved targets are shared. Choose Everyone to save this one.";
+
     async function createAndExpect(
       user: ReturnType<typeof userEvent.setup>, request: Record<string, unknown>,
     ): Promise<void> {
-      await user.click(screen.getByRole("button", { name: "Create Target" }));
+      await user.click(getSubmitButton());
       await waitFor(() => {
-        expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(request);
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(expect.objectContaining(request));
       });
     }
 
@@ -3016,7 +3018,7 @@ describe("CreateTargetDialog", () => {
 
       expect(onlyMeSwitch()).not.toBeChecked();
       await createAndExpect(user, {
-        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, ...authFields, private: false,
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, ...authFields, persist: true, private: false,
       });
     });
 
@@ -3030,7 +3032,10 @@ describe("CreateTargetDialog", () => {
       await user.click(screen.getByRole("radio", { name: "API Key" }));
 
       expect(onlyMeSwitch()).toBeChecked();
-      await createAndExpect(user, { type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: true });
+      expect(screen.getByRole("status")).toHaveTextContent(SHARED_ONLY);
+      await createAndExpect(user, {
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, persist: false, private: true,
+      });
     });
 
     it("should start off again after a target is created", async () => {
@@ -3038,7 +3043,9 @@ describe("CreateTargetDialog", () => {
       render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
       await chooseOpenAiChatTarget();
       await user.click(onlyMeSwitch());
-      await createAndExpect(user, { type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: true });
+      await createAndExpect(user, {
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, persist: false, private: true,
+      });
 
       await chooseOpenAiChatTarget();
 
@@ -3057,7 +3064,9 @@ describe("CreateTargetDialog", () => {
 
       expect(updatesSwitch()).toBeChecked();
       expect(screen.getByText(/You can replace its key or headers later/)).toBeInTheDocument();
-      await createAndExpect(user, { type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: true });
+      await createAndExpect(user, {
+        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, persist: false, private: true,
+      });
     });
 
     it("should send allow_credential_updates when you allow updates for a shared target", async () => {
@@ -3068,8 +3077,15 @@ describe("CreateTargetDialog", () => {
       await user.click(updatesSwitch());
 
       expect(screen.getByText(/Anyone signed in can replace its key or headers/)).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "A saved target's credentials can't be updated. Turn off Allow updates to save this one.",
+      );
       await createAndExpect(user, {
-        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: false, allow_credential_updates: true,
+        type: "OpenAIChatTarget",
+        params: { endpoint: ENDPOINT },
+        persist: false,
+        private: false,
+        allow_credential_updates: true,
       });
     });
 
@@ -3083,7 +3099,11 @@ describe("CreateTargetDialog", () => {
 
       expect(updatesSwitch()).not.toBeChecked();
       await createAndExpect(user, {
-        type: "OpenAIChatTarget", params: { endpoint: ENDPOINT }, private: true, allow_credential_updates: false,
+        type: "OpenAIChatTarget",
+        params: { endpoint: ENDPOINT },
+        persist: false,
+        private: true,
+        allow_credential_updates: false,
       });
     });
 
@@ -3141,7 +3161,10 @@ describe("CreateTargetDialog", () => {
       await user.click(onlyMeSwitch());
 
       await createAndExpect(user, {
-        type: "RoundRobinTarget", params: { targets: ["shared_a", "shared_b"], weights: [1, 1] }, private: true,
+        type: "RoundRobinTarget",
+        params: { targets: ["shared_a", "shared_b"], weights: [1, 1] },
+        persist: false,
+        private: true,
       });
     }, 30000);
 
@@ -3151,8 +3174,12 @@ describe("CreateTargetDialog", () => {
       expect(onlyMeSwitch()).toBeChecked();
       expect(onlyMeSwitch()).toBeDisabled();
       expect(screen.getByText(PRIVATE_MEMBER_HINT)).toBeVisible();
+      expect(screen.getByRole("status")).toHaveTextContent("Saved targets are shared, and only you can use this one.");
       await createAndExpect(user, {
-        type: "RoundRobinTarget", params: { targets: ["shared_a", "mine"], weights: [1, 1] }, private: true,
+        type: "RoundRobinTarget",
+        params: { targets: ["shared_a", "mine"], weights: [1, 1] },
+        persist: false,
+        private: true,
       });
     }, 30000);
 
@@ -3317,12 +3344,16 @@ describe("CreateTargetDialog saving", () => {
 
     await fillAzureOpenAiChat(user);
     const nameInput = screen.getByRole("textbox", { name: /Registry Name/ });
+    expect(nameInput).toHaveAccessibleDescription(
+      "Lowercase letters, digits and underscores, starting with a letter, up to 64 characters.",
+    );
     await user.clear(nameInput);
     await user.type(nameInput, "Contoso-GPT");
 
-    expect(
-      screen.getByText("Use lowercase letters, digits and underscores, starting with a letter (max 64 characters)."),
-    ).toBeInTheDocument();
+    // The rule shows once, as the error, while the name breaks it.
+    expect(nameInput).toHaveAccessibleDescription(
+      "Use lowercase letters, digits and underscores, starting with a letter (max 64 characters).",
+    );
     expect(getSubmitButton()).toBeDisabled();
   });
 
@@ -3363,6 +3394,7 @@ describe("CreateTargetDialog saving", () => {
       type: "OpenAIChatTarget",
       params: { endpoint: AZURE_ENDPOINT, model_name: "gpt-4o" },
       auth_mode: "identity",
+      private: false,
       persist: true,
     });
   });
@@ -3518,6 +3550,7 @@ describe("CreateTargetDialog saving", () => {
       name: "a2a",
       type: "A2ATarget",
       params: { endpoint: "https://agent.example.com" },
+      private: false,
       persist: true,
     });
   });
@@ -3531,18 +3564,19 @@ describe("CreateTargetDialog saving", () => {
     );
 
     await fillAzureOpenAiChat(user);
+    jest.mocked(Element.prototype.scrollIntoView).mockClear();
     await user.click(screen.getByRole("radio", { name: "API Key" }));
     await user.type(screen.getByPlaceholderText("API key (stored in memory only)"), "test-key");
 
     // A live region, so screen readers hear why the button changed.
     const warning = screen.getByRole("status", { name: "This target can't be saved" });
     expect(warning).toHaveTextContent(
-      /Saved targets can't use an API key yet\. Choose Microsoft Entra ID or No key to save this one\./,
+      "Saved targets can't use an API key yet. Choose Microsoft Entra ID or No key to save this one. "
+        + "A Temporary target is gone after the backend restarts or is reinitialized.",
     );
-    expect(warning).toHaveTextContent("A Temporary target is gone after the backend restarts or is reinitialized.");
-    // Once when it appeared, not again for each typed character.
-    expect(jest.mocked(Element.prototype.scrollIntoView).mock.contexts.filter((context) => context === warning))
-      .toHaveLength(1);
+    // Outside the scrolling form, so the auth choice the user just clicked stays where it was.
+    expect(screen.getByTestId("create-target-form")).not.toContainElement(warning);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
 
     await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
@@ -3550,6 +3584,7 @@ describe("CreateTargetDialog saving", () => {
       name: "openai_chat_gpt_4o",
       type: "OpenAIChatTarget",
       params: { endpoint: AZURE_ENDPOINT, model_name: "gpt-4o", api_key: "test-key" },
+      private: false,
       persist: false,
     });
   });
@@ -3604,15 +3639,19 @@ describe("CreateTargetDialog saving", () => {
       name: "a2a",
       type: "A2ATarget",
       params: { endpoint: "https://agent.example.com" },
+      private: false,
       persist: true,
     });
   });
 
   it("should offer Temporary after the server refuses to save, only for the values it refused", async () => {
     const user = userEvent.setup();
-    const detail = "'endpoint' can carry a credential in a URL, which saved entries can't hold. "
-      + "It can still be created without saving it.";
-    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, { type: "/errors/not-saveable", detail }));
+    const reason = "'endpoint' can carry a credential in a URL, which saved entries can't hold.";
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(400, {
+      type: "/errors/not-saveable",
+      detail: `${reason} It can still be created without saving it.`,
+      not_saveable_reason: reason,
+    }));
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
@@ -3622,7 +3661,11 @@ describe("CreateTargetDialog saving", () => {
     await fillAzureOpenAiChat(user);
     await user.click(screen.getByRole("button", { name: "Save Target" }));
 
-    expect(await screen.findByText(new RegExp("can carry a credential in a URL"))).toBeInTheDocument();
+    // The cause and the Temporary note, each once.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      `${reason} A Temporary target is gone after the backend restarts or is reinitialized.`,
+    );
+    expect(screen.queryByText(/It can still be created without saving it/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
 
     await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
@@ -3899,6 +3942,94 @@ describe("CreateTargetDialog saving", () => {
     expect(screen.getByRole("button", { name: "Save Target" })).toBeEnabled();
   });
 
+  it("should create a target only you can use as Temporary without asking whether it can be saved", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByRole("radio", { name: "Only me" }));
+    await pasteInto(user, screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), AZURE_ENDPOINT);
+    await pasteInto(user, screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4o");
+
+    expect(screen.getByRole("status")).toHaveTextContent("Saved targets are shared. Choose Everyone to save this one.");
+    await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
+    await waitFor(() => expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ persist: false, private: true }),
+    ));
+    expect(mockedTargetsApi.checkSaveability).not.toHaveBeenCalled();
+  });
+
+  it("should offer Save again once credential updates are turned off", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await fillAzureOpenAiChat(user);
+    const updates = screen.getByRole("switch", { name: /Allow updates/ });
+    await user.click(updates);
+    expect(screen.getByRole("button", { name: "Create as Temporary" })).toBeInTheDocument();
+    await user.click(updates);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Target" })).toBeEnabled());
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("should keep offering Save when the saveability check fails", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.checkSaveability.mockRejectedValue(new Error("Network Error"));
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await fillAzureOpenAiChat(user);
+    await waitFor(() => expect(mockedTargetsApi.checkSaveability).toHaveBeenCalled());
+
+    expect(screen.getByRole("button", { name: "Save Target" })).toBeEnabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save Target" }));
+    await waitFor(() => expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ persist: true }),
+    ));
+  });
+
+  it("should show a taken name on the name field when a Temporary target's name is taken", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: SAVEABLE_TARGET_TYPES.items.map((entry) => (entry.target_type === "HTTPTarget"
+        ? { ...entry, saveable_auth_modes: [], not_saveable_reason: "Its raw HTTP request can carry credentials." }
+        : entry)),
+    });
+    const detail = "Instance 'http_target' already exists";
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError(409, { detail }));
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+    const requestField = screen.getByTestId("target-param-http_request");
+    fireEvent.change(requestField, { target: { value: "POST /chat HTTP/1.1\nHost: example.com\n\n{PROMPT}" } });
+    await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
+
+    const nameInput = screen.getByRole("textbox", { name: /Registry Name/ });
+    await waitFor(() => expect(nameInput).toHaveAccessibleDescription(expect.stringContaining(detail)));
+    expect(nameInput).toHaveFocus();
+    expect(requestField).not.toHaveAttribute("aria-invalid", "true");
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "HTTPTarget", persist: false }),
+    );
+  });
+
   it("should show a taken name on the name field and hold saving until it is edited", async () => {
     const user = userEvent.setup();
     const detail = "A saved target named 'openai_chat_gpt_4o' already exists.";
@@ -3982,6 +4113,7 @@ describe("CreateTargetDialog saving", () => {
       name: "weighted_round_robin",
       type: "RoundRobinTarget",
       params: { targets: ["saved_chat", "startup_chat"], weights: [1, 1] },
+      private: false,
       persist: true,
     });
   });
@@ -4039,6 +4171,7 @@ describe("CreateTargetDialog saving", () => {
       name: "weighted_round_robin",
       type: "RoundRobinTarget",
       params: { targets: ["saved_chat", "temp_chat"], weights: [1, 1] },
+      private: false,
       persist: false,
     });
   });
