@@ -15,7 +15,7 @@ SKILLS_ROOT = Path(pyrit.backend.__file__).parent / "skills"
 SKILL_NAMES = ["pyrit-technique"]
 
 
-def _read_skill(name: str) -> tuple[dict[str, object], str]:
+def _read_skill(name: str) -> tuple[dict, str]:
     text = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
     _, frontmatter, body = text.split("---\n", 2)
     return yaml.safe_load(frontmatter), body
