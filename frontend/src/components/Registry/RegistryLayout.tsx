@@ -64,7 +64,7 @@ export default function RegistryLayout() {
       </TabList>
       <div className={styles.content}>
         {/* Tabs load on first visit; keep the tab list in place while one does. */}
-        <Suspense fallback={<Spinner label="Loading..." />}>
+        <Suspense key={selectedTab} fallback={<Spinner label="Loading..." />}>
           <Outlet />
         </Suspense>
       </div>

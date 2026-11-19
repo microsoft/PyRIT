@@ -144,6 +144,21 @@ function viewFromPath(pathname: string): ViewName {
   return match ? match[0] : 'home'
 }
 
+// Screens with ids in the URL. Matching on the pattern keeps the ids out of the screen key, so
+// moving between attacks, conversations or runs doesn't remount the screen.
+const SCREEN_PATHS = [
+  '/attack/chat/*',
+  '/registry/*',
+  '/scanner/launch/:scenarioName',
+  '/scanner/history/suites/executions/:executionId',
+  '/scanner/history/:scenarioResultId/*',
+  '/operations/:operationId',
+]
+
+function screenKey(pathname: string): string {
+  return SCREEN_PATHS.find((path) => matchPath(path, pathname)) ?? pathname
+}
+
 function LegacyPresetEditorRedirect() {
   const { presetName } = useParams<{ presetName: string }>()
   return <Navigate replace to={presetEditorRoutePath(routerPathParamValue(presetName))} />
@@ -1049,10 +1064,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 </MessageBarBody>
               </MessageBar>
             )}
-            {/* Keyed by view so a switch to a screen that is still loading shows the spinner
+            {/* Keyed by screen so a switch to a screen that is still loading shows the spinner
                 right away. Otherwise React keeps the old screen until the chunk arrives, and
                 currentView lags behind the URL (the tour reads it to decide where to go). */}
-            <Suspense key={currentView} fallback={<Spinner label="Loading..." />}>
+            <Suspense key={screenKey(location.pathname)} fallback={<Spinner label="Loading..." />}>
             <Routes>
               <Route
                 path="/"
