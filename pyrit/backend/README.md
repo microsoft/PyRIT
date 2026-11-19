@@ -60,7 +60,17 @@ its database collation.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
+  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
+  at all (`not_saveable_reason`)
 - `POST /api/targets` - Create (and optionally register) a target
+- `POST /api/targets/saveability` - Say whether a target could be saved, without building or saving it. Send the
+  create request's `type`, `params`, and `auth_mode`; the answer is `{"not_saveable_reason": ...}`, which gives only
+  the cause, or null when the save checks pass. It runs create's parameter, permission, and save checks on those
+  three fields only, and a request the parameter or permission checks refuse gets the same 400 or 403 as create. It
+  doesn't check the name or the registration options (`register`, `private`, and `allow_credential_updates`), and
+  the target's own constructor checks don't run, so null doesn't mean the create succeeds: a round robin with one
+  member gets null here and a 400 from create
 - `PUT /api/targets/{id}/credentials` - Update the API key or request headers of a target that allows it
 - `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
   apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
@@ -101,16 +111,23 @@ target the same way; the API adds the signed-in user, the configured source, and
 | A request with `persist` that... | Gets |
 |---|---|
 | names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
-| would save a key, or use one of this server's keys or address settings | **400** |
-| gives an address that can carry a credential, or, where this server's setting would apply, one that isn't a full http(s) or ws(s) address | **400** |
-| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** |
-| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** |
-| uses a Temporary target | **400** |
+| is private, or allows credential updates | **422** |
+| would save a key, or use one of this server's keys or address settings | **400** not-saveable |
+| gives an address that can carry a credential | **400** not-saveable |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** not-saveable |
+| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
+| uses a Temporary target | **400** not-saveable |
+| gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
 | takes a name that a target or a saved file already has | **409** |
 | can't be written to storage | **503** |
 
-A request refused with **400** can be sent again without `persist`. When storage can't be written, the server log names
-the target and its folder, since the target comes back at the next start if the write reached storage anyway.
+A not-saveable **400** has `"type": "/errors/not-saveable"` and the cause alone in `not_saveable_reason`, and the
+request can be sent again without `persist`. For any other **400**, fix what its `detail` names, such as the address
+or a constructor parameter. A name that a registered target has is a **409** without a problem type, with or without
+`persist`. `GET /api/targets/types` gives the same class-level answer before a request is sent, and
+`POST /api/targets/saveability` the answer for the request's values. When storage can't be written, the
+server log names the target and its folder, since the target comes back at the next start if the write reached storage
+anyway.
 
 Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
 (gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
