@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
     from pyrit.memory.memory_interface import PreparedSeedBatch
+    from pyrit.score import ScorerRequirements
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
@@ -159,18 +160,24 @@ def _deprecated_argument(*, old: str, new: str) -> None:
 @dataclass(frozen=True, kw_only=True)
 class DatasetSource:
     """
-    A named dataset, with an optional provider, selection limit, and fetch policy.
+    A named dataset, with an optional provider, selection limit, fetch policy, and scorer needs.
 
     A configured provider must use the source name. Preparation keeps stored data unless
     the effective fetch policy explicitly requests a refresh.
     Generation count and selection limits are independent. Use one writer per dataset
     name: concurrent runs can otherwise generate and store different batches.
+
+    ``scorer_requirements`` states what this dataset needs judged, such as the evaluation
+    its objectives promise. Scenarios that set ``SUPPORTS_OBJECTIVE_SCORER_POOL`` select or
+    check an objective scorer that meets it; other scenarios reject a source that declares it.
+    Overrides of the same source keep it.
     """
 
     name: str
     max_size: DatasetLimit = "default"
     fetch: DatasetFetchPolicy | None = None
     provider: SeedDatasetProvider | None = None
+    scorer_requirements: ScorerRequirements | None = None
 
     def __post_init__(self) -> None:
         """
@@ -187,6 +194,11 @@ class DatasetSource:
             raise DatasetConstraintError(f"'max_size': {exc}") from exc
         if self.fetch is not None and not isinstance(self.fetch, DatasetFetchPolicy):
             raise DatasetConstraintError("'fetch' must be a DatasetFetchPolicy.")
+        if self.scorer_requirements is not None:
+            from pyrit.score import ScorerRequirements
+
+            if not isinstance(self.scorer_requirements, ScorerRequirements):
+                raise DatasetConstraintError("'scorer_requirements' must be ScorerRequirements.")
         self._validate_provider()
 
     def _validate_provider(self) -> None:
@@ -728,6 +740,18 @@ class DatasetConfiguration:
             list[str]: The dataset names, or an empty list when using inline seeds/groups.
         """
         return [source.name for source in self.sources]
+
+    def get_scorer_requirements_by_dataset(self) -> dict[str, ScorerRequirements]:
+        """
+        Return the scorer requirements each configured dataset declares.
+
+        Returns:
+            dict[str, ScorerRequirements]: Requirements keyed by dataset name; datasets
+                without requirements are omitted.
+        """
+        return {
+            source.name: source.scorer_requirements for source in self.sources if source.scorer_requirements is not None
+        }
 
     @property
     def source_kind(self) -> DatasetSourceKind:
@@ -1318,6 +1342,24 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 if name not in names:
                     names.append(name)
         return names
+
+    def get_scorer_requirements_by_dataset(self) -> dict[str, ScorerRequirements]:
+        """
+        Return the scorer requirements every child dataset declares.
+
+        Returns:
+            dict[str, ScorerRequirements]: Requirements keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If two children declare different requirements for one dataset.
+        """
+        merged: dict[str, ScorerRequirements] = {}
+        for child in self._configurations:
+            for name, requirements in child.get_scorer_requirements_by_dataset().items():
+                if name in merged and merged[name] != requirements:
+                    raise DatasetConstraintError(f"Dataset '{name}' declares different scorer requirements.")
+                merged[name] = requirements
+        return merged
 
     @property
     def source_kind(self) -> DatasetSourceKind:

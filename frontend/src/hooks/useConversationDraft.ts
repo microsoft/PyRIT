@@ -15,14 +15,14 @@ import { targetIdentifierHash } from '@/utils/targetIdentity'
 
 import { useConversationSave } from './useConversationSave'
 
-function targetKey(target: TargetInstance | null): string | undefined {
-  return target ? JSON.stringify([target.target_registry_name, targetIdentifierHash(target)]) : undefined
+function targetKey(target: TargetInstance | null): string | null {
+  return target ? JSON.stringify([target.target_registry_name, targetIdentifierHash(target)]) : null
 }
 
 interface DraftState extends ConversationSaveInput {
   id: string
   baselineMessages: ConversationDraftMessage[]
-  baselineTarget: string | undefined
+  baselineTargetKey: string | null
   unsavedImport?: boolean
 }
 
@@ -41,7 +41,7 @@ export function useConversationDraft(
     draft.unsavedImport === true
     || draft.messages !== draft.baselineMessages
     || draft.objective !== draft.initialObjective
-    || targetKey(draft.target) !== draft.baselineTarget
+    || targetKey(draft.target) !== draft.baselineTargetKey
   )
   const validationError = draft ? validateDraft(draft.messages) : null
   const messages = draft?.messages ?? []
@@ -75,8 +75,10 @@ export function useConversationDraft(
     saved.current = false
     setError(null)
     setDraft({
-      ...input, id, messages, baselineMessages: input.baselineMessages ?? messages,
-      baselineTarget: targetKey(input.target),
+      ...input, id, messages,
+      baselineMessages: !input.baselineMessages || input.baselineMessages === input.messages
+        ? messages : input.baselineMessages,
+      baselineTargetKey: input.baselineTargetKey !== undefined ? input.baselineTargetKey : targetKey(input.target),
       unsavedImport: input.unsavedImport,
       sourcePieceIds: input.sourcePieceIds ?? input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
         (piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : [],

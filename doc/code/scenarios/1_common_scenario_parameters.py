@@ -214,6 +214,55 @@ custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
 
 # %% [markdown]
+# ## Judging Each Dataset With Its Own Scorer
+#
+# Some runs need a different judge per dataset, such as a hate-speech scorer for one harm category
+# and a violence scorer for another. `RapidResponse`, `Cyber`, and `Leakage` accept a
+# `CompatibleScorers` pool in place of one scorer. Bind each candidate to an evaluation key, then
+# name the key a dataset needs on its `DatasetSource`:
+
+# %%
+from azure.ai.contentsafety.models import TextCategory
+
+from pyrit.scenario.airt import RapidResponse
+from pyrit.score import (
+    AzureContentFilterScorer,
+    CompatibleScorers,
+    FloatScaleThresholdScorer,
+    ScorerCandidate,
+    ScorerRequirements,
+)
+
+hate_scorer = FloatScaleThresholdScorer(
+    scorer=AzureContentFilterScorer(harm_categories=[TextCategory.HATE]), threshold=0.5
+)
+violence_scorer = FloatScaleThresholdScorer(
+    scorer=AzureContentFilterScorer(harm_categories=[TextCategory.VIOLENCE]), threshold=0.5
+)
+scorers = CompatibleScorers(
+    candidates=[
+        ScorerCandidate(scorer=hate_scorer, evaluation="harm.hate"),
+        ScorerCandidate(scorer=violence_scorer, evaluation="harm.violence"),
+    ]
+)
+harm_dataset_config = DatasetAttackConfiguration(
+    sources=[
+        DatasetSource(name="airt_hate", scorer_requirements=ScorerRequirements(evaluation="harm.hate")),
+        DatasetSource(name="airt_violence", scorer_requirements=ScorerRequirements(evaluation="harm.violence")),
+    ]
+)
+
+pool_scenario = RapidResponse(objective_scorer=scorers)
+pool_scenario.set_params_from_args(args={"objective_target": objective_target, "dataset_config": harm_dataset_config})
+
+# %% [markdown]
+# Each dataset is judged by the candidate bound to the evaluation it names, and a dataset without
+# `scorer_requirements` uses a candidate without one. If no candidate can judge a dataset's
+# objectives, initialization fails and gives each candidate's reason. A technique that needs a
+# particular kind of scorer, such as TAP, follows `incompatible_technique_policy`.
+
+# %% [markdown]
+# (reporting-every-conversation)=
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use

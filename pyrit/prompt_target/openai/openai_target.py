@@ -25,7 +25,8 @@ from openai._exceptions import (
 )
 from pydantic import TypeAdapter
 
-from pyrit.auth import resolve_openai_auth
+from pyrit.auth import clean_credential_value, clean_request_headers, resolve_openai_auth
+from pyrit.auth.credential_values import FRAMING_HEADER_NAMES
 from pyrit.common import default_values
 from pyrit.exceptions import (
     RateLimitException,
@@ -165,6 +166,7 @@ class OpenAITarget(PromptTarget):
         {"api_key": None, "headers": "{}"}
     )
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    environment_backed_parameters: ClassVar[frozenset[str]] = frozenset({"endpoint", "model_name"})
     # The OpenAI SDK adds these headers to every client it creates.
     server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
 
@@ -259,7 +261,9 @@ class OpenAITarget(PromptTarget):
                 via parameter or environment variable.
         """
         self._headers: dict[str, str] = {}
-        self._httpx_client_kwargs = httpx_client_kwargs or {}
+        self._httpx_client_kwargs = dict(httpx_client_kwargs or {})
+        if (default_headers := self._httpx_client_kwargs.get("default_headers")) is not None:
+            self._httpx_client_kwargs["default_headers"] = clean_request_headers(default_headers)
         self._auth_mode = auth_mode
 
         request_headers = (
@@ -311,6 +315,8 @@ class OpenAITarget(PromptTarget):
             api_key_environment_variable=self.api_key_environment_variable,
             auth_mode=auth_mode,
         )
+        if auth_mode == "api_key" and isinstance(self._api_key, str):
+            self._api_key = clean_credential_value(self._api_key, name="api_key")
 
         self._initialize_openai_client()
         if self._SUPPORTED_GENERATION_CAPABILITIES:
@@ -499,8 +505,86 @@ class OpenAITarget(PromptTarget):
             await self._async_client.close()
 
     def attach_reconstruction_source(self, source: object) -> None:
-        """Share request pacing, not clients or behavioral configuration."""
+        """
+        Share request pacing and credential status, not clients or behavioral configuration.
+
+        Args:
+            source (object): The registered target this copy was built from.
+        """
+        super().attach_reconstruction_source(source)
         self._rate_limit_source = getattr(source, "_rate_limit_source", source)
+
+    @property
+    def supports_credential_updates(self) -> bool:
+        """Whether this target can replace its API key or request headers in place; not with its own HTTP client."""
+        return self._httpx_client_kwargs.get("http_client") is None
+
+    def update_credentials(self, *, api_key: str | None = None, headers: Mapping[str, str] | None = None) -> None:
+        """
+        Replace this target's API key or request headers in place, without changing anything else about it.
+
+        A header replaces any header of the same name, whatever its case, wherever it was configured: in
+        ``headers``, ``OPENAI_ADDITIONAL_REQUEST_HEADERS``, or ``httpx_client_kwargs``. A cookie is the
+        ``Cookie`` header. The new SDK client shares the old one's connections, and requests already
+        running finish with the old values. How the target authenticates never changes: a target that
+        gets its tokens from a token provider, such as Microsoft Entra ID (with ``auth_mode="identity"``
+        or a provider passed as ``api_key``), can't take an API key or an ``Authorization`` header, and a
+        target that needs no key can't take an API key. A configured ``Authorization`` header takes precedence
+        over an API key and must be updated explicitly. Errors never include a value.
+
+        Args:
+            api_key (str | None): The new API key or access token, or None to keep the current one.
+            headers (Mapping[str, str] | None): Request headers to set. Defaults to None.
+
+        Raises:
+            ValueError: If the target can't update its credentials, a value is blank or can't be sent, a header
+                controls how the request is sent, or the change would alter how the target authenticates.
+        """
+        if not self.supports_credential_updates:
+            raise ValueError(f"This {type(self).__name__} can't update its credentials. Create a new target instead.")
+        # A token provider, such as Entra ID passed as api_key by an initializer, is how the target authenticates
+        # even when its auth_mode says "api_key"; a static key or Authorization header would replace it.
+        uses_token_provider = self._auth_mode == "identity" or not isinstance(self._api_key, str)
+        if api_key is not None and self._auth_mode != "api_key":
+            raise ValueError(
+                f"This target authenticates with auth_mode '{self._auth_mode}', so it can't take an API key. "
+                "Create a new target instead."
+            )
+        if api_key is not None and uses_token_provider:
+            raise ValueError(
+                "This target authenticates with a token provider, so it can't take an API key. "
+                "Create a new target instead."
+            )
+        updates = clean_request_headers(headers or {})
+        blank = sorted(name for name, value in updates.items() if not value)
+        if blank:
+            raise ValueError(f"These headers need a nonblank value: {', '.join(blank)}")
+        framing = sorted(name for name in updates if name.lower() in FRAMING_HEADER_NAMES)
+        if framing:
+            raise ValueError(f"These headers control how a request is sent and can't be set: {', '.join(framing)}")
+        if uses_token_provider and any(name.lower() == "authorization" for name in updates):
+            raise ValueError(
+                "This target authenticates with a token provider, such as Microsoft Entra ID, so its Authorization "
+                "header can't be set. Create a new target instead."
+            )
+        key = clean_credential_value(api_key, name="api_key") if api_key is not None else None
+        # Keep the configured spelling, so the new value replaces a header instead of being sent beside it.
+        configured = [*(self._httpx_client_kwargs.get("default_headers") or {}), *self._headers]
+        spelling = {name.lower(): name for name in configured}
+        replaced = {name.lower() for name in updates}
+        if key is not None and "authorization" in spelling and "authorization" not in replaced:
+            raise ValueError(
+                "This target has an explicit Authorization header; update the Authorization header instead."
+            )
+        updates = {spelling.get(name.lower(), name): value for name, value in updates.items()}
+        self._async_client = self._client.with_options(api_key=key, default_headers=updates or None)
+        self._headers = {
+            **{name: value for name, value in self._headers.items() if name.lower() not in replaced},
+            **updates,
+        }
+        if key is not None:
+            self._api_key = key
+        self._reset_credential_status()
 
     @classmethod
     def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
@@ -536,7 +620,7 @@ class OpenAITarget(PromptTarget):
             if not isinstance(key, str) or not isinstance(header_value, str):
                 raise ValueError("Request headers must be a JSON object with string keys and values.")
             headers[key] = header_value
-        return headers
+        return clean_request_headers(headers)
 
     def _extract_deployment_from_azure_url(self, url: str) -> str:
         """
@@ -724,10 +808,15 @@ class OpenAITarget(PromptTarget):
         - Google Gemini: https://generativelanguage.googleapis.com/v1beta/openai
         - Custom endpoints: Any format (warnings may be shown but URL is not modified)
         """
-        # Merge custom headers with httpx_client_kwargs
+        # Header names are case-insensitive; explicit target headers win over the SDK options.
         httpx_kwargs = self._httpx_client_kwargs.copy()
-        if self._headers:
-            httpx_kwargs.setdefault("default_headers", {}).update(self._headers)
+        configured = {
+            name.lower(): (name, value)
+            for headers in (httpx_kwargs.get("default_headers") or {}, self._headers)
+            for name, value in headers.items()
+        }
+        if configured:
+            httpx_kwargs["default_headers"] = dict(configured.values())
 
         # Determine if this is Azure OpenAI based on the endpoint
         is_azure = "azure" in self._endpoint.lower() if self._endpoint else False

@@ -307,7 +307,7 @@ class AttackBuilder:
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.capabilities.output_modalities = frozenset({frozenset(["text"])})
         target.configuration.includes.side_effect = lambda capability: (
-            capability == CapabilityName.MULTI_TURN and supports_multi_turn
+            capability == CapabilityName.RESPONSES or (capability == CapabilityName.MULTI_TURN and supports_multi_turn)
         )
         # Sensible defaults so the _ModalityFeedbackRouter sees a text-only target,
         # matching the historical behavior of these tests.
