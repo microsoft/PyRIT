@@ -158,6 +158,7 @@ if TYPE_CHECKING:
         StructuredParameterValue,
         display_choices,
     )
+    from pyrit.models.prompt_generation_estimate import PromptGenerationEstimate, PromptGenerationStageEstimate
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
     from pyrit.models.results.assert_policy_metrics import AssertBinaryRate, AssertPolicyMetrics
     from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultRole, AttackResultT
@@ -216,6 +217,7 @@ if TYPE_CHECKING:
         ScenarioRunPlan,
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanGroupKind,
+        ScenarioRunPlanScorerBinding,
         ScenarioRunPlanSeedGroup,
         ScenarioRunPlanSeedPrompt,
         ScenarioRunProgress,
@@ -266,6 +268,7 @@ if TYPE_CHECKING:
         Scorable,
         ScorableUnion,
         Score,
+        ScorerCapabilities,
         ScorerTargetResponsePayload,
         ScoreStatus,
         ScoreType,
@@ -336,13 +339,17 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.assert_generation import (
         AssertBehaviorCategory,
         AssertBehaviorDefinition,
+        AssertBehaviorPreset,
         AssertConceptPattern,
         AssertConceptSpecification,
         AssertCoverage,
         AssertDimension,
         AssertDimensionLevel,
+        AssertGeneratedGroupContent,
+        AssertGenerationCheckpoint,
         AssertGenerationConfig,
         AssertGenerationProvenance,
+        AssertGenerationStage,
         AssertGroupMetadata,
         AssertPatternRole,
         AssertReplication,
@@ -351,10 +358,12 @@ if TYPE_CHECKING:
         AssertSlot,
         AssertSlotValue,
         AssertStakeholder,
+        AssertSuitePreset,
         AssertSystematization,
         AssertTaxonomy,
         AssertTerm,
     )
+    from pyrit.models.seeds.gcg_seed_metadata import GCGSeedMetadata
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
         JSON_SCHEMA_METADATA_KEY,
@@ -382,16 +391,21 @@ if TYPE_CHECKING:
     from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "GCGSeedMetadata": "pyrit.models.seeds",
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
     "AssertBehaviorCategory": "pyrit.models.seeds.assert_generation",
     "AssertBehaviorDefinition": "pyrit.models.seeds.assert_generation",
+    "AssertBehaviorPreset": "pyrit.models.seeds.assert_generation",
     "AssertConceptPattern": "pyrit.models.seeds.assert_generation",
     "AssertConceptSpecification": "pyrit.models.seeds.assert_generation",
     "AssertCoverage": "pyrit.models.seeds.assert_generation",
     "AssertDimension": "pyrit.models.seeds.assert_generation",
     "AssertDimensionLevel": "pyrit.models.seeds.assert_generation",
+    "AssertGeneratedGroupContent": "pyrit.models.seeds.assert_generation",
+    "AssertGenerationCheckpoint": "pyrit.models.seeds.assert_generation",
     "AssertGenerationConfig": "pyrit.models.seeds.assert_generation",
     "AssertGenerationProvenance": "pyrit.models.seeds.assert_generation",
+    "AssertGenerationStage": "pyrit.models.seeds.assert_generation",
     "AssertGroupMetadata": "pyrit.models.seeds.assert_generation",
     "AssertJudgeDimension": "pyrit.models.score.assert_judge",
     "AssertJudgePreset": "pyrit.models.score.assert_judge",
@@ -408,9 +422,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertSlot": "pyrit.models.seeds.assert_generation",
     "AssertSlotValue": "pyrit.models.seeds.assert_generation",
     "AssertStakeholder": "pyrit.models.seeds.assert_generation",
+    "AssertSuitePreset": "pyrit.models.seeds.assert_generation",
     "AssertSystematization": "pyrit.models.seeds.assert_generation",
     "AssertTaxonomy": "pyrit.models.seeds.assert_generation",
     "AssertTerm": "pyrit.models.seeds.assert_generation",
+    "PromptGenerationEstimate": "pyrit.models.prompt_generation_estimate",
+    "PromptGenerationStageEstimate": "pyrit.models.prompt_generation_estimate",
     "WebSearchConfig": "pyrit.models.target.web_search_config",
     "WebSearchMode": "pyrit.models.target.web_search_config",
     "Contains": "pyrit.models.score",
@@ -586,6 +603,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Score": "pyrit.models.score",
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
+    "ScorerCapabilities": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
     "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",
@@ -670,6 +688,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioQueueSnapshot": "pyrit.models.scenario_progress",
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
+    "ScenarioRunPlanScorerBinding": "pyrit.models.scenario_progress",
     "ScenarioRunPlanGroupKind": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedGroup": "pyrit.models.scenario_progress",

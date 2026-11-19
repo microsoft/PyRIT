@@ -378,10 +378,11 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
         statuses: list[str],
         attempts: int = 3,
         check_only: bool = False,
+        command: str = "",
         azure_failure: str = "",
         job_template: dict[str, object] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        command = (
+        command = command or (
             "if schema_is_current; then echo current; else echo migration-needed; fi"
             if check_only
             else "run_database_migration"
@@ -389,7 +390,8 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
         template_json = shlex.quote(json.dumps(JOB_TEMPLATE if job_template is None else job_template))
         return self._run(
             script="deploy_app.sh",
-            inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
+            inputs=APP_INPUTS
+            | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts), "PYRIT_SCHEMA_CHECK_POLL_ATTEMPTS": str(attempts)},
             command=f"""
 immutable_image={shlex.quote(IMAGE)}
 deployment_name=pyrit-test-42-app
@@ -421,6 +423,7 @@ az() {{
       echo execution-1
       ;;
     "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
+    "containerapp job stop") echo "stop $*" >&2 ;;
     *) echo "Unexpected az $*" >&2; exit 97 ;;
   esac
 }}
@@ -445,10 +448,46 @@ echo done
         assert "ended with status Failed; the app is stopped and was not deployed" in result.stdout
         assert "done" not in result.stdout
 
-    def test_database_migration_timeout_stops_deployment(self) -> None:
+    def test_database_migration_timeout_stops_execution_and_deployment(self) -> None:
         result = self._run_migration(statuses=["Running", "Running"], attempts=2)
         assert result.returncode == 1
-        assert "did not finish in time" in result.stdout
+        assert "did not finish in time and was stopped; the app is stopped" in result.stdout
+        assert "--job-execution-name execution-1" in next(
+            line for line in result.stderr.splitlines() if line.startswith("stop containerapp job stop")
+        )
+        assert "done" not in result.stdout
+
+    def test_database_job_timeout_with_failed_stop_reports_unknown_state(self) -> None:
+        for command, outcome in [
+            ("run_database_migration", "the app is stopped and was not deployed"),
+            ("ensure_schema_upgradable", "deployment was not continued"),
+        ]:
+            with self.subTest(command=command):
+                result = self._run_migration(
+                    statuses=["Running", "Running"], attempts=2, command=command, azure_failure="stop"
+                )
+                assert result.returncode == 1
+                assert "could not be stopped; its state is unknown" in result.stdout
+                assert "Confirm it has stopped before retrying" in result.stdout
+                assert outcome in result.stdout
+                assert "was stopped;" not in result.stdout
+                assert "done" not in result.stdout
+
+    def test_revision_check_preserves_full_execution_template(self) -> None:
+        result = self._run_migration(statuses=["Running", "Succeeded"], command="ensure_schema_upgradable")
+        assert result.returncode == 0, result.stdout + result.stderr
+        template = next(
+            line.removeprefix("template ") for line in result.stderr.splitlines() if line.startswith("template ")
+        )
+        expected = json.loads(json.dumps(JOB_TEMPLATE))
+        expected["containers"][0]["args"] = ["--check-upgradable"]
+        assert json.loads(template) == expected
+
+    def test_failed_revision_check_does_not_stop_app(self) -> None:
+        result = self._run_migration(statuses=["Running", "Failed"], command="ensure_schema_upgradable")
+        assert result.returncode == 1
+        assert "migrating with this image cannot fix the schema" in result.stdout
+        assert "The app was not stopped or deployed" in result.stdout
         assert "done" not in result.stdout
 
     def test_schema_check_preserves_full_execution_template(self) -> None:
@@ -515,11 +554,11 @@ echo done
                 assert "migration-needed" not in result.stdout
 
     def test_app_deployment_migrates_only_when_schema_check_fails(self) -> None:
-        for check_exit in (0, 1):
-            with self.subTest(check_exit=check_exit):
-                self._assert_app_deployment_order(check_exit=check_exit)
+        for check_exit, upgradable_exit in ((0, 0), (1, 0), (1, 1)):
+            with self.subTest(check_exit=check_exit, upgradable_exit=upgradable_exit):
+                self._assert_app_deployment_order(check_exit=check_exit, upgradable_exit=upgradable_exit)
 
-    def _assert_app_deployment_order(self, *, check_exit: int) -> None:
+    def _assert_app_deployment_order(self, *, check_exit: int, upgradable_exit: int) -> None:
         result = self._run(
             script="deploy_app.sh",
             inputs=APP_INPUTS,
@@ -530,6 +569,7 @@ for step in validate_app_inputs initialize_deployment_scope read_existing_topolo
   eval "$step() {{ echo $step; }}"
 done
 schema_is_current() {{ echo schema-check; return {check_exit}; }}
+ensure_schema_upgradable() {{ echo revision-check; return {upgradable_exit}; }}
 preview_deployment() {{ echo "preview $1"; }}
 az() {{ echo "az $1 $2 $3"; }}
 revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
@@ -537,15 +577,24 @@ template_file=t deployment_name=d parameters=(appName=test)
 main
 """,
         )
-        assert result.returncode == 0, result.stdout + result.stderr
         lines = result.stdout.splitlines()
+        if upgradable_exit:
+            assert result.returncode != 0
+            assert lines[-1] == "revision-check"
+            return
+        assert result.returncode == 0, result.stdout + result.stderr
         assert lines[4:] == [
             "build_app_parameters",
             "preview app",
             "prepare_database_migration",
             "schema-check",
             *(
-                ["stop_app", "run_database_migration"]
+                [
+                    "revision-check",
+                    "This image can upgrade the database; migrating with the app stopped",
+                    "stop_app",
+                    "run_database_migration",
+                ]
                 if check_exit
                 else ["Schema is current; deploying without stopping the app"]
             ),
