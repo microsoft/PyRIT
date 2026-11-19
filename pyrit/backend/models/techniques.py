@@ -89,6 +89,13 @@ class CreateTechniqueRequest(BaseModel):
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
+    private: bool | None = Field(
+        None,
+        description=(
+            "Whether only the signed-in user who creates it can see and use it. Omitted, it is shared, unless "
+            "it is built on your private targets; then it is private and false is refused."
+        ),
+    )
 
     @field_validator("name")
     @classmethod

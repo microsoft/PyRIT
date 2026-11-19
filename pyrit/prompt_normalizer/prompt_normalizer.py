@@ -46,16 +46,6 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-def _is_write_only_response(responses: object) -> bool:
-    """
-    Distinguish a write-only target's empty list from a malformed None response.
-
-    Returns:
-        bool: Whether the target returned an empty list.
-    """
-    return isinstance(responses, list) and len(responses) == 0
-
-
 class _TargetInvocationContext:
     """Track dispatch without changing caller-independent history selection."""
 
@@ -146,7 +136,8 @@ class PromptNormalizer:
                 history selection and send lifecycle state.
 
         Returns:
-            Message: The response received from the target.
+            Message: The response received from the target. A target without
+                ``supports_responses`` may return nothing, and then this is the sent request.
 
         Raises:
             Exception: If an error occurs during the request processing.
@@ -242,9 +233,9 @@ class PromptNormalizer:
 
         # handling empty responses message list and None responses
         if not responses or not any(responses):
-            # An empty list is valid for write-only targets (e.g., TextTarget)
-            # that don't produce responses. Return the request as-is.
-            if _is_write_only_response(responses):
+            # A target that declares it never replies (e.g., TextTarget) delivered the request, so
+            # return it as-is. Any other target returning nothing gets an empty error response.
+            if not target.configuration.includes(capability=CapabilityName.RESPONSES):
                 return request
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],
