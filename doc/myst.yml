@@ -62,6 +62,9 @@ project:
   toc:
     - file: index.md
     - file: security.md
+    - file: red_teaming/0_red_teaming.md
+      children:
+        - file: red_teaming/1_resources.md
     - file: getting_started/README.md
       children:
         - file: getting_started/install.md
@@ -255,6 +258,8 @@ project:
     - file: bibliography.md
 site:
   nav:
+    - title: Learn
+      url: /red-teaming/red-teaming
     - title: Installation
       url: /getting-started/readme
     - title: GUI
