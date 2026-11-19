@@ -34,7 +34,6 @@ from pyrit.models import (
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.scenario import (
     AttackTechniqueFactory,
-    IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
@@ -92,9 +91,9 @@ class TestChosenBeforeExecution:
         technique = _technique()
         with (
             patch.object(technique, "create", side_effect=AssertionError("built an attack it cannot judge")),
-            pytest.raises(IncompatibleTechniqueError) as excinfo,
+            pytest.raises(ValueError, match="No objective scorer can judge dataset") as excinfo,
         ):
-            _builder(CompatibleScorers(candidates=[judge]), policy=IncompatibleTechniquePolicy.RAISE).build(
+            _builder(CompatibleScorers(candidates=[judge]), policy=IncompatibleTechniquePolicy.SKIP).build(
                 technique_factories={"prompt_sending": technique}, dataset_groups=_datasets()
             )
         message = str(excinfo.value)

@@ -61,7 +61,7 @@ from pyrit.models import (
 )
 from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 from pyrit.score import Scorer
 
@@ -791,15 +791,22 @@ class MessageSendService:
                 )
             if progress is not None:
                 progress.state = MessageSendState.FINALIZING
-            response = await self._stored_response_async(
-                conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
+            responds = target.configuration.includes(capability=CapabilityName.RESPONSES)
+            response = (
+                await self._stored_response_async(
+                    conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
+                )
+                if responds
+                else None
             )
             last_response = response.message_pieces[0] if response is not None else None
-            if response is not None and validated.scoring is not None:
+            scoring_anchor = response if responds else delivered_response
+            if scoring_anchor is not None and validated.scoring is not None:
                 evaluation = await self._score_chat_response_async(
-                    response=response,
+                    response=scoring_anchor,
                     validated=validated,
                     progress=progress,
+                    side_effect_evidence_only=not responds,
                 )
         else:
             await self._store_message_only_async(
@@ -849,6 +856,7 @@ class MessageSendService:
         response: Message,
         validated: _ValidatedMessage,
         progress: MessageSendConversation | None,
+        side_effect_evidence_only: bool = False,
     ) -> ChatEvaluation:
         """
         Evaluate the delivered response with the scoring selection captured at admission.
@@ -865,6 +873,7 @@ class MessageSendService:
                 response=response,
                 scorer=validated.scorer,
                 error=validated.scoring_error,
+                side_effect_evidence_only=side_effect_evidence_only,
             )
         finally:
             if progress is not None:

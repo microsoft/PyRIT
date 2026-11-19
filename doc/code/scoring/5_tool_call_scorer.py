@@ -487,9 +487,9 @@ print(f"Trace the backend does not have: {missing.acquisition.value}")
 # scenario = RapidResponse(objective_scorer=scorers)
 # ```
 #
-# When no candidate can evaluate a dataset's conditions, that technique and dataset are skipped
-# with each candidate's reason, or initialization stops under `incompatible_technique_policy:
-# raise`. Either way, no prompt is sent only to be judged by a scorer that would ignore the
-# condition. The selected `MessageToolCallScorer` then reads the run as described above: an
-# invocation attempt counts even when the tool reported an error, while a claim in the reply, a
-# request that never ran, a dispatch failure, or simulated history leaves the result undetermined.
+# When no candidate can evaluate a dataset's conditions, initialization stops with each
+# candidate's reason, whatever the `incompatible_technique_policy`, so no prompt is sent only to
+# be judged by a scorer that would ignore the condition. The selected `MessageToolCallScorer` then
+# reads the run as described above: an invocation attempt counts even when the tool reported an
+# error, while a claim in the reply, a request that never ran, a dispatch failure, or simulated
+# history leaves the result undetermined.

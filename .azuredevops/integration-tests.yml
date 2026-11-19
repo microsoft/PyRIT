@@ -24,6 +24,7 @@ jobs:
     testBatches:
       - tests/integration/ai_recruiter
       - tests/integration/backend
+      - tests/integration/build_scripts
       - tests/integration/cli
       - tests/integration/converter
       - tests/integration/datasets

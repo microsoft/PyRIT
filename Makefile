@@ -1,4 +1,4 @@
-.PHONY: all pre-commit ty docs-api docs-build docs-build-pdf docs-build-all unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
+.PHONY: all pre-commit ty docs-api docs-build unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
 
 CMD:=uv run -m
 PYMODULE:=pyrit
@@ -20,18 +20,9 @@ ty:
 	uv run --frozen --extra all --link-mode=copy -m ty check $(PYMODULE) $(UNIT_TESTS)
 
 # Build strict HTML with link checks and the RSS feed after API generation.
-# --all would also select the configured PDF export and require LaTeX.
 docs-build: docs-api
 	cd doc && uv run jupyter-book build --html --strict --check-links
 	uv run python -m build_scripts.generate_rss
-
-# PDF is a separate, checked export requiring latexmk and xelatex.
-docs-build-pdf: docs-api
-	uv run python -m build_scripts.build_docs_pdf
-
-# Build HTML first, then check the PDF export without repeating API generation.
-docs-build-all: docs-build
-	uv run python -m build_scripts.build_docs_pdf
 
 # Regenerate only the API reference pages (without building the full site)
 docs-api:
