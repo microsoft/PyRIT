@@ -151,7 +151,7 @@ print(f"[keyword] meth synthesis terms -> {hit.get_value()}")
 # #### OWASP LLM02 output scorers
 #
 # A family of `RegexScorer` subclasses flags insecure *output* a model might emit
-# ([OWASP LLM02 — Insecure Output Handling](https://genai.owasp.org/llmrisk/llm02-insecure-output-handling/)):
+# ([OWASP 2023–24 LLM02 — Insecure Output Handling](https://genai.owasp.org/llmrisk2023-24/llm02-insecure-output-handling/)):
 #
 # - **`XSSOutputScorer`** — `<script>`, `onerror=`, `javascript:` URIs, SVG-embedded script.
 # - **`SQLInjectionOutputScorer`** — `UNION SELECT`, `;DROP TABLE`, `';--`, `' OR 1=1`.

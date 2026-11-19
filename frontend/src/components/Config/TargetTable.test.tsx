@@ -1202,4 +1202,177 @@ describe('TargetTable', () => {
 
     expect(screen.queryByLabelText('Expand inner targets')).not.toBeInTheDocument()
   })
+
+  describe('account', () => {
+    const REJECTED_MESSAGE = 'The last request was rejected. The credentials may be expired or invalid. '
+      + 'Update them through the API (PUT /api/targets/my_rejected/credentials) '
+      + 'or with pyrit_scan set-target-credential my_rejected.'
+    const acceptedTarget = makeTarget({
+      target_registry_name: 'my_accepted', private: true, credentials_rejected: false,
+    })
+    const NOT_UPDATABLE_MESSAGE = 'The last request was rejected. The credentials may be expired or invalid. '
+      + "This target doesn't allow credential updates, so ask whoever set it up to update them."
+    const rejectedTarget = makeTarget({
+      target_registry_name: 'my_rejected', private: true, credentials_rejected: true, allow_credential_updates: true,
+    })
+    const accountTargets = [sampleTargets[0], acceptedTarget, rejectedTarget]
+    const rowFor = (name: string) => within(screen.getByTestId(`target-row-${name}`))
+
+    it('should explain the Account column with info help', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      expect(screen.getByRole('columnheader', { name: 'Account' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /Account.*information/i }))
+      expect(await screen.findByRole('note')).toHaveTextContent(
+        'Shared targets are available to everyone. Yours are available only to you. '
+          + "The icon shows whether the provider accepted the target's credentials on the last request; "
+          + 'there is none until the target is used.',
+      )
+    })
+
+    it.each([
+      ['Shared', false, false, true, 'img', 'Credentials accepted'],
+      ['Shared', false, true, true, 'button', REJECTED_MESSAGE],
+      ['Shared', false, true, false, 'button', NOT_UPDATABLE_MESSAGE],
+      ['Yours', true, false, true, 'img', 'Credentials accepted'],
+      ['Yours', true, true, true, 'button', REJECTED_MESSAGE],
+    ])('should show %s (private: %s) with its credential status (rejected: %s, updatable: %s)', (
+      label: string, isPrivate: boolean, credentialsRejected: boolean, updatable: boolean, role: string, name: string,
+    ) => {
+      const target = makeTarget({
+        target_registry_name: 'my_rejected',
+        private: isPrivate,
+        credentials_rejected: credentialsRejected,
+        allow_credential_updates: updatable,
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+      const row = rowFor('my_rejected')
+      expect(row.getByText(label)).toBeInTheDocument()
+      expect(row.getByRole(role, { name })).toBeInTheDocument()
+    })
+    it('should show a key labeled Credentials accepted once a request succeeded', async () => {
+      const user = userEvent.setup()
+      const target = makeTarget({ target_registry_name: 'my_target', private: true, credentials_rejected: false })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+      const row = rowFor('my_target')
+      expect(row.getByText('Yours')).toBeInTheDocument()
+      const key = row.getByRole('img', { name: 'Credentials accepted' })
+      expect(row.queryByRole('button', { name: /rejected/ })).not.toBeInTheDocument()
+      await user.hover(key)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Credentials accepted')
+    })
+
+    it.each([null, undefined])(
+      'should show no credential icon before the target is used (credentials_rejected: %s)',
+      (credentialsRejected: null | undefined) => {
+        const target = makeTarget({
+          target_registry_name: 'my_target', private: true, credentials_rejected: credentialsRejected,
+        })
+        render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+        const row = rowFor('my_target')
+        expect(row.getByText('Yours')).toBeInTheDocument()
+        expect(row.queryByRole('img', { name: 'Credentials accepted' })).not.toBeInTheDocument()
+        expect(row.queryByRole('button', { name: /rejected/ })).not.toBeInTheDocument()
+      },
+    )
+
+    it('should explain that a target without credential updates needs its owner when the lock is clicked', async () => {
+      const user = userEvent.setup()
+      const target = makeTarget({
+        target_registry_name: 'team_target', credentials_rejected: true, allow_credential_updates: false,
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[target]} /></TestWrapper>)
+
+      await user.click(rowFor('team_target').getByRole('button', { name: NOT_UPDATABLE_MESSAGE }))
+
+      expect(await screen.findByText(/ask whoever set it up/)).toBeInTheDocument()
+      expect(screen.queryByText(/set-target-credential/, { selector: 'code' })).not.toBeInTheDocument()
+    })
+
+    it('should show a lock button labeled with how to update rejected credentials', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      const row = rowFor('my_rejected')
+      expect(row.getByText('Yours')).toBeInTheDocument()
+      expect(row.queryByRole('img', { name: 'Credentials accepted' })).not.toBeInTheDocument()
+      const lock = row.getByRole('button', { name: REJECTED_MESSAGE })
+      await user.hover(lock)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(REJECTED_MESSAGE)
+    })
+
+    it('should explain how to update rejected credentials when the lock is clicked, without an edit dialog', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      await user.click(rowFor('my_rejected').getByRole('button', { name: REJECTED_MESSAGE }))
+
+      const commands = await screen.findAllByText(/my_rejected/, { selector: 'code' })
+      expect(commands.map((command: HTMLElement) => command.textContent)).toEqual([
+        'PUT /api/targets/my_rejected/credentials',
+        'pyrit_scan set-target-credential my_rejected',
+      ])
+      expect(commands[0].parentElement).toHaveTextContent(REJECTED_MESSAGE)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    })
+
+    it('should offer no credential row actions', () => {
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      const actions = within(rowFor('my_rejected').getAllByRole('cell')[0]).getAllByRole('button')
+      expect(actions.map((button: HTMLElement) => button.getAttribute('aria-label'))).toEqual(['Hide my_rejected'])
+    })
+
+    it('should leave the account of inner targets blank', async () => {
+      const user = userEvent.setup()
+      const roundRobin = makeTarget({
+        target_registry_name: 'rr_mixed',
+        target_type: 'RoundRobinTarget',
+        target_specific_params: { weights: [1, 1] },
+        inner_targets: [
+          { target_registry_name: 'inner_shared', target_type: 'OpenAIChatTarget' },
+          {
+            target_registry_name: 'inner_mine', target_type: 'OpenAIChatTarget',
+            private: true, credentials_rejected: true,
+          },
+        ],
+      })
+      render(<TestWrapper><TargetTable {...defaultProps} targets={[roundRobin]} /></TestWrapper>)
+
+      await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+      const accountColumn = screen.getAllByRole('columnheader')
+        .findIndex((header: HTMLElement) => header.getAttribute('aria-label') === 'Account')
+      for (const name of [/#1 inner_shared/, /#2 inner_mine/]) {
+        const innerRow = screen.getByRole('row', { name })
+        expect(within(innerRow).getAllByRole('cell')[accountColumn]).toBeEmptyDOMElement()
+        expect(within(innerRow).queryByText(/^(Shared|Yours)$/)).not.toBeInTheDocument()
+      }
+    })
+
+    it('should filter targets by account', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><TargetTable {...defaultProps} targets={accountTargets} /></TestWrapper>)
+
+      await pickFilterOption(user, 'Filter by account:', 'Yours')
+      expect(screen.queryByTestId('target-row-openai_chat_gpt4')).not.toBeInTheDocument()
+      expect(screen.getByTestId('target-row-my_accepted')).toBeInTheDocument()
+      expect(screen.getByTestId('target-row-my_rejected')).toBeInTheDocument()
+
+      await pickFilterOption(user, 'Filter by account:', 'Yours')
+      await pickFilterOption(user, 'Filter by account:', 'Shared')
+      expect(screen.getByTestId('target-row-openai_chat_gpt4')).toBeInTheDocument()
+      expect(screen.queryByTestId('target-row-my_accepted')).not.toBeInTheDocument()
+    })
+
+    it('should not offer the account filter when every target is shared', () => {
+      render(<TestWrapper><TargetTable {...defaultProps} /></TestWrapper>)
+
+      expect(screen.queryByRole('combobox', { name: 'Filter by account:' })).not.toBeInTheDocument()
+    })
+  })
 })
