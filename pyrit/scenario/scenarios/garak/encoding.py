@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
+    AffineConverter,
     AsciiSmugglerConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -127,6 +128,7 @@ class EncodingTechnique(ScenarioTechnique):
     LeetSpeak = ("leet_speak", {"default"})
     AsciiSmuggler = ("ascii_smuggler", set[str]())
     Bifid = ("bifid", set[str]())
+    Affine = ("affine", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -314,6 +316,7 @@ class Encoding(Scenario):
             ([LeetspeakConverter()], "leet_speak", "leet_speak"),
             ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
             ([BifidConverter()], "bifid", "bifid"),
+            ([AffineConverter()], "affine", "affine"),
         ]
 
     # These are the same as Garak encoding attacks
