@@ -418,6 +418,81 @@ def _validate_judgment_replay_compatibility(
         raise NonReplayableObservationError("A judgment can only replay with the exact expectation used to acquire it.")
 
 
+class _ErrorJudgmentObservationError(Exception):
+    """
+    Signal that an error-acquired judgment passed replay contract validation.
+
+    The stored acquisition failed, so there is no judgment response to parse. Raised by
+    ``_parse_judgment_observation`` once the replay contract checks out, so the calling
+    scorer can fall back to its undetermined result. Internal to the score package.
+    """
+
+
+def _validate_replay_contract_compatibility(
+    *,
+    observation: Observation,
+    evidence: _ObservationEvidence,
+    response_handler: ResponseHandler,
+    category: Sequence[str] | str | None = None,
+    judgment_replay_identifier: Mapping[str, object] | None = None,
+    target: PromptTarget | None = None,
+) -> None:
+    """
+    Require a retained judgment to have been acquired under the current replay contract.
+
+    The contract fingerprint binds the response handler, the category, the judgment
+    identity, and the target adaptation. Observations stored under an older contract stay
+    replayable through the explicit legacy fingerprints: digests of older handler
+    contracts, and the pre-adaptation form of the current contract, which does not depend
+    on the stored response and so is checked even when no text judgment was retained.
+
+    Raises:
+        NonReplayableObservationError: If the stored contract differs from the current one.
+    """
+    if not isinstance(observation.payload, ScorerTargetResponsePayload):
+        raise NonReplayableObservationError("A judgment scorer requires a judgment observation.")
+    target_adaptation = _target_judgment_adaptation(target)
+    replay_contract_fingerprint = _replay_contract_fingerprint(
+        response_handler=response_handler,
+        category=category,
+        judgment_replay_identifier=judgment_replay_identifier,
+        target_adaptation=target_adaptation,
+    )
+    if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
+        # A current handler that opts out of replay is never overridden by a legacy contract.
+        raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
+    if replay_contract_fingerprint == observation.payload.replay_contract_fingerprint:
+        return
+    if not isinstance(evidence, Message):
+        raise NonReplayableObservationError(
+            "The judgment configuration, response handler or category differs from the acquisition contract."
+        )
+    text_piece = next(
+        (piece for piece in evidence.message_pieces if piece.converted_value_data_type == "text"),
+        None,
+    )
+    legacy_fingerprints: set[str] = set()
+    pre_adaptation_fingerprint = _contract_fingerprint(
+        handler_identifier=response_handler._get_replay_identifier(),
+        category=category,
+        judgment_replay_identifier=judgment_replay_identifier,
+    )
+    if pre_adaptation_fingerprint is not None:
+        legacy_fingerprints.add(pre_adaptation_fingerprint)
+    if text_piece is not None:
+        legacy_fingerprints |= _legacy_replay_contract_fingerprints(
+            response_handler=response_handler,
+            response_text=text_piece.converted_value,
+            category=category,
+            judgment_replay_identifier=judgment_replay_identifier,
+            target_adaptation=target_adaptation,
+        )
+    if observation.payload.replay_contract_fingerprint not in legacy_fingerprints:
+        raise NonReplayableObservationError(
+            "The judgment configuration, response handler or category differs from the acquisition contract."
+        )
+
+
 def _parse_judgment_observation(
     *,
     observation: Observation,
@@ -437,23 +512,24 @@ def _parse_judgment_observation(
 
     Raises:
         NonReplayableObservationError: If the stored response has no text judgment.
+        _ErrorJudgmentObservationError: If the stored acquisition failed, once its replay
+            contract has been validated.
     """
     if not isinstance(observation.payload, ScorerTargetResponsePayload):
         raise NonReplayableObservationError("A judgment scorer requires a judgment observation.")
-    target_adaptation = _target_judgment_adaptation(target)
-    replay_contract_fingerprint = _replay_contract_fingerprint(
+    _validate_replay_contract_compatibility(
+        observation=observation,
+        evidence=evidence,
         response_handler=response_handler,
         category=category,
         judgment_replay_identifier=judgment_replay_identifier,
-        target_adaptation=target_adaptation,
+        target=target,
     )
-    if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
-        # A current handler that opts out of replay is never overridden by a legacy contract.
-        raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
-    contract_matches = replay_contract_fingerprint == observation.payload.replay_contract_fingerprint
-    if not contract_matches and not isinstance(evidence, Message):
-        raise NonReplayableObservationError(
-            "The judgment configuration, response handler or category differs from the acquisition contract."
+    if observation.acquisition is Acquisition.ERROR:
+        # The acquisition failed, so there is no judgment to parse; the validated contract
+        # is the only thing replay can check. Signal the caller to use its fallback.
+        raise _ErrorJudgmentObservationError(
+            f"Observation {observation.id} was acquired with an error, so no judgment can be parsed from it."
         )
     if not isinstance(evidence, Message):
         raise NonReplayableObservationError("A judgment requires resolved message evidence.")
@@ -461,20 +537,6 @@ def _parse_judgment_observation(
         (piece for piece in evidence.message_pieces if piece.converted_value_data_type == "text"),
         None,
     )
-    if not contract_matches and not (
-        text_piece is not None
-        and observation.payload.replay_contract_fingerprint
-        in _legacy_replay_contract_fingerprints(
-            response_handler=response_handler,
-            response_text=text_piece.converted_value,
-            category=category,
-            judgment_replay_identifier=judgment_replay_identifier,
-            target_adaptation=target_adaptation,
-        )
-    ):
-        raise NonReplayableObservationError(
-            "The judgment configuration, response handler or category differs from the acquisition contract."
-        )
     if text_piece is None:
         raise NonReplayableObservationError(f"Observation {observation.id} contains no text judgment.")
     anchor_id = observation.payload.scored_piece_id
